@@ -158,6 +158,52 @@ class ScreeningWindow(QMainWindow):
         )
         self._error_banner.show()
 
+    def show_form_error(self, message: str) -> None:
+        self._error_banner.setText(message)
+        self._error_banner.show()
+
+    def set_subject_match_summary(self, message: str) -> None:
+        label = self._pages[PageId.SUBJECT_IDENTIFICATION].findChild(
+            QLabel,
+            "subjectMatchSummary",
+        )
+        label.setText(message)
+
+    def subject_identifier(self) -> tuple[str, str]:
+        page = self._pages[PageId.SUBJECT_IDENTIFICATION]
+        id_type = page.findChild(QComboBox, "subjectIdTypeInput")
+        external_id = page.findChild(QLineEdit, "subjectExternalIdInput")
+        return str(id_type.currentData()), external_id.text()
+
+    def profile_form_values(self) -> dict[str, tuple[str, str]]:
+        page = self._pages[PageId.PROFILE]
+        values: dict[str, tuple[str, str]] = {}
+        for field_name in (
+            "ageBand",
+            "sex",
+            "height",
+            "weight",
+            "conditionTags",
+            "injuryTags",
+        ):
+            state = page.findChild(QComboBox, f"{field_name}State")
+            value_widget = page.findChild(QWidget, f"{field_name}Input")
+            if isinstance(value_widget, QComboBox):
+                raw_value = value_widget.currentData()
+                value = "" if raw_value is None else str(raw_value)
+            elif isinstance(value_widget, QLineEdit):
+                value = value_widget.text()
+            else:
+                raise RuntimeError(f"missing profile input: {field_name}")
+            values[field_name] = (str(state.currentData()), value)
+        return values
+
+    def consent_choices(self) -> tuple[bool, bool]:
+        page = self._pages[PageId.CONSENT]
+        required = page.findChild(QCheckBox, "requiredConsent")
+        research = page.findChild(QCheckBox, "researchConsent")
+        return required.isChecked(), research.isChecked()
+
     def _build_navigation(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("globalNavigation")
@@ -223,6 +269,16 @@ class ScreeningWindow(QMainWindow):
                 recent,
             )
         if page_id is PageId.SUBJECT_IDENTIFICATION:
+            id_type = QComboBox()
+            id_type.setObjectName("subjectIdTypeInput")
+            id_type.setAccessibleName("机构编号类型")
+            for label, value in (
+                ("机构档案号", "institution_record"),
+                ("病历号", "medical_record_number"),
+                ("体检号", "examination_number"),
+                ("住户编号", "resident_number"),
+            ):
+                id_type.addItem(label, value)
             external_id = QLineEdit()
             external_id.setObjectName("subjectExternalIdInput")
             external_id.setAccessibleName("机构档案号、病历号、体检号或住户编号")
@@ -230,7 +286,12 @@ class ScreeningWindow(QMainWindow):
             lookup.setObjectName("lookupSubjectButton")
             lookup.setAccessibleName("查找受试者")
             lookup.setMinimumHeight(48)
+            if self._on_action is not None:
+                lookup.clicked.connect(
+                    lambda _checked=False: self._on_action("LOOKUP_SUBJECT")
+                )
             return (
+                id_type,
                 external_id,
                 lookup,
                 self._status_label("subjectMatchSummary", "输入编号后查找档案"),
@@ -239,18 +300,75 @@ class ScreeningWindow(QMainWindow):
             age = QComboBox()
             age.setObjectName("ageBandInput")
             age.setAccessibleName("年龄段（选填）")
-            age.addItems(("未提供", "18–39", "40–59", "60–69", "70–79", "80+"))
+            for label, value in (
+                ("请选择", None),
+                ("18–39", "18-39"),
+                ("40–59", "40-59"),
+                ("60–69", "60-69"),
+                ("70–79", "70-79"),
+                ("80+", "80+"),
+            ):
+                age.addItem(label, value)
             sex = QComboBox()
             sex.setObjectName("sexInput")
             sex.setAccessibleName("性别（选填）")
-            sex.addItems(("未提供", "女", "男", "其他", "拒绝提供"))
+            for label, value in (
+                ("请选择", None),
+                ("女", "female"),
+                ("男", "male"),
+                ("其他", "other"),
+            ):
+                sex.addItem(label, value)
             height = QLineEdit()
             height.setObjectName("heightInput")
             height.setAccessibleName("身高厘米（选填）")
             weight = QLineEdit()
             weight.setObjectName("weightInput")
             weight.setAccessibleName("体重千克（选填）")
-            return (age, sex, height, weight)
+            conditions = QLineEdit()
+            conditions.setObjectName("conditionTagsInput")
+            conditions.setAccessibleName("基础情况标签（选填）")
+            injuries = QLineEdit()
+            injuries.setObjectName("injuryTagsInput")
+            injuries.setAccessibleName("既往损伤标签（选填）")
+            return (
+                self._profile_row(
+                    "年龄段",
+                    "ageBandState",
+                    "年龄段提供状态",
+                    age,
+                ),
+                self._profile_row(
+                    "性别",
+                    "sexState",
+                    "性别提供状态",
+                    sex,
+                ),
+                self._profile_row(
+                    "身高（厘米）",
+                    "heightState",
+                    "身高提供状态",
+                    height,
+                ),
+                self._profile_row(
+                    "体重（千克）",
+                    "weightState",
+                    "体重提供状态",
+                    weight,
+                ),
+                self._profile_row(
+                    "基础情况/基础病",
+                    "conditionTagsState",
+                    "基础情况提供状态",
+                    conditions,
+                ),
+                self._profile_row(
+                    "既往损伤",
+                    "injuryTagsState",
+                    "既往损伤提供状态",
+                    injuries,
+                ),
+            )
         if page_id is PageId.CONSENT:
             required = QCheckBox("我已了解并同意上述必要处理")
             required.setObjectName("requiredConsent")
@@ -332,3 +450,39 @@ class ScreeningWindow(QMainWindow):
         label.setAccessibleName(text)
         label.setWordWrap(True)
         return label
+
+    @staticmethod
+    def _field_state_combo(object_name: str, accessible_name: str) -> QComboBox:
+        selector = QComboBox()
+        selector.setObjectName(object_name)
+        selector.setAccessibleName(accessible_name)
+        for label, value in (
+            ("已填写", "PROVIDED"),
+            ("明确无", "NONE_REPORTED"),
+            ("未知/未询问", "UNKNOWN"),
+            ("拒绝提供", "DECLINED"),
+            ("不适用", "NOT_APPLICABLE"),
+        ):
+            selector.addItem(label, value)
+        selector.setCurrentIndex(2)
+        return selector
+
+    @classmethod
+    def _profile_row(
+        cls,
+        label_text: str,
+        state_name: str,
+        state_accessible_name: str,
+        value_widget: QWidget,
+    ) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(label_text)
+        label.setFixedWidth(150)
+        state = cls._field_state_combo(state_name, state_accessible_name)
+        state.setFixedWidth(180)
+        layout.addWidget(label)
+        layout.addWidget(state)
+        layout.addWidget(value_widget, 1)
+        return row

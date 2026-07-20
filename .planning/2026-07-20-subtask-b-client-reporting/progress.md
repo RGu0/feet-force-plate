@@ -21,4 +21,9 @@
 - 生成 P-01/P-07/P-08/P-10 offscreen 截图并人工查看；未把该查看等同于目标现场人工验收。
 - 新鲜验证：RAY-101 共 28 个自动测试通过，compileall 与差异检查通过，禁止直接依赖扫描 0 命中。
 - 提交 RAY-101 实现与 evidence：`9a93b6534f3c9f5d57c4bd0aeacfff45196bd7f4`。
-- 下一步：提交 evidence SHA 回填，将 Linear 更新为 In Review 并明确未验证项；然后只启动下一个 issue。
+- 回填 RAY-101 evidence 的提交：`2fd5fc18805a9177633a9fbc2c374bec73da4d78`；Linear 已确认更新为 In Review，评论包含证据路径与人工/真机缺口。
+- 重新读取 RAY-92 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-92 完成领域与端口实现：机构编号/匿名建档、固定机构隔离、冲突不自动合并、五态选填字段、访问/导出审计、策略化授权复用和重确认。
+- P-02～P-04 已接入应用控制器；受试者 UUID 与授权记录 ID 必须绑定后才允许创建采集会话。
+- 新鲜自动验证：客户端 48 个测试通过，compileall 和禁止直接依赖扫描通过；生成并目视检查 P-02/P-03/P-04 offscreen 截图。
+- 下一步：提交 RAY-92 实现与 evidence，回填 SHA，将 Linear 更新为 In Review 并明确外部适配器、目标 Windows 和现场人工验收缺口；然后只启动 RAY-91。

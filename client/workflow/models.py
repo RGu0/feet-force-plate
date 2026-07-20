@@ -93,6 +93,12 @@ class PreflightSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class ScreeningParticipantContext:
+    subject_uuid: str
+    consent_record_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowState:
     step: ScreeningStep
     session_id: str | None = None

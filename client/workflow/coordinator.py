@@ -9,6 +9,7 @@ from .models import (
     LifecycleStatus,
     QualityOutcome,
     ReportStatus,
+    ScreeningParticipantContext,
     SessionValidity,
     UploadStatus,
     WorkflowState,
@@ -43,6 +44,7 @@ class ScreeningCoordinator:
         self._reports = reports
         self._telemetry = telemetry
         self._session_id: str | None = None
+        self._participant_context: ScreeningParticipantContext | None = None
         self._lifecycle_status = LifecycleStatus.DRAFT
         self._validity = SessionValidity.UNKNOWN
         self._upload_status = UploadStatus.LOCAL_ONLY
@@ -72,6 +74,14 @@ class ScreeningCoordinator:
     def start_new_screening(self) -> None:
         self._transition(ScreeningStep.SUBJECT_IDENTIFICATION)
 
+    def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None:
+        if not subject_uuid.strip() or not consent_record_id.strip():
+            raise ValueError("subject and consent identifiers are required")
+        self._participant_context = ScreeningParticipantContext(
+            subject_uuid=subject_uuid,
+            consent_record_id=consent_record_id,
+        )
+
     def confirm_subject(self) -> None:
         self._transition(ScreeningStep.PROFILE_DETAILS)
 
@@ -98,8 +108,15 @@ class ScreeningCoordinator:
     def start_acquisition(self) -> bool:
         if self._machine.step is not ScreeningStep.POSITION_GUIDANCE:
             return False
+        if self._participant_context is None:
+            self._error = ClientError(
+                code="E-AUT-001",
+                operator_message="请先确认受试者和授权，再开始检测",
+                action=ClientAction.RECHECK,
+            )
+            return False
         try:
-            session_id = self._sessions.create_session()
+            session_id = self._sessions.create_session(self._participant_context)
         except Exception as exc:
             technical_detail = f"{type(exc).__name__}: {exc}"
             self._telemetry.record_error(
@@ -189,6 +206,7 @@ class ScreeningCoordinator:
             return
         self._machine = SessionStateMachine()
         self._session_id = None
+        self._participant_context = None
         self._lifecycle_status = LifecycleStatus.DRAFT
         self._validity = SessionValidity.UNKNOWN
         self._upload_status = UploadStatus.LOCAL_ONLY

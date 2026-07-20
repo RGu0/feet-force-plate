@@ -13,6 +13,7 @@ from client.workflow.models import (
     QualityOutcome,
     QualityResult,
     ReportStatus,
+    ScreeningParticipantContext,
     SessionValidity,
     UploadStatus,
 )
@@ -30,12 +31,14 @@ class _PreflightPort:
 class _SessionPort:
     def __init__(self, *, create_error: Exception | None = None) -> None:
         self.create_calls = 0
+        self.contexts: list[ScreeningParticipantContext] = []
         self.incomplete: list[str] = []
         self.finalized: list[str] = []
         self.create_error = create_error
 
-    def create_session(self) -> str:
+    def create_session(self, context: ScreeningParticipantContext) -> str:
         self.create_calls += 1
+        self.contexts.append(context)
         if self.create_error is not None:
             raise self.create_error
         return f"session-{self.create_calls}"
@@ -115,7 +118,7 @@ def _coordinator(
     reports: _ReportPort | None = None,
     telemetry: _TelemetryPort | None = None,
 ) -> ScreeningCoordinator:
-    return ScreeningCoordinator(
+    coordinator = ScreeningCoordinator(
         preflight=preflight,
         sessions=sessions,
         acquisition=acquisition or _AcquisitionPort(),
@@ -124,6 +127,11 @@ def _coordinator(
         reports=reports or _ReportPort(),
         telemetry=telemetry or _TelemetryPort(),
     )
+    coordinator.bind_participant(
+        subject_uuid="subject-test",
+        consent_record_id="consent-test",
+    )
+    return coordinator
 
 
 class CoordinatorPreflightTests(unittest.TestCase):
