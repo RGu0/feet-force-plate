@@ -2,9 +2,9 @@
 
 - Issue: RAY-89 — 本地状态库、离线配额与确认后清理
 - URL: https://linear.app/ray-app/issue/RAY-89/本地状态库离线配额与确认后清理
-- Captured at: 2026-07-20T10:27:01Z
-- Snapshot: In Progress; milestone P1：可靠采集; priority High
-- Relations: related to RAY-83
+- Captured at: 2026-07-20T10:29:44Z
+- Snapshot: In Review; milestone P1：可靠采集; priority High
+- Relations: related to RAY-83 and RAY-87
 
 ## Acceptance snapshot
 
