@@ -1,0 +1,34 @@
+RAY-89 automated verification
+Captured at: 2026-07-20T10:27:01Z
+Runtime: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+
+COMMAND
+python3 -m unittest tests.spool.test_state_store
+
+RESULT
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.021s
+
+OK
+
+COMMAND
+python3 -m unittest discover -s tests -p 'test_*.py'
+
+RESULT
+...........................................
+----------------------------------------------------------------------
+Ran 43 tests in 0.077s
+
+OK
+
+COMMAND
+python3 -m compileall -q client/spool tests/spool client/device tests/device
+
+RESULT
+exit 0
+
+BOUNDARY
+Temporary SQLite and an injected ephemeral AES key only. No OS Keychain,
+process-kill crash injection, real disk-full, cloud upload, UI, or manual
+validation was run.
