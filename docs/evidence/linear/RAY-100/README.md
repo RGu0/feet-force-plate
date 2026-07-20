@@ -12,7 +12,7 @@
 - Baseline: `c0e4f38113453f2c517158347b499618ce19f6f6`
 - RAY-97 server prerequisite: `d8466ead54cc25697185b2811c71937550f1b45b`
 - RAY-99 sync prerequisite: `f76d042f598c0459ff57781f3b769fa379c497c2`
-- RAY-100 implementation commit: recorded by the evidence follow-up commit after the implementation commit is created
+- RAY-100 implementation commit: `a4642125c887addf932dbf00acb67839dbc1a5fa`
 
 ## Acceptance snapshot and result
 
