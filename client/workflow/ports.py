@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .models import PreflightSummary, QualityResult, ScreeningParticipantContext
+from .protocol import ProtocolSnapshot
 
 
 class PreflightPort(Protocol):
@@ -11,7 +12,11 @@ class PreflightPort(Protocol):
 
 
 class SessionPort(Protocol):
-    def create_session(self, context: ScreeningParticipantContext) -> str: ...
+    def create_session(
+        self,
+        context: ScreeningParticipantContext,
+        protocol: ProtocolSnapshot,
+    ) -> str: ...
 
     def mark_incomplete(self, session_id: str) -> None: ...
 

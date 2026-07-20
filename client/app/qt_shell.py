@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from client.workflow.models import WorkflowState
+from client.workflow.models import ReportStatus, SessionValidity, WorkflowState
 
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
 
@@ -56,6 +56,7 @@ class ScreeningWindow(QMainWindow):
         self.setWindowTitle("FeetForcePlate 足底压力健康筛查")
         self.setMinimumSize(1280, 720)
         self._on_action = on_action
+        self._stop_confirmation_pending = False
         self._pages: dict[PageId, QWidget] = {}
         self._stack = QStackedWidget()
         self._notice_banner = QLabel()
@@ -143,6 +144,33 @@ class ScreeningWindow(QMainWindow):
         self._navigation.setEnabled(
             PAGE_DEFINITIONS[page_id].global_navigation_enabled
         )
+        if page_id is not PageId.ACQUIRING:
+            self._reset_stop_confirmation()
+        if state.position_guidance is not None:
+            page = self._pages[PageId.POSITION_GUIDANCE]
+            page.findChild(QLabel, "positionStatus").setText(
+                state.position_guidance.instruction_text
+            )
+            page.findChild(QLabel, "countdownLabel").setText(
+                state.position_guidance.countdown_text
+            )
+        if state.acquisition_instruction is not None:
+            acquisition_page = self._pages[PageId.ACQUIRING]
+            acquisition_page.findChild(
+                QLabel,
+                "acquisitionInstruction",
+            ).setText(state.acquisition_instruction)
+            acquisition_page.findChild(QLabel, "acquisitionStatus").setText(
+                "当前状态：采集中"
+            )
+        if state.remaining_seconds is not None:
+            minutes, seconds = divmod(state.remaining_seconds, 60)
+            self._pages[PageId.ACQUIRING].findChild(
+                QLabel,
+                "remainingTime",
+            ).setText(f"剩余 {minutes:02d}:{seconds:02d}")
+        if page_id is PageId.RESULT:
+            self._present_result_state(state)
         if state.notice is None:
             self._notice_banner.clear()
             self._notice_banner.hide()
@@ -251,10 +279,59 @@ class ScreeningWindow(QMainWindow):
         button.setMinimumHeight(48)
         button.setProperty("importance", "primary" if primary else "secondary")
         if self._on_action is not None:
-            button.clicked.connect(
-                lambda _checked=False, selected=action: self._on_action(selected)
-            )
+            if action == "STOP_SCREENING":
+                button.clicked.connect(self._confirm_stop)
+            else:
+                button.clicked.connect(
+                    lambda _checked=False, selected=action: self._on_action(selected)
+                )
         return button
+
+    def _confirm_stop(self, _checked: bool = False) -> None:
+        if not self._stop_confirmation_pending:
+            self._stop_confirmation_pending = True
+            button = self._pages[PageId.ACQUIRING].findChild(
+                QPushButton,
+                "STOP_SCREENING",
+            )
+            button.setText("再次点击确认停止")
+            self._notice_banner.setText("停止后本次检测将标记为未完成")
+            self._notice_banner.show()
+            return
+        self._stop_confirmation_pending = False
+        self._on_action("STOP_SCREENING")
+
+    def _reset_stop_confirmation(self) -> None:
+        self._stop_confirmation_pending = False
+        page = self._pages.get(PageId.ACQUIRING)
+        if page is None:
+            return
+        button = page.findChild(QPushButton, "STOP_SCREENING")
+        if button is not None:
+            button.setText(_ACTION_LABELS["STOP_SCREENING"])
+
+    def _present_result_state(self, state: WorkflowState) -> None:
+        page = self._pages[PageId.RESULT]
+        report_ready = state.report_status is ReportStatus.BASIC_READY
+        retry_required = state.validity in {
+            SessionValidity.INVALID,
+            SessionValidity.INCOMPLETE,
+            SessionValidity.FAILED,
+        }
+        page.findChild(QPushButton, "VIEW_BASIC_REPORT").setVisible(report_ready)
+        page.findChild(QPushButton, "START_NEXT_SCREENING").setVisible(report_ready)
+        page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_required)
+        basic_status = page.findChild(QLabel, "basicReportStatus")
+        full_status = page.findChild(QLabel, "fullReportStatus")
+        if report_ready:
+            basic_status.setText(f"✓ 基础报告已生成（版本 {state.report_version}）")
+            full_status.setText("⟳ 完整分析正在后台生成")
+        elif retry_required:
+            basic_status.setText("本次检测未完成，请重新站稳后检测")
+            full_status.clear()
+        else:
+            basic_status.setText("正在完成本地处理")
+            full_status.clear()
 
     def _page_content(self, page_id: PageId) -> tuple[QWidget, ...]:
         if page_id is PageId.WORKBENCH:
@@ -409,6 +486,10 @@ class ScreeningWindow(QMainWindow):
             return (
                 heatmap,
                 self._status_label("remainingTime", "剩余 --:--"),
+                self._status_label(
+                    "acquisitionInstruction",
+                    "请保持自然站立，不要说话或大幅移动",
+                ),
                 self._status_label("acquisitionStatus", "当前状态：等待采集"),
             )
         if page_id is PageId.RESULT:

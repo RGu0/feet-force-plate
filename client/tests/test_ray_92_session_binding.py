@@ -10,6 +10,7 @@ from client.workflow.models import (
     QualityResult,
     ScreeningParticipantContext,
 )
+from client.workflow.protocol import ProtocolSnapshot
 
 
 class _Preflight:
@@ -21,8 +22,13 @@ class _Sessions:
     def __init__(self) -> None:
         self.contexts: list[ScreeningParticipantContext] = []
 
-    def create_session(self, context: ScreeningParticipantContext) -> str:
+    def create_session(
+        self,
+        context: ScreeningParticipantContext,
+        protocol: ProtocolSnapshot,
+    ) -> str:
         self.contexts.append(context)
+        _ = protocol
         return "session-1"
 
     def mark_incomplete(self, session_id: str) -> None:
@@ -83,6 +89,11 @@ class SessionBindingTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
+        coordinator.observe_position(
+            now_seconds=0.0,
+            contact_ready=True,
+            in_valid_area=True,
+        )
 
         coordinator.start_acquisition()
 
@@ -111,6 +122,11 @@ class SessionBindingTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
+        coordinator.observe_position(
+            now_seconds=0.0,
+            contact_ready=True,
+            in_valid_area=True,
+        )
 
         started = coordinator.start_acquisition()
 

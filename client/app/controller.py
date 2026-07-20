@@ -57,6 +57,16 @@ class _CoordinatorPort(Protocol):
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None: ...
 
+    def observe_position(
+        self,
+        *,
+        now_seconds: float,
+        contact_ready: bool,
+        in_valid_area: bool,
+    ): ...
+
+    def observe_acquisition_elapsed(self, *, elapsed_seconds: int) -> int | None: ...
+
     def start_next_screening(self) -> None: ...
 
 
@@ -149,6 +159,26 @@ class ApplicationController:
 
     def on_device_disconnected(self, technical_detail: str) -> None:
         self._coordinator.handle_device_disconnect(technical_detail=technical_detail)
+        self.refresh()
+
+    def on_position_observation(
+        self,
+        *,
+        now_seconds: float,
+        contact_ready: bool,
+        in_valid_area: bool,
+    ) -> None:
+        self._coordinator.observe_position(
+            now_seconds=now_seconds,
+            contact_ready=contact_ready,
+            in_valid_area=in_valid_area,
+        )
+        self.refresh()
+
+    def on_acquisition_elapsed(self, elapsed_seconds: int) -> None:
+        self._coordinator.observe_acquisition_elapsed(
+            elapsed_seconds=elapsed_seconds,
+        )
         self.refresh()
 
     def _run_preflight(self) -> None:

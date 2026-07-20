@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .protocol import PositionGuidanceState
 from .state_machine import ScreeningStep
 
 
@@ -111,3 +112,7 @@ class WorkflowState:
     report_version: int | None = None
     error: ClientError | None = None
     notice: str | None = None
+    position_guidance: PositionGuidanceState | None = None
+    acquisition_instruction: str | None = None
+    planned_duration_seconds: int | None = None
+    remaining_seconds: int | None = None

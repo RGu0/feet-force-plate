@@ -18,6 +18,7 @@ from client.workflow.models import (
     UploadStatus,
 )
 from client.workflow.state_machine import ScreeningStep
+from client.workflow.protocol import ProtocolSnapshot
 
 
 class _PreflightPort:
@@ -36,9 +37,14 @@ class _SessionPort:
         self.finalized: list[str] = []
         self.create_error = create_error
 
-    def create_session(self, context: ScreeningParticipantContext) -> str:
+    def create_session(
+        self,
+        context: ScreeningParticipantContext,
+        protocol: ProtocolSnapshot,
+    ) -> str:
         self.create_calls += 1
         self.contexts.append(context)
+        _ = protocol
         if self.create_error is not None:
             raise self.create_error
         return f"session-{self.create_calls}"
@@ -134,6 +140,15 @@ def _coordinator(
     return coordinator
 
 
+def _start_acquisition(coordinator: ScreeningCoordinator) -> bool:
+    coordinator.observe_position(
+        now_seconds=0.0,
+        contact_ready=True,
+        in_valid_area=True,
+    )
+    return coordinator.start_acquisition()
+
+
 class CoordinatorPreflightTests(unittest.TestCase):
     def test_failed_preflight_stays_repairable_without_creating_session(self) -> None:
         preflight = _PreflightPort(
@@ -184,8 +199,8 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.confirm_consent()
         self.assertTrue(coordinator.run_preflight())
 
-        first_start = coordinator.start_acquisition()
-        duplicate_start = coordinator.start_acquisition()
+        first_start = _start_acquisition(coordinator)
+        duplicate_start = _start_acquisition(coordinator)
 
         self.assertTrue(first_start)
         self.assertFalse(duplicate_start)
@@ -213,7 +228,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.confirm_consent()
         coordinator.run_preflight()
 
-        started = coordinator.start_acquisition()
+        started = _start_acquisition(coordinator)
 
         self.assertFalse(started)
         self.assertEqual(coordinator.state.step, ScreeningStep.INCOMPLETE)
@@ -243,7 +258,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.confirm_consent()
         coordinator.run_preflight()
 
-        started = coordinator.start_acquisition()
+        started = _start_acquisition(coordinator)
 
         self.assertFalse(started)
         self.assertEqual(coordinator.state.step, ScreeningStep.POSITION_GUIDANCE)
@@ -272,7 +287,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
 
         coordinator.handle_device_disconnect(
             technical_detail="SerialException: /dev/cu.usbserial stack trace"
@@ -318,7 +333,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
 
         coordinator.complete_acquisition()
 
@@ -347,7 +362,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
 
         coordinator.complete_acquisition()
 
@@ -375,7 +390,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
 
         coordinator.complete_acquisition()
 
@@ -405,7 +420,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
         coordinator.complete_acquisition()
         destination = Path("/tmp/masked-20260720-basic-v1.pdf")
 
@@ -428,7 +443,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
         coordinator.complete_acquisition()
 
         coordinator.record_upload_status(UploadStatus.PENDING)
@@ -460,7 +475,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.confirm_consent()
         self.assertEqual(coordinator.state.lifecycle_status, LifecycleStatus.PREFLIGHT)
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
         self.assertEqual(coordinator.state.lifecycle_status, LifecycleStatus.ACQUIRING)
 
         coordinator.complete_acquisition()
@@ -486,7 +501,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
 
         first_stop = coordinator.stop_acquisition()
         duplicate_stop = coordinator.stop_acquisition()
@@ -517,11 +532,11 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
         coordinator.stop_acquisition()
 
         coordinator.retry_screening()
-        second_start = coordinator.start_acquisition()
+        second_start = _start_acquisition(coordinator)
 
         self.assertTrue(second_start)
         self.assertEqual(coordinator.state.step, ScreeningStep.ACQUIRING)
@@ -542,7 +557,7 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
-        coordinator.start_acquisition()
+        _start_acquisition(coordinator)
         coordinator.complete_acquisition()
 
         coordinator.start_next_screening()

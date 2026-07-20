@@ -22,6 +22,12 @@ from .ports import (
     SessionPort,
     TelemetryPort,
 )
+from .protocol import (
+    PositionGuidanceController,
+    PositionGuidanceState,
+    ScreeningProtocol,
+    default_standard_protocol,
+)
 from .state_machine import ScreeningStep, SessionStateMachine
 
 
@@ -35,6 +41,7 @@ class ScreeningCoordinator:
         analysis: AnalysisPort,
         reports: ReportPort,
         telemetry: TelemetryPort,
+        protocol: ScreeningProtocol | None = None,
     ) -> None:
         self._machine = SessionStateMachine()
         self._preflight = preflight
@@ -43,7 +50,10 @@ class ScreeningCoordinator:
         self._analysis = analysis
         self._reports = reports
         self._telemetry = telemetry
+        self._protocol = protocol or default_standard_protocol()
+        self._position_guidance = PositionGuidanceController(self._protocol)
         self._session_id: str | None = None
+        self._remaining_seconds: int | None = None
         self._participant_context: ScreeningParticipantContext | None = None
         self._lifecycle_status = LifecycleStatus.DRAFT
         self._validity = SessionValidity.UNKNOWN
@@ -69,6 +79,26 @@ class ScreeningCoordinator:
             report_version=self._report_version,
             error=self._error,
             notice=self._notice,
+            position_guidance=(
+                self._position_guidance.state
+                if self._machine.step is ScreeningStep.POSITION_GUIDANCE
+                else None
+            ),
+            acquisition_instruction=(
+                self._protocol.prompts.acquisition_text
+                if self._machine.step is ScreeningStep.ACQUIRING
+                else None
+            ),
+            planned_duration_seconds=(
+                self._protocol.acquisition_duration_seconds
+                if self._machine.step is ScreeningStep.ACQUIRING
+                else None
+            ),
+            remaining_seconds=(
+                self._remaining_seconds
+                if self._machine.step is ScreeningStep.ACQUIRING
+                else None
+            ),
         )
 
     def start_new_screening(self) -> None:
@@ -103,10 +133,36 @@ class ScreeningCoordinator:
             )
             return False
         self._transition(ScreeningStep.POSITION_GUIDANCE)
+        self._position_guidance.reset()
         return True
+
+    def observe_position(
+        self,
+        *,
+        now_seconds: float,
+        contact_ready: bool,
+        in_valid_area: bool,
+    ) -> PositionGuidanceState:
+        if self._machine.step is not ScreeningStep.POSITION_GUIDANCE:
+            return self._position_guidance.state
+        state = self._position_guidance.observe(
+            now_seconds=now_seconds,
+            contact_ready=contact_ready,
+            in_valid_area=in_valid_area,
+        )
+        if state.auto_start:
+            self.start_acquisition()
+        return state
 
     def start_acquisition(self) -> bool:
         if self._machine.step is not ScreeningStep.POSITION_GUIDANCE:
+            return False
+        if not self._position_guidance.state.manual_start_allowed:
+            self._error = ClientError(
+                code="E-POS-001",
+                operator_message="请站到压力垫中央并保持站稳",
+                action=ClientAction.RECHECK,
+            )
             return False
         if self._participant_context is None:
             self._error = ClientError(
@@ -116,7 +172,10 @@ class ScreeningCoordinator:
             )
             return False
         try:
-            session_id = self._sessions.create_session(self._participant_context)
+            session_id = self._sessions.create_session(
+                self._participant_context,
+                self._protocol.snapshot(),
+            )
         except Exception as exc:
             technical_detail = f"{type(exc).__name__}: {exc}"
             self._telemetry.record_error(
@@ -133,6 +192,7 @@ class ScreeningCoordinator:
         self._session_id = session_id
         self._transition(ScreeningStep.ACQUIRING)
         self._lifecycle_status = LifecycleStatus.ACQUIRING
+        self._remaining_seconds = self._protocol.acquisition_duration_seconds
         try:
             self._acquisition.start(session_id)
         except Exception as exc:
@@ -153,6 +213,20 @@ class ScreeningCoordinator:
             )
             return False
         return True
+
+    def observe_acquisition_elapsed(self, *, elapsed_seconds: int) -> int | None:
+        if self._machine.step is not ScreeningStep.ACQUIRING:
+            return None
+        if elapsed_seconds < 0:
+            raise ValueError("elapsed_seconds cannot be negative")
+        remaining = max(
+            0,
+            self._protocol.acquisition_duration_seconds - elapsed_seconds,
+        )
+        self._remaining_seconds = remaining
+        if remaining == 0:
+            self.complete_acquisition()
+        return remaining
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None:
         if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
@@ -190,7 +264,9 @@ class ScreeningCoordinator:
 
     def retry_screening(self) -> None:
         self._machine.retry()
+        self._position_guidance.reset()
         self._session_id = None
+        self._remaining_seconds = None
         self._lifecycle_status = LifecycleStatus.PREFLIGHT
         self._validity = SessionValidity.UNKNOWN
         self._upload_status = UploadStatus.LOCAL_ONLY
@@ -206,6 +282,7 @@ class ScreeningCoordinator:
             return
         self._machine = SessionStateMachine()
         self._session_id = None
+        self._remaining_seconds = None
         self._participant_context = None
         self._lifecycle_status = LifecycleStatus.DRAFT
         self._validity = SessionValidity.UNKNOWN
@@ -222,6 +299,7 @@ class ScreeningCoordinator:
         if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
             return
         session_id = self._session_id
+        self._remaining_seconds = 0
         self._transition(ScreeningStep.FINALIZING)
         self._lifecycle_status = LifecycleStatus.FINALIZING
         self._sessions.finalize(session_id)

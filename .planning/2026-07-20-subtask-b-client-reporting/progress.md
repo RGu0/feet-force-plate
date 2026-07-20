@@ -27,3 +27,9 @@
 - P-02～P-04 已接入应用控制器；受试者 UUID 与授权记录 ID 必须绑定后才允许创建采集会话。
 - 新鲜自动验证：客户端 48 个测试通过，compileall 和禁止直接依赖扫描通过；生成并目视检查 P-02/P-03/P-04 offscreen 截图。
 - 下一步：提交 RAY-92 实现与 evidence，回填 SHA，将 Linear 更新为 In Review 并明确外部适配器、目标 Windows 和现场人工验收缺口；然后只启动 RAY-91。
+- 提交并同步 RAY-92：实现 `53de745d72fd660cd4afd13a1e6f7fbc4a962b2d`，evidence 回填 `52bacb4981b28ea67f46083f7b5ea2e73b841a07`，状态确认 `5d66f3e`；Linear 已回读为 In Review。
+- 重新读取 RAY-91 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-91 完成版本化标准协议、起止条件、站位门控、数字+文字倒计时、自动/手动开始、协议时长自动结束、停止确认、扩展范式双门控和参考范围审批门控。
+- 明确 `standard-static-bilateral@1.0.0-pilot` 的 30 秒/3 秒配置仍需现场验证；未把文档中的待验证假设升级为正式承诺。
+- 新鲜自动验证：客户端 60 个测试通过，compileall 和禁止直接依赖扫描通过；P-05～P-08 offscreen 截图已目视检查。
+- 下一步：提交 RAY-91 实现与 evidence，回填 SHA，将 Linear 更新为 In Review；然后只启动 RAY-90。
