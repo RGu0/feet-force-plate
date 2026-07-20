@@ -78,4 +78,5 @@ QT_QPA_PLATFORM=offscreen /private/tmp/feetforceplate-subtask-b-venv/bin/python 
 
 ## 关联提交
 
-- 实现与本 evidence：待提交后回填完整 commit SHA。
+- 实现与本 evidence：`68bbbeeed7e447a3100b03754ce196fc9c822864`。
+- 本 SHA 回填：将在紧随其后的 evidence-only 提交中保存。
