@@ -18,11 +18,11 @@
 |---|---|---|
 | 1. 基线与契约梳理 | complete | 已阅读全部必读文档及相关模块文档，记录端口、状态机、报告与错误约束 |
 | 2. 现有工程与测试基线 | complete | 已建立 `/private/tmp` 隔离环境，可运行 unittest、pytest 与 pytest-qt |
-| 3. 工作流与能力门控 | in_progress | RAY-101/RAY-92/RAY-91 已在 In Review；RAY-90 实现与自动验证完成，等待提交和状态同步 |
-| 4. 本地分析与基础报告 | in_progress | RAY-90 已在 In Review；RAY-85 实现与自动验证完成，等待提交和状态同步 |
-| 5. UI、热力图、PDF/打印与错误状态 | in_progress | RAY-84 实现与自动验证完成；PDF/打印和安装人工验证继续由 RAY-96 覆盖 |
-| 6. 全量验证与范围审计 | pending | 全量自动测试通过；检查无越权访问；列出尚需真机/人工验证项 |
-| 7. 提交本任务变更 | pending | 提交仅包含本任务拥有目录与独立计划文件 |
+| 3. 工作流与能力门控 | complete | RAY-101/RAY-92/RAY-91/RAY-90 已提交并在 In Review；真实设备、现场协议和人工验收边界已记录 |
+| 4. 本地分析与基础报告 | complete | RAY-90/RAY-85 已提交并在 In Review；离线 `BASIC_READY` 与指标门控自动测试通过 |
+| 5. UI、热力图、PDF/打印与错误状态 | complete | RAY-84 已在 In Review；RAY-96 的 PDF/打印自动合同完成，实体打印与安装人工验收保留 |
+| 6. 全量验证与范围审计 | in_progress | 当前 89 个自动测试通过；正在保存最终 JUnit、无越权依赖扫描和未验证边界 |
+| 7. 提交本任务变更 | in_progress | 正在提交 RAY-96 所属文件和独立 evidence，逐次审计 staged 清单 |
 
 ## Linear 执行顺序
 

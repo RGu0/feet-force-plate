@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "windows-x86_64": {
+      "installer": "signed-installer-required",
+      "driver_check": "CH340-ready-before-device-use",
+      "signing": "CI-secret-reference-only"
+    },
+    "macos-universal2-pilot": {
+      "bundle": "signed-pilot-app",
+      "notarization": "required-for-external-pilot",
+      "signing": "CI-keychain-reference-only"
+    }
+  },
+  "persistent_data_policy": "preserve-on-uninstall-and-rollback",
+  "upgrade_policy": "idle-only-signed-digest-verified-with-database-rollback",
+  "embedded_credentials": false
+}

@@ -46,3 +46,7 @@
 - 重新读取 RAY-84 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
 - RAY-84 完成不可变 DisplayFrame、latest-only 线程安全邮箱、30 Hz 最大 UI 刷新、48×64 Qt 热力图、COP/短轨迹、负重文字、帧真实性说明和显示停滞时工作流独立更新。
 - 当前客户端 80 个测试通过；P-07 合成 offscreen 截图已目视检查。下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-96。
+- 提交并同步 RAY-84：实现 `1722afeec4e809907b93c59b155421c41fe3c120`，SHA 回填 `c84b9fb8259cd0bbc18887c5d636a91c4a5132aa`，状态确认 `698f1b6`；Linear 已回读为 In Review。
+- 重新读取 RAY-96 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-96 已实现安装/持久目录合同、构建 manifest、激活绑定门控、CH340 探测端口、受控升级与应用/数据库联合回滚，并补齐 A4 PDF、原子导出、安全打印临时文件和打印确认合同。
+- 当前客户端 89 个测试通过；合成 PDF 及第一页预览已目视检查。下一步执行最终全量验证、提交 evidence，并将 Linear 更新为 In Review，明确双平台签名安装、驱动、联网激活、实体打印和现场操作员验收缺口。
