@@ -6,7 +6,10 @@
 
 - [总体架构设计](docs/架构设计文档.md)
 - [产品需求文档（PRD）](docs/产品需求文档_PRD.md)
+- [通信接口设计文档](docs/通信接口设计文档.md)
+- [数据库设计文档](docs/数据库设计文档.md)
 - [模块设计索引](docs/modules/README.md)
 - [已批准设计规范](docs/superpowers/specs/2026-07-20-institution-screening-platform-design.md)
+- [通信与数据库批准规范](docs/superpowers/specs/2026-07-20-communication-and-database-design.md)
 
 当前仓库处于设计与硬件基线验证阶段；构建、测试通过不代表真机、标定或专业指标已经完成验证。
