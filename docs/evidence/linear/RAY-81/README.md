@@ -69,4 +69,4 @@ golden-fixture acceptance item, so this issue must remain short of Done.
 
 ## Commit
 
-Pending initial implementation commit.
+Implementation and initial evidence: `7468e749ecfc4d61075fcef6573b855046973b91`.
