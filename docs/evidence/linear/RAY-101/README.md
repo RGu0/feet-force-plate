@@ -61,4 +61,4 @@
 - P-02/P-03/P-04 的真实受试者与授权行为待 RAY-92；P-06 待 RAY-91；P-07 实际 48x64/COP 待 RAY-84；P-08/P-10 的真实报告内容与 PDF 工件待 RAY-85。
 - 未执行 Windows/macOS 真实字体、A4 打印、1280x720 目标机和高 DPI 人工回归。
 - 状态结论：实现和自动验证已完成到 RAY-101 所有权边界，但仍缺人工 UI/操作员及跨 issue 适配器验收，因此只能进入 `In Review`，不能标 `Done`。
-- 关联 implementation commit SHA：待提交后回填。
+- 关联 implementation commit SHA：`9a93b6534f3c9f5d57c4bd0aeacfff45196bd7f4`。

@@ -20,4 +20,5 @@
 - 补齐 11 页必要控件、控制器事件、报告导出/打印端口、生命周期/有效性/上传/分析/报告五维状态、重测/下一位流程和内部遥测边界。
 - 生成 P-01/P-07/P-08/P-10 offscreen 截图并人工查看；未把该查看等同于目标现场人工验收。
 - 新鲜验证：RAY-101 共 28 个自动测试通过，compileall 与差异检查通过，禁止直接依赖扫描 0 命中。
-- 下一步：仅提交 RAY-101 实现与 evidence，回填 commit SHA，将 Linear 更新为 In Review 并明确未验证项。
+- 提交 RAY-101 实现与 evidence：`9a93b6534f3c9f5d57c4bd0aeacfff45196bd7f4`。
+- 下一步：提交 evidence SHA 回填，将 Linear 更新为 In Review 并明确未验证项；然后只启动下一个 issue。
