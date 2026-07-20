@@ -62,4 +62,5 @@ Machine-readable benchmark: [benchmark.json](benchmark.json)
 
 ## Commit
 
-Implementation/evidence commit: pending at snapshot time; replaced after commit.
+Implementation/tests/benchmark/evidence commit:
+`83b0357cbee8d3c339fdd19f7003785ec87477bb`.
