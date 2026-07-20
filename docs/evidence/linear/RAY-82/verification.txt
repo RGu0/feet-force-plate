@@ -1,0 +1,20 @@
+Captured: 2026-07-20T09:46Z
+
+FOCUSED
+Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -W error -m unittest tests/device/test_simulator.py
+Exit: 0
+Result: Ran 8 tests in 0.023s - OK
+
+OWNED DISCOVERY
+Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -W error -m unittest discover -s tests -t . -p 'test_*.py'
+Exit: 0
+Result: Ran 19 tests in 0.027s - OK
+
+COMPILE
+Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m compileall -q client/device tests/device
+Exit: 0
+
+PHYSICAL/INTEGRATION BOUNDARY
+- Physical raw serial capture replay: NOT RUN / fixture unavailable.
+- Simulator through encrypted segmentation/recovery/upload: NOT RUN / downstream issues not implemented yet.
+- CheckSum coverage and wire length-byte order: NOT PHYSICALLY VERIFIED.
