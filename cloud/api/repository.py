@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -35,6 +36,16 @@ from shared.contracts.cloud import (
     ValidityStatus,
 )
 from shared.contracts.events import EventEnvelope
+from shared.contracts.device_policy import SignedLicense
+from shared.contracts.operations import (
+    DeviceRegistrationRequest,
+    DeviceSummary,
+    SiteCreateRequest,
+    SiteSummary,
+    TerminalDeviceBindingSummary,
+    TerminalHealthSummary,
+    UpgradePolicySummary,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +71,7 @@ class DeviceRecord:
     device_id: UUID
     model: str
     status: str = "ACTIVE"
+    capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +145,7 @@ class ActivationCodeRecord:
     expires_at: datetime
     used_at: datetime | None = None
     terminal_id: UUID | None = None
+    enrollment_code_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +168,8 @@ class InMemoryPlatformRepository:
 
     def __init__(self) -> None:
         self._terminals: dict[tuple[UUID, UUID], TerminalRecord] = {}
+        self._tenants: dict[UUID, tuple[str, str]] = {}
+        self._sites: dict[tuple[UUID, UUID], SiteSummary] = {}
         self._devices: dict[tuple[UUID, UUID], DeviceRecord] = {}
         self._terminal_device_bindings: set[tuple[UUID, UUID, UUID]] = set()
         self._activation_codes: dict[bytes, ActivationCodeRecord] = {}
@@ -162,6 +177,10 @@ class InMemoryPlatformRepository:
             tuple[bytes, str], EnrollmentIdempotencyRecord
         ] = {}
         self._heartbeats: list[tuple[UUID, UUID, HeartbeatRequest, datetime]] = []
+        self._operations_audits: list[tuple[UUID, str, str, UUID]] = []
+        self._license_versions: dict[tuple[UUID, UUID], list[SignedLicense]] = {}
+        self._upgrade_policies: dict[tuple[UUID, UUID], UpgradePolicySummary] = {}
+        self._terminal_health_overrides: dict[tuple[UUID, UUID], dict[str, Any]] = {}
         self._subjects: set[tuple[UUID, UUID]] = set()
         self._subject_profiles: dict[tuple[UUID, UUID], dict[str, Any]] = {}
         self._identity_profiles: dict[tuple[UUID, UUID], tuple[bytes, bytes, str]] = {}
@@ -180,6 +199,171 @@ class InMemoryPlatformRepository:
     def add_terminal(self, tenant_id: UUID, site_id: UUID, terminal_id: UUID) -> None:
         self._terminals[(tenant_id, terminal_id)] = TerminalRecord(tenant_id, site_id, terminal_id)
 
+    def add_tenant(self, tenant_id: UUID, name: str, status: str = "ACTIVE") -> None:
+        self._tenants[tenant_id] = (name, status)
+
+    def create_site(self, tenant_id: UUID, request: SiteCreateRequest) -> SiteSummary:
+        if tenant_id not in self._tenants:
+            raise TenantAccessDenied("机构不存在")
+        key = (tenant_id, request.site_id)
+        if key in self._sites:
+            raise IdempotencyConflict("站点 ID 已存在")
+        if any(
+            existing.tenant_id == tenant_id and existing.site_code == request.site_code
+            for existing in self._sites.values()
+        ):
+            raise IdempotencyConflict("站点编码已存在")
+        summary = SiteSummary(tenant_id=tenant_id, **request.model_dump())
+        self._sites[key] = summary
+        return summary
+
+    def register_device(
+        self,
+        tenant_id: UUID,
+        request: DeviceRegistrationRequest,
+    ) -> DeviceSummary:
+        existing_owner = next(
+            (owner for owner, device_id in self._devices if device_id == request.device_id),
+            None,
+        )
+        if existing_owner is not None and existing_owner != tenant_id:
+            raise TenantAccessDenied("设备 ID 已属于其他租户")
+        if (tenant_id, request.device_id) in self._devices:
+            raise IdempotencyConflict("设备 ID 已存在")
+        self._devices[(tenant_id, request.device_id)] = DeviceRecord(
+            tenant_id,
+            request.device_id,
+            request.model,
+            capabilities=dict(request.capabilities),
+        )
+        return DeviceSummary(tenant_id=tenant_id, **request.model_dump())
+
+    def bind_terminal_device(
+        self,
+        tenant_id: UUID,
+        terminal_id: UUID,
+        device_id: UUID,
+        valid_from: datetime,
+    ) -> TerminalDeviceBindingSummary:
+        terminal = self._terminals.get((tenant_id, terminal_id))
+        device = self._devices.get((tenant_id, device_id))
+        if terminal is None or device is None:
+            raise TenantAccessDenied("终端或设备不属于当前租户")
+        self._terminal_device_bindings.add((tenant_id, terminal_id, device_id))
+        return TerminalDeviceBindingSummary(
+            binding_id=uuid4(),
+            tenant_id=tenant_id,
+            terminal_id=terminal_id,
+            device_id=device_id,
+            valid_from=valid_from,
+        )
+
+    def terminal_owner(self, terminal_id: UUID) -> tuple[UUID, UUID | None] | None:
+        for (tenant_id, candidate), terminal in self._terminals.items():
+            if candidate == terminal_id:
+                return tenant_id, terminal.site_id
+        return None
+
+    def device_owner(self, device_id: UUID) -> UUID | None:
+        return next(
+            (tenant_id for tenant_id, candidate in self._devices if candidate == device_id),
+            None,
+        )
+
+    def terminal_status(self, tenant_id: UUID, terminal_id: UUID) -> str:
+        return self._terminals[(tenant_id, terminal_id)].status
+
+    def terminal_keys(self):
+        return tuple(self._terminals)
+
+    def append_operations_audit(
+        self,
+        tenant_id: UUID,
+        action: str,
+        outcome: str,
+        audit_id: UUID | None = None,
+    ) -> UUID:
+        record_id = audit_id or uuid4()
+        self._operations_audits.append((tenant_id, action, outcome, record_id))
+        return record_id
+
+    def audit_actions(self, tenant_id: UUID) -> list[str]:
+        return [
+            action
+            for record_tenant, action, _, _ in self._operations_audits
+            if record_tenant == tenant_id
+        ]
+
+    def access_audit_outcomes(self, tenant_id: UUID) -> list[str]:
+        return [
+            outcome
+            for record_tenant, action, outcome, _ in self._operations_audits
+            if record_tenant == tenant_id and action == "data.access"
+        ]
+
+    def store_license_version(self, tenant_id: UUID, bundle: SignedLicense) -> None:
+        key = (tenant_id, bundle.document.license_id)
+        versions = self._license_versions.setdefault(key, [])
+        if versions and bundle.document.license_version != len(versions) + 1:
+            raise IdempotencyConflict("License 版本不连续")
+        versions.append(bundle)
+
+    def latest_license(self, tenant_id: UUID, license_id: UUID) -> SignedLicense:
+        versions = self._license_versions.get((tenant_id, license_id))
+        if not versions:
+            raise ResourceNotFound("License 不存在")
+        return versions[-1]
+
+    def license_version_count(self, tenant_id: UUID, license_id: UUID) -> int:
+        return len(self._license_versions.get((tenant_id, license_id), ()))
+
+    def store_upgrade_policy(self, policy: UpgradePolicySummary) -> None:
+        self._upgrade_policies[(policy.tenant_id, policy.upgrade_policy_id)] = policy
+
+    def get_upgrade_policy(
+        self, tenant_id: UUID, policy_id: UUID
+    ) -> UpgradePolicySummary:
+        policy = self._upgrade_policies.get((tenant_id, policy_id))
+        if policy is None:
+            raise ResourceNotFound("升级策略不存在")
+        return policy
+
+    def terminal_health(
+        self, tenant_id: UUID, terminal_id: UUID
+    ) -> TerminalHealthSummary:
+        terminal = self._terminals.get((tenant_id, terminal_id))
+        if terminal is None:
+            raise ResourceNotFound("终端不存在")
+        heartbeats = [
+            request
+            for heartbeat_tenant, heartbeat_terminal, request, _ in self._heartbeats
+            if heartbeat_tenant == tenant_id and heartbeat_terminal == terminal_id
+        ]
+        override = self._terminal_health_overrides.get((tenant_id, terminal_id), {})
+        error_codes = [
+            request.health.last_error_code
+            for request in heartbeats
+            if request.health.last_error_code is not None
+        ]
+        connection_state = (
+            heartbeats[-1].device.connection_state
+            if heartbeats
+            else override.get("device_connection_state", "UNKNOWN")
+        )
+        return TerminalHealthSummary(
+            terminal_id=terminal_id,
+            site_id=terminal.site_id,
+            status=terminal.status,
+            last_seen_at=terminal.last_seen_at,
+            app_version=terminal.app_version,
+            config_version=terminal.config_version,
+            protocol_version=terminal.protocol_version,
+            pending_sessions=terminal.pending_sessions,
+            pending_bytes=terminal.pending_bytes,
+            device_connection_state=connection_state,
+            error_trends=dict(Counter(error_codes or override.get("error_codes", ()))),
+        )
+
     def add_device(self, tenant_id: UUID, device_id: UUID, model: str) -> None:
         self._devices[(tenant_id, device_id)] = DeviceRecord(tenant_id, device_id, model)
 
@@ -191,6 +375,7 @@ class InMemoryPlatformRepository:
         site_id: UUID | None,
         device_id: UUID | None,
         expires_at: datetime,
+        enrollment_code_id: UUID | None = None,
     ) -> None:
         self._activation_codes[activation_code_hash] = ActivationCodeRecord(
             activation_code_hash,
@@ -198,6 +383,17 @@ class InMemoryPlatformRepository:
             site_id,
             device_id,
             expires_at,
+            enrollment_code_id=enrollment_code_id or uuid4(),
+        )
+
+    def activation_storage_contains(self, activation_code: str) -> bool:
+        raw = activation_code.encode("utf-8")
+        return any(raw in digest for digest in self._activation_codes)
+
+    def has_activation_code_id(self, enrollment_code_id: UUID) -> bool:
+        return any(
+            record.enrollment_code_id == enrollment_code_id
+            for record in self._activation_codes.values()
         )
 
     def is_device_bound(

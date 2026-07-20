@@ -32,6 +32,7 @@ from .device_policy import (
     evaluate_device_policy,
 )
 from .events import EventEnvelope
+from .operations import *  # noqa: F403
 
 __all__ = [
     "EventEnvelope",

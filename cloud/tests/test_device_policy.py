@@ -39,6 +39,7 @@ class DevicePolicyTests(unittest.TestCase):
     def license_document(self, **updates) -> LicenseDocument:
         values = dict(
             license_id=uuid4(),
+            license_version=1,
             tenant_id=self.tenant_id,
             site_id=None,
             terminal_id=self.terminal_id,

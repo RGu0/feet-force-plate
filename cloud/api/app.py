@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
+from cloud.api.operations_auth import OperationsTokenIssuer
 from cloud.api.errors import (
     AuthenticationError,
     PlatformError,
@@ -29,6 +30,18 @@ from shared.contracts.cloud import (
     SubjectCreateRequest,
     SubjectResolveRequest,
 )
+from shared.contracts.operations import (
+    ActivationCodeIssueRequest,
+    DataAccessRequest,
+    DeviceRegistrationRequest,
+    LicenseIssueRequest,
+    LicenseRenewRequest,
+    LicenseRevokeRequest,
+    SiteCreateRequest,
+    TerminalStatusChangeRequest,
+    UpgradePolicyRequest,
+    UpgradePolicyStatusRequest,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +50,8 @@ class ServiceContainer:
     token_issuer: TerminalTokenIssuer
     subjects: object
     devices: object | None = None
+    operations: object | None = None
+    operations_tokens: OperationsTokenIssuer | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -158,6 +173,152 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return context
 
     TerminalDependency = Annotated[TerminalContext, Depends(terminal_context)]
+
+    def operations_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ):
+        if container.operations_tokens is None:
+            raise RepositoryUnavailable("运营身份服务暂不可用")
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            raise AuthenticationError("缺少有效运营 Bearer 凭据")
+        return container.operations_tokens.verify(token)
+
+    OperationsDependency = Annotated[object, Depends(operations_context)]
+
+    def operations_service():
+        if container.operations is None:
+            raise RepositoryUnavailable("运营控制面暂不可用")
+        return container.operations
+
+    @app.post("/v1/operations/sites")
+    async def operations_create_site(
+        request: Request,
+        body: SiteCreateRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().create_site(context, body)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/devices")
+    async def operations_register_device(
+        request: Request,
+        body: DeviceRegistrationRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().register_device(context, body)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/terminals/{terminal_id}/devices/{device_id}")
+    async def operations_bind_device(
+        request: Request,
+        terminal_id: UUID,
+        device_id: UUID,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().bind_device(context, terminal_id, device_id)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/terminals/{terminal_id}/status")
+    async def operations_set_terminal_status(
+        request: Request,
+        terminal_id: UUID,
+        body: TerminalStatusChangeRequest,
+        context: OperationsDependency,
+    ):
+        await operations_service().set_terminal_status(context, terminal_id, body.status)
+        return _data_response(
+            request,
+            {"terminal_id": terminal_id, "status": body.status},
+        )
+
+    @app.post("/v1/operations/activation-codes")
+    async def operations_issue_activation_code(
+        request: Request,
+        body: ActivationCodeIssueRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().issue_activation_code(
+            context,
+            site_id=body.site_id,
+            device_id=body.device_id,
+            expires_at=body.expires_at,
+        )
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/licenses")
+    async def operations_issue_license(
+        request: Request,
+        body: LicenseIssueRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().issue_license(context, body)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/licenses/{license_id}/renew")
+    async def operations_renew_license(
+        request: Request,
+        license_id: UUID,
+        body: LicenseRenewRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().renew_license(context, license_id, body)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/licenses/{license_id}/revoke")
+    async def operations_revoke_license(
+        request: Request,
+        license_id: UUID,
+        body: LicenseRevokeRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().revoke_license(
+            context,
+            license_id,
+            reason_code=body.reason_code,
+        )
+        return _data_response(request, result, 201)
+
+    @app.get("/v1/operations/terminals/{terminal_id}/health")
+    async def operations_terminal_health(
+        request: Request,
+        terminal_id: UUID,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().get_terminal_health(context, terminal_id)
+        return _data_response(request, result)
+
+    @app.post("/v1/operations/upgrade-policies")
+    async def operations_create_upgrade_policy(
+        request: Request,
+        body: UpgradePolicyRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().create_upgrade_policy(context, body)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/operations/upgrade-policies/{policy_id}/status")
+    async def operations_set_upgrade_policy_status(
+        request: Request,
+        policy_id: UUID,
+        body: UpgradePolicyStatusRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().set_upgrade_policy_status(
+            context,
+            policy_id,
+            body.status,
+        )
+        return _data_response(request, result)
+
+    @app.post("/v1/operations/data-access-authorizations")
+    async def operations_authorize_data_access(
+        request: Request,
+        body: DataAccessRequest,
+        context: OperationsDependency,
+    ):
+        result = await operations_service().authorize_data_access(context, body)
+        return _data_response(request, result)
 
     @app.post("/v1/terminals/enroll")
     async def enroll_terminal(

@@ -112,8 +112,11 @@ class DeviceManagementTests(unittest.IsolatedAsyncioTestCase):
 
         self.now -= timedelta(hours=2)
         enrolled = await self.service.enroll(self.enrollment_request(), "valid")
+        header, payload, signature = enrolled.access_token.split(".")
+        replacement = "A" if signature[0] != "A" else "B"
+        tampered = f"{header}.{payload}.{replacement}{signature[1:]}"
         with self.assertRaisesRegex(AuthenticationError, "签名"):
-            self.issuer.verify(enrolled.access_token[:-1] + "A", now=self.now)
+            self.issuer.verify(tampered, now=self.now)
 
     async def test_heartbeat_is_terminal_bound_and_contains_no_subject_payload(self) -> None:
         enrolled = await self.service.enroll(self.enrollment_request(), "enroll")

@@ -65,6 +65,7 @@ FeatureName = Annotated[
 
 class LicenseDocument(ContractModel):
     license_id: UUID
+    license_version: Annotated[int, Field(gt=0)]
     tenant_id: UUID
     site_id: UUID | None
     terminal_id: UUID
@@ -84,8 +85,6 @@ class LicenseDocument(ContractModel):
 
     @model_validator(mode="after")
     def validate_window(self) -> LicenseDocument:
-        if self.not_before < self.issued_at:
-            raise ValueError("not_before cannot precede issued_at")
         if self.expires_at <= self.not_before:
             raise ValueError("expires_at must follow not_before")
         return self

@@ -16,7 +16,7 @@ python -m venv .venv-cloud
 .venv-cloud/bin/pip install -r cloud/api/requirements.txt
 ```
 
-Apply `cloud/migrations/0001_p3_cloud_platform.sql` with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
+Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002_p5_device_operations.sql`, with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
 
 ## Application composition
 
@@ -42,6 +42,8 @@ app = create_app(ServiceContainer(
     token_issuer=terminal_token_issuer,
     subjects=subjects,
     devices=devices,
+    operations=operations_service,
+    operations_tokens=operations_identity_adapter,
 ))
 ```
 
@@ -49,6 +51,7 @@ Secrets must come from a secret manager and never from source control or request
 
 - terminal-token signing key and key ID;
 - activation-code HMAC lookup key and the isolated enrollment-role credential;
+- License Ed25519 signing key/key ID and operations-IAM verification material;
 - external-identifier HMAC query key;
 - identity AES-256-GCM key and key version;
 - PostgreSQL credential;
@@ -64,6 +67,8 @@ Secrets must come from a secret manager and never from source control or request
 - Error responses use an allowlist of safe context and never echo bearer tokens, external identifiers, raw bodies, or report content.
 - Activation codes are HMAC-indexed before lookup, consumed under a row lock, and never logged. A prebound device is activated in the same transaction as the terminal and audit record.
 - Heartbeats accept only the versioned operational-health contract; unknown identity/report/raw-data fields are rejected without echoing their values.
+- `/v1/operations/*` uses an identity boundary distinct from terminal credentials. Tenant, site scopes, and permissions come from verified claims, not request bodies. The bundled HMAC operations-token issuer is a deterministic integration boundary; production must map the organization's IAM/SSO claims to the same `OperationsContext` and must not expose a token-minting route.
+- Raw-data, identity, log, and diagnostic support access are separate permissions and produce short-lived, audited decisions. The operations API deliberately exposes no subject public-report link.
 - Formal analysis is triggered only by `session.ingested.v1`, written in the same PostgreSQL transaction that verifies the exact segment set and marks the approved `INGESTED` state. Linear's phrase `INGESTED_COMPLETE` maps to this approved documented state; no second status vocabulary is introduced.
 
 ## S3 permissions
