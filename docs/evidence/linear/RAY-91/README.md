@@ -5,10 +5,10 @@
 - 初次抓取时间：2026-07-20T08:54:41Z
 - 开始实现时间：2026-07-20T09:56:31Z
 - 初次抓取状态：Backlog
-- 当前工作流状态：In Progress（实现与自动验证完成后将转 In Review）
+- 当前工作流状态：In Review（2026-07-20T10:08:39Z 写入并重新读取确认）
 - 里程碑：P2：一键筛查
 - 优先级：Medium
-- 关系：无阻塞、被阻塞或 related issue
+- 关系：无阻塞/被阻塞；重新读取时 related issue 为 `RAY-92`、`RAY-101`
 
 ## 验收条目快照
 
@@ -79,4 +79,4 @@ QT_QPA_PLATFORM=offscreen /private/tmp/feetforceplate-subtask-b-venv/bin/python 
 ## 关联提交
 
 - 实现与本 evidence：`68bbbeeed7e447a3100b03754ce196fc9c822864`。
-- 本 SHA 回填：将在紧随其后的 evidence-only 提交中保存。
+- SHA 回填：`1155e048a273f383354105b1befbddfd67325b6d`。
