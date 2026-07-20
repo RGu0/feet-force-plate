@@ -4,7 +4,7 @@
   "report_schema_version": "1.0.0",
   "data_schema_version": 1,
   "minimum_supported_version": "0.1.0",
-  "git_commit": "RAY-96-IMPLEMENTATION-SHA-PENDING",
+  "git_commit": "c04430984cbd460e0aa8f30f6e2c0e9ef8604235",
   "targets": [
     "windows-x86_64",
     "macos-universal2-pilot"

@@ -71,6 +71,6 @@ git diff --check
 
 ## 提交
 
-- 实现 commit：`PENDING`
+- 实现 commit：`c04430984cbd460e0aa8f30f6e2c0e9ef8604235`
 - evidence SHA 回填 commit：`PENDING`
 - Linear 状态确认 commit：`PENDING`
