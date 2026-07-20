@@ -1,0 +1,25 @@
+{
+  "fixture_id": "ray-90-symmetric-two-point-v1",
+  "algorithm_version": "local-basic/1.0.0",
+  "protocol_id": "standard-static-bilateral",
+  "protocol_version": "1.0.0-pilot",
+  "customer_metrics": {
+    "left_load_percent": 50.0,
+    "right_load_percent": 50.0,
+    "total_relative_load": 2000.0
+  },
+  "internal_cop_metrics": {
+    "cop_bounding_area": 0.0,
+    "cop_path_length": 0.0,
+    "cop_x_amplitude": 0.0,
+    "cop_x_sensor_index": 31.5,
+    "cop_y_amplitude": 0.0,
+    "cop_y_sensor_index": 20.0
+  },
+  "customer_gate": {
+    "cop_path_length": "NOT_CUSTOMER_VALIDATED",
+    "cop_frequency_spectrum": "NOT_IMPLEMENTED_AND_UNVALIDATED",
+    "stability_score": "NOT_IMPLEMENTED_AND_UNVALIDATED",
+    "population_reference_range": "NOT_IMPLEMENTED_AND_UNVALIDATED"
+  }
+}

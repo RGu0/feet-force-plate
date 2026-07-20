@@ -33,3 +33,8 @@
 - 明确 `standard-static-bilateral@1.0.0-pilot` 的 30 秒/3 秒配置仍需现场验证；未把文档中的待验证假设升级为正式承诺。
 - 新鲜自动验证：客户端 60 个测试通过，compileall 和禁止直接依赖扫描通过；P-05～P-08 offscreen 截图已目视检查。
 - 下一步：提交 RAY-91 实现与 evidence，回填 SHA，将 Linear 更新为 In Review；然后只启动 RAY-90。
+- 提交并同步 RAY-91：实现 `68bbbeeed7e447a3100b03754ce196fc9c822864`，SHA 回填 `1155e048a273f383354105b1befbddfd67325b6d`，状态确认 `b8baf8a`；Linear 已回读为 In Review。
+- 重新读取 RAY-90 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-90 完成纯 NumPy 本地分析合同、指标登记、原始/相对热力图、相对总量/左右比例、内部 COP 轨迹/路径/幅度/包围面积和严格客户门控。
+- 未验证频域、稳定性评分、参考范围、物理力值和 COP 客户指标全部保持不可见；合成 fixture 不被描述为临床验证。
+- 当前客户端 67 个测试通过；下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-85。

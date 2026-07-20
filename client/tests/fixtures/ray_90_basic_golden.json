@@ -1,0 +1,18 @@
+{
+  "fixture_id": "ray-90-symmetric-two-point-v1",
+  "shape": [120, 48, 64],
+  "sample_rate_hz": 12.0,
+  "protocol_id": "standard-static-bilateral",
+  "points": [
+    {"row": 20, "column": 10, "count": 1000.0},
+    {"row": 20, "column": 53, "count": 1000.0}
+  ],
+  "expected": {
+    "total_relative_load": 2000.0,
+    "left_load_percent": 50.0,
+    "right_load_percent": 50.0,
+    "cop_x_sensor_index": 31.5,
+    "cop_y_sensor_index": 20.0,
+    "cop_path_length_sensor_index": 0.0
+  }
+}
