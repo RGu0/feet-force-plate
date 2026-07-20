@@ -38,3 +38,7 @@
 - RAY-90 完成纯 NumPy 本地分析合同、指标登记、原始/相对热力图、相对总量/左右比例、内部 COP 轨迹/路径/幅度/包围面积和严格客户门控。
 - 未验证频域、稳定性评分、参考范围、物理力值和 COP 客户指标全部保持不可见；合成 fixture 不被描述为临床验证。
 - 当前客户端 67 个测试通过；下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-85。
+- 提交并同步 RAY-90：实现 `174b4ee643fa6b459040d78d7cdb3e30b1cfe77d`，SHA 回填 `dc14550c234e0a1feeb26e079bb394e73034e61b`，状态确认 `db9143a`；Linear 已回读为 In Review。
+- 重新读取 RAY-85 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-85 完成可靠会话只读端口、离线本地分析编排、版本化不可变结果、BASIC_READY 文档、指标白名单、非权威上传快照和跨进程幂等复用。
+- 当前客户端 73 个测试通过；下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-84。

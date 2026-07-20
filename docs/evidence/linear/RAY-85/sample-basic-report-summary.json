@@ -1,0 +1,21 @@
+{
+  "report_id": "report-1",
+  "version": 1,
+  "status": "BASIC_READY",
+  "kind": "BASIC",
+  "session_id": "session-1",
+  "analysis_result_id": "local-analysis-1",
+  "subject_display_id": "受试者 **1234",
+  "protocol_id": "standard-static-bilateral",
+  "protocol_version": "1.0.0-pilot",
+  "metrics": [
+    {"key": "total_relative_load", "value": 2000.0, "unit": "relative_count"},
+    {"key": "left_load_percent", "value": 50.0, "unit": "percent"},
+    {"key": "right_load_percent", "value": 50.0, "unit": "percent"}
+  ],
+  "relative_heatmap": {"shape": [48, 64], "peak": 1.0, "omitted_from_summary": true},
+  "summary": "基础相对压力分布已生成。",
+  "disclaimer": "本报告用于健康筛查与风险提示，不作疾病诊断。",
+  "provenance": ["local-basic/1.0.0", "report-schema/1.0.0"],
+  "evidence_note": "This is a redacted summary of the deterministic test document; the full heatmap remains covered by automated tests."
+}
