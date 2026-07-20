@@ -142,15 +142,30 @@ class LatestFrameMailbox:
 
     def __init__(self) -> None:
         self._frame: RawFrame | None = None
+        self._publish_count = 0
+        self._replacement_count = 0
         self._lock = threading.Lock()
 
     def publish(self, frame: RawFrame) -> None:
         with self._lock:
+            if self._frame is not None:
+                self._replacement_count += 1
             self._frame = frame
+            self._publish_count += 1
 
     def read(self) -> RawFrame | None:
         with self._lock:
             return self._frame
+
+    @property
+    def publish_count(self) -> int:
+        with self._lock:
+            return self._publish_count
+
+    @property
+    def replacement_count(self) -> int:
+        with self._lock:
+            return self._replacement_count
 
 
 @dataclass(frozen=True, slots=True)
