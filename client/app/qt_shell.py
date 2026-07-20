@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from client.local_analysis.display import DisplayFrame
 from client.workflow.models import ReportStatus, SessionValidity, WorkflowState
 
+from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
 
 
@@ -231,6 +233,23 @@ class ScreeningWindow(QMainWindow):
         required = page.findChild(QCheckBox, "requiredConsent")
         research = page.findChild(QCheckBox, "researchConsent")
         return required.isChecked(), research.isChecked()
+
+    def present_display_frame(self, frame: DisplayFrame) -> None:
+        page = self._pages[PageId.ACQUIRING]
+        page.findChild(HeatmapWidget, "heatmapHost").set_display_frame(frame)
+        if frame.cop_x is None or frame.cop_y is None:
+            cop_text = "COP：等待有效接触"
+        else:
+            cop_text = f"COP：({frame.cop_x:.1f}, {frame.cop_y:.1f}) 传感器索引"
+        page.findChild(QLabel, "copSummary").setText(cop_text)
+        page.findChild(QLabel, "loadSummary").setText(
+            f"相对负重：左 {frame.left_load_percent:.1f}% / "
+            f"右 {frame.right_load_percent:.1f}% / "
+            f"总量 {frame.total_relative_load:.0f} count"
+        )
+        page.findChild(QLabel, "frameFreshness").setText(
+            f"设备帧 #{frame.sequence}；显示只取最新帧，不代表提高采样率"
+        )
 
     def _build_navigation(self) -> QFrame:
         frame = QFrame()
@@ -478,11 +497,7 @@ class ScreeningWindow(QMainWindow):
                 self._status_label("countdownLabel", "检测到稳定站位后将自动开始"),
             )
         if page_id is PageId.ACQUIRING:
-            heatmap = QFrame()
-            heatmap.setObjectName("heatmapHost")
-            heatmap.setAccessibleName("实时压力热力图")
-            heatmap.setMinimumHeight(320)
-            heatmap.setStyleSheet("background: #edf2f7; border: 1px solid #64748b;")
+            heatmap = HeatmapWidget()
             return (
                 heatmap,
                 self._status_label("remainingTime", "剩余 --:--"),
@@ -491,6 +506,12 @@ class ScreeningWindow(QMainWindow):
                     "请保持自然站立，不要说话或大幅移动",
                 ),
                 self._status_label("acquisitionStatus", "当前状态：等待采集"),
+                self._status_label("copSummary", "COP：等待有效接触"),
+                self._status_label("loadSummary", "相对负重：等待设备帧"),
+                self._status_label(
+                    "frameFreshness",
+                    "显示只取最新设备帧，不代表提高采样率",
+                ),
             )
         if page_id is PageId.RESULT:
             return (

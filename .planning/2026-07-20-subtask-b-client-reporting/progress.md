@@ -42,3 +42,7 @@
 - 重新读取 RAY-85 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
 - RAY-85 完成可靠会话只读端口、离线本地分析编排、版本化不可变结果、BASIC_READY 文档、指标白名单、非权威上传快照和跨进程幂等复用。
 - 当前客户端 73 个测试通过；下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-84。
+- 提交并同步 RAY-85：实现 `799df394d2c8b66e81d530b55301ee5df6189fa4`，SHA 回填 `5cd8ad58d46c5e5503ccfc55e8e2d7a8625c1deb`，状态确认 `dcdbb1b`；Linear 已回读为 In Review。
+- 重新读取 RAY-84 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
+- RAY-84 完成不可变 DisplayFrame、latest-only 线程安全邮箱、30 Hz 最大 UI 刷新、48×64 Qt 热力图、COP/短轨迹、负重文字、帧真实性说明和显示停滞时工作流独立更新。
+- 当前客户端 80 个测试通过；P-07 合成 offscreen 截图已目视检查。下一步保存最终 JUnit、compileall/依赖扫描，提交并将 Linear 更新为 In Review，然后只启动 RAY-96。

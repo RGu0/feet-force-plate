@@ -20,7 +20,7 @@
 | 2. 现有工程与测试基线 | complete | 已建立 `/private/tmp` 隔离环境，可运行 unittest、pytest 与 pytest-qt |
 | 3. 工作流与能力门控 | in_progress | RAY-101/RAY-92/RAY-91 已在 In Review；RAY-90 实现与自动验证完成，等待提交和状态同步 |
 | 4. 本地分析与基础报告 | in_progress | RAY-90 已在 In Review；RAY-85 实现与自动验证完成，等待提交和状态同步 |
-| 5. UI、热力图、PDF/打印与错误状态 | pending | 先写失败测试，再实现本地 UI 行为、热力图模型、PDF/打印端口和通俗错误映射 |
+| 5. UI、热力图、PDF/打印与错误状态 | in_progress | RAY-84 实现与自动验证完成；PDF/打印和安装人工验证继续由 RAY-96 覆盖 |
 | 6. 全量验证与范围审计 | pending | 全量自动测试通过；检查无越权访问；列出尚需真机/人工验证项 |
 | 7. 提交本任务变更 | pending | 提交仅包含本任务拥有目录与独立计划文件 |
 

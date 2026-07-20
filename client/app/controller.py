@@ -14,6 +14,7 @@ from client.workflow.consent import (
     RequiredConsentDeclined,
 )
 from client.workflow.models import WorkflowState
+from client.local_analysis.display import DisplayRefreshController
 from client.workflow.participant import (
     AnalysisProfile,
     ExternalIdType,
@@ -79,12 +80,14 @@ class ApplicationController:
         participant: ParticipantWorkflow | None = None,
         consent: ConsentWorkflow | None = None,
         consent_policy: ConsentPolicy | None = None,
+        display_refresh: DisplayRefreshController | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
         self._participant = participant
         self._consent = consent
         self._consent_policy = consent_policy
+        self._display_refresh = display_refresh
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -180,6 +183,17 @@ class ApplicationController:
             elapsed_seconds=elapsed_seconds,
         )
         self.refresh()
+
+    def on_display_tick(self, now_monotonic_seconds: float) -> bool:
+        if self._display_refresh is None:
+            return False
+        frame = self._display_refresh.poll(
+            now_monotonic_seconds=now_monotonic_seconds
+        )
+        if frame is None:
+            return False
+        self.window.present_display_frame(frame)
+        return True
 
     def _run_preflight(self) -> None:
         self._coordinator.run_preflight()
