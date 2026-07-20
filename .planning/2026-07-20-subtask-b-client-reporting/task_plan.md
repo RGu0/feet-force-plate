@@ -21,8 +21,8 @@
 | 3. 工作流与能力门控 | complete | RAY-101/RAY-92/RAY-91/RAY-90 已提交并在 In Review；真实设备、现场协议和人工验收边界已记录 |
 | 4. 本地分析与基础报告 | complete | RAY-90/RAY-85 已提交并在 In Review；离线 `BASIC_READY` 与指标门控自动测试通过 |
 | 5. UI、热力图、PDF/打印与错误状态 | complete | RAY-84 已在 In Review；RAY-96 的 PDF/打印自动合同完成，实体打印与安装人工验收保留 |
-| 6. 全量验证与范围审计 | in_progress | 当前 89 个自动测试通过；正在保存最终 JUnit、无越权依赖扫描和未验证边界 |
-| 7. 提交本任务变更 | in_progress | 正在提交 RAY-96 所属文件和独立 evidence，逐次审计 staged 清单 |
+| 6. 全量验证与范围审计 | complete | 89 个自动测试、compileall、越权依赖扫描和差异检查通过；真机/人工边界逐 issue 记录 |
+| 7. 提交本任务变更 | complete | 七个 issue 的实现与独立 evidence 已提交；Linear 全部回读为 In Review，未提前标 Done |
 
 ## Linear 执行顺序
 

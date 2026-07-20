@@ -4,7 +4,8 @@
 - URL：https://linear.app/ray-app/issue/RAY-96/机构采集端打包安装与受控升级
 - 首次抓取时间：2026-07-20T08:54:41Z
 - 开始时间：2026-07-20T10:37:09Z
-- 开始时状态：Backlog；实现中状态：In Progress
+- 开始时状态：Backlog；实现中状态：In Progress；当前状态：In Review
+- 状态回读确认：2026-07-20T10:48:47.938Z
 - 里程碑：P2：一键筛查
 - 优先级：Medium
 - 关系：无显式阻塞、依赖或重复关系
@@ -72,5 +73,4 @@ git diff --check
 ## 提交
 
 - 实现 commit：`c04430984cbd460e0aa8f30f6e2c0e9ef8604235`
-- evidence SHA 回填 commit：`PENDING`
-- Linear 状态确认 commit：`PENDING`
+- evidence SHA 回填 commit：`7bd7ebeb4cfea80909e6fb34e80c9da2df1056c2`

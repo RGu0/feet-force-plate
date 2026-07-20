@@ -50,3 +50,6 @@
 - 重新读取 RAY-96 后将其从 Backlog 更新为唯一 In Progress，添加启动评论并确认状态写入成功。
 - RAY-96 已实现安装/持久目录合同、构建 manifest、激活绑定门控、CH340 探测端口、受控升级与应用/数据库联合回滚，并补齐 A4 PDF、原子导出、安全打印临时文件和打印确认合同。
 - 当前客户端 89 个测试通过；合成 PDF 及第一页预览已目视检查。下一步执行最终全量验证、提交 evidence，并将 Linear 更新为 In Review，明确双平台签名安装、驱动、联网激活、实体打印和现场操作员验收缺口。
+- 提交 RAY-96：实现 `c04430984cbd460e0aa8f30f6e2c0e9ef8604235`，evidence SHA 回填 `7bd7ebeb4cfea80909e6fb34e80c9da2df1056c2`；Linear 已回读为 In Review，完成评论记录了双平台目标机、CH340、真实激活、实体打印和现场操作员验收缺口。
+- 最终审计 RAY-84/85/90/91/92/96/101，七个分配 issue 均为 In Review；没有把仍缺真机或人工验收的 issue 标为 Done。
+- 最终自动验证：客户端 `89 passed in 0.54s`，compileall 通过，禁止直接依赖扫描 0 命中，`git diff --check` 通过。
