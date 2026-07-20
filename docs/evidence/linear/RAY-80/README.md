@@ -59,11 +59,7 @@ Detailed output: [verification.txt](verification.txt)
 
 ## Commit
 
-Implementation/evidence commit: `c5cf0e0eca95671f4a839ee6336efef3162b3dd5`.
+Implementation/tests/verification commit:
+`c470478455349fc6afb2d1e13a96f106ade3080e`.
 
-Concurrency note: the shared Git index was changed between this task's explicit
-RAY-80 staging check and its commit command. A concurrent RAY-91 metadata commit
-captured the six staged RAY-80 paths along with one RAY-91 evidence update. The
-RAY-80 path set is complete and verified above, but the implementation commit is
-not issue-isolated. History was not rewritten because that would modify another
-task's completed commit.
+Evidence metadata commits: `66a88af` and the current follow-up commit.
