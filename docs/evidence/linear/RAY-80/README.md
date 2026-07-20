@@ -2,8 +2,8 @@
 
 - Issue: RAY-80 — 设备接入与可靠采集
 - URL: https://linear.app/ray-app/issue/RAY-80/设备接入与可靠采集
-- Captured at: 2026-07-20T10:07:22Z
-- Snapshot: In Progress; milestone P1：可靠采集; priority High
+- Captured at: 2026-07-20T10:12:10Z
+- Snapshot: In Review; milestone P1：可靠采集; priority High
 - Relations: blocked by RAY-78
 
 ## Acceptance snapshot
