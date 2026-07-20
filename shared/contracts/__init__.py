@@ -17,6 +17,20 @@ from .client_sync import (
     may_enqueue_segment,
 )
 from .cloud import *  # noqa: F403
+from .device_policy import (
+    DevicePolicyDecision,
+    DevicePolicyInput,
+    DevicePolicyThresholds,
+    GateReason,
+    LicenseDocument,
+    LicenseStatus,
+    LicenseValidationState,
+    LicenseVerifier,
+    OperationalCapability,
+    SignedLicense,
+    detect_clock_rollback,
+    evaluate_device_policy,
+)
 from .events import EventEnvelope
 
 __all__ = [
@@ -35,4 +49,16 @@ __all__ = [
     "decode_segment_metadata",
     "encode_segment_metadata",
     "may_enqueue_segment",
+    "DevicePolicyDecision",
+    "DevicePolicyInput",
+    "DevicePolicyThresholds",
+    "GateReason",
+    "LicenseDocument",
+    "LicenseStatus",
+    "LicenseValidationState",
+    "LicenseVerifier",
+    "OperationalCapability",
+    "SignedLicense",
+    "detect_clock_rollback",
+    "evaluate_device_policy",
 ]

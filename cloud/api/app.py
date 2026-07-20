@@ -12,6 +12,7 @@ from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.errors import (
     AuthenticationError,
     PlatformError,
+    RepositoryUnavailable,
     RequestContractError,
     ResourceNotFound,
     TenantAccessDenied,
@@ -21,6 +22,8 @@ from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentRevokeRequest,
+    EnrollmentRequest,
+    HeartbeatRequest,
     SessionCreateRequest,
     SessionManifest,
     SubjectCreateRequest,
@@ -33,6 +36,7 @@ class ServiceContainer:
     ingestion: IngestionService
     token_issuer: TerminalTokenIssuer
     subjects: object
+    devices: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -140,19 +144,55 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     def terminal_context(
         authorization: Annotated[str, Header(alias="Authorization")],
-        terminal_id: Annotated[UUID, Header(alias="X-Terminal-ID")],
+        terminal_header_id: Annotated[UUID, Header(alias="X-Terminal-ID")],
     ) -> TerminalContext:
         scheme, separator, token = authorization.partition(" ")
         if separator != " " or scheme.lower() != "bearer" or not token:
             raise AuthenticationError("缺少有效终端 Bearer 凭据")
         context = container.token_issuer.verify(token)
-        if context.terminal_id != terminal_id:
+        if context.terminal_id != terminal_header_id:
             raise TenantAccessDenied(
-                "X-Terminal-ID 与终端凭据不一致", terminal_id=str(terminal_id)
+                "X-Terminal-ID 与终端凭据不一致",
+                terminal_id=str(terminal_header_id),
             )
         return context
 
     TerminalDependency = Annotated[TerminalContext, Depends(terminal_context)]
+
+    @app.post("/v1/terminals/enroll")
+    async def enroll_terminal(
+        request: Request,
+        body: EnrollmentRequest,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=256),
+        ],
+    ):
+        if container.devices is None:
+            raise RepositoryUnavailable("终端激活服务暂不可用")
+        result = await container.devices.enroll(body, idempotency_key)
+        return _data_response(request, result, 201)
+
+    @app.post("/v1/terminals/{terminal_id}/heartbeats")
+    async def record_terminal_heartbeat(
+        request: Request,
+        terminal_id: UUID,
+        body: HeartbeatRequest,
+        context: TerminalDependency,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=256),
+        ],
+    ):
+        if container.devices is None:
+            raise RepositoryUnavailable("终端心跳服务暂不可用")
+        result = await container.devices.record_heartbeat(
+            context,
+            terminal_id,
+            body,
+            idempotency_key,
+        )
+        return _data_response(request, result)
 
     @app.post("/v1/sessions")
     async def create_session(

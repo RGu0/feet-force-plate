@@ -8,19 +8,25 @@ from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
 from cloud.api.errors import (
+    ActivationCodeInvalid,
     IdempotencyConflict,
     ManifestConflict,
     ManifestIncomplete,
     ResourceNotFound,
+    RepositoryUnavailable,
     SegmentDigestConflict,
     TenantAccessDenied,
 )
-from cloud.api.repository import SegmentRecord, SessionRecord
+from cloud.api.repository import EnrollmentBinding, SegmentRecord, SessionRecord
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
+    EnrollmentRequest,
+    EnrollmentStatus,
+    HeartbeatRequest,
+    HeartbeatResponse,
     IngestStatus,
     ManifestCompletionResponse,
     SegmentMetadata,
@@ -89,8 +95,15 @@ def _session_record(row: Any) -> SessionRecord:
 class PostgresPlatformRepository:
     """Production asyncpg adapter for tenant-scoped ingestion state."""
 
-    def __init__(self, pool, *, idempotency_ttl: timedelta = timedelta(days=7)) -> None:
+    def __init__(
+        self,
+        pool,
+        *,
+        enrollment_pool=None,
+        idempotency_ttl: timedelta = timedelta(days=7),
+    ) -> None:
         self._pool = pool
+        self._enrollment_pool = enrollment_pool
         self._idempotency_ttl = idempotency_ttl
 
     async def _require_active_terminal(
@@ -162,6 +175,259 @@ class PostgresPlatformRepository:
             resource_id,
             datetime.now(UTC) + self._idempotency_ttl,
         )
+
+    async def consume_activation_code(
+        self,
+        activation_code_hash: bytes,
+        request: EnrollmentRequest,
+        request_sha256: str,
+        idempotency_key: str,
+        accepted_at: datetime,
+    ) -> EnrollmentBinding:
+        if self._enrollment_pool is None:
+            raise RepositoryUnavailable("终端激活数据库角色未配置")
+        async with self._enrollment_pool.acquire() as connection:
+            async with connection.transaction():
+                code = await connection.fetchrow(
+                    """
+                    SELECT tenant_id, site_id, device_id, expires_at, used_at, terminal_id
+                    FROM device.enrollment_codes
+                    WHERE activation_code_hash=$1
+                    FOR UPDATE
+                    """,
+                    activation_code_hash,
+                )
+                if code is None:
+                    raise ActivationCodeInvalid("激活码无效、已使用或已过期")
+                replay = await self._idempotency(
+                    connection,
+                    code["tenant_id"],
+                    "device.enroll",
+                    idempotency_key,
+                    request_sha256,
+                )
+                if replay is not None:
+                    return EnrollmentBinding(
+                        tenant_id=UUID(replay["tenant_id"]),
+                        site_id=UUID(replay["site_id"]) if replay["site_id"] else None,
+                        terminal_id=UUID(replay["terminal_id"]),
+                        status=EnrollmentStatus(replay["status"]),
+                        config_version=replay.get("config_version"),
+                    )
+                if code["used_at"] is not None or code["expires_at"] <= accepted_at:
+                    raise ActivationCodeInvalid("激活码无效、已使用或已过期")
+                installation_exists = await connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM device.terminals
+                        WHERE tenant_id=$1 AND installation_id=$2
+                    )
+                    """,
+                    code["tenant_id"],
+                    request.installation_id,
+                )
+                if installation_exists:
+                    raise ActivationCodeInvalid("安装实例已经绑定，请联系支持")
+                if code["device_id"] is not None:
+                    device_is_active = await connection.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM device.devices
+                            WHERE tenant_id=$1 AND device_id=$2 AND status='ACTIVE'
+                        )
+                        """,
+                        code["tenant_id"],
+                        code["device_id"],
+                    )
+                    if not device_is_active:
+                        raise ActivationCodeInvalid("激活码绑定的设备不可用")
+                terminal_id = uuid4()
+                await connection.execute(
+                    """
+                    INSERT INTO device.terminals (
+                        terminal_id, tenant_id, site_id, installation_id,
+                        client_public_key, status, app_version, last_seen_at
+                    ) VALUES ($1,$2,$3,$4,$5,'ACTIVE',$6,$7)
+                    """,
+                    terminal_id,
+                    code["tenant_id"],
+                    code["site_id"],
+                    request.installation_id,
+                    request.client_public_key,
+                    request.system.app_version,
+                    accepted_at,
+                )
+                if code["device_id"] is not None:
+                    await connection.execute(
+                        """
+                        INSERT INTO device.terminal_device_bindings (
+                            terminal_device_binding_id, tenant_id, terminal_id,
+                            device_id, valid_from
+                        ) VALUES ($1,$2,$3,$4,$5)
+                        """,
+                        uuid4(),
+                        code["tenant_id"],
+                        terminal_id,
+                        code["device_id"],
+                        accepted_at,
+                    )
+                await connection.execute(
+                    """
+                    UPDATE device.enrollment_codes
+                    SET used_at=$2, terminal_id=$3
+                    WHERE activation_code_hash=$1 AND used_at IS NULL
+                    """,
+                    activation_code_hash,
+                    accepted_at,
+                    terminal_id,
+                )
+                response = {
+                    "tenant_id": str(code["tenant_id"]),
+                    "site_id": str(code["site_id"]) if code["site_id"] else None,
+                    "terminal_id": str(terminal_id),
+                    "status": EnrollmentStatus.ACTIVE.value,
+                    "config_version": None,
+                }
+                await self._store_idempotency(
+                    connection,
+                    code["tenant_id"],
+                    "device.enroll",
+                    idempotency_key,
+                    request_sha256,
+                    201,
+                    response,
+                    "terminal",
+                    terminal_id,
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO ops.audit_logs (
+                        audit_log_id, tenant_id, occurred_at, actor_type,
+                        actor_id, action, resource_type, resource_id,
+                        outcome, safe_context
+                    ) VALUES ($1,$2,$3,'ACTIVATION_CODE',NULL,'terminal.enroll',
+                              'terminal',$4,'ALLOWED',$5::jsonb)
+                    """,
+                    uuid4(),
+                    code["tenant_id"],
+                    accepted_at,
+                    terminal_id,
+                    json.dumps(
+                        {
+                            "site_id": str(code["site_id"]) if code["site_id"] else None,
+                            "device_bound": code["device_id"] is not None,
+                            "app_version": request.system.app_version,
+                        },
+                        separators=(",", ":"),
+                    ),
+                )
+                return EnrollmentBinding(
+                    tenant_id=code["tenant_id"],
+                    site_id=code["site_id"],
+                    terminal_id=terminal_id,
+                    status=EnrollmentStatus.ACTIVE,
+                )
+
+    async def record_heartbeat(
+        self,
+        context: TerminalContext,
+        request: HeartbeatRequest,
+        request_sha256: str,
+        idempotency_key: str,
+        accepted_at: datetime,
+    ) -> HeartbeatResponse:
+        context.ensure_active()
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            replay = await self._idempotency(
+                connection,
+                context.tenant_id,
+                "terminal.heartbeat",
+                idempotency_key,
+                request_sha256,
+            )
+            if replay is not None:
+                return HeartbeatResponse.model_validate(replay)
+            await self._require_active_terminal(connection, context)
+            if request.device.device_id is not None:
+                bound = await connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM device.terminal_device_bindings
+                        WHERE tenant_id=$1 AND terminal_id=$2 AND device_id=$3
+                          AND valid_to IS NULL
+                    )
+                    """,
+                    context.tenant_id,
+                    context.terminal_id,
+                    request.device.device_id,
+                )
+                if not bound:
+                    raise TenantAccessDenied(
+                        "设备未绑定到当前终端",
+                        device_id=str(request.device.device_id),
+                    )
+            await connection.execute(
+                """
+                INSERT INTO device.terminal_heartbeats (
+                    terminal_heartbeat_id, tenant_id, terminal_id, device_id,
+                    observed_at, app_version, config_version, protocol_version,
+                    connection_state, last_successful_sync_at, pending_sessions,
+                    pending_bytes, disk_free_bytes, clock_skew_seconds,
+                    last_error_code, received_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                """,
+                uuid4(),
+                context.tenant_id,
+                context.terminal_id,
+                request.device.device_id,
+                request.observed_at,
+                request.app_version,
+                request.config_version,
+                request.protocol_version,
+                request.device.connection_state,
+                request.sync.last_successful_sync,
+                request.sync.pending_sessions,
+                request.sync.pending_bytes,
+                request.health.disk_free_bytes,
+                request.health.clock_skew_seconds,
+                request.health.last_error_code,
+                accepted_at,
+            )
+            await connection.execute(
+                """
+                UPDATE device.terminals
+                SET app_version=$3, config_version=$4, protocol_version=$5,
+                    last_seen_at=$6, last_successful_sync_at=$7,
+                    pending_sessions=$8, pending_bytes=$9, updated_at=$6
+                WHERE tenant_id=$1 AND terminal_id=$2
+                """,
+                context.tenant_id,
+                context.terminal_id,
+                request.app_version,
+                request.config_version,
+                request.protocol_version,
+                accepted_at,
+                request.sync.last_successful_sync,
+                request.sync.pending_sessions,
+                request.sync.pending_bytes,
+            )
+            response = HeartbeatResponse(
+                terminal_id=context.terminal_id,
+                accepted_at=accepted_at,
+                status=EnrollmentStatus.ACTIVE,
+            )
+            await self._store_idempotency(
+                connection,
+                context.tenant_id,
+                "terminal.heartbeat",
+                idempotency_key,
+                request_sha256,
+                200,
+                response.model_dump(mode="json"),
+                "terminal",
+                context.terminal_id,
+            )
+            return response
 
     async def create_session(
         self,

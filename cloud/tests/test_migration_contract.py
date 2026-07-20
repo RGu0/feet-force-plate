@@ -56,6 +56,18 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("session.ingested.v1", self.sql)
         self.assertIn("WHERE published_at IS NULL", self.sql)
 
+    def test_enrollment_code_can_prebind_an_approved_device(self) -> None:
+        enrollment_table = self.sql.split(
+            "CREATE TABLE device.enrollment_codes",
+            maxsplit=1,
+        )[1].split(");", maxsplit=1)[0]
+
+        self.assertIn("device_id uuid", enrollment_table)
+        self.assertIn(
+            "FOREIGN KEY (tenant_id, device_id) REFERENCES device.devices(tenant_id, device_id)",
+            enrollment_table,
+        )
+
     def test_raw_identity_and_audit_records_are_separate_tables(self) -> None:
         self.assertIn("CREATE TABLE subject.identity_profiles", self.sql)
         self.assertIn("CREATE TABLE screening.session_segments", self.sql)

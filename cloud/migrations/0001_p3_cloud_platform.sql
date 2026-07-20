@@ -94,12 +94,14 @@ CREATE TABLE device.enrollment_codes (
     enrollment_code_id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES iam.tenants(tenant_id),
     site_id uuid,
+    device_id uuid,
     activation_code_hash bytea NOT NULL UNIQUE,
     expires_at timestamptz NOT NULL,
     used_at timestamptz,
     terminal_id uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (tenant_id, site_id) REFERENCES iam.sites(tenant_id, site_id),
+    FOREIGN KEY (tenant_id, device_id) REFERENCES device.devices(tenant_id, device_id),
     FOREIGN KEY (tenant_id, terminal_id) REFERENCES device.terminals(tenant_id, terminal_id),
     CHECK (used_at IS NULL OR terminal_id IS NOT NULL)
 );

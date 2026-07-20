@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
 from cloud.api.errors import (
+    ActivationCodeInvalid,
     IdempotencyConflict,
     ManifestConflict,
     ManifestIncomplete,
@@ -19,6 +20,9 @@ from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
+    EnrollmentStatus,
+    HeartbeatRequest,
+    HeartbeatResponse,
     IngestStatus,
     ManifestCompletionResponse,
     SegmentMetadata,
@@ -36,9 +40,18 @@ from shared.contracts.events import EventEnvelope
 @dataclass(frozen=True, slots=True)
 class TerminalRecord:
     tenant_id: UUID
-    site_id: UUID
+    site_id: UUID | None
     terminal_id: UUID
     status: str = "ACTIVE"
+    installation_id: UUID | None = None
+    client_public_key: str | None = None
+    app_version: str | None = None
+    config_version: str | None = None
+    protocol_version: str | None = None
+    last_seen_at: datetime | None = None
+    last_successful_sync_at: datetime | None = None
+    pending_sessions: int = 0
+    pending_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,12 +124,44 @@ class IdempotencyRecord:
     response: Any
 
 
+@dataclass(frozen=True, slots=True)
+class ActivationCodeRecord:
+    activation_code_hash: bytes
+    tenant_id: UUID
+    site_id: UUID | None
+    device_id: UUID | None
+    expires_at: datetime
+    used_at: datetime | None = None
+    terminal_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnrollmentBinding:
+    tenant_id: UUID
+    site_id: UUID | None
+    terminal_id: UUID
+    status: EnrollmentStatus
+    config_version: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnrollmentIdempotencyRecord:
+    request_sha256: str
+    binding: EnrollmentBinding
+
+
 class InMemoryPlatformRepository:
     """Deterministic reference adapter for contract and fault tests."""
 
     def __init__(self) -> None:
         self._terminals: dict[tuple[UUID, UUID], TerminalRecord] = {}
         self._devices: dict[tuple[UUID, UUID], DeviceRecord] = {}
+        self._terminal_device_bindings: set[tuple[UUID, UUID, UUID]] = set()
+        self._activation_codes: dict[bytes, ActivationCodeRecord] = {}
+        self._enrollment_idempotency: dict[
+            tuple[bytes, str], EnrollmentIdempotencyRecord
+        ] = {}
+        self._heartbeats: list[tuple[UUID, UUID, HeartbeatRequest, datetime]] = []
         self._subjects: set[tuple[UUID, UUID]] = set()
         self._subject_profiles: dict[tuple[UUID, UUID], dict[str, Any]] = {}
         self._identity_profiles: dict[tuple[UUID, UUID], tuple[bytes, bytes, str]] = {}
@@ -137,6 +182,148 @@ class InMemoryPlatformRepository:
 
     def add_device(self, tenant_id: UUID, device_id: UUID, model: str) -> None:
         self._devices[(tenant_id, device_id)] = DeviceRecord(tenant_id, device_id, model)
+
+    def add_activation_code_hash(
+        self,
+        activation_code_hash: bytes,
+        *,
+        tenant_id: UUID,
+        site_id: UUID | None,
+        device_id: UUID | None,
+        expires_at: datetime,
+    ) -> None:
+        self._activation_codes[activation_code_hash] = ActivationCodeRecord(
+            activation_code_hash,
+            tenant_id,
+            site_id,
+            device_id,
+            expires_at,
+        )
+
+    def is_device_bound(
+        self,
+        tenant_id: UUID,
+        terminal_id: UUID,
+        device_id: UUID,
+    ) -> bool:
+        return (tenant_id, terminal_id, device_id) in self._terminal_device_bindings
+
+    def set_terminal_status(
+        self,
+        tenant_id: UUID,
+        terminal_id: UUID,
+        status: str,
+    ) -> None:
+        record = self._terminals[(tenant_id, terminal_id)]
+        self._terminals[(tenant_id, terminal_id)] = replace(record, status=status)
+
+    async def consume_activation_code(
+        self,
+        activation_code_hash: bytes,
+        request,
+        request_sha256: str,
+        idempotency_key: str,
+        accepted_at: datetime,
+    ) -> EnrollmentBinding:
+        replay = self._enrollment_idempotency.get(
+            (activation_code_hash, idempotency_key)
+        )
+        if replay is not None:
+            if replay.request_sha256 != request_sha256:
+                raise IdempotencyConflict("同一激活幂等键对应不同请求", scope="device.enroll")
+            return replay.binding
+        code = self._activation_codes.get(activation_code_hash)
+        if code is None or code.used_at is not None or code.expires_at <= accepted_at:
+            raise ActivationCodeInvalid("激活码无效、已使用或已过期")
+        if any(
+            tenant_id == code.tenant_id
+            and terminal.installation_id == request.installation_id
+            for (tenant_id, _), terminal in self._terminals.items()
+        ):
+            raise ActivationCodeInvalid("安装实例已经绑定，请联系支持")
+        if code.device_id is not None:
+            device = self._devices.get((code.tenant_id, code.device_id))
+            if device is None or device.status != "ACTIVE":
+                raise ActivationCodeInvalid("激活码绑定的设备不可用")
+        terminal_id = uuid4()
+        terminal = TerminalRecord(
+            tenant_id=code.tenant_id,
+            site_id=code.site_id,
+            terminal_id=terminal_id,
+            installation_id=request.installation_id,
+            client_public_key=request.client_public_key,
+            app_version=request.system.app_version,
+            last_seen_at=accepted_at,
+        )
+        self._terminals[(code.tenant_id, terminal_id)] = terminal
+        if code.device_id is not None:
+            self._terminal_device_bindings.add(
+                (code.tenant_id, terminal_id, code.device_id)
+            )
+        self._activation_codes[activation_code_hash] = replace(
+            code,
+            used_at=accepted_at,
+            terminal_id=terminal_id,
+        )
+        binding = EnrollmentBinding(
+            tenant_id=code.tenant_id,
+            site_id=code.site_id,
+            terminal_id=terminal_id,
+            status=EnrollmentStatus.ACTIVE,
+        )
+        self._enrollment_idempotency[(activation_code_hash, idempotency_key)] = (
+            EnrollmentIdempotencyRecord(request_sha256, binding)
+        )
+        return binding
+
+    async def record_heartbeat(
+        self,
+        context: TerminalContext,
+        request: HeartbeatRequest,
+        request_sha256: str,
+        idempotency_key: str,
+        accepted_at: datetime,
+    ) -> HeartbeatResponse:
+        terminal = self._terminal(context)
+        replay = self._idempotent_result(
+            context.tenant_id,
+            "terminal.heartbeat",
+            idempotency_key,
+            request_sha256,
+        )
+        if replay is not None:
+            return replay
+        if request.device.device_id is not None and not self.is_device_bound(
+            context.tenant_id,
+            context.terminal_id,
+            request.device.device_id,
+        ):
+            raise TenantAccessDenied(
+                "设备未绑定到当前终端",
+                device_id=str(request.device.device_id),
+            )
+        response = HeartbeatResponse(
+            terminal_id=context.terminal_id,
+            accepted_at=accepted_at,
+            status=EnrollmentStatus(terminal.status),
+        )
+        self._terminals[(context.tenant_id, context.terminal_id)] = replace(
+            terminal,
+            app_version=request.app_version,
+            config_version=request.config_version,
+            protocol_version=request.protocol_version,
+            last_seen_at=accepted_at,
+            last_successful_sync_at=request.sync.last_successful_sync,
+            pending_sessions=request.sync.pending_sessions,
+            pending_bytes=request.sync.pending_bytes,
+        )
+        self._heartbeats.append(
+            (context.tenant_id, context.terminal_id, request, accepted_at)
+        )
+        self._idempotency[
+            (context.tenant_id, "terminal.heartbeat", idempotency_key)
+        ] = IdempotencyRecord(request_sha256, response)
+        return response
 
     def add_subject(self, tenant_id: UUID, subject_uuid: UUID) -> None:
         self._subjects.add((tenant_id, subject_uuid))
@@ -377,15 +564,20 @@ class InMemoryPlatformRepository:
     def subject_count(self, tenant_id: UUID) -> int:
         return sum(1 for tenant, _ in self._subjects if tenant == tenant_id)
 
-    def _terminal(self, context: TerminalContext) -> TerminalRecord:
+    def _terminal(
+        self,
+        context: TerminalContext,
+        *,
+        require_active: bool = True,
+    ) -> TerminalRecord:
         context.ensure_active()
         terminal = self._terminals.get((context.tenant_id, context.terminal_id))
-        if terminal is None or terminal.status != "ACTIVE":
+        if terminal is None or (require_active and terminal.status != "ACTIVE"):
             raise TenantAccessDenied("终端未绑定到当前租户", terminal_id=str(context.terminal_id))
         return terminal
 
     def _session(self, context: TerminalContext, session_id: UUID) -> SessionRecord:
-        self._terminal(context)
+        self._terminal(context, require_active=False)
         tenant = self._session_tenants.get(session_id)
         if tenant is not None and tenant != context.tenant_id:
             raise TenantAccessDenied("会话不属于当前租户", session_id=str(session_id))

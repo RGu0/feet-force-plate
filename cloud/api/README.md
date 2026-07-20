@@ -16,14 +16,14 @@ python -m venv .venv-cloud
 .venv-cloud/bin/pip install -r cloud/api/requirements.txt
 ```
 
-Apply `cloud/migrations/0001_p3_cloud_platform.sql` with a migration role before the API role starts. The API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation and uses a separate audited role; the unauthenticated enrollment endpoint and License lifecycle are completed under RAY-100/RAY-98.
+Apply `cloud/migrations/0001_p3_cloud_platform.sql` with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
 
 ## Application composition
 
 The transport is intentionally dependency-injected. A deployment bootstrap creates one `asyncpg.Pool`, one S3 client, and the server-only secrets, then composes:
 
 ```python
-repository = PostgresPlatformRepository(pool)
+repository = PostgresPlatformRepository(pool, enrollment_pool=enrollment_pool)
 objects = S3ObjectStore(s3_client, bucket=raw_bucket, kms_key_id=kms_key_id)
 ingestion = IngestionService(
     repository,
@@ -32,16 +32,23 @@ ingestion = IngestionService(
     supported_manifest_schemas={"session-manifest/1"},
 )
 subjects = SubjectConsentService(repository, identity_protector)
+devices = DeviceManagementService(
+    repository,
+    terminal_token_issuer,
+    activation_code_hmac_key=activation_code_hmac_key,
+)
 app = create_app(ServiceContainer(
     ingestion=ingestion,
     token_issuer=terminal_token_issuer,
     subjects=subjects,
+    devices=devices,
 ))
 ```
 
 Secrets must come from a secret manager and never from source control or request payloads:
 
 - terminal-token signing key and key ID;
+- activation-code HMAC lookup key and the isolated enrollment-role credential;
 - external-identifier HMAC query key;
 - identity AES-256-GCM key and key version;
 - PostgreSQL credential;
@@ -55,6 +62,8 @@ Secrets must come from a secret manager and never from source control or request
 - External identifiers are NFKC-normalized, indexed by keyed HMAC, and stored as AES-256-GCM ciphertext. Optional name/contact fields use the separate identity-vault table and are never passed to ingestion/analysis objects.
 - Object keys contain only tenant/internal UUIDs, segment indexes, and digest prefixes.
 - Error responses use an allowlist of safe context and never echo bearer tokens, external identifiers, raw bodies, or report content.
+- Activation codes are HMAC-indexed before lookup, consumed under a row lock, and never logged. A prebound device is activated in the same transaction as the terminal and audit record.
+- Heartbeats accept only the versioned operational-health contract; unknown identity/report/raw-data fields are rejected without echoing their values.
 - Formal analysis is triggered only by `session.ingested.v1`, written in the same PostgreSQL transaction that verifies the exact segment set and marks the approved `INGESTED` state. Linear's phrase `INGESTED_COMPLETE` maps to this approved documented state; no second status vocabulary is introduced.
 
 ## S3 permissions

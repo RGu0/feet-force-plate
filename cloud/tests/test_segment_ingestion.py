@@ -111,6 +111,30 @@ class SegmentIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second.idempotent_replay)
         self.assertEqual(self.objects.object_count, 1)
 
+    async def test_revocation_blocks_new_sessions_but_allows_existing_session_upload(self) -> None:
+        self.repository.set_terminal_status(
+            self.tenant_id,
+            self.terminal_id,
+            "REVOKED",
+        )
+        payload = b"sealed before terminal revocation"
+
+        acknowledgement = await self.service.put_segment(
+            self.context,
+            self.session_id,
+            0,
+            self.metadata(payload),
+            chunks(payload),
+        )
+
+        self.assertEqual(acknowledgement.status.value, "ACKNOWLEDGED")
+        with self.assertRaises(TenantAccessDenied):
+            await self.service.create_session(
+                self.context,
+                self.request.model_copy(update={"session_id": uuid4()}),
+                "create-after-revocation",
+            )
+
     async def test_same_index_different_digest_conflicts_without_overwrite(self) -> None:
         original = b"original encrypted segment"
         replacement = b"different encrypted segment"

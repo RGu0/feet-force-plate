@@ -21,6 +21,11 @@ class AuthenticationError(PlatformError):
     action = "REFRESH_CREDENTIAL"
 
 
+class ActivationCodeInvalid(AuthenticationError):
+    code = "E-ACT-401"
+    action = "REQUEST_ACTIVATION_CODE"
+
+
 class TenantAccessDenied(PlatformError):
     code = "E-AUT-403"
     http_status = 403
