@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+from PySide6.QtWidgets import QPushButton, QWidget
+
+from client.app.pages import PageId
+from client.app.qt_shell import ScreeningWindow
+from client.workflow.models import ClientAction, ClientError, WorkflowState
+from client.workflow.state_machine import ScreeningStep
+
+
+def test_shell_builds_all_prd_pages_with_accessible_action_targets(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+
+    assert window.page_count == 11
+    for page_id in PageId:
+        page = window.page_widget(page_id)
+        assert page.objectName() == page_id.value
+        for button in page.findChildren(QPushButton):
+            assert button.minimumHeight() >= 48
+            assert button.accessibleName()
+
+
+def test_acquiring_state_locks_navigation_and_shows_only_safe_error(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    state = WorkflowState(
+        step=ScreeningStep.ACQUIRING,
+        session_id="session-1",
+        error=ClientError(
+            code="E-DEV-002",
+            operator_message="压力设备连接已中断，本次检测未完成",
+            action=ClientAction.RETRY_SCREENING,
+        ),
+    )
+
+    window.present_state(state)
+
+    assert window.current_page_id == PageId.ACQUIRING
+    assert not window.global_navigation_enabled
+    assert "E-DEV-002" in window.error_text
+    assert "压力设备连接已中断" in window.error_text
+    assert "SerialException" not in window.error_text
+
+
+def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    required_controls = {
+        PageId.WORKBENCH: {
+            "deviceSummary",
+            "syncSummary",
+            "pendingSummary",
+            "recentScreenings",
+        },
+        PageId.SUBJECT_IDENTIFICATION: {
+            "subjectExternalIdInput",
+            "lookupSubjectButton",
+            "subjectMatchSummary",
+        },
+        PageId.PROFILE: {
+            "ageBandInput",
+            "sexInput",
+            "heightInput",
+            "weightInput",
+        },
+        PageId.CONSENT: {"requiredConsent", "researchConsent", "policyLink"},
+        PageId.PREFLIGHT: {
+            "deviceCheck",
+            "storageCheck",
+            "calibrationCheck",
+            "syncCheck",
+            "zeroLoadCheck",
+        },
+        PageId.POSITION_GUIDANCE: {"positionStatus", "countdownLabel"},
+        PageId.ACQUIRING: {
+            "heatmapHost",
+            "remainingTime",
+            "acquisitionStatus",
+            "STOP_SCREENING",
+        },
+        PageId.RESULT: {"basicReportStatus", "fullReportStatus"},
+        PageId.RECORDS: {"recordSearchInput", "recordsTable"},
+        PageId.REPORT_PREVIEW: {"reportPreview", "EXPORT_PDF", "PRINT_REPORT"},
+        PageId.SUPPORT: {
+            "deviceHealth",
+            "syncHealth",
+            "pendingCount",
+            "appVersion",
+        },
+    }
+
+    for page_id, object_names in required_controls.items():
+        page = window.page_widget(page_id)
+        for object_name in object_names:
+            assert page.findChild(QWidget, object_name) is not None, (
+                page_id,
+                object_name,
+            )
+
+
+def test_nonblocking_sync_notice_keeps_basic_report_available(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.present_state(
+        WorkflowState(
+            step=ScreeningStep.BASIC_REPORT,
+            notice="基础报告已生成。网络恢复后系统会自动完成完整分析。",
+        )
+    )
+
+    assert window.current_page_id == PageId.RESULT
+    assert window.global_navigation_enabled
+    assert "基础报告已生成" in window.notice_text
+    assert window.error_text == ""
