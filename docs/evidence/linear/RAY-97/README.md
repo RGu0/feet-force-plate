@@ -7,6 +7,7 @@
 - Milestone: `P3：云端闭环`
 - Priority: `Urgent`
 - Relations: no declared blockers, blocks, duplicates, or related issues
+- Implementation commit: `d8466ead54cc25697185b2811c71937550f1b45b`
 
 ## Acceptance snapshot
 
@@ -60,4 +61,4 @@ Linear uses `INGESTED_COMPLETE` in one acceptance sentence, while the approved c
 
 - Automated in-memory/ASGI tests are not a real PostgreSQL, S3, TLS, or terminal-certificate deployment.
 - Backup/restore drills, production least-privilege roles, and deployment-region privacy/compliance review require external environments and human approval.
-- Commit SHA will be recorded immediately after the issue-scoped implementation and evidence are committed.
+- The implementation, tests, initial evidence, and plan are committed at `d8466ead54cc25697185b2811c71937550f1b45b`. This evidence-only follow-up records that immutable SHA.
