@@ -11,7 +11,7 @@
 - Relations: no declared blockers, blocked issues, related issues, duplicates, releases, or customer needs
 - Baseline: `c0e4f38113453f2c517158347b499618ce19f6f6`
 - RAY-100 prerequisite: `a4642125c887addf932dbf00acb67839dbc1a5fa`
-- RAY-98 implementation commit: recorded by the evidence follow-up commit after the implementation commit is created
+- RAY-98 implementation commit: `f81a6704b03459e6fc98aa633828ed3f87a0ca26`
 
 ## Acceptance snapshot and result
 
