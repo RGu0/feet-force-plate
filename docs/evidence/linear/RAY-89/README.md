@@ -54,4 +54,5 @@ Detailed output: [verification.txt](verification.txt)
 
 ## Commit
 
-Implementation/evidence commit: pending at snapshot time; replaced after commit.
+Implementation/tests/evidence commit:
+`db56b9e7132fbe8fbd9c6e7982260ea7869bde30`.
