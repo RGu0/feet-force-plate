@@ -51,4 +51,4 @@ downstream segmentation/recovery/upload contract cannot be accepted yet.
 
 ## Commit
 
-Pending.
+Implementation and initial evidence: `1abbc1f1f01d71713b16539a80b65af7b87f8c10`.
