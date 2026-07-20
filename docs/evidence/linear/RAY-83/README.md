@@ -2,9 +2,9 @@
 
 - Issue: RAY-83 — 数据处理管线：48×64@约12Hz、标定与显示解耦
 - URL: https://linear.app/ray-app/issue/RAY-83/数据处理管线4864约12hz标定与显示解耦
-- Captured at: 2026-07-20T10:18:44Z
-- Snapshot: In Progress; milestone P1：可靠采集; priority High
-- Relations: none recorded in Linear
+- Captured at: 2026-07-20T10:21:02Z
+- Snapshot: In Review; milestone P1：可靠采集; priority High
+- Relations: related to RAY-80
 
 ## Acceptance snapshot
 
