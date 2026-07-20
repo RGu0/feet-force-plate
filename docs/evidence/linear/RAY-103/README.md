@@ -6,7 +6,8 @@
 - 当时状态: Backlog；2026-07-20T09:18:20Z 启动后为 In Progress
 - 里程碑: P5：商业运营
 - 优先级: High
-- 关联 commit SHA: 待本任务提交
+- 当前状态: In Review
+- 关联实现 commit SHA: `7b8ebb0ba90fbda6b062ffd845528986c37c2c73`
 
 ## 验收条目快照
 
