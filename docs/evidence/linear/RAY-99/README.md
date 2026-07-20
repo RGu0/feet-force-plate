@@ -11,7 +11,7 @@
 - Relations: related to `RAY-97`; no declared blockers, blocked issues, duplicates, releases, or customer needs
 - Baseline: `c0e4f38113453f2c517158347b499618ce19f6f6`
 - Server prerequisite: `d8466ead54cc25697185b2811c71937550f1b45b` (`RAY-97` ingestion implementation)
-- RAY-99 implementation commit: recorded by the evidence follow-up commit after the implementation commit is created
+- RAY-99 implementation commit: `f76d042f598c0459ff57781f3b769fa379c497c2`
 
 ## Acceptance snapshot and result
 
