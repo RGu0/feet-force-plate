@@ -84,5 +84,8 @@ placing raw pressure data in evidence.
 ## Commit
 
 `779b08e` — hardware baseline evidence and non-human 10-minute sustained-link
-measurement. This issue remains In Progress because fixture promotion, checksum,
-per-frame jitter/resynchronisation metrics, and calibration are incomplete.
+measurement.
+`75182e9` — changed the issue-local capture-duration requirement from 30 minutes
+to 10 minutes, preserving the remaining metric requirements. This issue remains
+In Progress because fixture promotion, checksum, per-frame
+jitter/resynchronisation metrics, and calibration are incomplete.
