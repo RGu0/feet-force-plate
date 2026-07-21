@@ -1,0 +1,25 @@
+{
+  "input": "dop4864-timed-20260721T064602Z.bin",
+  "input_sha256": "8858c434f34a9939034271a6d0b083e135aee5a89e2f0973306737c48c75e14b",
+  "observed_structural_frame_bytes": 3079,
+  "candidate_checksum_offset": 3077,
+  "tail_offset": 3078,
+  "documented_algorithm": "checksum = (256 - (sum(bytes) % 256)) % 256",
+  "contiguous_coverage_search": {
+    "frame_count_used": 32,
+    "searched_byte_spans": "all non-empty contiguous [start:end) spans within offsets 0..3076",
+    "common_matching_spans": []
+  },
+  "conventional_coverage": {
+    "span": "[0:3077]",
+    "matches": 7767,
+    "structural_frames": 12359,
+    "match_rate": 0.62844890363298
+  },
+  "conventional_coverage_with_both_neighbour_gaps_3079": {
+    "matches": 7718,
+    "frames": 12276,
+    "match_rate": 0.6287064190289997
+  },
+  "conclusion": "The documented two's-complement checksum helper is not validated for the observed 3079-byte compact stream."
+}
