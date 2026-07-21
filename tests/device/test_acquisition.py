@@ -22,7 +22,7 @@ def _profile() -> ProtocolProfile:
         version="do-p4864/synthetic-acquisition-test-1",
         length_byte_order="little",
         checksum_start=0,
-        checksum_end=6149,
+        checksum_end=3077,
     )
 
 
@@ -87,7 +87,7 @@ class AcquisitionRunnerTests(unittest.TestCase):
             _profile(),
             realtime=False,
             max_frames=3,
-            frame_source=lambda index: np.full((48, 64), index + 1, dtype=np.uint16),
+            frame_source=lambda index: np.full((48, 64), index + 1, dtype=np.uint8),
         )
         durable = RecordingQueue(capacity=4)
         latest = RecordingMailbox()

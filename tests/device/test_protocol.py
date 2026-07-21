@@ -10,12 +10,12 @@ def _synthetic_profile(protocol: object):
         version="do-p4864/synthetic-test-1",
         length_byte_order="little",
         checksum_start=0,
-        checksum_end=6149,
+        checksum_end=3077,
     )
 
 
 def _frame_bytes(protocol: object, profile: object, values: np.ndarray) -> bytes:
-    payload = np.asarray(values, dtype="<u2").reshape(48, 64).tobytes(order="C")
+    payload = np.asarray(values, dtype=np.uint8).reshape(48, 64).tobytes(order="C")
     frame = bytearray(b"\xff\xaa")
     frame.extend(protocol.FRAME_LENGTH.to_bytes(2, profile.length_byte_order))
     frame.append(0x01)
@@ -26,6 +26,17 @@ def _frame_bytes(protocol: object, profile: object, values: np.ndarray) -> bytes
 
 
 class ProtocolSurfaceTests(unittest.TestCase):
+    def test_current_runtime_contract_has_no_legacy_6151_byte_definition(self) -> None:
+        protocol = importlib.import_module("client.device.protocol")
+
+        self.assertEqual(protocol.FRAME_LENGTH, 3079)
+        self.assertEqual(protocol.CHECKSUM_OFFSET, 3077)
+        self.assertEqual(protocol.TAIL_OFFSET, 3078)
+        self.assertFalse(hasattr(protocol, "COMPACT_OBSERVED_FRAME_LENGTH"))
+        self.assertEqual(
+            tuple(protocol.PayloadEncoding), (protocol.PayloadEncoding.UINT8_RAW,)
+        )
+
     def test_observed_compact_profile_decodes_8bit_grid_without_checksum_filter(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = protocol.ProtocolProfile.observed_compact_8bit(
@@ -77,7 +88,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
             version="do-p4864/synthetic-test-1",
             length_byte_order="little",
             checksum_start=0,
-            checksum_end=6149,
+            checksum_end=3077,
         )
         with self.assertRaises(error_type):
             protocol.DaoOneP4864Parser(profile)
@@ -92,7 +103,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
                 version="do-p4864/capture-1",
                 length_byte_order="little",
                 checksum_start=0,
-                checksum_end=6149,
+                checksum_end=3077,
                 fixture_sha256="not-a-sha256",
             )
 
@@ -104,7 +115,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
                 version="do-p4864/unsafe-direct-construction",
                 length_byte_order="little",
                 checksum_start=0,
-                checksum_end=6149,
+                checksum_end=3077,
                 evidence=protocol.ProfileEvidence.CAPTURE_VERIFIED,
                 fixture_sha256=None,
             )
@@ -112,7 +123,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
     def test_parser_accepts_single_bytes_and_emits_host_audited_matrix(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = _synthetic_profile(protocol)
-        source = np.arange(3072, dtype=np.uint16).reshape(48, 64) | 0xF000
+        source = np.arange(3072, dtype=np.uint8).reshape(48, 64)
         wire_frame = _frame_bytes(protocol, profile, source)
         monotonic_values = iter([123_456_789])
         wall_values = iter([987_654_321])
@@ -132,9 +143,9 @@ class ProtocolSurfaceTests(unittest.TestCase):
 
         self.assertEqual(len(decoded), 1)
         frame = decoded[0]
-        np.testing.assert_array_equal(frame.values, source & 0x0FFF)
+        np.testing.assert_array_equal(frame.values, source)
         self.assertEqual(frame.values.shape, (48, 64))
-        self.assertEqual(frame.values.dtype, np.dtype("uint16"))
+        self.assertEqual(frame.values.dtype, np.dtype("uint8"))
         self.assertFalse(frame.values.flags.writeable)
         self.assertEqual(frame.source_index, 0)
         self.assertEqual(frame.host_monotonic_ns, 123_456_789)
@@ -146,8 +157,8 @@ class ProtocolSurfaceTests(unittest.TestCase):
     def test_random_chunks_and_sticky_frames_preserve_order_and_interval_audit(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = _synthetic_profile(protocol)
-        first = _frame_bytes(protocol, profile, np.zeros((48, 64), dtype=np.uint16))
-        second = _frame_bytes(protocol, profile, np.ones((48, 64), dtype=np.uint16))
+        first = _frame_bytes(protocol, profile, np.zeros((48, 64), dtype=np.uint8))
+        second = _frame_bytes(protocol, profile, np.ones((48, 64), dtype=np.uint8))
         ticks = iter([1_000_000_000, 1_083_000_000])
         parser = protocol.DaoOneP4864Parser(
             profile,
@@ -178,7 +189,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
     def test_noise_and_bad_checksum_resynchronize_at_next_header(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = _synthetic_profile(protocol)
-        valid = _frame_bytes(protocol, profile, np.full((48, 64), 7, dtype=np.uint16))
+        valid = _frame_bytes(protocol, profile, np.full((48, 64), 7, dtype=np.uint8))
         corrupt = bytearray(valid)
         corrupt[protocol.CHECKSUM_OFFSET] ^= 0x01
         parser = protocol.DaoOneP4864Parser(
@@ -218,7 +229,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
     def test_length_function_and_tail_failures_are_audited_separately(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = _synthetic_profile(protocol)
-        valid = _frame_bytes(protocol, profile, np.zeros((48, 64), dtype=np.uint16))
+        valid = _frame_bytes(protocol, profile, np.zeros((48, 64), dtype=np.uint8))
         bad_length = bytearray(valid)
         bad_length[2:4] = b"\x00\x00"
         bad_function = bytearray(valid)
@@ -242,18 +253,18 @@ class ProtocolSurfaceTests(unittest.TestCase):
             version="do-p4864/capture-contract-test-1",
             length_byte_order="big",
             checksum_start=5,
-            checksum_end=6149,
+            checksum_end=3077,
             fixture_sha256="a" * 64,
         )
         wire_frame = _frame_bytes(
-            protocol, profile, np.full((48, 64), 0xF123, dtype=np.uint16)
+            protocol, profile, np.full((48, 64), 0x23, dtype=np.uint8)
         )
 
         decoded = protocol.DaoOneP4864Parser(profile).feed(wire_frame)
 
-        self.assertEqual(wire_frame[2:4], b"\x18\x07")
+        self.assertEqual(wire_frame[2:4], b"\x0c\x07")
         self.assertEqual(len(decoded), 1)
-        np.testing.assert_array_equal(decoded[0].values, 0x0123)
+        np.testing.assert_array_equal(decoded[0].values, 0x23)
         self.assertNotIn("PROTOCOL_PROFILE_UNVERIFIED", decoded[0].quality_flags)
 
     def test_seeded_noise_fuzz_recovers_all_inserted_valid_frames(self) -> None:
@@ -269,7 +280,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
                 _frame_bytes(
                     protocol,
                     profile,
-                    np.full((48, 64), marker, dtype=np.uint16),
+                    np.full((48, 64), marker, dtype=np.uint8),
                 )
             )
         parser = protocol.DaoOneP4864Parser(profile, allow_unverified=True)

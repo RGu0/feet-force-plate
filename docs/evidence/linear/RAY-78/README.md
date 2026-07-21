@@ -122,6 +122,22 @@ reported 59 resynchronisations. The replay is an interface audit, not a new
 live-device capture or protocol verification. Machine-readable result:
 [`compact-parser-replay-20260721.json`](compact-parser-replay-20260721.json).
 
+### Runtime-definition supersession
+
+At the user's direction, the original 6,151-byte layout and the byte-6,150
+tail definition have been removed from the current client runtime contract.
+`FRAME_LENGTH`, `CHECKSUM_OFFSET`, and `TAIL_OFFSET` now define only the
+observed 3,079-byte structure at 3,079, 3,077, and 3,078 respectively; the
+only supported payload encoding is the row-major 48×64 `uint8` raw-byte grid.
+The legacy layout remains above and in the linked JSON analyses as historical
+evidence of the source conflict, not as an executable protocol profile.
+
+The user-authorized update also changes `docs/通信接口设计文档.md` and the
+related Linear project, P0 milestone, and RAY-78/RAY-80/RAY-81/RAY-82/RAY-83
+definitions. It does not upgrade the observed profile to production-verified:
+CheckSum remains audit-only, and payload semantics, calibration, and vendor
+confirmation remain outstanding.
+
 | Capture | Scenario | Bytes | Candidate frames | Result |
 |---|---:|---:|---:|---|
 | `71b636…e8264c` | 20s empty board | 1,277,952 | 414 | startup prefix 1,767 bytes, then 3079-byte structure |
@@ -212,3 +228,8 @@ measurement.
 to 10 minutes, preserving the remaining metric requirements. This issue remains
 In Progress because fixture promotion, checksum, per-frame
 jitter/resynchronisation metrics, and calibration are incomplete.
+
+`6d7cc9e` — removed the legacy 6,151-byte/6,150 runtime definition in
+favour of the observed 3,079-byte `uint8` interface; synchronized the
+communication contract and Linear definitions while retaining historical
+capture evidence.

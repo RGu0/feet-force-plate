@@ -16,18 +16,15 @@ from typing import Callable, Literal
 import numpy as np
 
 
-FRAME_LENGTH = 6_151
+FRAME_LENGTH = 3_079
 HEADER = b"\xff\xaa"
 LENGTH_OFFSET = 2
 FUNCTION_OFFSET = 4
 PAYLOAD_OFFSET = 5
-CHECKSUM_OFFSET = 6_149
-TAIL_OFFSET = 6_150
+CHECKSUM_OFFSET = 3_077
+TAIL_OFFSET = 3_078
 FUNCTION_CODE = 0x01
 TAIL = 0xFA
-COMPACT_OBSERVED_FRAME_LENGTH = 3_079
-COMPACT_OBSERVED_CHECKSUM_OFFSET = 3_077
-COMPACT_OBSERVED_TAIL_OFFSET = 3_078
 
 
 class ProfileEvidence(StrEnum):
@@ -48,7 +45,6 @@ class ChecksumPolicy(StrEnum):
 class PayloadEncoding(StrEnum):
     """Payload representation allowed by an explicit wire profile."""
 
-    UINT16_LE_12 = "UINT16_LE_12"
     UINT8_RAW = "UINT8_RAW"
 
 
@@ -72,7 +68,7 @@ class ProtocolProfile:
     tail_offset: int = TAIL_OFFSET
     enforce_wire_length: bool = True
     checksum_policy: ChecksumPolicy = ChecksumPolicy.REQUIRE
-    payload_encoding: PayloadEncoding = PayloadEncoding.UINT16_LE_12
+    payload_encoding: PayloadEncoding = PayloadEncoding.UINT8_RAW
 
     def __post_init__(self) -> None:
         if self.length_byte_order not in ("little", "big"):
@@ -88,8 +84,6 @@ class ProtocolProfile:
         if not 0 <= self.checksum_start < self.checksum_end <= self.checksum_offset:
             raise ValueError("CheckSum coverage must exclude the CheckSum byte")
         payload_length = self.checksum_offset - self.payload_offset
-        if self.payload_encoding is PayloadEncoding.UINT16_LE_12 and payload_length != 6_144:
-            raise ValueError("12-bit little-endian profiles require a 6144-byte payload")
         if self.payload_encoding is PayloadEncoding.UINT8_RAW and payload_length != 3_072:
             raise ValueError("raw uint8 profiles require a 3072-byte payload")
         if self.evidence is ProfileEvidence.CAPTURE_VERIFIED:
@@ -154,12 +148,12 @@ class ProtocolProfile:
             version=version,
             length_byte_order="big",
             checksum_start=PAYLOAD_OFFSET,
-            checksum_end=COMPACT_OBSERVED_CHECKSUM_OFFSET,
+            checksum_end=CHECKSUM_OFFSET,
             evidence=ProfileEvidence.OBSERVED_STRUCTURAL,
-            frame_length=COMPACT_OBSERVED_FRAME_LENGTH,
+            frame_length=FRAME_LENGTH,
             payload_offset=PAYLOAD_OFFSET,
-            checksum_offset=COMPACT_OBSERVED_CHECKSUM_OFFSET,
-            tail_offset=COMPACT_OBSERVED_TAIL_OFFSET,
+            checksum_offset=CHECKSUM_OFFSET,
+            tail_offset=TAIL_OFFSET,
             enforce_wire_length=False,
             checksum_policy=ChecksumPolicy.OBSERVE,
             payload_encoding=PayloadEncoding.UINT8_RAW,
@@ -347,11 +341,7 @@ class DaoOneP4864Parser:
 
     def _decode(self, frame: bytes) -> RawFrame:
         payload = frame[self.profile.payload_offset : self.profile.checksum_offset]
-        if self.profile.payload_encoding is PayloadEncoding.UINT16_LE_12:
-            values = np.frombuffer(payload, dtype="<u2").astype(np.uint16, copy=True)
-            values &= 0x0FFF
-        else:
-            values = np.frombuffer(payload, dtype=np.uint8).copy()
+        values = np.frombuffer(payload, dtype=np.uint8).copy()
         values = values.reshape(48, 64)
         values.setflags(write=False)
         quality_flags: set[str] = set()

@@ -15,7 +15,7 @@ def _profile() -> ProtocolProfile:
         version="do-p4864/synthetic-simulator-test-1",
         length_byte_order="little",
         checksum_start=0,
-        checksum_end=6149,
+        checksum_end=3077,
     )
 
 
@@ -26,21 +26,21 @@ class SimulatorFrameTests(unittest.TestCase):
         except ModuleNotFoundError as exc:
             self.fail(f"simulator module is missing: {exc}")
         self.assertTrue(hasattr(simulator, "encode_frame"))
-        values = np.arange(3072, dtype=np.uint16).reshape(48, 64)
+        values = np.arange(3072, dtype=np.uint8).reshape(48, 64)
 
         wire = simulator.encode_frame(values, _profile())
         decoded = DaoOneP4864Parser(_profile(), allow_unverified=True).feed(wire)
 
-        self.assertEqual(len(wire), 6151)
+        self.assertEqual(len(wire), 3079)
         self.assertEqual(len(decoded), 1)
         np.testing.assert_array_equal(decoded[0].values, values)
 
-    def test_encoder_rejects_counts_outside_12_bit_range(self) -> None:
+    def test_encoder_rejects_counts_outside_uint8_range(self) -> None:
         simulator = importlib.import_module("client.device.simulator")
 
         with self.assertRaises(ValueError):
             simulator.encode_frame(
-                np.full((48, 64), 4096, dtype=np.uint16), _profile()
+                np.full((48, 64), 256, dtype=np.uint16), _profile()
             )
 
     def test_pressure_scene_models_static_and_left_right_load_bias(self) -> None:
@@ -56,8 +56,8 @@ class SimulatorFrameTests(unittest.TestCase):
         right = scene.frame(0, pattern_type.RIGHT_BIAS)
 
         self.assertEqual(static.shape, (48, 64))
-        self.assertEqual(static.dtype, np.dtype("uint16"))
-        self.assertLessEqual(int(static.max()), 4095)
+        self.assertEqual(static.dtype, np.dtype("uint8"))
+        self.assertLessEqual(int(static.max()), 255)
         self.assertGreater(int(static.sum()), 0)
         self.assertGreater(int(left[:, :32].sum()), int(left[:, 32:].sum()))
         self.assertGreater(int(right[:, 32:].sum()), int(right[:, :32].sum()))
@@ -88,7 +88,7 @@ class SimulatorFrameTests(unittest.TestCase):
             realtime=False,
             max_frames=2,
             frame_source=lambda index: np.full(
-                (48, 64), index + 10, dtype=np.uint16
+                (48, 64), index + 10, dtype=np.uint8
             ),
         )
         parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
@@ -128,7 +128,7 @@ class SimulatorFrameTests(unittest.TestCase):
             sleep=clock.sleep,
         )
 
-        sticky_wire = transport.read(6151 * 4)
+        sticky_wire = transport.read(3079 * 4)
         decoded = DaoOneP4864Parser(_profile(), allow_unverified=True).feed(
             sticky_wire
         )
@@ -161,7 +161,7 @@ class SimulatorFrameTests(unittest.TestCase):
             max_frames=10,
             fault_plan=fault_plan,
             frame_source=lambda index: np.full(
-                (48, 64), index + 1, dtype=np.uint16
+                (48, 64), index + 1, dtype=np.uint8
             ),
         )
         parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
@@ -183,7 +183,7 @@ class SimulatorFrameTests(unittest.TestCase):
         self.assertIsNotNone(replay_type)
         wire = b"".join(
             simulator.encode_frame(
-                np.full((48, 64), marker, dtype=np.uint16), _profile()
+                np.full((48, 64), marker, dtype=np.uint8), _profile()
             )
             for marker in (21, 22)
         )

@@ -74,13 +74,13 @@ class FaultPlan:
 class PressureScene:
     """Deterministic two-foot raw-count generator without physical units."""
 
-    peak_count: int = 3_000
+    peak_count: int = 220
     sway_period_frames: int = 120
     sway_columns: float = 3.0
 
     def __post_init__(self) -> None:
-        if not 1 <= self.peak_count <= 4_095:
-            raise ValueError("peak_count must be within the 12-bit sensor range")
+        if not 1 <= self.peak_count <= 255:
+            raise ValueError("peak_count must be within the uint8 raw-byte range")
         if self.sway_period_frames <= 0:
             raise ValueError("sway_period_frames must be positive")
         if not 0.0 <= self.sway_columns <= 8.0:
@@ -112,7 +112,7 @@ class PressureScene:
         elif pattern is PressurePattern.RIGHT_BIAS:
             left_weight, right_weight = 0.45, 1.0
         counts = np.rint(self.peak_count * (left_weight * left + right_weight * right))
-        return np.clip(counts, 0, 4_095).astype(np.uint16)
+        return np.clip(counts, 0, 255).astype(np.uint8)
 
 
 def encode_frame(values: np.ndarray, profile: ProtocolProfile) -> bytes:
@@ -121,9 +121,9 @@ def encode_frame(values: np.ndarray, profile: ProtocolProfile) -> bytes:
     matrix = np.asarray(values)
     if matrix.shape != (48, 64):
         raise ValueError("DO-P4864 matrices must have shape (48, 64)")
-    if np.any(matrix < 0) or np.any(matrix > 4_095):
-        raise ValueError("DO-P4864 synthetic counts must stay within 0..4095")
-    payload = matrix.astype("<u2", copy=False).tobytes(order="C")
+    if np.any(matrix < 0) or np.any(matrix > 255):
+        raise ValueError("DO-P4864 synthetic raw bytes must stay within 0..255")
+    payload = matrix.astype(np.uint8, copy=False).tobytes(order="C")
     frame = bytearray(HEADER)
     frame.extend(FRAME_LENGTH.to_bytes(2, profile.length_byte_order))
     frame.append(FUNCTION_CODE)
