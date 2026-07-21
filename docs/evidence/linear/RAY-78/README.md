@@ -13,6 +13,7 @@
 - [ ] Manual 6151-byte / 12-bit / about-12-Hz assertions are contradicted by this hardware capture and cannot remain a production parsing baseline.
 - [ ] Physical golden fixture is captured but not promoted: CheckSum coverage and payload encoding are still unverified.
 - [x] Physical 10-minute empty-board sustained raw-link observation.
+- [x] Timestamped 10-minute host-receipt cadence observation. This is limited to structural candidates and host receipt time; it is not device timing or validated parser timing.
 - [ ] In the 10-minute run, measure per-frame arrival jitter, checksum failures, and resynchronisation. The present raw recorder has no per-frame arrival timestamps and the CheckSum profile is unverified.
 - [ ] Calibration, units, bad pixels, drift, and device identity.
 - [ ] Reproducible final hardware baseline report.
@@ -33,6 +34,7 @@ parser to production.
 | `826120…ac85e` | 20s right load, pressed | 1,277,952 | 415 | weak centre-line response, max about +0.64 |
 | `6b84cc…53515` | 20s empty board after removal | 1,277,952 | 415 | low-amplitude state returned; max drift about +0.41 |
 | `2c2022…ea8f63` | 10m empty board sustained link | 38,199,296 | 12,389 | 20.648 Hz; 12,372/12,388 adjacent candidate gaps were exactly 3,079 bytes; 16 were non-contiguous |
+| `8858c4…75e14b` | 10m empty board, host-timestamped candidates | 38,187,663 | 12,359 | 20.598 Hz; raw scan found 12,317/12,358 consecutive 3,079-byte gaps; 41 were non-contiguous |
 
 The 3072 bytes between function byte and CheckSum/tail candidate change under
 left load. Treating it as a row-major 48x64 byte array is an observation-only
@@ -67,6 +69,24 @@ Verification command:
   --port /dev/cu.usbserial-130 --seconds 600 --output-dir tmp/hardware
 ```
 
+### Timestamped candidate-cadence observation
+
+A second 600.001645-second empty-board capture used a 1 ms host polling bound
+to assign host receipt timestamps to each structural `FF AA … FA` candidate.
+The raw file SHA-256 is
+`8858c434f34a9939034271a6d0b083e135aee5a89e2f0973306737c48c75e14b`.
+It produced 12,359 candidates (20.5983 Hz). Host receipt intervals had p50
+48.380417 ms, p95 48.639500 ms, p99 49.970625 ms, mean 48.543244 ms, and
+maximum 219.956833 ms. The 48 microsecond minimum is an artefact of multiple
+candidates being handled in one read batch, not a device-frame interval.
+
+An independent raw-byte scan found 12,317 contiguous 3,079-byte intervals out
+of 12,358 (99.668%) and 41 non-contiguous intervals. The recorder reported 88
+structural realignments and 133,054 discarded bytes; neither count is a
+validated protocol-parser resynchronisation count because the CheckSum profile
+is unknown. Full machine-readable results are in
+[`timed-capture-20260721.json`](timed-capture-20260721.json).
+
 ## Sensitive-data boundary
 
 All listed captures used user-confirmed non-human test load or an empty board.
@@ -79,7 +99,7 @@ placing raw pressure data in evidence.
 1. Repeat left/right/centre with a calibrated, known load and fixed coordinates.
 2. Obtain vendor protocol clarification for 3079-byte frame format and CheckSum coverage.
 3. Promote only a non-sensitive representative raw fixture after repeated checksum validation.
-4. Complete the 10-minute metric pass after the verified profile exists; record per-frame arrival jitter, invalid/resync counts, storage behaviour, and memory.
+4. With a verified profile, complete the 10-minute validated-parser metric pass: per-frame arrival jitter, CheckSum failures, invalid/resync counts, storage behaviour, and memory.
 
 ## Commit
 

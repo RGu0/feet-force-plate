@@ -35,6 +35,7 @@
     {"sha256": "e4c04c8682d91eb5038e20f8fead91b4e2409c28ba0a45aaaa61c82d4c4bbefd", "scenario": "right_load_20s", "bytes": 1277952, "candidate_frames": 413},
     {"sha256": "826120ee7d7de167a9e34542dbd7c8ce35b0511ac86316fa9f8d0d1ac49ac85e", "scenario": "right_pressed_20s", "bytes": 1277952, "candidate_frames": 415},
     {"sha256": "6b84cc3aaaaee8927a3f43629bb15d7d26cb7629cfa257b3d643ce6b54235315", "scenario": "empty_after_removal_20s", "bytes": 1277952, "candidate_frames": 415},
-    {"sha256": "2c2022170a226344b1c33fb5e004c4e9ddf1dd90c240831f3831bbaa9aea8f63", "scenario": "empty_10m_sustained", "duration_seconds": 600.0, "bytes": 38199296, "candidate_frames": 12389, "candidate_rate_hz": 20.6483, "contiguous_3079_byte_gaps": 12372, "total_adjacent_gaps": 12388, "noncontiguous_gap_count": 16}
+    {"sha256": "2c2022170a226344b1c33fb5e004c4e9ddf1dd90c240831f3831bbaa9aea8f63", "scenario": "empty_10m_sustained", "duration_seconds": 600.0, "bytes": 38199296, "candidate_frames": 12389, "candidate_rate_hz": 20.6483, "contiguous_3079_byte_gaps": 12372, "total_adjacent_gaps": 12388, "noncontiguous_gap_count": 16},
+    {"sha256": "8858c434f34a9939034271a6d0b083e135aee5a89e2f0973306737c48c75e14b", "scenario": "empty_10m_host_timestamped", "duration_seconds": 600.001645084, "bytes": 38187663, "candidate_frames": 12359, "candidate_rate_hz": 20.598276856840528, "contiguous_3079_byte_gaps": 12317, "total_adjacent_gaps": 12358, "noncontiguous_gap_count": 41, "host_receipt_interval_p50_ns": 48380417, "host_receipt_interval_p95_ns": 48639500, "host_receipt_interval_p99_ns": 49970625, "checksum_profile": "UNVERIFIED"}
   ]
 }
