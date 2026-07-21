@@ -83,4 +83,6 @@ placing raw pressure data in evidence.
 
 ## Commit
 
-Pending; this issue remains In Progress because fixture promotion, checksum, calibration, and 30-minute evidence are incomplete.
+`779b08e` — hardware baseline evidence and non-human 10-minute sustained-link
+measurement. This issue remains In Progress because fixture promotion, checksum,
+calibration, and 30-minute evidence are incomplete.
