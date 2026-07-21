@@ -155,6 +155,24 @@ diagnostic: it is not a confirmed data encoding, sensor coordinate mapping, or
 physical pressure unit. The asymmetric left/right response is a hardware-risk
 observation requiring retest with a calibrated load and vendor clarification.
 
+### Four-direction physical-to-display check
+
+A user-operated manual check captured five seconds at each physical upper-left,
+upper-right, lower-left, and lower-right region, followed by a five-second
+empty-board baseline. The raw contact captures remain ignored under
+`tmp/hardware/`; only their SHA-256 values and sanitized aggregate results are
+stored in [`four-direction-mapping-20260721.json`](four-direction-mapping-20260721.json).
+
+The test confirms that grouping the 3,072 observed content bytes row-major into
+`(48, 64)` is not sufficient to establish a physical display orientation.
+Physical left-side presses had decoded centres near row 3 while right-side
+presses had decoded centres near row 44; physical upper/lower changed the
+decoded column from roughly 26–28 to 33–34. A display transform (at least a
+transpose, and potentially mirror operations) must be verified with repeated,
+fixed-coordinate presses before it is used as a production physical orientation.
+This is not a calibrated pressure measurement, a customer result, or a final
+sensor-coordinate mapping.
+
 For the 60-second capture, direct two's-complement candidates over byte ranges
 `0..3076` and `1..3076` matched only 785/1242 and 210/1242 frames respectively;
 no tested starts `2..5` matched. CheckSum coverage therefore remains unknown.

@@ -1,0 +1,24 @@
+{
+  "scope": "user-operated four-direction spatial mapping check; sanitized metadata only",
+  "protocol": "observed 3079-byte frame; frame[5:3077] reshaped row-major as 48x64 uint8",
+  "method": "five-second capture at each physical direction followed by a five-second empty-board baseline; each display matrix is mean(direction) minus mean(baseline), clipped to positive values",
+  "raw_capture_sha256": {
+    "physical_upper_left": "e8dbee369335b0145797c93ec3043b264b8a845901e994e5eb44ffb30e1e4090",
+    "physical_upper_right": "cf09e76c3f5ed9183fa204278278a24b6da35131ef2d3be60cd528b599be882a",
+    "physical_lower_left": "e85ac9f933759307d26c560fc79732c7baf842cd21a338fea3815634a1b7dedd",
+    "physical_lower_right": "c221496824eb614ad2221d9b5db75f7e98150213843f2785fdb97ad9538f6768",
+    "empty_baseline": "2ca1ede8680aad1c797deac3fed5d4a87b6781d092f695101ab74ccf7e3701b0"
+  },
+  "results": [
+    {"physical_direction": "upper_left", "frames": 102, "decoded_center_row": 3.69, "decoded_center_column": 28.10, "positive_delta_max": 216.20},
+    {"physical_direction": "upper_right", "frames": 102, "decoded_center_row": 43.77, "decoded_center_column": 25.60, "positive_delta_max": 207.06},
+    {"physical_direction": "lower_left", "frames": 103, "decoded_center_row": 3.12, "decoded_center_column": 34.35, "positive_delta_max": 252.85},
+    {"physical_direction": "lower_right", "frames": 103, "decoded_center_row": 44.49, "decoded_center_column": 33.46, "positive_delta_max": 222.05}
+  ],
+  "conclusion": "The byte stream can be grouped row-major, but that raw matrix is not yet aligned with the pressure board's physical display orientation. Physical left/right primarily mapped to decoded row, while physical upper/lower primarily shifted decoded column. A transpose and one or more mirror operations require confirmation with repeatable fixed-point testing before becoming a production display transform.",
+  "boundaries": [
+    "No raw human-contact capture or heatmap image is committed; raw bytes remain ignored under tmp/hardware.",
+    "This is an observation-only mapping check, not calibrated physical pressure or a health result.",
+    "CheckSum remains observation-only and cannot validate these frames."
+  ]
+}
