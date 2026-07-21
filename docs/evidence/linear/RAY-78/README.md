@@ -173,6 +173,17 @@ fixed-coordinate presses before it is used as a production physical orientation.
 This is not a calibrated pressure measurement, a customer result, or a final
 sensor-coordinate mapping.
 
+Applying all eight rectangle-grid orientation candidates to the same aggregate
+data selected `display = raw.T` (pure transpose) with a relative-direction
+score of 0.783; the next candidate, transpose plus a row flip, scored 0.489,
+while the unmodified matrix scored -0.025. The candidate changes the display
+geometry from raw `(48, 64)` to `(64, 48)`, which may be appropriate for a
+physical board whose long axis is vertical even though its canonical byte-grid
+is stored as 48×64. It is **not** a production transform: repeated
+fixed-coordinate testing must confirm physical dimensions, origin and mirror
+state before any UI change. See
+[`orientation-candidates-20260721.json`](orientation-candidates-20260721.json).
+
 For the 60-second capture, direct two's-complement candidates over byte ranges
 `0..3076` and `1..3076` matched only 785/1242 and 210/1242 frames respectively;
 no tested starts `2..5` matched. CheckSum coverage therefore remains unknown.

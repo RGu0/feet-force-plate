@@ -1,0 +1,27 @@
+{
+  "input": "four-direction-mapping-20260721.json",
+  "method": "apply the eight rectangle-grid orientations to the baseline-subtracted matrices and score whether physical upper/lower separates candidate rows and physical left/right separates candidate columns",
+  "candidate_scores": [
+    {"name": "transpose", "score": 0.783453},
+    {"name": "transpose_flip_rows", "score": 0.489270},
+    {"name": "identity_flip_columns", "score": 0.028006},
+    {"name": "identity_flip_both", "score": 0.025065},
+    {"name": "identity", "score": -0.025065},
+    {"name": "identity_flip_rows", "score": -0.028006},
+    {"name": "transpose_flip_columns", "score": -0.489270},
+    {"name": "transpose_flip_both", "score": -0.783453}
+  ],
+  "selected_candidate": {
+    "transform": "display = raw.T",
+    "raw_shape": [48, 64],
+    "candidate_display_shape": [64, 48],
+    "centers": {
+      "physical_upper_left": [28.10, 3.69],
+      "physical_upper_right": [25.60, 43.77],
+      "physical_lower_left": [34.35, 3.12],
+      "physical_lower_right": [33.46, 44.49]
+    }
+  },
+  "conclusion": "Transpose best restores relative physical direction in this one manual dataset. It is a display candidate only: do not apply it to the canonical raw storage matrix or production UI until repeated fixed-point tests confirm the transform and the physical dimensions/origin.",
+  "privacy_boundary": "The transformed heatmap and raw human-contact captures remain ignored under tmp/hardware and are not committed."
+}
