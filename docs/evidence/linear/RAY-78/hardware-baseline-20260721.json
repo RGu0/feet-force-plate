@@ -1,0 +1,28 @@
+{
+  "capture_contract": "non-human-test-load-only",
+  "serial": {
+    "device": "/dev/cu.usbserial-130",
+    "vid_pid": "1A86:7523",
+    "baud": 1000000,
+    "format": "8N1"
+  },
+  "observed_frame": {
+    "header": "FFAA",
+    "length_field": "0C07",
+    "function": "01",
+    "tail": "FA",
+    "observed_total_bytes": 3079,
+    "observed_rate_hz_60s": 20.7,
+    "checksum_coverage": "UNVERIFIED",
+    "payload_encoding": "UNVERIFIED"
+  },
+  "captures": [
+    {"sha256": "71b636814ea34b4f41699fb55fd9826970029b4050b8eafe7c9de85004e8264c", "scenario": "empty_20s", "bytes": 1277952, "candidate_frames": 414},
+    {"sha256": "98d829cc834298e0e7dbe06f04110e2f26b13f772d0a2d8029770597b7bad791", "scenario": "empty_60s", "bytes": 3825664, "candidate_frames": 1242},
+    {"sha256": "143eaa5e0badd59e0606295151dc4297d1124ff273039467da74bde8a54fb470", "scenario": "left_load_20s", "bytes": 1277952, "candidate_frames": 414},
+    {"sha256": "e4c04c8682d91eb5038e20f8fead91b4e2409c28ba0a45aaaa61c82d4c4bbefd", "scenario": "right_load_20s", "bytes": 1277952, "candidate_frames": 413},
+    {"sha256": "826120ee7d7de167a9e34542dbd7c8ce35b0511ac86316fa9f8d0d1ac49ac85e", "scenario": "right_pressed_20s", "bytes": 1277952, "candidate_frames": 415},
+    {"sha256": "6b84cc3aaaaee8927a3f43629bb15d7d26cb7629cfa257b3d643ce6b54235315", "scenario": "empty_after_removal_20s", "bytes": 1277952, "candidate_frames": 415},
+    {"sha256": "2c2022170a226344b1c33fb5e004c4e9ddf1dd90c240831f3831bbaa9aea8f63", "scenario": "empty_10m_sustained", "duration_seconds": 600.0, "bytes": 38199296, "candidate_frames": 12389, "candidate_rate_hz": 20.6483, "contiguous_3079_byte_gaps": 12372, "total_adjacent_gaps": 12388, "noncontiguous_gap_count": 16}
+  ]
+}
