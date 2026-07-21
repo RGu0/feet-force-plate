@@ -184,6 +184,15 @@ fixed-coordinate testing must confirm physical dimensions, origin and mirror
 state before any UI change. See
 [`orientation-candidates-20260721.json`](orientation-candidates-20260721.json).
 
+An independent repeat of the same four 5-second directions plus empty-board
+baseline selected pure transpose again, now with a stronger score of 1.309.
+The candidate centres separated into upper-left `(17.08, 0.07)`, upper-right
+`(16.31, 46.72)`, lower-left `(41.33, 0.15)`, and lower-right `(47.61, 46.92)`.
+This materially strengthens the display-orientation hypothesis but does not
+verify the physical origin, dimensions, mirror state, payload semantics, or
+calibration. See
+[`four-direction-repeat-20260721.json`](four-direction-repeat-20260721.json).
+
 For the 60-second capture, direct two's-complement candidates over byte ranges
 `0..3076` and `1..3076` matched only 785/1242 and 210/1242 frames respectively;
 no tested starts `2..5` matched. CheckSum coverage therefore remains unknown.
