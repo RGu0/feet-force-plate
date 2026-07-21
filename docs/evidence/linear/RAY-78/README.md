@@ -98,6 +98,30 @@ offset 3,077 in any of the 12,359 frames. The compact frame format therefore
 has a stable boundary but an unverified CheckSum rule and payload encoding. See
 [`compact-frame-validation-20260721.json`](compact-frame-validation-20260721.json).
 
+### Observed compact hardware-interface mode
+
+The client now exposes `ProtocolProfile.observed_compact_8bit(...)` for this
+observed 3,079-byte structure. It deliberately does **not** treat the
+contradictory `0C07` length field as an enforced wire-length assertion, and it
+uses the candidate CheckSum in `OBSERVE` mode rather than as a hard frame-drop
+filter. Each structurally complete candidate is decoded as the immutable,
+row-major `uint8` grid `frame[5:3077].reshape(48, 64)`.
+
+For traceability, every candidate CheckSum is counted and a mismatch produces
+the quality flags `CHECKSUM_NOT_ENFORCED` and
+`CHECKSUM_MISMATCH_OBSERVED`; the compact mapping also carries
+`COMPACT_8BIT_PAYLOAD_UNVERIFIED` and `PROTOCOL_PROFILE_UNVERIFIED`. This
+allows later forensic analysis without falsely claiming that CheckSum, payload
+semantics, or calibrated pressure values are known.
+
+An automated replay of the timestamped non-human raw capture through this
+profile decoded 12,359 frames with monotonic `source_index` 0 through 12,358.
+All 12,359 CheckSums were observed and mismatched under the currently tested
+rule, while hard CheckSum failures remained zero; the structural parser
+reported 59 resynchronisations. The replay is an interface audit, not a new
+live-device capture or protocol verification. Machine-readable result:
+[`compact-parser-replay-20260721.json`](compact-parser-replay-20260721.json).
+
 | Capture | Scenario | Bytes | Candidate frames | Result |
 |---|---:|---:|---:|---|
 | `71b636…e8264c` | 20s empty board | 1,277,952 | 414 | startup prefix 1,767 bytes, then 3079-byte structure |

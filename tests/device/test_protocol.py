@@ -26,6 +26,38 @@ def _frame_bytes(protocol: object, profile: object, values: np.ndarray) -> bytes
 
 
 class ProtocolSurfaceTests(unittest.TestCase):
+    def test_observed_compact_profile_decodes_8bit_grid_without_checksum_filter(self) -> None:
+        protocol = importlib.import_module("client.device.protocol")
+        profile = protocol.ProtocolProfile.observed_compact_8bit(
+            version="do-p4864/observed-compact-test-1"
+        )
+        values = np.arange(48 * 64, dtype=np.uint8).reshape(48, 64)
+        wire_frame = b"".join(
+            (
+                b"\xff\xaa\x0c\x07\x01",
+                values.tobytes(order="C"),
+                b"\x01",  # Deliberately differs from the documented checksum rule.
+                b"\xfa",
+            )
+        )
+
+        parser = protocol.DaoOneP4864Parser(profile, allow_unverified=True)
+        decoded = []
+        for chunk in (wire_frame[:7], wire_frame[7:2050], wire_frame[2050:]):
+            decoded.extend(parser.feed(chunk))
+
+        self.assertEqual(len(wire_frame), 3079)
+        self.assertEqual(len(decoded), 1)
+        np.testing.assert_array_equal(decoded[0].values, values)
+        self.assertEqual(decoded[0].values.dtype, np.dtype("uint8"))
+        self.assertFalse(decoded[0].values.flags.writeable)
+        self.assertIn("PROTOCOL_PROFILE_UNVERIFIED", decoded[0].quality_flags)
+        self.assertIn("CHECKSUM_NOT_ENFORCED", decoded[0].quality_flags)
+        self.assertIn("CHECKSUM_MISMATCH_OBSERVED", decoded[0].quality_flags)
+        self.assertEqual(parser.statistics.checksum_failures, 0)
+        self.assertEqual(parser.statistics.checksum_observations, 1)
+        self.assertEqual(parser.statistics.checksum_mismatches, 1)
+
     def test_protocol_module_exposes_incremental_parser(self) -> None:
         try:
             protocol = importlib.import_module("client.device.protocol")

@@ -1,0 +1,31 @@
+{
+  "input": "dop4864-timed-20260721T064602Z.bin",
+  "input_sha256": "8858c434f34a9939034271a6d0b083e135aee5a89e2f0973306737c48c75e14b",
+  "profile": "do-p4864/observed-compact-8bit",
+  "replay_chunk_bytes": 137,
+  "decoded_frames": 12359,
+  "source_index_range": [0, 12358],
+  "values": {
+    "shape": [48, 64],
+    "dtype": "uint8",
+    "mapping": "frame[5:3077] row-major raw byte grid"
+  },
+  "checksum": {
+    "policy": "OBSERVE",
+    "observations": 12359,
+    "mismatches": 12359,
+    "hard_failures": 0
+  },
+  "structural_resynchronisations": 59,
+  "quality_flags_on_first_frame": [
+    "CHECKSUM_MISMATCH_OBSERVED",
+    "CHECKSUM_NOT_ENFORCED",
+    "COMPACT_8BIT_PAYLOAD_UNVERIFIED",
+    "PROTOCOL_PROFILE_UNVERIFIED"
+  ],
+  "automated_tests": {
+    "command": "UV_CACHE_DIR=/private/tmp/feetforceplate-uv-cache uv run python -m unittest discover -s tests -p 'test_*.py'",
+    "result": "51 passed"
+  },
+  "production_boundary": "This observed compact profile requires allow_unverified=True and must not be represented as a capture-verified production protocol."
+}

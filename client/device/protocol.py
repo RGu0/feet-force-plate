@@ -25,13 +25,31 @@ CHECKSUM_OFFSET = 6_149
 TAIL_OFFSET = 6_150
 FUNCTION_CODE = 0x01
 TAIL = 0xFA
+COMPACT_OBSERVED_FRAME_LENGTH = 3_079
+COMPACT_OBSERVED_CHECKSUM_OFFSET = 3_077
+COMPACT_OBSERVED_TAIL_OFFSET = 3_078
 
 
 class ProfileEvidence(StrEnum):
     """Strength of evidence behind a protocol profile."""
 
     SYNTHETIC = "SYNTHETIC"
+    OBSERVED_STRUCTURAL = "OBSERVED_STRUCTURAL"
     CAPTURE_VERIFIED = "CAPTURE_VERIFIED"
+
+
+class ChecksumPolicy(StrEnum):
+    """Whether a CheckSum mismatch rejects a frame or remains audit-only."""
+
+    REQUIRE = "REQUIRE"
+    OBSERVE = "OBSERVE"
+
+
+class PayloadEncoding(StrEnum):
+    """Payload representation allowed by an explicit wire profile."""
+
+    UINT16_LE_12 = "UINT16_LE_12"
+    UINT8_RAW = "UINT8_RAW"
 
 
 class UnverifiedProtocolProfileError(ValueError):
@@ -48,12 +66,32 @@ class ProtocolProfile:
     checksum_end: int
     evidence: ProfileEvidence
     fixture_sha256: str | None = None
+    frame_length: int = FRAME_LENGTH
+    payload_offset: int = PAYLOAD_OFFSET
+    checksum_offset: int = CHECKSUM_OFFSET
+    tail_offset: int = TAIL_OFFSET
+    enforce_wire_length: bool = True
+    checksum_policy: ChecksumPolicy = ChecksumPolicy.REQUIRE
+    payload_encoding: PayloadEncoding = PayloadEncoding.UINT16_LE_12
 
     def __post_init__(self) -> None:
         if self.length_byte_order not in ("little", "big"):
             raise ValueError("length_byte_order must be 'little' or 'big'")
-        if not 0 <= self.checksum_start < self.checksum_end <= CHECKSUM_OFFSET:
+        if self.frame_length <= 0:
+            raise ValueError("frame_length must be positive")
+        if not FUNCTION_OFFSET < self.payload_offset < self.checksum_offset:
+            raise ValueError("payload must start after the function byte and before CheckSum")
+        if self.tail_offset != self.frame_length - 1:
+            raise ValueError("tail_offset must be the final byte of the frame")
+        if self.checksum_offset != self.tail_offset - 1:
+            raise ValueError("CheckSum must immediately precede the tail")
+        if not 0 <= self.checksum_start < self.checksum_end <= self.checksum_offset:
             raise ValueError("CheckSum coverage must exclude the CheckSum byte")
+        payload_length = self.checksum_offset - self.payload_offset
+        if self.payload_encoding is PayloadEncoding.UINT16_LE_12 and payload_length != 6_144:
+            raise ValueError("12-bit little-endian profiles require a 6144-byte payload")
+        if self.payload_encoding is PayloadEncoding.UINT8_RAW and payload_length != 3_072:
+            raise ValueError("raw uint8 profiles require a 3072-byte payload")
         if self.evidence is ProfileEvidence.CAPTURE_VERIFIED:
             digest = (self.fixture_sha256 or "").lower()
             if len(digest) != 64 or any(char not in string.hexdigits for char in digest):
@@ -103,6 +141,30 @@ class ProtocolProfile:
             fixture_sha256=normalized_digest,
         )
 
+    @classmethod
+    def observed_compact_8bit(cls, *, version: str) -> ProtocolProfile:
+        """Represent the observed 3079-byte stream without treating it as verified.
+
+        The length bytes and CheckSum candidate are retained for diagnostics, but
+        neither causes a frame to be rejected until the compact protocol is
+        independently specified and verified.
+        """
+
+        return cls(
+            version=version,
+            length_byte_order="big",
+            checksum_start=PAYLOAD_OFFSET,
+            checksum_end=COMPACT_OBSERVED_CHECKSUM_OFFSET,
+            evidence=ProfileEvidence.OBSERVED_STRUCTURAL,
+            frame_length=COMPACT_OBSERVED_FRAME_LENGTH,
+            payload_offset=PAYLOAD_OFFSET,
+            checksum_offset=COMPACT_OBSERVED_CHECKSUM_OFFSET,
+            tail_offset=COMPACT_OBSERVED_TAIL_OFFSET,
+            enforce_wire_length=False,
+            checksum_policy=ChecksumPolicy.OBSERVE,
+            payload_encoding=PayloadEncoding.UINT8_RAW,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RawFrame:
@@ -125,6 +187,8 @@ class ProtocolStatistics:
     valid_frames: int = 0
     invalid_frames: int = 0
     checksum_failures: int = 0
+    checksum_observations: int = 0
+    checksum_mismatches: int = 0
     length_failures: int = 0
     function_failures: int = 0
     tail_failures: int = 0
@@ -168,20 +232,25 @@ class DaoOneP4864Parser:
         allow_unverified: bool = False,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         wall_time_ns: Callable[[], int] = time.time_ns,
-        max_buffer_bytes: int = FRAME_LENGTH * 2,
+        max_buffer_bytes: int | None = None,
     ) -> None:
         if profile.evidence is not ProfileEvidence.CAPTURE_VERIFIED and not allow_unverified:
             raise UnverifiedProtocolProfileError(
                 "DO-P4864 profile is not backed by a physical serial fixture"
             )
-        if max_buffer_bytes < FRAME_LENGTH:
-            raise ValueError(f"max_buffer_bytes must be at least {FRAME_LENGTH}")
+        resolved_max_buffer_bytes = (
+            profile.frame_length * 2 if max_buffer_bytes is None else max_buffer_bytes
+        )
+        if resolved_max_buffer_bytes < profile.frame_length:
+            raise ValueError(
+                f"max_buffer_bytes must be at least {profile.frame_length}"
+            )
         self.profile = profile
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
         self._buffer = bytearray()
         self._next_source_index = 0
-        self._max_buffer_bytes = max_buffer_bytes
+        self._max_buffer_bytes = resolved_max_buffer_bytes
         self.statistics = ProtocolStatistics()
 
     @property
@@ -211,11 +280,11 @@ class DaoOneP4864Parser:
 
     def _drain_buffer(self) -> list[RawFrame]:
         decoded: list[RawFrame] = []
-        while self._align_to_header() and len(self._buffer) >= FRAME_LENGTH:
-            candidate = bytes(self._buffer[:FRAME_LENGTH])
+        while self._align_to_header() and len(self._buffer) >= self.profile.frame_length:
+            candidate = bytes(self._buffer[: self.profile.frame_length])
             failure = self._validation_failure(candidate)
             if failure is None:
-                del self._buffer[:FRAME_LENGTH]
+                del self._buffer[: self.profile.frame_length]
                 decoded.append(self._decode(candidate))
                 continue
             self.statistics.invalid_frames += 1
@@ -230,18 +299,22 @@ class DaoOneP4864Parser:
         return decoded
 
     def _validation_failure(self, frame: bytes) -> str | None:
-        wire_length = int.from_bytes(
-            frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
-        )
-        if wire_length != FRAME_LENGTH:
-            return "length"
+        if self.profile.enforce_wire_length:
+            wire_length = int.from_bytes(
+                frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
+            )
+            if wire_length != self.profile.frame_length:
+                return "length"
         if frame[FUNCTION_OFFSET] != FUNCTION_CODE:
             return "function"
-        if frame[TAIL_OFFSET] != TAIL:
+        if frame[self.profile.tail_offset] != TAIL:
             return "tail"
         expected = (-sum(frame[self.profile.checksum_start : self.profile.checksum_end])) & 0xFF
-        if frame[CHECKSUM_OFFSET] != expected:
-            return "checksum"
+        self.statistics.checksum_observations += 1
+        if frame[self.profile.checksum_offset] != expected:
+            self.statistics.checksum_mismatches += 1
+            if self.profile.checksum_policy is ChecksumPolicy.REQUIRE:
+                return "checksum"
         return None
 
     def _align_to_header(self) -> bool:
@@ -273,15 +346,24 @@ class DaoOneP4864Parser:
         self.statistics.discarded_bytes += count
 
     def _decode(self, frame: bytes) -> RawFrame:
-        values = np.frombuffer(
-            frame[PAYLOAD_OFFSET:CHECKSUM_OFFSET], dtype="<u2"
-        ).astype(np.uint16, copy=True)
-        values &= 0x0FFF
+        payload = frame[self.profile.payload_offset : self.profile.checksum_offset]
+        if self.profile.payload_encoding is PayloadEncoding.UINT16_LE_12:
+            values = np.frombuffer(payload, dtype="<u2").astype(np.uint16, copy=True)
+            values &= 0x0FFF
+        else:
+            values = np.frombuffer(payload, dtype=np.uint8).copy()
         values = values.reshape(48, 64)
         values.setflags(write=False)
         quality_flags: set[str] = set()
         if self.profile.evidence is not ProfileEvidence.CAPTURE_VERIFIED:
             quality_flags.add("PROTOCOL_PROFILE_UNVERIFIED")
+        if self.profile.checksum_policy is ChecksumPolicy.OBSERVE:
+            quality_flags.add("CHECKSUM_NOT_ENFORCED")
+            expected = (-sum(frame[self.profile.checksum_start : self.profile.checksum_end])) & 0xFF
+            if frame[self.profile.checksum_offset] != expected:
+                quality_flags.add("CHECKSUM_MISMATCH_OBSERVED")
+        if self.profile.payload_encoding is PayloadEncoding.UINT8_RAW:
+            quality_flags.add("COMPACT_8BIT_PAYLOAD_UNVERIFIED")
         host_monotonic_ns = self._monotonic_ns()
         decoded = RawFrame(
             values=values,
