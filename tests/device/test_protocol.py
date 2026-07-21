@@ -15,7 +15,7 @@ def _synthetic_profile(protocol: object):
 
 
 def _frame_bytes(protocol: object, profile: object, values: np.ndarray) -> bytes:
-    payload = np.asarray(values, dtype=np.uint8).reshape(48, 64).tobytes(order="C")
+    payload = np.asarray(values, dtype=np.uint8).reshape(48, 64).tobytes(order="F")
     frame = bytearray(b"\xff\xaa")
     frame.extend(protocol.FRAME_LENGTH.to_bytes(2, profile.length_byte_order))
     frame.append(0x01)
@@ -46,7 +46,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
         wire_frame = b"".join(
             (
                 b"\xff\xaa\x0c\x07\x01",
-                values.tobytes(order="C"),
+                values.tobytes(order="F"),
                 b"\x01",  # Deliberately differs from the documented checksum rule.
                 b"\xfa",
             )
@@ -60,6 +60,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
         self.assertEqual(len(wire_frame), 3079)
         self.assertEqual(len(decoded), 1)
         np.testing.assert_array_equal(decoded[0].values, values)
+        self.assertEqual(wire_frame[5:53], values[:, 0].tobytes())
         self.assertEqual(decoded[0].values.dtype, np.dtype("uint8"))
         self.assertFalse(decoded[0].values.flags.writeable)
         self.assertIn("PROTOCOL_PROFILE_UNVERIFIED", decoded[0].quality_flags)

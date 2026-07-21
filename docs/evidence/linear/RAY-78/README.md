@@ -87,9 +87,10 @@ Under the user-directed compact-frame hypothesis, the timestamped capture has
 12,359 structurally consistent frames:
 `FF AA | 0C 07 | 01 | 3,072 bytes | candidate CheckSum | FA`. Every candidate
 has function byte `01` and tail `FA`. The 3,072-byte content field can be
-reshaped row-major as a `(48, 64)` **raw uint8 byte grid**; in this empty-board
-capture its bytes range from 0 to 2 (mean 0.006412). This verifies a structural
-byte-grid mapping only, not 12-bit pressure encoding or calibrated units.
+reshaped column-major as a `(48, 64)` **raw uint8 byte grid**; in this
+empty-board capture its bytes range from 0 to 2 (mean 0.006412). This verifies
+a structural byte-grid mapping only, not 12-bit pressure encoding or calibrated
+units.
 
 The documented two's-complement function was re-evaluated against this compact
 hypothesis. Neither content-only coverage `frame[5:3077]` nor
@@ -105,7 +106,7 @@ observed 3,079-byte structure. It deliberately does **not** treat the
 contradictory `0C07` length field as an enforced wire-length assertion, and it
 uses the candidate CheckSum in `OBSERVE` mode rather than as a hard frame-drop
 filter. Each structurally complete candidate is decoded as the immutable,
-row-major `uint8` grid `frame[5:3077].reshape(48, 64)`.
+column-major `uint8` grid `frame[5:3077].reshape((48, 64), order="F")`.
 
 For traceability, every candidate CheckSum is counted and a mismatch produces
 the quality flags `CHECKSUM_NOT_ENFORCED` and
@@ -128,7 +129,7 @@ At the user's direction, the original 6,151-byte layout and the byte-6,150
 tail definition have been removed from the current client runtime contract.
 `FRAME_LENGTH`, `CHECKSUM_OFFSET`, and `TAIL_OFFSET` now define only the
 observed 3,079-byte structure at 3,079, 3,077, and 3,078 respectively; the
-only supported payload encoding is the row-major 48×64 `uint8` raw-byte grid.
+only supported payload encoding is the column-major 48×64 `uint8` raw-byte grid.
 The legacy layout remains above and in the linked JSON analyses as historical
 evidence of the source conflict, not as an executable protocol profile.
 
@@ -150,10 +151,10 @@ confirmation remain outstanding.
 | `8858c4…75e14b` | 10m empty board, host-timestamped candidates | 38,187,663 | 12,359 | 20.598 Hz; raw scan found 12,317/12,358 consecutive 3,079-byte gaps; 41 were non-contiguous |
 
 The 3072 bytes between function byte and CheckSum/tail candidate change under
-left load. Treating it as a row-major 48x64 byte array is an observation-only
-diagnostic: it is not a confirmed data encoding, sensor coordinate mapping, or
-physical pressure unit. The asymmetric left/right response is a hardware-risk
-observation requiring retest with a calibrated load and vendor clarification.
+left load. Their column-major 48x64 coordinate mapping is verified by the
+four-corner test below; their data encoding and physical pressure units remain
+unconfirmed. The asymmetric left/right response is a hardware-risk observation
+requiring retest with a calibrated load and vendor clarification.
 
 ### Four-direction physical-to-display check
 
@@ -185,13 +186,34 @@ state before any UI change. See
 [`orientation-candidates-20260721.json`](orientation-candidates-20260721.json).
 
 An independent repeat of the same four 5-second directions plus empty-board
-baseline selected pure transpose again, now with a stronger score of 1.309.
-The candidate centres separated into upper-left `(17.08, 0.07)`, upper-right
-`(16.31, 46.72)`, lower-left `(41.33, 0.15)`, and lower-right `(47.61, 46.92)`.
-This materially strengthens the display-orientation hypothesis but does not
-verify the physical origin, dimensions, mirror state, payload semantics, or
-calibration. See
-[`four-direction-repeat-20260721.json`](four-direction-repeat-20260721.json).
+baseline originally selected pure transpose again, with a relative-direction
+score of 1.309. That result led to the direct wire-order hypothesis below and
+is retained in [`four-direction-repeat-20260721.json`](four-direction-repeat-20260721.json)
+as historical analysis.
+
+### Verified column-major coordinate mapping
+
+The user then confirmed the candidate against the physical board: wire bytes
+must be interpreted as columns, not as the PDF's stated rows. Bytes `0..47`
+fill column `0` from row `0` to row `47`; the next 48 bytes fill column `1`.
+The explicit decode is therefore:
+
+```python
+uint8(frame[5:3077]).reshape((48, 64), order="F")
+```
+
+The independent four-direction repeat and empty-board baseline produced these
+positive-delta centres `(row, column)`: physical upper-left `(0.23, 0.44)`,
+upper-right `(0.37, 62.63)`, lower-left `(43.37, 0.15)`, and lower-right
+`(45.74, 62.60)`. Thus all four tested physical corners map to their matching
+array corners without transpose or mirror. Sanitized capture hashes, frame
+counts and aggregate values are in
+[`column-major-layout-validation-20260721.json`](column-major-layout-validation-20260721.json).
+
+This supersedes the PDF's row-major layout assertion and the earlier
+transpose-display hypothesis. It does not validate CheckSum coverage, raw value
+semantics, calibrated pressure units, arbitrary interior locations, bad pixels,
+or long-term drift.
 
 For the 60-second capture, direct two's-complement candidates over byte ranges
 `0..3076` and `1..3076` matched only 785/1242 and 210/1242 frames respectively;

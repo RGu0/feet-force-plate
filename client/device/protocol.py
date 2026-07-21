@@ -342,7 +342,9 @@ class DaoOneP4864Parser:
     def _decode(self, frame: bytes) -> RawFrame:
         payload = frame[self.profile.payload_offset : self.profile.checksum_offset]
         values = np.frombuffer(payload, dtype=np.uint8).copy()
-        values = values.reshape(48, 64)
+        # Verified by the four-corner hardware check: each consecutive 48-byte
+        # span is one physical column from top to bottom, then the next column.
+        values = values.reshape((48, 64), order="F")
         values.setflags(write=False)
         quality_flags: set[str] = set()
         if self.profile.evidence is not ProfileEvidence.CAPTURE_VERIFIED:

@@ -116,14 +116,14 @@ class PressureScene:
 
 
 def encode_frame(values: np.ndarray, profile: ProtocolProfile) -> bytes:
-    """Encode one 48x64 matrix using the caller's explicit wire profile."""
+    """Encode one 48x64 matrix as physical columns, top to bottom."""
 
     matrix = np.asarray(values)
     if matrix.shape != (48, 64):
         raise ValueError("DO-P4864 matrices must have shape (48, 64)")
     if np.any(matrix < 0) or np.any(matrix > 255):
         raise ValueError("DO-P4864 synthetic raw bytes must stay within 0..255")
-    payload = matrix.astype(np.uint8, copy=False).tobytes(order="C")
+    payload = matrix.astype(np.uint8, copy=False).tobytes(order="F")
     frame = bytearray(HEADER)
     frame.extend(FRAME_LENGTH.to_bytes(2, profile.length_byte_order))
     frame.append(FUNCTION_CODE)
