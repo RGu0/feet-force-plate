@@ -41,8 +41,9 @@ It specifies the target legacy format as a 6,151-byte total frame:
 | 6,150 | 1 | tail `FA` |
 
 The documented CheckSum helper returns the two's complement of the byte sum
-(`256 - (sum % 256)`). It does **not** show the caller's `pBuf` start or `len`,
-so its coverage range remains unproven by the screenshot alone.
+(`256 - (sum % 256)`). The user clarified that its `pBuf`/`len` arguments are
+the content field only: in a matching 6,151-byte frame it covers exactly the
+6,144 bytes `frame[5:6149]`, and compares the result with `frame[6149]`.
 
 This confirms how a matching 6,151-byte capture must be decoded: reshape the
 little-endian `uint16` payload in row-major order into `(48, 64)` and mask to
@@ -63,22 +64,21 @@ format. The actual content boundary is structurally 3,072 bytes after the
 function byte, before a candidate CheckSum and `FA`. See
 [`frame-boundary-analysis-20260721.json`](frame-boundary-analysis-20260721.json).
 
-### CheckSum validation for the observed 3,079-byte stream
+### CheckSum validation status
 
-The screenshot's helper was applied exactly as `checkSum = (256 - (sum %
-256)) % 256`, treating byte offset 3,077 as the candidate CheckSum and `FA` at
-3,078 as the tail. Because the screenshot does not give the caller's `pBuf`
-and `len`, every possible non-empty contiguous byte span ending no later than
-the candidate CheckSum was searched across 32 independent structural frames.
-No common coverage span matches all 32 frames. The conventional frame-start to
-pre-CheckSum span (`[0:3077]`) matched only 7,767 of 12,359 frames (62.845%),
-and the rate remains 62.871% even when both neighbouring structural intervals
-are exactly 3,079 bytes.
+The correct target test is
+`frame[6149] == (256 - (sum(frame[5:6149]) % 256)) % 256`. The observed
+3,079-byte structure contains only 3,072 bytes after its function byte, so it
+cannot supply the required 6,144-byte content field. Its candidate byte at
+offset 3,077 is therefore not the documented protocol's `frame[6149]`, and no
+valid CheckSum test of the documented rule can be performed on this capture.
 
-Thus the documented CheckSum helper is not validated for the observed compact
-stream; this is not a checksum-failure rate. It may belong to the documented
-6,151-byte protocol or the compact stream may use another CheckSum field,
-coverage, or framing mode. See
+For a strict negative layout check, the documented calculation was nevertheless
+applied literally to every raw 6,151-byte window beginning at an observed
+`FF AA`: `raw[i+6149] == -sum(raw[i+5:i+6149]) mod 256`. It matched 0 of
+12,402 windows, and `raw[i+6150]` was `FA` in 0 of 12,402 windows. This does
+not invalidate the documented algorithm; it confirms that none of the observed
+windows is a frame of the documented 6,151-byte layout. See
 [`checksum-analysis-20260721.json`](checksum-analysis-20260721.json).
 
 | Capture | Scenario | Bytes | Candidate frames | Result |
