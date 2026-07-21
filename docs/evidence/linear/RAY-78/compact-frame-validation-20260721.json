@@ -1,0 +1,47 @@
+{
+  "input": "dop4864-timed-20260721T064602Z.bin",
+  "input_sha256": "8858c434f34a9939034271a6d0b083e135aee5a89e2f0973306737c48c75e14b",
+  "hypothesis": {
+    "total_bytes": 3079,
+    "header": "FFAA",
+    "length_bytes": "0C07",
+    "function_offset": 4,
+    "function_code": "01",
+    "content_offsets": "[5:3077]",
+    "content_bytes": 3072,
+    "candidate_checksum_offset": 3077,
+    "tail_offset": 3078,
+    "tail": "FA"
+  },
+  "structural_validation": {
+    "frames": 12359,
+    "function_code_matches": 12359,
+    "tail_matches": 12359
+  },
+  "content_observation": {
+    "provisional_mapping": "row-major uint8 frame[5:3077].reshape(48, 64)",
+    "minimum": 0,
+    "maximum": 2,
+    "mean": 0.006411830658157348,
+    "not_verified": [
+      "12_bit_encoding",
+      "pressure_units",
+      "calibration"
+    ]
+  },
+  "checksum_validation": {
+    "content_only": {
+      "coverage": "frame[5:3077]",
+      "formula": "(256 - (sum % 256)) % 256",
+      "matches": 0,
+      "frames": 12359
+    },
+    "function_plus_content": {
+      "coverage": "frame[4:3077]",
+      "formula": "(256 - (sum % 256)) % 256",
+      "matches": 0,
+      "frames": 12359
+    }
+  },
+  "conclusion": "The compact 3079-byte boundary is structurally consistent, but its payload encoding and checksum rule remain unverified."
+}

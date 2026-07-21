@@ -81,6 +81,23 @@ not invalidate the documented algorithm; it confirms that none of the observed
 windows is a frame of the documented 6,151-byte layout. See
 [`checksum-analysis-20260721.json`](checksum-analysis-20260721.json).
 
+### Provisional 3,079-byte compact-frame validation
+
+Under the user-directed compact-frame hypothesis, the timestamped capture has
+12,359 structurally consistent frames:
+`FF AA | 0C 07 | 01 | 3,072 bytes | candidate CheckSum | FA`. Every candidate
+has function byte `01` and tail `FA`. The 3,072-byte content field can be
+reshaped row-major as a `(48, 64)` **raw uint8 byte grid**; in this empty-board
+capture its bytes range from 0 to 2 (mean 0.006412). This verifies a structural
+byte-grid mapping only, not 12-bit pressure encoding or calibrated units.
+
+The documented two's-complement function was re-evaluated against this compact
+hypothesis. Neither content-only coverage `frame[5:3077]` nor
+function-plus-content coverage `frame[4:3077]` matches the candidate byte at
+offset 3,077 in any of the 12,359 frames. The compact frame format therefore
+has a stable boundary but an unverified CheckSum rule and payload encoding. See
+[`compact-frame-validation-20260721.json`](compact-frame-validation-20260721.json).
+
 | Capture | Scenario | Bytes | Candidate frames | Result |
 |---|---:|---:|---:|---|
 | `71b636…e8264c` | 20s empty board | 1,277,952 | 414 | startup prefix 1,767 bytes, then 3079-byte structure |
