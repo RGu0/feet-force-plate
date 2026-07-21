@@ -54,6 +54,15 @@ before CheckSum/tail. It therefore must not be converted into the documented
 12-bit pressure array without a matching 6,151-byte golden fixture or vendor
 confirmation of a separate compact-mode protocol.
 
+Ignoring the length field entirely gives the same result. In the timestamped
+10-minute raw file, 12,358 observed structures had `FA` at offset 3,078 and a
+new `FF AA 0C 07 01` immediately at offset 3,079; zero observed headers had
+`FA` at the 6,151-byte target-frame tail offset (6,150). Thus a new complete
+frame starts within the supposed 6,144-byte content region of the documented
+format. The actual content boundary is structurally 3,072 bytes after the
+function byte, before a candidate CheckSum and `FA`. See
+[`frame-boundary-analysis-20260721.json`](frame-boundary-analysis-20260721.json).
+
 | Capture | Scenario | Bytes | Candidate frames | Result |
 |---|---:|---:|---:|---|
 | `71b636…e8264c` | 20s empty board | 1,277,952 | 414 | startup prefix 1,767 bytes, then 3079-byte structure |
