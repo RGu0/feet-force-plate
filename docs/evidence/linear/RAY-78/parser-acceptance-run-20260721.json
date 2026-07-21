@@ -1,0 +1,32 @@
+{
+  "scope": "fresh empty-board physical capture through the current observed compact parser; sanitized aggregate evidence only",
+  "tool": "scripts/run_dop4864_parser_capture.py",
+  "serial": {"device": "/dev/cu.usbserial-130", "baud_rate": 1000000, "format": "8N1"},
+  "requested_duration_seconds": 600.0,
+  "elapsed_duration_seconds": 600.234642125,
+  "raw_capture_sha256": "cd87194cd390263c9aec1f5b4d82ce167423a7ee9352a9f18f7038eaf90c58bc",
+  "raw_capture_bytes": 38210374,
+  "profile": {
+    "frame_length": 3079,
+    "payload_mapping": "uint8(frame[5:3077]).reshape((48, 64), order='F')",
+    "checksum_policy": "OBSERVE",
+    "enforce_wire_length": false
+  },
+  "parser": {
+    "decoded_frames": 12396,
+    "invalid_frames": 14,
+    "resynchronizations": 15,
+    "discarded_bytes": 43090,
+    "peak_buffer_bytes": 6158,
+    "buffered_bytes_at_end": 0,
+    "checksum_observations": 12396,
+    "checksum_mismatches": 12396,
+    "outcome": "COMPLETED",
+    "disconnect_reason": null
+  },
+  "interval_boundary": "Parser emission timestamps can be batched within one serial read and are not per-frame device arrival intervals.",
+  "boundaries": [
+    "Raw capture remains ignored under tmp/hardware and is not committed.",
+    "CheckSum coverage and raw-value pressure semantics remain unverified."
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "scope": "user-operated fixed-object 3x3 spatial mapping check; sanitized aggregate evidence only",
+  "protocol": "observed 3079-byte frame; uint8(frame[5:3077]).reshape((48, 64), order='F')",
+  "method": "five seconds at each 3x3 location; baseline equals the mean of a five-second empty-board capture before and after the grid",
+  "raw_capture_sha256": {
+    "baseline_before": "9c532a4453f01b37ac18d8eae2918e9809a7928041ce6bb9ca4d134b9db972a9",
+    "upper_left": "1dd96485ad4aaf17762c553d2d137ed13694517eeea628632d04afca36ff56fd",
+    "upper_center": "4ded539d90f3a88fc17d8a8b1fff6177689dea9e7b7d2bf3a27581d78d6a8599",
+    "upper_right": "849210bdceeabf567b44f5b331cc64ffa220bfaf31fa16193606c4ed71b41261",
+    "middle_left": "481ad802e72225a5cba3c44172476375a56280d270a6f23ccd241692d7e2c217",
+    "center": "007b71fd90cea7a974e168b35f659631ef4fbaabf5c71708897a90f7d12c68f3",
+    "middle_right": "aad42ed388cd79fd0425ddafad9ee332177e2781b94d995fba85d02bc4c8d9fc",
+    "lower_left": "1ae30c36d93e00658836dcd652a834f84a5abe55171cee94c80156a96a52b348",
+    "lower_center": "d712294ec83db79953cdb9beab640be67a5171be4095dcca12718d377d7311be",
+    "lower_right": "6d0e6a86a67099b4b89779808cdf791cf553a1bb43e6b4de2a7be6570c381191",
+    "baseline_after": "0c3d793c99b069443295c7d46708048cd70da8ba628dbc5068eb57293a70606d"
+  },
+  "baseline": {"before_frames": 103, "after_frames": 103, "mean_absolute_byte_drift": 0.000484, "maximum_absolute_byte_drift": 0.951456},
+  "centres": [
+    {"physical_location": "upper_left", "frames": 104, "row": 2.49, "column": 2.81},
+    {"physical_location": "upper_center", "frames": 102, "row": 0.29, "column": 28.54},
+    {"physical_location": "upper_right", "frames": 103, "row": 2.10, "column": 58.01},
+    {"physical_location": "middle_left", "frames": 103, "row": 19.52, "column": 4.97},
+    {"physical_location": "center", "frames": 103, "row": 19.76, "column": 32.23},
+    {"physical_location": "middle_right", "frames": 103, "row": 20.81, "column": 62.47},
+    {"physical_location": "lower_left", "frames": 103, "row": 43.18, "column": 4.82},
+    {"physical_location": "lower_center", "frames": 104, "row": 42.95, "column": 35.28},
+    {"physical_location": "lower_right", "frames": 103, "row": 40.83, "column": 61.18}
+  ],
+  "conclusion": "The 3x3 physical grid is strictly ordered in decoded rows and columns, supporting the column-major 48x64 coordinate mapping without transpose or mirror.",
+  "boundaries": [
+    "No raw capture or heatmap image is committed; local raw data remains under ignored tmp/hardware.",
+    "This is a coordinate-order test with one fixed object, not a calibration, pressure-unit, linearity, bad-pixel, drift, or health-result test."
+  ]
+}

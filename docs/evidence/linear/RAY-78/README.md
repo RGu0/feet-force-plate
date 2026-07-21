@@ -14,7 +14,9 @@
 - [ ] Physical golden fixture is captured but not promoted: CheckSum coverage and payload encoding are still unverified.
 - [x] Physical 10-minute empty-board sustained raw-link observation.
 - [x] Timestamped 10-minute host-receipt cadence observation. This is limited to structural candidates and host receipt time; it is not device timing or validated parser timing.
-- [ ] In the 10-minute run, measure per-frame arrival jitter, checksum failures, and resynchronisation. The present raw recorder has no per-frame arrival timestamps and the CheckSum profile is unverified.
+- [x] Fresh 10-minute current-parser empty-board run: structural frames, candidate-CheckSum observations, invalid candidates, resynchronisations, buffer state, and disconnect outcome recorded.
+- [x] Fixed-object 3×3 physical mapping check: top/middle/bottom and left/centre/right response centres are strictly ordered under the column-major mapping.
+- [ ] Device per-frame arrival jitter remains unmeasurable from parser emission timestamps because a serial read can contain multiple frames; CheckSum profile remains unverified.
 - [ ] Calibration, units, bad pixels, drift, and device identity.
 - [ ] Reproducible final hardware baseline report.
 
@@ -214,6 +216,37 @@ This supersedes the PDF's row-major layout assertion and the earlier
 transpose-display hypothesis. It does not validate CheckSum coverage, raw value
 semantics, calibrated pressure units, arbitrary interior locations, bad pixels,
 or long-term drift.
+
+### Fixed-object 3×3 spatial check
+
+Using the same small fixed object, the operator captured upper-left, upper-centre,
+upper-right, middle-left, centre, middle-right, lower-left, lower-centre and
+lower-right for five seconds each. Two five-second empty-board captures were
+taken before and after; the display baseline is their mean. The response centres
+were strictly ordered by the commanded 3×3 physical grid: top rows `0.29–2.49`,
+middle rows `19.52–20.81`, lower rows `40.83–43.18`; left columns `2.81–4.97`,
+centre columns `28.54–35.28`, right columns `58.01–62.47`.
+
+The two empty-board means differed by 0.000484 raw bytes per cell on average
+(maximum 0.951456), substantially below the recorded contact deltas. This
+confirms a continuous 3×3 **coordinate mapping**, not a physical pressure
+calibration. Sanitized centres, frame counts and raw-capture SHA-256 values are
+in [`grid-3x3-mapping-20260721.json`](grid-3x3-mapping-20260721.json).
+
+### Fresh current-parser 10-minute run
+
+`scripts/run_dop4864_parser_capture.py` captured an empty board for 600.234642
+seconds through the observed compact profile and completed without disconnect.
+It decoded 12,396 structural frames; 14 candidates were invalid, 15 parser
+resynchronisations discarded 43,090 bytes, and no residual parser buffer
+remained. All 12,396 candidate CheckSums mismatched the currently tested rule,
+so the parser correctly retained `OBSERVE` mode rather than dropping data.
+
+The parser's intra-process interval p50/p95 values must not be treated as device
+arrival jitter: multiple frames are timestamped while one serial read is being
+decoded. The earlier host-polling candidate cadence remains the only available
+host-arrival observation. See
+[`parser-acceptance-run-20260721.json`](parser-acceptance-run-20260721.json).
 
 For the 60-second capture, direct two's-complement candidates over byte ranges
 `0..3076` and `1..3076` matched only 785/1242 and 210/1242 frames respectively;
