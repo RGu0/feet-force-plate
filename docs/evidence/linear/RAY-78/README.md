@@ -25,6 +25,35 @@ The field `0C07` equals 3079 only when read big-endian. This conflicts with the
 manual-derived 6151-byte baseline and blocks promotion of the existing 6151-byte
 parser to production.
 
+## User-provided protocol structure
+
+The user supplied [a protocol-structure screenshot](user-provided-frame-structure-20260721.png)
+(SHA-256 `97508e5d530bc04403348791dd45f97f5d1287ff31f624457a390e489d6de45d`).
+It specifies the target legacy format as a 6,151-byte total frame:
+
+| Offset | Size | Target value / interpretation |
+|---:|---:|---|
+| 0 | 2 | header `FF AA` |
+| 2 | 2 | documented total length `0x1807` |
+| 4 | 1 | function `01` |
+| 5 | 6,144 | 3,072 row-major samples, `uint16` little-endian, 12-bit effective value |
+| 6,149 | 1 | CheckSum |
+| 6,150 | 1 | tail `FA` |
+
+The documented CheckSum helper returns the two's complement of the byte sum
+(`256 - (sum % 256)`). It does **not** show the caller's `pBuf` start or `len`,
+so its coverage range remains unproven by the screenshot alone.
+
+This confirms how a matching 6,151-byte capture must be decoded: reshape the
+little-endian `uint16` payload in row-major order into `(48, 64)` and mask to
+the documented 12-bit range. It does not validate the currently captured
+stream: that stream contains recurring `FF AA 0C 07 01 … FA` structures at
+3,079-byte intervals. Neither byte order for `0C 07` equals documented
+`0x1807`, and the observed structure has only 3,072 bytes after the function
+before CheckSum/tail. It therefore must not be converted into the documented
+12-bit pressure array without a matching 6,151-byte golden fixture or vendor
+confirmation of a separate compact-mode protocol.
+
 | Capture | Scenario | Bytes | Candidate frames | Result |
 |---|---:|---:|---:|---|
 | `71b636…e8264c` | 20s empty board | 1,277,952 | 414 | startup prefix 1,767 bytes, then 3079-byte structure |
@@ -94,12 +123,18 @@ Raw files are retained only under ignored `tmp/hardware/` and are not committed
 or uploaded. The reported SHA-256 values permit local re-identification without
 placing raw pressure data in evidence.
 
+The local file `tmp/hardware/dop4864-timed-20260721T064602Z-provisional-48x64.npz`
+is a provisional `uint8` byte-grid export from the incompatible 3,079-byte
+stream. It is retained for forensic comparison only and must not be used as
+decoded or calibrated pressure data.
+
 ## Next hardware steps
 
 1. Repeat left/right/centre with a calibrated, known load and fixed coordinates.
-2. Obtain vendor protocol clarification for 3079-byte frame format and CheckSum coverage.
-3. Promote only a non-sensitive representative raw fixture after repeated checksum validation.
-4. With a verified profile, complete the 10-minute validated-parser metric pass: per-frame arrival jitter, CheckSum failures, invalid/resync counts, storage behaviour, and memory.
+2. Obtain vendor confirmation of the `0C 07` / 3,079-byte stream or the command/mode needed to emit the documented 6,151-byte format.
+3. Capture a non-sensitive 6,151-byte golden fixture and prove the CheckSum helper's caller coverage range.
+4. Promote only a matching representative raw fixture after repeated checksum validation.
+5. With a verified profile, complete the 10-minute validated-parser metric pass: per-frame arrival jitter, CheckSum failures, invalid/resync counts, storage behaviour, and memory.
 
 ## Commit
 
