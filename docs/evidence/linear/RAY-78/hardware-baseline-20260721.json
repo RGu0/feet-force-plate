@@ -16,6 +16,18 @@
     "checksum_coverage": "UNVERIFIED",
     "payload_encoding": "UNVERIFIED"
   },
+  "acceptance": {
+    "duration_requirement_seconds": 600,
+    "duration_requirement_satisfied": true,
+    "unmet": [
+      "per_frame_arrival_jitter",
+      "checksum_failures",
+      "resynchronisation",
+      "golden_fixture_and_payload_encoding",
+      "calibration_and_device_identity",
+      "reproducible_final_baseline_report"
+    ]
+  },
   "captures": [
     {"sha256": "71b636814ea34b4f41699fb55fd9826970029b4050b8eafe7c9de85004e8264c", "scenario": "empty_20s", "bytes": 1277952, "candidate_frames": 414},
     {"sha256": "98d829cc834298e0e7dbe06f04110e2f26b13f772d0a2d8029770597b7bad791", "scenario": "empty_60s", "bytes": 3825664, "candidate_frames": 1242},

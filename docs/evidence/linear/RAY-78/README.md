@@ -12,8 +12,8 @@
 - [x] Non-human empty-board and controlled left/right-load raw serial captures produced.
 - [ ] Manual 6151-byte / 12-bit / about-12-Hz assertions are contradicted by this hardware capture and cannot remain a production parsing baseline.
 - [ ] Physical golden fixture is captured but not promoted: CheckSum coverage and payload encoding are still unverified.
-- [ ] Physical 30-minute rate/jitter/checksum/resync run.
-- [x] Physical 10-minute empty-board sustained raw-link observation (partial evidence only; it does not substitute for the required 30-minute run).
+- [x] Physical 10-minute empty-board sustained raw-link observation.
+- [ ] In the 10-minute run, measure per-frame arrival jitter, checksum failures, and resynchronisation. The present raw recorder has no per-frame arrival timestamps and the CheckSum profile is unverified.
 - [ ] Calibration, units, bad pixels, drift, and device identity.
 - [ ] Reproducible final hardware baseline report.
 
@@ -46,8 +46,8 @@ no tested starts `2..5` matched. CheckSum coverage therefore remains unknown.
 
 ## Sustained-link observation
 
-The user requested the original 30-minute test be shortened to 10 minutes. The
-completed raw capture duration is 600.0 seconds, with SHA-256
+The acceptance duration was changed from 30 minutes to 10 minutes at the user's
+direction. The completed raw capture duration is 600.0 seconds, with SHA-256
 `2c2022170a226344b1c33fb5e004c4e9ddf1dd90c240831f3831bbaa9aea8f63`.
 It contained 12,389 `FF AA … FA` structural candidates (20.648 Hz). Of 12,388
 adjacent candidate gaps, 12,372 were exactly 3,079 bytes (99.871%); 16 gaps
@@ -58,7 +58,7 @@ were non-contiguous, with observed byte distances
 These are structural continuity measurements only. Because the protocol profile
 and checksum coverage are unverified and this raw recorder stores no per-frame
 arrival timestamps, this result cannot quantify jitter, identify the loss side,
-or satisfy the required 30-minute checksum/resynchronisation acceptance.
+or satisfy the remaining 10-minute checksum/resynchronisation acceptance.
 
 Verification command:
 
@@ -79,10 +79,10 @@ placing raw pressure data in evidence.
 1. Repeat left/right/centre with a calibrated, known load and fixed coordinates.
 2. Obtain vendor protocol clarification for 3079-byte frame format and CheckSum coverage.
 3. Promote only a non-sensitive representative raw fixture after repeated checksum validation.
-4. Run the required 30-minute capture after the verified profile exists; record rate, per-frame arrival jitter, invalid/resync counts, storage behaviour, and memory.
+4. Complete the 10-minute metric pass after the verified profile exists; record per-frame arrival jitter, invalid/resync counts, storage behaviour, and memory.
 
 ## Commit
 
 `779b08e` — hardware baseline evidence and non-human 10-minute sustained-link
 measurement. This issue remains In Progress because fixture promotion, checksum,
-calibration, and 30-minute evidence are incomplete.
+per-frame jitter/resynchronisation metrics, and calibration are incomplete.
