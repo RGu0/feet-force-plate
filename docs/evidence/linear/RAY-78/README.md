@@ -232,6 +232,9 @@ The two empty-board means differed by 0.000484 raw bytes per cell on average
 confirms a continuous 3×3 **coordinate mapping**, not a physical pressure
 calibration. Sanitized centres, frame counts and raw-capture SHA-256 values are
 in [`grid-3x3-mapping-20260721.json`](grid-3x3-mapping-20260721.json).
+Regenerate the local diagnostic image and summary with
+`scripts/render_dop4864_grid_mapping.py`; neither raw captures nor generated
+heatmaps belong in the repository.
 
 ### Fresh current-parser 10-minute run
 
