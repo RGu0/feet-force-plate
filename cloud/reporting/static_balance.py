@@ -75,6 +75,10 @@ class StaticBalanceReportBuilder:
             screening_summary=(
                 f"静态平衡综合筛查指数：{risk.balance_index}/100",
                 f"筛查提示：{risk_label}",
+                *tuple(
+                    f"{stage.stage_id.value} 实际完成时长：{stage.completion_time_s:.1f} 秒"
+                    for stage in features.stages
+                ),
             ),
             risk_prompts=(
                 "综合提示由背景信息、动作完成情况和物理平衡指标按规则合并。",
