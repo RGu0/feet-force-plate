@@ -111,3 +111,21 @@
   - `git diff --check`
     - 待本切片提交前执行。
 - 验证边界：上述为合成 payload 的自动测试；尚未证明 DO-P4864 或任何真实适配器能生成通过契约的真实物理数据。RAY-117/RAY-78 真机、参考人群、目标环境性能、操作员、PDF/打印与临床验证仍未完成。
+
+## 2026-07-22 物理特征管线切片
+
+- 实现文件：`cloud/analysis/feature_parameters.py`、`cloud/analysis/features.py`
+- 测试文件：`tests/cloud/analysis/test_physical_features.py`
+- 关键决策：
+  - 通过真实 N、mm、mm²、s 和身体 ML/AP 坐标计算每阶段 COP、路径、总/ML/AP 速度、RMS、P5-P95 范围、95% 椭圆、总力 CV、接触面积变化。
+  - 阶段派生结果支持闭眼/睁眼、半串联/基线和左右前脚对称差异；所有比值与参数版本化。
+  - 只在连续时间段内计算路径，不跨越超过两个名义间隔的时间缺口；无效帧排除但不解释为受试者风险。
+  - 使用同一物理场景的四点阵列和拆分八点阵列验证结果等价；旧的设备耦合 `FeaturePipeline` 暂保留供历史回归，未作为新 V1 输入。
+- 自动验证：
+  - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_features.py -q`
+    - `4 passed`
+  - `./scripts/local-env.sh python -m pytest tests/cloud -q`
+    - `85 passed, 9 subtests passed`
+  - `git diff --check`
+    - 提交前通过。
+- 验证边界：当前参数和曲线来自合成物理 fixture；真实硬件适配器、采样能力、标定不确定度、冻结参考工件、临床/人工与 PDF 验证仍未完成。
