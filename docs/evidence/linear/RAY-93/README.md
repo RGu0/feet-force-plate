@@ -54,3 +54,17 @@
 
 - 当前仓库基线没有可用的真实分段 fixture、标定资料或经批准专业指标白名单；实现只能提供默认关闭和可审计门控框架。
 - evidence 不保存客户原始压力、身份字段或内部敏感诊断样本。
+
+## 2026-07-22 V1 标准物理能力门控切片
+
+- 实现文件：`cloud/analysis/physical_gates.py`
+- 测试文件：`tests/cloud/analysis/test_physical_gates.py`
+- 关键决策：
+  - 仅允许 V1 静态平衡物理指标白名单；动态步态指标返回 `METRIC_NOT_IN_V1_WHITELIST`。
+  - 门控只读取标准物理 schema、ML/AP、N/mm/mm²/s、测量验证版本、特征版本和质量上下文，不读取设备型号、阵列尺寸或原始计数。
+  - 实际采样率、有效时长、有效帧比例、长缺口、参考工件、适配器批准和算法状态任一不满足即默认关闭。
+- 自动验证：
+  - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_gates.py -q` — `3 passed`
+  - `./scripts/local-env.sh python -m pytest tests/cloud -q` — `104 passed, 9 subtests passed`
+- 限制：合成 fixture 仅用于门控契约；18 Hz/19 s/95% 是发布门槛而非临床 cut-off，真实 RAY-117 适配器、参考工件、临床和人工审批仍未完成。
+- 关联实现 commit：待本切片提交后补写。
