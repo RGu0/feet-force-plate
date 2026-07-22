@@ -85,5 +85,5 @@ Therefore RAY-113 may move only to `In Review`, never `Done`, after commit SHA a
 
 ## Commits
 
-- Implementation: pending commit in this task.
-- Evidence/SHA follow-up: pending.
+- Implementation, tests, plan, and initial evidence: `0fd1b4d`.
+- Evidence SHA follow-up: this README-only follow-up commit.
