@@ -28,7 +28,7 @@
 ## 验证命令和结果
 
 - `./scripts/local-env.sh python -m pytest tests/cloud/reporting/test_static_balance_reporting.py -q` — `3 passed`
-- `./scripts/local-env.sh python -m pytest tests/cloud -q` — `101 passed, 9 subtests passed`
+- `./scripts/local-env.sh python -m pytest tests/cloud -q` — `104 passed, 9 subtests passed`
 - 自动检查覆盖 report_id、版本号、PDF SHA-256、幂等和隐私拒绝词；未使用真实客户或药物数据。
 
 ## 自动测试/真机/人工边界
@@ -39,4 +39,5 @@
 
 ## 关联 commit
 
-- `11a21a7`
+- `11a21a7`（报告服务）
+- `4c2187c`（阶段完成时长摘要）
