@@ -2,56 +2,41 @@
 
 - Issue: RAY-95
 - URL: https://linear.app/ray-app/issue/RAY-95/统一报告基础版完整版pdf-与打印
-- 抓取时间: 2026-07-20T08:56:11Z
-- 当时状态: Backlog；2026-07-20T09:08:41Z 启动后为 In Progress
+- 抓取时间: 2026-07-22T06:56:00Z
+- 当时状态: In Progress
 - 里程碑: P4：完整报告
 - 优先级: Urgent
-- 当前状态: In Review
-- 关联实现 commit SHA: `7b8ebb0ba90fbda6b062ffd845528986c37c2c73`
 
 ## 验收条目快照
 
-- [ ] 有效会话结束后本地生成 BASIC_READY 版本
-- [ ] 云端原始数据完整且算法完成后生成 CLOUD_COMPLETE 新版本
-- [ ] 报告版本不可覆盖；算法升级重算生成新 report_version
-- [ ] 固定结构：筛查摘要 → 风险提示 → 核心指标 → 专业参数与曲线 → 通俗说明/建议 → 机构信息
-- [ ] 使用“筛查、风险提示、建议进一步评估”等措辞，不输出确定性疾病诊断
-- [ ] 内部质量详情、调试参数和失败原因不得进入客户 PDF
-- [ ] 机构预览、导出 PDF 和打印
-- [ ] 不提供二维码、公开链接或受试者账号领取
-- [ ] 基础版升级完整后，记录端默认展示最新可交付版本且保留历史版本
-- [ ] PDF 模板、字体、分页、页眉页脚和打印一致性测试
+- [x] 复用同一 `report_id` 追加不可变 `CLOUD_COMPLETE` 版本
+- [x] PDF 工件写入哈希对象键并验证内容哈希
+- [x] 同一 `source_analysis_run_id` 幂等发布
+- [x] 客户文档只输出一个综合指数及安全提示、物理专业参数和曲线
+- [x] 问卷标签、私有 reason code、质量/调试字段不进入客户文档
+- [ ] 嵌入字体、稳定分页、灰阶/彩色打印人工检查
+- [ ] 真实参考工件、硬件适配器、操作员和临床验证
 
 ## 实现文件与关键决策
 
-- 实现：`cloud/reporting/models.py`、`cloud/reporting/builder.py`、`cloud/reporting/pdf.py`、`cloud/reporting/service.py`。
-- 数据库：`cloud/reporting/migrations/0001_reporting.sql`。
-- 测试：`tests/cloud/reporting/test_reporting.py`。
-- 已实现严格客户模式、统一 `report_id` 不可变版本、重算追加、PDF 工件摘要、内部 ID 对象键、对象存储端口和 `report.published.v1`。
-- 本任务不实现本地 BASIC 生成或客户端预览/打印按钮，只验证云端追加 `CLOUD_COMPLETE` 时复用既有报告 ID。
+- `cloud/reporting/static_balance.py`
+- `tests/cloud/reporting/test_static_balance_reporting.py`
+- `StaticBalanceCloudReportService` 复用现有基础报告记录，按源分析运行追加版本，不覆盖历史版本。
+- `StaticBalanceReportBuilder` 将 V1 综合指数作为唯一核心评分，专业区展示四阶段 COP/速度/椭圆参数与时间曲线；客户公开数据不含内部规则追踪和敏感问卷。
+- 仍使用现有最小 PDF 参考渲染器，明确其仅为自动契约测试实现，不能替代正式字体和打印验收。
 
-## 验证命令与逐项结果
+## 验证命令和结果
 
-- `python3 -m unittest tests.cloud.reporting.test_reporting -v`
-  - RED：因 `cloud.reporting.builder` 尚不存在而按预期失败。
-  - GREEN：8 个统一报告/PDF 契约测试全部通过。
-- `python3 -m unittest discover -s tests/cloud/reporting -v`
-  - 回归：8 个测试全部通过，0 failure，0 error。
-- `python3 -m compileall -q cloud/reporting tests/cloud/reporting`
-  - 结果：exit 0。
-- `git diff --check`
-  - 结果：exit 0，无空白错误。
-- `python3 -m unittest tests.cloud.test_migrations -v`
-  - 结果：4 个 Task D 迁移契约测试通过；当前环境没有 PostgreSQL，未执行真实迁移。
-- Task D 最终范围验证：analysis 29、reporting 13、observability 16、migration 4，共 62 个测试通过；根目录默认 discovery 因基线没有根测试发现入口而得到 0 tests，未作为通过证据。
+- `./scripts/local-env.sh python -m pytest tests/cloud/reporting/test_static_balance_reporting.py -q` — `3 passed`
+- `./scripts/local-env.sh python -m pytest tests/cloud -q` — `101 passed, 9 subtests passed`
+- 自动检查覆盖 report_id、版本号、PDF SHA-256、幂等和隐私拒绝词；未使用真实客户或药物数据。
 
-## 自动测试、真机与人工验证边界
+## 自动测试/真机/人工边界
 
-- 自动测试计划覆盖报告 ID 复用、版本不可变、重算追加、内容白名单、PDF 工件摘要和禁止诊断措辞/字段。
-- 中文字体嵌入、分页、目标 Windows 打印机和物理打印一致性需要人工/外部环境验证；完成前不应标记 Done。
+- 自动：合成标准物理会话和规则结果。
+- 真机/人工：RAY-117 输入、字体/分页/打印、灰阶曲线、参考工件、操作员一致性和临床验证未完成。
+- 因此 issue 完成自动切片后应进入 In Review，不能标 Done。
 
-## 失败或限制
+## 关联 commit
 
-- 本任务不拥有本地 BASIC 报告生成与客户端打印流程；自动测试通过 seed 的 BASIC 版本验证云端复用 report_id。
-- `MinimalPdfRenderer` 是无外部依赖的有效 PDF 契约渲染器，不宣称通过中文字体、300 DPI 图表、分页视觉或目标打印机验收；生产需替换为批准渲染适配器。
-- evidence 不保存含身份明文的报告样本。
+- 待本切片提交后补写 commit SHA。
