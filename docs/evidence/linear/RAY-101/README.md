@@ -115,5 +115,5 @@ QT_QPA_PLATFORM=offscreen \
 
 ### 补充提交
 
-- UI 连接 implementation commit：`PENDING`
+- UI 连接 implementation commit：`b9addb350d4b36b317a68b1e50ee02196b6a4305`
 - SHA/evidence 回填 commit：`PENDING`
