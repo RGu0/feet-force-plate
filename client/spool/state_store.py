@@ -153,6 +153,8 @@ class StateStore:
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA synchronous=FULL")
+        self._connection.execute("PRAGMA busy_timeout=5000")
         self._migrate()
 
     def close(self) -> None:
@@ -164,6 +166,22 @@ class StateStore:
         with self._lock:
             row = self._connection.execute("PRAGMA journal_mode").fetchone()
             return str(row[0]).lower()
+
+    @property
+    def synchronous_level(self) -> int:
+        """SQLite durability level; FULL is required for sealed-segment state."""
+
+        with self._lock:
+            row = self._connection.execute("PRAGMA synchronous").fetchone()
+            return int(row[0])
+
+    @property
+    def busy_timeout_ms(self) -> int:
+        """Bounded writer contention timeout used by the local state boundary."""
+
+        with self._lock:
+            row = self._connection.execute("PRAGMA busy_timeout").fetchone()
+            return int(row[0])
 
     @property
     def schema_version(self) -> int:
@@ -300,6 +318,53 @@ class StateStore:
                 (task_id, segment_id, state),
             )
 
+    def register_sealed_segment(
+        self,
+        segment_id: str,
+        *,
+        session_id: str,
+        relative_path: str,
+        byte_count: int,
+        sealed_at_ns: int,
+    ) -> None:
+        """Atomically register a verified sealed file and its pending upload."""
+
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT OR IGNORE INTO segments
+                (segment_id, session_id, relative_path, byte_count, state, sealed_at_ns)
+                VALUES (?, ?, ?, ?, 'SEALED', ?)""",
+                (segment_id, session_id, relative_path, byte_count, sealed_at_ns),
+            )
+            state = self._connection.execute(
+                "SELECT state FROM segments WHERE segment_id=?", (segment_id,)
+            ).fetchone()[0]
+            if state != "SEALED":
+                raise ValueError("only SEALED segments may enter the upload queue")
+            self._connection.execute(
+                """INSERT OR IGNORE INTO upload_tasks(upload_task_id, segment_id, state)
+                VALUES (?, ?, 'PENDING')""",
+                (f"upload:{segment_id}", segment_id),
+            )
+
+    def segment_state(self, segment_id: str) -> str:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT state FROM segments WHERE segment_id=?", (segment_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(segment_id)
+        return str(row[0])
+
+    def upload_tasks_for_segment(self, segment_id: str) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT state FROM upload_tasks WHERE segment_id=?
+                ORDER BY upload_task_id""",
+                (segment_id,),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def recover_interrupted_state(self, *, recovered_at_ns: int) -> RecoveryResult:
         with self._lock, self._connection:
             sessions = self._connection.execute(
@@ -312,6 +377,29 @@ class StateStore:
                 "UPDATE upload_tasks SET state='PENDING' WHERE state='UPLOADING'"
             ).rowcount
         return RecoveryResult(sessions, uploads)
+
+    def quarantine_segment_path(self, relative_path: str) -> int:
+        """Make a verified-bad on-disk segment permanently ineligible for upload."""
+
+        with self._lock, self._connection:
+            rows = self._connection.execute(
+                "SELECT segment_id FROM segments WHERE relative_path=?",
+                (relative_path,),
+            ).fetchall()
+            if not rows:
+                return 0
+            segment_ids = [str(row[0]) for row in rows]
+            placeholders = ", ".join("?" for _ in segment_ids)
+            self._connection.execute(
+                f"UPDATE segments SET state='CORRUPT' WHERE segment_id IN ({placeholders})",
+                segment_ids,
+            )
+            self._connection.execute(
+                f"UPDATE upload_tasks SET state='QUARANTINED' "
+                f"WHERE segment_id IN ({placeholders})",
+                segment_ids,
+            )
+            return len(segment_ids)
 
     def session_status(self, session_id: str) -> tuple[str, str, int | None]:
         with self._lock:

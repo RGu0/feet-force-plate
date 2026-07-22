@@ -32,6 +32,8 @@ class StateStoreTests(unittest.TestCase):
 
     def test_database_uses_wal_and_versioned_migrations(self) -> None:
         self.assertEqual(self.store.journal_mode, "wal")
+        self.assertEqual(self.store.synchronous_level, 2)
+        self.assertEqual(self.store.busy_timeout_ms, 5_000)
         self.assertEqual(self.store.schema_version, 1)
         expected = {
             "subject_refs",
