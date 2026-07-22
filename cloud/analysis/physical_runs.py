@@ -8,6 +8,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from cloud.analysis.models import CapabilityStatus
+
 
 class PhysicalRunStatus(StrEnum):
     QUEUED = "QUEUED"
@@ -27,6 +29,7 @@ class PhysicalAnalysisRunKey:
     hardware_adapter_version: str
     input_schema_version: str
     measurement_conformance_version: str
+    calibration_profile_version: str
     uncertainty_profile_version: str
     test_protocol_version: str
     feature_pipeline_version: str
@@ -62,6 +65,7 @@ class PhysicalAnalysisRun:
     error_code: str | None
     started_at: datetime
     completed_at: datetime | None
+    capability_status: CapabilityStatus | None = None
 
 
 class InMemoryPhysicalAnalysisRepository:

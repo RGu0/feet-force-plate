@@ -142,6 +142,15 @@ class AnalysisOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(repository.count(), 0)
 
+    def test_legacy_raw_array_pipeline_rejects_standard_physical_sessions(self) -> None:
+        repository = InMemoryAnalysisRepository()
+        service = orchestrator(repository=repository)
+
+        with self.assertRaisesRegex(ValueError, "PhysicalAnalysisOrchestrator"):
+            service.handle(event(payload_schema_version="physical-pressure-session/1.1"))
+
+        self.assertEqual(repository.count(), 0)
+
     def test_duplicate_delivery_returns_the_same_persisted_run(self) -> None:
         repository = InMemoryAnalysisRepository()
         publisher = InMemoryEventPublisher()

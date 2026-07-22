@@ -26,6 +26,8 @@ V1_STATIC_BALANCE_METRICS = frozenset(
     }
 )
 
+RISK_RELEASE_REQUIRED_METRICS = frozenset({"ellipse_area_95_mm2"})
+
 
 @dataclass(frozen=True, slots=True)
 class PhysicalMetricDescriptor:
@@ -34,6 +36,7 @@ class PhysicalMetricDescriptor:
     definition: str
     input_schema_version: str
     measurement_conformance_version: str
+    calibration_profile_version: str
     uncertainty_profile_version: str
     protocol_version: str
     feature_pipeline_version: str
@@ -52,6 +55,8 @@ class PhysicalCapabilityContext:
     max_gap_nominal_intervals: float
     reference_artifact_sha256: str | None
     adapter_version: str
+    protocol_version: str
+    rule_set_version: str
 
 
 def evaluate_physical_capability(
@@ -68,7 +73,7 @@ def evaluate_physical_capability(
         reasons.append("METRIC_NOT_IN_V1_WHITELIST")
     if session.schema_version != descriptor.input_schema_version:
         reasons.append("INPUT_SCHEMA_MISMATCH")
-    if session.coordinate_frame.value != "SUBJECT_ML_AP":
+    if session.coordinate_frame.value != "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN":
         reasons.append("COORDINATE_FRAME_UNSUPPORTED")
     if (session.coordinate_unit, session.force_unit, session.area_unit, session.time_unit) != (
         "mm",
@@ -84,15 +89,25 @@ def evaluate_physical_capability(
             profile.physical_validation,
             profile.timing_validation,
             profile.coordinate_validation,
+            profile.force_validation,
+            profile.geometry_validation,
         )
     ):
         reasons.append("MEASUREMENT_VALIDATION_INSUFFICIENT")
     if profile.measurement_conformance_version != descriptor.measurement_conformance_version:
         reasons.append("MEASUREMENT_CONFORMANCE_MISMATCH")
+    if profile.calibration_profile_version != descriptor.calibration_profile_version:
+        reasons.append("CALIBRATION_PROFILE_MISMATCH")
     if profile.uncertainty_profile_version != descriptor.uncertainty_profile_version:
         reasons.append("UNCERTAINTY_PROFILE_MISMATCH")
     if features.pipeline_version != descriptor.feature_pipeline_version:
         reasons.append("FEATURE_PIPELINE_MISMATCH")
+    if features.parameters_sha256 != descriptor.feature_parameters_sha256:
+        reasons.append("FEATURE_PARAMETERS_MISMATCH")
+    if context.protocol_version != descriptor.protocol_version:
+        reasons.append("PROTOCOL_VERSION_MISMATCH")
+    if context.rule_set_version != descriptor.algorithm_version:
+        reasons.append("RULE_SET_VERSION_MISMATCH")
     if context.sample_rate_hz < 18.0:
         reasons.append("SAMPLE_RATE_TOO_LOW")
     if context.completed_valid_duration_s < 19.0 or any(
@@ -116,4 +131,29 @@ def evaluate_physical_capability(
         metric_id=descriptor.metric_id,
         status=CapabilityStatus.SUPPORTED if not reasons else CapabilityStatus.UNSUPPORTED,
         internal_reason_codes=tuple(reasons),
+    )
+
+
+def evaluate_risk_release_capability(
+    *,
+    session: PhysicalPressureSession,
+    features: SessionFeatureSet,
+    context: PhysicalCapabilityContext,
+    descriptor: PhysicalMetricDescriptor,
+) -> CapabilityDecision:
+    """Gate the public V1 composite on the exact feature bundle it consumes."""
+
+    decision = evaluate_physical_capability(
+        session=session,
+        features=features,
+        context=context,
+        descriptor=descriptor,
+    )
+    if descriptor.metric_id in RISK_RELEASE_REQUIRED_METRICS:
+        return decision
+    return CapabilityDecision(
+        metric_id=decision.metric_id,
+        status=CapabilityStatus.UNSUPPORTED,
+        internal_reason_codes=decision.internal_reason_codes
+        + ("RISK_RELEASE_METRIC_BUNDLE_MISMATCH",),
     )

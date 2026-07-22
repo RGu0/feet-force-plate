@@ -21,6 +21,7 @@ def make_key(**overrides: object) -> PhysicalAnalysisRunKey:
         "hardware_adapter_version": "adapter/1",
         "input_schema_version": "physical-pressure-session/1.0",
         "measurement_conformance_version": "measurement/1",
+        "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",
         "test_protocol_version": "static-balance/1",
         "feature_pipeline_version": "static-balance-feature-pipeline/1.0",

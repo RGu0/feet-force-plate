@@ -124,6 +124,10 @@ class AnalysisOrchestrator:
     def handle(self, event: SessionIngestedEvent) -> AnalysisRun:
         if event.event_type != "session.ingested.v1":
             raise ValueError("analysis only accepts session.ingested.v1")
+        if event.payload_schema_version.startswith("physical-pressure-session/"):
+            raise ValueError(
+                "standard physical sessions must be handled by PhysicalAnalysisOrchestrator"
+            )
 
         key = AnalysisRunKey(
             tenant_id=event.tenant_id,

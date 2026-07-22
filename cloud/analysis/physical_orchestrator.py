@@ -6,10 +6,17 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from statistics import median
 from typing import Protocol
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.features import SessionFeatureSet, extract_features
+from cloud.analysis.models import CapabilityStatus
+from cloud.analysis.physical_gates import (
+    PhysicalCapabilityContext,
+    PhysicalMetricDescriptor,
+    evaluate_risk_release_capability,
+)
 from cloud.analysis.physical_input import (
     PhysicalPressureSession,
     validate_physical_pressure_session,
@@ -20,6 +27,15 @@ from cloud.analysis.physical_runs import (
     PhysicalAnalysisRunKey,
     PhysicalRunStatus,
 )
+from cloud.analysis.risk_rules import (
+    QuestionnaireSnapshot,
+    evaluate_screening_risk,
+    questionnaire_snapshot_sha256,
+)
+
+
+class QuestionnaireIdentityError(ValueError):
+    """The loaded questionnaire does not match the immutable event identity."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +48,7 @@ class CompleteSessionEvent:
     hardware_adapter_version: str
     input_schema_version: str
     measurement_conformance_version: str
+    calibration_profile_version: str
     uncertainty_profile_version: str
     test_protocol_version: str
     feature_pipeline_version: str
@@ -45,6 +62,10 @@ class CompleteSessionEvent:
 
 class PhysicalSessionLoader(Protocol):
     def load(self, event: CompleteSessionEvent) -> PhysicalPressureSession: ...
+
+
+class QuestionnaireLoader(Protocol):
+    def load(self, event: CompleteSessionEvent) -> QuestionnaireSnapshot: ...
 
 
 class InMemoryPhysicalSessionLoader:
@@ -63,6 +84,24 @@ class InMemoryPhysicalSessionLoader:
         if self.session is None:
             raise ValueError("physical session is unavailable")
         return self.session
+
+
+class InMemoryQuestionnaireLoader:
+    def __init__(
+        self,
+        questionnaire: QuestionnaireSnapshot | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.questionnaire = questionnaire
+        self.error = error
+
+    def load(self, event: CompleteSessionEvent) -> QuestionnaireSnapshot:
+        if self.error is not None:
+            raise self.error
+        if self.questionnaire is None:
+            raise ValueError("questionnaire snapshot is unavailable")
+        return self.questionnaire
 
 
 def _canonical_sha256(value: object) -> str:
@@ -85,10 +124,53 @@ class PhysicalAnalysisOrchestrator:
         loader: PhysicalSessionLoader,
         repository: InMemoryPhysicalAnalysisRepository,
         parameters: FeatureParameters,
+        release_descriptor: PhysicalMetricDescriptor,
+        questionnaire_loader: QuestionnaireLoader,
     ) -> None:
         self.loader = loader
         self.repository = repository
         self.parameters = parameters
+        self.release_descriptor = release_descriptor
+        self.questionnaire_loader = questionnaire_loader
+
+    def _capability_context(
+        self,
+        *,
+        session: PhysicalPressureSession,
+        features: SessionFeatureSet,
+        event: CompleteSessionEvent,
+    ) -> PhysicalCapabilityContext:
+        valid_timestamps = tuple(
+            timestamp
+            for stage in features.stages
+            for timestamp in stage.timestamps_s
+        )
+        deltas = tuple(
+            right - left
+            for left, right in zip(valid_timestamps, valid_timestamps[1:])
+            if right > left
+        )
+        nominal_interval = median(deltas) if deltas else 0.0
+        sample_rate = 1.0 / nominal_interval if nominal_interval > 0 else 0.0
+        max_gap = (
+            max(deltas) / nominal_interval
+            if nominal_interval > 0 and deltas
+            else float("inf")
+        )
+        total_frames = sum(stage.total_frame_count for stage in features.stages)
+        valid_frames = sum(stage.valid_frame_count for stage in features.stages)
+        return PhysicalCapabilityContext(
+            sample_rate_hz=sample_rate,
+            valid_frame_ratio=valid_frames / total_frames if total_frames else 0.0,
+            completed_valid_duration_s=min(
+                stage.completion_time_s for stage in features.stages
+            ),
+            max_gap_nominal_intervals=max_gap,
+            reference_artifact_sha256=event.reference_artifact_sha256,
+            adapter_version=event.hardware_adapter_version,
+            protocol_version=event.test_protocol_version,
+            rule_set_version=event.rule_set_version,
+        )
 
     def handle(self, event: CompleteSessionEvent) -> PhysicalAnalysisRun:
         if event.event_type != "INGESTED_COMPLETE":
@@ -100,6 +182,7 @@ class PhysicalAnalysisOrchestrator:
             hardware_adapter_version=event.hardware_adapter_version,
             input_schema_version=event.input_schema_version,
             measurement_conformance_version=event.measurement_conformance_version,
+            calibration_profile_version=event.calibration_profile_version,
             uncertainty_profile_version=event.uncertainty_profile_version,
             test_protocol_version=event.test_protocol_version,
             feature_pipeline_version=event.feature_pipeline_version,
@@ -138,17 +221,64 @@ class PhysicalAnalysisOrchestrator:
             profile = session.measurement_profile
             if profile.measurement_conformance_version != event.measurement_conformance_version:
                 raise ValueError("measurement conformance does not match event")
+            if profile.calibration_profile_version != event.calibration_profile_version:
+                raise ValueError("calibration profile does not match event")
             if profile.uncertainty_profile_version != event.uncertainty_profile_version:
                 raise ValueError("uncertainty profile does not match event")
             validate_physical_pressure_session(session)
             feature_set: SessionFeatureSet = extract_features(session, self.parameters)
-            ready = replace(
-                candidate,
-                status=PhysicalRunStatus.FEATURES_READY,
-                feature_set=feature_set,
+            if feature_set.pipeline_version != event.feature_pipeline_version:
+                raise ValueError("feature pipeline does not match event")
+            capability = evaluate_risk_release_capability(
+                session=session,
+                features=feature_set,
+                context=self._capability_context(
+                    session=session,
+                    features=feature_set,
+                    event=event,
+                ),
+                descriptor=self.release_descriptor,
             )
-            self.repository.save(ready)
-            return ready
+            if capability.status is not CapabilityStatus.SUPPORTED:
+                unsupported = replace(
+                    candidate,
+                    status=PhysicalRunStatus.UNSUPPORTED,
+                    feature_set=feature_set,
+                    private_trace=capability.internal_reason_codes,
+                    error_code="E-ALG-CAPABILITY",
+                    capability_status=capability.status,
+                    completed_at=datetime.now(UTC),
+                )
+                self.repository.save(unsupported)
+                return unsupported
+            questionnaire = self.questionnaire_loader.load(event)
+            if questionnaire_snapshot_sha256(questionnaire) != event.questionnaire_snapshot_sha256:
+                raise QuestionnaireIdentityError("questionnaire snapshot identity does not match event")
+            risk = evaluate_screening_risk(
+                session=session,
+                features=feature_set,
+                questionnaire=questionnaire,
+            )
+            succeeded = replace(
+                candidate,
+                status=PhysicalRunStatus.SUCCEEDED,
+                feature_set=feature_set,
+                public_result=risk,
+                capability_status=capability.status,
+                completed_at=datetime.now(UTC),
+            )
+            self.repository.save(succeeded)
+            return succeeded
+        except QuestionnaireIdentityError:
+            failed = replace(
+                candidate,
+                status=PhysicalRunStatus.FAILED,
+                private_trace=("QUESTIONNAIRE_IDENTITY_MISMATCH",),
+                error_code="E-ALG-QUESTIONNAIRE",
+                completed_at=datetime.now(UTC),
+            )
+            self.repository.save(failed)
+            return failed
         except Exception:
             failed = replace(
                 candidate,

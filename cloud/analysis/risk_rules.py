@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 from cloud.analysis.features import SessionFeatureSet
@@ -47,6 +49,25 @@ class QuestionnaireSnapshot:
             raise ValueError("age_years cannot be negative")
         if not self.medication_tags.issubset(frozenset(MedicationTag)):
             raise ValueError("unsupported medication category")
+
+
+def questionnaire_snapshot_sha256(questionnaire: QuestionnaireSnapshot) -> str:
+    """Return the deterministic identity digest stored on an AnalysisRun key."""
+
+    payload = {
+        "age_years": questionnaire.age_years,
+        "recent_fall_12m": questionnaire.recent_fall_12m,
+        "recurrent_dizziness": questionnaire.recurrent_dizziness,
+        "medication_tags": sorted(tag.value for tag in questionnaire.medication_tags),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +143,8 @@ def evaluate_screening_risk(
             profile.physical_validation,
             profile.timing_validation,
             profile.coordinate_validation,
+            profile.force_validation,
+            profile.geometry_validation,
         )
     ):
         return ScreeningRiskResult(

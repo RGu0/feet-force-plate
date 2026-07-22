@@ -12,7 +12,7 @@ class InputValidationError(ValueError):
 
 
 class CoordinateFrame(StrEnum):
-    SUBJECT_ML_AP = "SUBJECT_ML_AP"
+    BOARD_TOP_LEFT_X_RIGHT_Y_DOWN = "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"
 
 
 class ValidationState(StrEnum):
@@ -74,18 +74,21 @@ class StopReason(StrEnum):
 class MeasurementProfile:
     profile_version: str
     measurement_conformance_version: str
+    calibration_profile_version: str
     uncertainty_profile_version: str
     physical_validation: ValidationState
     timing_validation: ValidationState
     coordinate_validation: ValidationState
+    force_validation: ValidationState
+    geometry_validation: ValidationState
 
 
 @dataclass(frozen=True, slots=True)
 class SensorCell:
     cell_id: str
-    ml_mm: float
-    ap_mm: float
-    active_area_mm2: float
+    x_mm: float
+    y_mm: float
+    active_area_mm2: float | None
     status: CellStatus
 
 
@@ -145,12 +148,15 @@ _TOP_LEVEL_FIELDS = {
 _PROFILE_FIELDS = {
     "profile_version",
     "measurement_conformance_version",
+    "calibration_profile_version",
     "uncertainty_profile_version",
     "physical_validation",
     "timing_validation",
     "coordinate_validation",
+    "force_validation",
+    "geometry_validation",
 }
-_CELL_FIELDS = {"cell_id", "ml_mm", "ap_mm", "active_area_mm2", "status"}
+_CELL_FIELDS = {"cell_id", "x_mm", "y_mm", "active_area_mm2", "status"}
 _FRAME_FIELDS = {"timestamp_s", "normal_force_n", "quality"}
 _STAGE_FIELDS = {
     "stage_id",
@@ -240,6 +246,10 @@ def _parse_profile(value: object) -> MeasurementProfile:
             raw["measurement_conformance_version"],
             "measurement_conformance_version",
         ),
+        calibration_profile_version=_text(
+            raw["calibration_profile_version"],
+            "calibration_profile_version",
+        ),
         uncertainty_profile_version=_text(
             raw["uncertainty_profile_version"],
             "uncertainty_profile_version",
@@ -254,6 +264,12 @@ def _parse_profile(value: object) -> MeasurementProfile:
             ValidationState,
             raw["coordinate_validation"],
             "coordinate_validation",
+        ),
+        force_validation=_enum(ValidationState, raw["force_validation"], "force_validation"),
+        geometry_validation=_enum(
+            ValidationState,
+            raw["geometry_validation"],
+            "geometry_validation",
         ),
     )
 
@@ -271,14 +287,19 @@ def _parse_cells(value: object) -> tuple[SensorCell, ...]:
         if cell_id in seen:
             raise InputValidationError(f"duplicate cell_id: {cell_id}")
         seen.add(cell_id)
-        active_area = _number(raw["active_area_mm2"], f"cells[{index}].active_area_mm2")
-        if active_area <= 0:
+        raw_area = raw["active_area_mm2"]
+        active_area = (
+            None
+            if raw_area is None
+            else _number(raw_area, f"cells[{index}].active_area_mm2")
+        )
+        if active_area is not None and active_area <= 0:
             raise InputValidationError(f"cells[{index}].active_area_mm2 must be positive")
         cells.append(
             SensorCell(
                 cell_id=cell_id,
-                ml_mm=_number(raw["ml_mm"], f"cells[{index}].ml_mm"),
-                ap_mm=_number(raw["ap_mm"], f"cells[{index}].ap_mm"),
+                x_mm=_number(raw["x_mm"], f"cells[{index}].x_mm"),
+                y_mm=_number(raw["y_mm"], f"cells[{index}].y_mm"),
                 active_area_mm2=active_area,
                 status=_enum(CellStatus, raw["status"], f"cells[{index}].status"),
             )
@@ -447,16 +468,19 @@ def _session_to_payload(session: PhysicalPressureSession) -> dict[str, object]:
         "measurement_profile": {
             "profile_version": profile.profile_version,
             "measurement_conformance_version": profile.measurement_conformance_version,
+            "calibration_profile_version": profile.calibration_profile_version,
             "uncertainty_profile_version": profile.uncertainty_profile_version,
             "physical_validation": profile.physical_validation.value,
             "timing_validation": profile.timing_validation.value,
             "coordinate_validation": profile.coordinate_validation.value,
+            "force_validation": profile.force_validation.value,
+            "geometry_validation": profile.geometry_validation.value,
         },
         "cells": [
             {
                 "cell_id": cell.cell_id,
-                "ml_mm": cell.ml_mm,
-                "ap_mm": cell.ap_mm,
+                "x_mm": cell.x_mm,
+                "y_mm": cell.y_mm,
                 "active_area_mm2": cell.active_area_mm2,
                 "status": cell.status.value,
             }

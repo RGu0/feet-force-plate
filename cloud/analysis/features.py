@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from cloud.analysis.feature_parameters import FeatureParameters
+from cloud.analysis.coordinates import board_to_subject_coordinates
 from cloud.analysis.physical_input import (
     FrameQuality,
     PhysicalPressureSession,
@@ -142,7 +143,7 @@ class StageFeatureSet:
     ml_range_90_mm: float
     ellipse_area_95_mm2: float
     total_force_cv: float
-    contact_area_variation_mm2: float
+    contact_area_variation_mm2: float | None
     timestamps_s: tuple[float, ...]
     cop_ml_mm: tuple[float, ...]
     cop_ap_mm: tuple[float, ...]
@@ -268,10 +269,22 @@ def _extract_stage_features(
     active_indices = tuple(
         index for index, cell in enumerate(session.cells) if cell.status.value == "ACTIVE"
     )
-    ml_coordinates = np.asarray([session.cells[index].ml_mm for index in active_indices])
-    ap_coordinates = np.asarray([session.cells[index].ap_mm for index in active_indices])
-    area_coordinates = np.asarray(
-        [session.cells[index].active_area_mm2 for index in active_indices]
+    subject_coordinates = tuple(
+        board_to_subject_coordinates(
+            x_mm=session.cells[index].x_mm,
+            y_mm=session.cells[index].y_mm,
+            orientation=stage.subject_orientation,
+        )
+        for index in active_indices
+    )
+    ml_coordinates = np.asarray([coordinate[0] for coordinate in subject_coordinates])
+    ap_coordinates = np.asarray([coordinate[1] for coordinate in subject_coordinates])
+    cell_areas = tuple(session.cells[index].active_area_mm2 for index in active_indices)
+    has_unknown_active_area = any(area is None for area in cell_areas)
+    area_coordinates = (
+        None
+        if has_unknown_active_area
+        else np.asarray(cell_areas, dtype=float)
     )
     timestamps: list[float] = []
     cop_ml: list[float] = []
@@ -291,9 +304,10 @@ def _extract_stage_features(
         cop_ml.append(float(np.dot(forces, ml_coordinates) / total_force))
         cop_ap.append(float(np.dot(forces, ap_coordinates) / total_force))
         total_forces.append(total_force)
-        contact_areas.append(
-            float(area_coordinates[forces >= parameters.contact_cell_force_threshold_n].sum())
-        )
+        if area_coordinates is not None:
+            contact_areas.append(
+                float(area_coordinates[forces >= parameters.contact_cell_force_threshold_n].sum())
+            )
 
     if not timestamps:
         raise ValueError(f"stage {stage.stage_id.value} has no valid physical frames")
@@ -341,7 +355,9 @@ def _extract_stage_features(
         ml_range_90_mm=float(np.quantile(ml_array, 0.95) - np.quantile(ml_array, 0.05)),
         ellipse_area_95_mm2=ellipse_area,
         total_force_cv=force_cv,
-        contact_area_variation_mm2=float(np.asarray(contact_areas).std()),
+        contact_area_variation_mm2=(
+            None if has_unknown_active_area else float(np.asarray(contact_areas).std())
+        ),
         timestamps_s=tuple(float(value) for value in timestamp_array),
         cop_ml_mm=tuple(float(value) for value in ml_array),
         cop_ap_mm=tuple(float(value) for value in ap_array),

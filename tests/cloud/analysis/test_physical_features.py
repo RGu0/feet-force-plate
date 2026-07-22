@@ -5,8 +5,13 @@ from copy import deepcopy
 import pytest
 
 from cloud.analysis.feature_parameters import FeatureParameters
+from cloud.analysis.coordinates import board_to_subject_coordinates
 from cloud.analysis.features import extract_features
-from cloud.analysis.physical_input import StageId, parse_physical_pressure_session
+from cloud.analysis.physical_input import (
+    StageId,
+    SubjectOrientation,
+    parse_physical_pressure_session,
+)
 
 from test_physical_input import valid_payload
 
@@ -23,63 +28,67 @@ def _weights(ml_mm: float, ap_mm: float) -> tuple[float, float, float, float]:
     )
 
 
-def _session_payload(split_cells: bool = False) -> dict[str, object]:
+def _session_payload(
+    split_cells: bool = False,
+    *,
+    sample_rate_hz: float = 1.0,
+) -> dict[str, object]:
     payload = valid_payload()
     if split_cells:
         payload["cells"] = [
             {
                 "cell_id": "a1",
-                "ml_mm": -40.0,
-                "ap_mm": -40.0,
+                "x_mm": -40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "a2",
-                "ml_mm": -40.0,
-                "ap_mm": -40.0,
+                "x_mm": -40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "b1",
-                "ml_mm": 40.0,
-                "ap_mm": -40.0,
+                "x_mm": 40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "b2",
-                "ml_mm": 40.0,
-                "ap_mm": -40.0,
+                "x_mm": 40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "c1",
-                "ml_mm": -40.0,
-                "ap_mm": 40.0,
+                "x_mm": -40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "c2",
-                "ml_mm": -40.0,
-                "ap_mm": 40.0,
+                "x_mm": -40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "d1",
-                "ml_mm": 40.0,
-                "ap_mm": 40.0,
+                "x_mm": 40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "d2",
-                "ml_mm": 40.0,
-                "ap_mm": 40.0,
+                "x_mm": 40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 50.0,
                 "status": "ACTIVE",
             },
@@ -88,36 +97,38 @@ def _session_payload(split_cells: bool = False) -> dict[str, object]:
         payload["cells"] = [
             {
                 "cell_id": "a",
-                "ml_mm": -40.0,
-                "ap_mm": -40.0,
+                "x_mm": -40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "b",
-                "ml_mm": 40.0,
-                "ap_mm": -40.0,
+                "x_mm": 40.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "c",
-                "ml_mm": -40.0,
-                "ap_mm": 40.0,
+                "x_mm": -40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "d",
-                "ml_mm": 40.0,
-                "ap_mm": 40.0,
+                "x_mm": 40.0,
+                "y_mm": -40.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
         ]
 
     frames: list[dict[str, object]] = []
-    for timestamp in range(81):
+    frame_count = int(80 * sample_rate_hz) + 1
+    for frame_index in range(frame_count):
+        timestamp = frame_index / sample_rate_hz
         stage_index = min(timestamp // 20, 3)
         local = timestamp % 20
         extent = (stage_index + 1) * 9.0
@@ -225,3 +236,34 @@ def test_invalid_frames_are_excluded_from_physical_metrics() -> None:
     )
 
     assert features.stage(StageId.BILATERAL_EYES_OPEN).valid_frame_count == 19
+
+
+def test_algorithm_rotates_board_coordinates_for_fixed_left_turn() -> None:
+    assert board_to_subject_coordinates(
+        x_mm=10.0,
+        y_mm=20.0,
+        orientation=SubjectOrientation.FORWARD,
+    ) == pytest.approx((10.0, -20.0))
+    assert board_to_subject_coordinates(
+        x_mm=10.0,
+        y_mm=20.0,
+        orientation=SubjectOrientation.LEFT_90,
+    ) == pytest.approx((-20.0, -10.0))
+
+
+def test_feature_extraction_applies_left_turn_to_board_cop() -> None:
+    session = parse_physical_pressure_session(_session_payload())
+    features = extract_features(
+        session,
+        FeatureParameters(
+            version="physical-features/test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    left_forward = features.stage(StageId.SEMI_TANDEM_LEFT_FORWARD)
+    # At t=41 the fixture's board COP is (27/19, -2.0).  The V1 fixed left
+    # turn maps it to subject ML/AP = (-y, -x) = (2.0, -27/19).
+    assert left_forward.cop_ml_mm[1] == pytest.approx(2.0)
+    assert left_forward.cop_ap_mm[1] == pytest.approx(-(27.0 / 19.0))

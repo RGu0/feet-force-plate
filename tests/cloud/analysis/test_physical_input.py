@@ -83,7 +83,7 @@ def valid_payload() -> dict[str, object]:
     return {
         "schema_version": "physical-pressure-session/1.0",
         "session_id": "session-physical-1",
-        "coordinate_frame": "SUBJECT_ML_AP",
+        "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
         "coordinate_unit": "mm",
         "force_unit": "N",
         "area_unit": "mm2",
@@ -91,30 +91,33 @@ def valid_payload() -> dict[str, object]:
         "measurement_profile": {
             "profile_version": "measurement-profile/1",
             "measurement_conformance_version": "measurement-conformance/1",
+            "calibration_profile_version": "calibration/1",
             "uncertainty_profile_version": "uncertainty/1",
             "physical_validation": "VALIDATED",
             "timing_validation": "VALIDATED",
             "coordinate_validation": "VALIDATED",
+            "force_validation": "VALIDATED",
+            "geometry_validation": "VALIDATED",
         },
         "cells": [
             {
                 "cell_id": "a",
-                "ml_mm": -10.0,
-                "ap_mm": 20.0,
+                "x_mm": 0.0,
+                "y_mm": 0.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "b",
-                "ml_mm": 10.0,
-                "ap_mm": 20.0,
+                "x_mm": 20.0,
+                "y_mm": 0.0,
                 "active_area_mm2": 100.0,
                 "status": "ACTIVE",
             },
             {
                 "cell_id": "c",
-                "ml_mm": 0.0,
-                "ap_mm": -20.0,
+                "x_mm": 10.0,
+                "y_mm": 40.0,
                 "active_area_mm2": 75.0,
                 "status": "ACTIVE",
             },
@@ -132,7 +135,7 @@ def test_accepts_irregular_layout_and_preserves_physical_semantics() -> None:
     session = parse_physical_pressure_session(valid_payload())
 
     assert session.schema_version == "physical-pressure-session/1.0"
-    assert session.coordinate_frame is CoordinateFrame.SUBJECT_ML_AP
+    assert session.coordinate_frame is CoordinateFrame.BOARD_TOP_LEFT_X_RIGHT_Y_DOWN
     assert len(session.cells) == 3
     assert session.cells[2].active_area_mm2 == 75.0
     assert [stage.stage_id.value for stage in session.stages] == [
@@ -214,4 +217,21 @@ def test_requires_all_four_canonical_stages() -> None:
     payload["stages"] = payload["stages"][:3]
 
     with pytest.raises(InputValidationError, match="four stages"):
+        parse_physical_pressure_session(payload)
+
+
+def test_preserves_unknown_active_area_without_inventing_a_value() -> None:
+    payload = valid_payload()
+    payload["cells"][0]["active_area_mm2"] = None
+
+    session = parse_physical_pressure_session(payload)
+
+    assert session.cells[0].active_area_mm2 is None
+
+
+def test_requires_force_and_geometry_validation_status() -> None:
+    payload = valid_payload()
+    del payload["measurement_profile"]["force_validation"]
+
+    with pytest.raises(InputValidationError, match="force_validation"):
         parse_physical_pressure_session(payload)
