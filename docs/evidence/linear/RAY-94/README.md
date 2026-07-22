@@ -53,3 +53,13 @@
 - 当前没有批准的真实专业曲线白名单或视觉基准样张；默认目录仍为 DRAFT，测试使用显式批准 fixture 验证发布契约。
 - 自动检查只证明图表模式具有文字替代、线型和标记，不证明实际灰阶/色彩、分页或物理打印可读性。
 - evidence 不保存未脱敏客户曲线或内部调试图。
+
+## 2026-07-22 V1 物理参数与 COP 曲线切片
+
+- 实现文件：`cloud/reporting/static_balance.py`
+- 测试文件：`tests/cloud/reporting/test_static_balance_reporting.py`
+- 结果：同一 CLOUD_COMPLETE 报告中输出唯一 `balance_index`，并展示四阶段 ML/AP COP 时间曲线、COP 路径、平均速度、95% 椭圆面积、睁闭眼比值和左右前脚差异；曲线从标准物理输入时间戳推导，不依赖阵列形状。
+- 隐私：客户文档不含药物标签、问卷原值、私有 reason code、质量字段、对象键或调试字段。
+- 自动验证：`./scripts/local-env.sh python -m pytest tests/cloud/reporting/test_static_balance_reporting.py -q`（3 passed）；全云端 `101 passed, 9 subtests passed`。
+- 未完成：能力审批、真实参考工件、字体/分页、灰阶/彩色打印和人工视觉检查。
+- 关联实现 commit：`11a21a7`。
