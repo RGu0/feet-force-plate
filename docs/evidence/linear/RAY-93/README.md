@@ -67,4 +67,4 @@
   - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_gates.py -q` — `3 passed`
   - `./scripts/local-env.sh python -m pytest tests/cloud -q` — `104 passed, 9 subtests passed`
 - 限制：合成 fixture 仅用于门控契约；18 Hz/19 s/95% 是发布门槛而非临床 cut-off，真实 RAY-117 适配器、参考工件、临床和人工审批仍未完成。
-- 关联实现 commit：待本切片提交后补写。
+- 关联实现 commit：`80ea454`。
