@@ -160,3 +160,31 @@
   - `./scripts/local-env.sh python -m pytest tests/cloud -q`
     - `93 passed, 9 subtests passed`
 - 验证边界：loader、仓储和输入均为内存/合成实现；真实队列至少一次投递、对象存储读取、数据库事务、硬件适配器和目标环境容量仍待集成验证。PDF/打印、临床样本和告警演练未在本切片完成。
+
+## 2026-07-22 板面坐标、能力门控与风险结果闭环
+
+- 当前状态：`In Progress`
+- 关联实现 commit：`84b0277` — `Enforce physical balance analysis pipeline`
+- 适用接口：`physical-pressure-session/1.0`，硬件只传递板面 `x_mm/y_mm`、法向载荷 N、实际时间、几何/面积、质量及版本。
+
+### 本轮实现
+
+- `cloud/analysis/physical_input.py` 只接受 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`、`x_mm/y_mm`；补齐标定、载荷、几何验证状态，允许 `active_area_mm2=null` 并保持其未知状态。
+- `cloud/analysis/coordinates.py` 在算法层将朝前和固定左转 90°阶段的板面坐标归一化为身体 ML/AP；`cloud/analysis/features.py` 再由归一化坐标计算 COP、路径、速度、RMS、范围、椭圆及阶段差异。
+- `cloud/analysis/physical_gates.py` 强制输入、测量一致性、标定、载荷/几何验证、特征参数、协议、规则、参考工件、适配器、采样率、有效帧与时间缺口匹配；综合风险发布只接受其所需椭圆特征束。
+- `cloud/analysis/physical_orchestrator.py` 只在门控通过且问卷快照摘要匹配时生成 `SUCCEEDED` 与公开风险结果；门控失败为 `UNSUPPORTED` 且 `public_result=None`。旧的 48×64 原始阵列编排器拒绝全部 `physical-pressure-session/*` schema，不能绕过物理流水线。
+- `PhysicalAnalysisRunKey` 新增标定版本，继续以不可变版本集合实现幂等与重算。
+
+### 自动验证
+
+- `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_orchestrator.py tests/cloud/analysis/test_physical_gates.py -q`
+  - `12 passed`
+- `./scripts/local-env.sh python -m pytest tests/cloud -q`
+  - `114 passed, 9 subtests passed`
+- `git diff --check`
+  - 通过，无空白错误。
+
+### 验证边界与限制
+
+- 上述结果只使用合成压力会话、内存 loader/仓储和批准状态 fixture；未证明真实适配器能提供 N、面积、方向、时间与不确定度证据。
+- 冻结 60+ 参考工件、临床/前瞻性验证、队列与数据库事务、目标环境性能、PDF/打印人工检查及告警演练仍未完成；RAY-102 必须保持 `In Progress`/后续 `In Review`，不能标记 Done。
