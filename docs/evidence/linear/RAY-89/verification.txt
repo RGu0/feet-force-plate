@@ -1,34 +1,29 @@
 RAY-89 automated verification
-Captured at: 2026-07-20T10:27:01Z
-Runtime: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
+Captured at: 2026-07-21T19:10:00-07:00
+Runtime: uv run --extra dev (CPython 3.11.15)
 
 COMMAND
-python3 -m unittest tests.spool.test_state_store
+uv run --extra dev pytest tests/spool -q
 
 RESULT
-.....
-----------------------------------------------------------------------
-Ran 5 tests in 0.021s
-
-OK
+...................
+19 passed in 0.21s
 
 COMMAND
-python3 -m unittest discover -s tests -p 'test_*.py'
+uv run --extra dev pytest tests/device tests/spool -q
 
 RESULT
-...........................................
-----------------------------------------------------------------------
-Ran 43 tests in 0.077s
-
-OK
+...........................................................
+59 passed in 0.19s
 
 COMMAND
-python3 -m compileall -q client/spool tests/spool client/device tests/device
+uv run --extra dev python -m py_compile client/spool/state_store.py client/spool/segments.py client/spool/recovery.py
 
 RESULT
-exit 0
+passed
 
 BOUNDARY
 Temporary SQLite and an injected ephemeral AES key only. No OS Keychain,
 process-kill crash injection, real disk-full, cloud upload, UI, or manual
-validation was run.
+validation was run. The cleanup test injects only a file-unlink error; it is
+not a disk-full validation.

@@ -213,7 +213,9 @@ class StateStore:
         )
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT OR REPLACE INTO subject_refs VALUES (?, ?)",
+                """INSERT INTO subject_refs(subject_uuid, encrypted_ref) VALUES (?, ?)
+                ON CONFLICT(subject_uuid) DO UPDATE
+                SET encrypted_ref=excluded.encrypted_ref""",
                 (subject_uuid, encrypted),
             )
 
@@ -242,7 +244,13 @@ class StateStore:
         )
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT OR REPLACE INTO consent_records VALUES (?, ?, ?, ?)",
+                """INSERT INTO consent_records(
+                    consent_id, subject_uuid, encrypted_payload, recorded_at_ns
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(consent_id) DO UPDATE SET
+                    subject_uuid=excluded.subject_uuid,
+                    encrypted_payload=excluded.encrypted_payload,
+                    recorded_at_ns=excluded.recorded_at_ns""",
                 (consent_id, subject_uuid, encrypted, recorded_at_ns),
             )
 
@@ -429,14 +437,14 @@ class StateStore:
             )
 
     def offline_snapshot(self) -> OfflineSnapshot:
-        pending = ("SEALED", "PENDING_UPLOAD", "UPLOADING")
+        pending = ("SEALED", "PENDING_UPLOAD", "UPLOADING", "CORRUPT")
         with self._lock:
             row = self._connection.execute(
                 """SELECT terminal_state.last_successful_online_ns,
                     COUNT(DISTINCT segments.session_id),
                     COALESCE(SUM(segments.byte_count), 0)
                 FROM terminal_state
-                LEFT JOIN segments ON segments.state IN (?, ?, ?)
+                LEFT JOIN segments ON segments.state IN (?, ?, ?, ?)
                 WHERE terminal_state.singleton=1""",
                 pending,
             ).fetchone()

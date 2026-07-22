@@ -66,6 +66,29 @@ class StateStoreTests(unittest.TestCase):
         )
         self.assertGreaterEqual(self.keys.calls, 4)
 
+    def test_sensitive_reference_updates_preserve_existing_session_foreign_keys(self) -> None:
+        self.store.put_subject_ref("subject-uuid", b"old-ref")
+        self.store.put_consent_record(
+            "consent-1", "subject-uuid", b"old-consent", recorded_at_ns=10
+        )
+        self.store.create_session(
+            "session-1",
+            subject_uuid="subject-uuid",
+            consent_id="consent-1",
+            lifecycle_status="CLOSED",
+            versions_json=b"{}",
+            started_at_ns=20,
+        )
+
+        self.store.put_subject_ref("subject-uuid", b"new-ref")
+        self.store.put_consent_record(
+            "consent-1", "subject-uuid", b"new-consent", recorded_at_ns=30
+        )
+
+        self.assertEqual(self.store.get_subject_ref("subject-uuid"), b"new-ref")
+        self.assertEqual(self.store.get_consent_record("consent-1"), b"new-consent")
+        self.assertEqual(self.store.session_status("session-1")[0], "CLOSED")
+
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")
         self.store.create_session(
@@ -175,6 +198,30 @@ class StateStoreTests(unittest.TestCase):
         self.assertFalse(self.store.segment_exists("eligible"))
         self.assertTrue(self.store.segment_exists("pending"))
         self.assertTrue(self.store.segment_exists("retained"))
+
+    def test_corrupt_quarantined_data_still_counts_against_offline_quota(self) -> None:
+        self.store.put_subject_ref("subject-uuid", b"opaque")
+        self.store.create_session(
+            "session-1",
+            subject_uuid="subject-uuid",
+            consent_id=None,
+            lifecycle_status="CLOSED",
+            versions_json=b"{}",
+            started_at_ns=1,
+        )
+        self.store.add_segment(
+            "corrupt-1",
+            session_id="session-1",
+            relative_path="session-1/corrupt-1.ffps.corrupt",
+            byte_count=123,
+            state="CORRUPT",
+            sealed_at_ns=1,
+        )
+
+        snapshot = self.store.offline_snapshot()
+
+        self.assertEqual(snapshot.pending_session_count, 1)
+        self.assertEqual(snapshot.pending_bytes, 123)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,13 @@
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
-from client.spool.recovery import RecoveryScanner, seal_and_register
+from client.spool.recovery import (
+    RecoveryScanner,
+    cleanup_acknowledged_segments,
+    seal_and_register,
+)
 from client.spool.segments import ImmutableSegmentWriter
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 from tests.spool.test_segments import StaticKeyProvider, _frame
@@ -116,6 +121,52 @@ class RecoveryScannerTests(unittest.TestCase):
         self.assertTrue(
             (sealed.path.parent / "quarantine" / f"{sealed.path.name}.corrupt").exists()
         )
+
+    def test_acknowledged_file_is_deleted_before_its_state_record_is_finalized(self) -> None:
+        relative_path = "segments/session-1/eligible.ffps"
+        file_path = self.root / relative_path
+        file_path.parent.mkdir(parents=True)
+        file_path.write_bytes(b"acknowledged encrypted bytes")
+        self.store.add_segment(
+            "eligible",
+            session_id="session-1",
+            relative_path=relative_path,
+            byte_count=file_path.stat().st_size,
+            state="ACKNOWLEDGED",
+            sealed_at_ns=1,
+            acknowledged_at_ns=2,
+            retain_until_ns=50,
+        )
+
+        result = cleanup_acknowledged_segments(self.store, self.root, now_ns=100)
+
+        self.assertEqual(result.files_deleted, 1)
+        self.assertEqual(result.records_finalized, 1)
+        self.assertFalse(file_path.exists())
+        self.assertFalse(self.store.segment_exists("eligible"))
+
+    def test_cleanup_delete_error_keeps_acknowledged_state_record(self) -> None:
+        relative_path = "segments/session-1/eligible.ffps"
+        file_path = self.root / relative_path
+        file_path.parent.mkdir(parents=True)
+        file_path.write_bytes(b"acknowledged encrypted bytes")
+        self.store.add_segment(
+            "eligible",
+            session_id="session-1",
+            relative_path=relative_path,
+            byte_count=file_path.stat().st_size,
+            state="ACKNOWLEDGED",
+            sealed_at_ns=1,
+            acknowledged_at_ns=2,
+            retain_until_ns=50,
+        )
+
+        with patch.object(Path, "unlink", side_effect=OSError("simulated disk error")):
+            with self.assertRaises(OSError):
+                cleanup_acknowledged_segments(self.store, self.root, now_ns=100)
+
+        self.assertTrue(file_path.exists())
+        self.assertTrue(self.store.segment_exists("eligible"))
 
 
 if __name__ == "__main__":

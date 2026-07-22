@@ -25,6 +25,12 @@ class ScanResult:
     uploads_requeued: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class CleanupResult:
+    files_deleted: int = 0
+    records_finalized: int = 0
+
+
 def _register_path(
     path: Path,
     restored,
@@ -67,6 +73,38 @@ def seal_and_register(
     restored = writer.verify(sealed)
     _register_path(sealed.path, restored, store, Path(repository_root))
     return sealed
+
+
+def cleanup_acknowledged_segments(
+    store: StateStore,
+    repository_root: str | Path,
+    *,
+    now_ns: int,
+) -> CleanupResult:
+    """Delete only eligible acknowledged files, then finalize their DB records.
+
+    A crash after unlink but before SQLite finalization is safe: a subsequent run
+    sees the eligible record, observes the missing file, and finalizes that record.
+    A deletion error is propagated before the record can be removed.
+    """
+
+    root = Path(repository_root).resolve()
+    files_deleted = 0
+    records_finalized = 0
+    for candidate in store.cleanup_candidates(now_ns=now_ns):
+        path = (root / candidate.relative_path).resolve()
+        if root not in path.parents:
+            raise ValueError("cleanup candidate escapes the configured repository root")
+        if path.exists():
+            path.unlink()
+            _fsync_directory(path.parent)
+            files_deleted += 1
+        store.finalize_segment_cleanup(candidate.segment_id, now_ns=now_ns)
+        records_finalized += 1
+    return CleanupResult(
+        files_deleted=files_deleted,
+        records_finalized=records_finalized,
+    )
 
 
 class RecoveryScanner:
