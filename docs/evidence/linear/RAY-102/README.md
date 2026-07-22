@@ -144,3 +144,19 @@
   - `./scripts/local-env.sh python -m pytest tests/cloud -q`
     - `89 passed, 9 subtests passed`
 - 验证边界：当前为内存仓储与合成版本输入；数据库迁移、完整会话 loader、队列/事务、参考工件和真实环境仍待后续切片。
+
+## 2026-07-22 完整会话触发与特征就绪切片
+
+- 实现文件：`cloud/analysis/physical_orchestrator.py`、`cloud/analysis/physical_runs.py`
+- 测试文件：`tests/cloud/analysis/test_physical_orchestrator.py`
+- 关键决策：
+  - 只接受 `INGESTED_COMPLETE`；其他事件类型不会创建 AnalysisRun。
+  - 触发后通过标准物理会话 loader 重新加载输入，校验 session、schema、测量一致性和不确定度版本，再执行输入校验与物理特征重建。
+  - 运行键包含完整版本身份和特征参数哈希；重复事件返回同一运行，不重复计算或产生冲突结果。
+  - 成功只推进到 `FEATURES_READY`，不提前生成客户结果；异常只持久化 `E-ALG-PHYSICAL-INPUT` 和脱敏私有 reason code，异常详情不出现在公共结果。
+- 自动验证：
+  - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_orchestrator.py -q`
+    - `4 passed`
+  - `./scripts/local-env.sh python -m pytest tests/cloud -q`
+    - `93 passed, 9 subtests passed`
+- 验证边界：loader、仓储和输入均为内存/合成实现；真实队列至少一次投递、对象存储读取、数据库事务、硬件适配器和目标环境容量仍待集成验证。PDF/打印、临床样本和告警演练未在本切片完成。

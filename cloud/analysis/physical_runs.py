@@ -12,6 +12,7 @@ from typing import Any
 class PhysicalRunStatus(StrEnum):
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
+    FEATURES_READY = "FEATURES_READY"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     UNSUPPORTED = "UNSUPPORTED"
