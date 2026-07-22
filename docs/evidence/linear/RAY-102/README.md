@@ -129,3 +129,18 @@
   - `git diff --check`
     - 提交前通过。
 - 验证边界：当前参数和曲线来自合成物理 fixture；真实硬件适配器、采样能力、标定不确定度、冻结参考工件、临床/人工与 PDF 验证仍未完成。
+
+## 2026-07-22 AnalysisRun 版本身份切片
+
+- 实现文件：`cloud/analysis/physical_runs.py`
+- 测试文件：`tests/cloud/analysis/test_physical_run_versioning.py`
+- 关键决策：
+  - 运行唯一身份覆盖 session、manifest、硬件适配器、输入模式、测量一致性、不确定度、协议、特征管线/参数、规则、参考工件、问卷快照和结果模式。
+  - 完整版本集合相同则按不可变 key 幂等；任一版本或哈希变化创建新运行。
+  - 终态运行不可覆盖；失败、不可支持和取消状态保留历史。
+- 自动验证：
+  - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_run_versioning.py -q`
+    - `4 passed`
+  - `./scripts/local-env.sh python -m pytest tests/cloud -q`
+    - `89 passed, 9 subtests passed`
+- 验证边界：当前为内存仓储与合成版本输入；数据库迁移、完整会话 loader、队列/事务、参考工件和真实环境仍待后续切片。
