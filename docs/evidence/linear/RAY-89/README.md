@@ -65,4 +65,4 @@ Detailed output: [verification.txt](verification.txt)
 
 ## Commit
 
-Implementation/tests/evidence commit: pending.
+Implementation commit: `dc6042d` — `Harden offline quota and acknowledged cleanup`.
