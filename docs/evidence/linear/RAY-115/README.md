@@ -38,7 +38,7 @@
 - `scripts/capture_startup_failure_states.py`
   - deterministic capture of all seven public failure/recovery states.
 
-Implementation commit: `PENDING_COMMIT_SHA`
+Implementation commit: `ef26fdb7447ed951ab9322a4dc08bc746675c617`
 
 ## Automated verification
 
