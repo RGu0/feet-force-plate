@@ -39,3 +39,7 @@
 客户报告中的 0–100 分是版本化的“综合筛查评分”，不是临床量表原始分，也不是跌倒概率。算法先根据明确高风险背景、动作完成程度和压力指标确定低/中/高风险，再把分数限制在相应区间内；任何正常的单次压力板表现都不能抵消已经成立的高风险事实。
 
 核心算法输入以 [`standard-physical-input-contract.md`](standard-physical-input-contract.md) 为准，不依赖设备型号、阵列行列数、点尺寸、点间距、原始值类型或通信协议。首款 DO-P4864 的解析和物理换算属于上游硬件适配层，以 [`docs/通信接口设计文档.md`](../通信接口设计文档.md) 为准；在适配器未能输出通过验证的标准物理数据前，不得进入正式物理指标和综合评分。
+# 算法与输入契约索引
+
+- [上游板面物理阵列模式：physical-array-session/1.0](schemas/physical-array-session-1.0.schema.json)
+- [标准物理输入契约与下游身体语义边界](standard-physical-input-contract.md)

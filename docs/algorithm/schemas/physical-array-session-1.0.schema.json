@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "physical-array-session/1.0",
+  "title": "Physical array session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "session_id", "coordinate_frame", "coordinate_unit",
+    "raw_value_unit", "relative_value_unit", "force_unit", "measurement_profile", "uncertainty",
+    "cells", "frames", "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": "physical-array-session/1.0"},
+    "session_id": {"type": "string", "minLength": 1},
+    "coordinate_frame": {"const": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"},
+    "coordinate_unit": {"const": "mm"},
+    "raw_value_unit": {"type": "string", "minLength": 1},
+    "relative_value_unit": {"type": "string", "minLength": 1},
+    "force_unit": {"const": "N"},
+    "measurement_profile": {"type": "object"},
+    "uncertainty": {"type": "object"},
+    "cells": {"type": "array", "minItems": 1},
+    "frames": {"type": "array"},
+    "provenance": {"type": "object"}
+  }
+}

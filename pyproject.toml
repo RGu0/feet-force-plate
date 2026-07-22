@@ -1,0 +1,28 @@
+[project]
+name = "feetforceplate"
+version = "0.1.0"
+description = "足底压力力台 PC 上位机：实时采集、可视化、算法分析、记录回放、报告输出与云端授权管理"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6",
+    "pyqtgraph",
+    "pyserial",
+    "numpy",
+    "scipy",
+    "h5py",
+    "SQLAlchemy",
+    "alembic",
+    "httpx",
+    "cryptography",
+    "Jinja2",
+    "matplotlib",
+    "platformdirs",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller"]
+dev = ["pytest", "pytest-qt"]
+
+[tool.uv]
+package = false

@@ -9,16 +9,33 @@
 | 核心原则 | 算法不读取串口帧、ADC/计数值、行列顺序或设备专用标定参数 |
 | Linear 实施任务 | [RAY-117：硬件标准化层](https://linear.app/ray-app/issue/RAY-117/硬件标准化层任意传感器阵列到统一物理输入) |
 
-## 1. 责任边界
+> **实施边界（2026-07-22）**：本文件的 `physical-pressure-session/1.0` 是下游、身体语义和绝对物理量已经验证后的契约，不是当前 RAY-117 的直接输出。RAY-117 首先交付上游 `physical-array-session/1.0`：板面坐标、不可变原始计数、5 秒空载窗口得出的零点/噪声参考、相对载荷、主机单调时间、质量与版本。未验证已知载荷标定、有效面积或板面到身体方向时，绝不写成 N、Pa、ML/AP 或 COP。
 
-硬件层负责把任意传感器阵列转换为本契约：
+## 0. 上游物理阵列契约
 
 ```text
-设备字节流 / ADC / 原始计数
-  → 帧解析与时间轴
-  → 零点、增益、非线性、温漂、坏点和饱和处理
-  → 感应点尺寸、间距、数量和安装方向换算
-  → 真实物理坐标和真实法向力
+decoded immutable sensor array
+  → board geometry + raw_count
+  → qualifying 5-second unloaded baseline
+  → zero_corrected_count + relative_load_count
+  → physical-array-session/1.0
+  → later verified coordinate/force semantic adapter
+  → physical-pressure-session/1.0
+```
+
+`physical-array-session/1.0` 坐标系为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`。当前 DO-P4864 的用户确认约定为：左上第一个点 `(0, 0) mm`，x 向右、y 向下，48×64 网格，两个方向的点间距均为 `7.99 mm`；源索引是列主序 `column × 48 + row`。供应商图中的 6×6 mm 和 7×7 mm 仅是名义来源数据，电学有效面积仍未验证。
+
+5 秒空载只产生逐点 `zero_offset_count` 与 `noise_mad_count`。当前帧保留 `raw_count`，并分别输出有符号 `zero_corrected_count = raw - zero_offset` 和非负 `relative_load_count = max(zero_corrected, 0)`；不覆盖原始值。`normal_force_n` 仅在已知载荷曲线和不确定性已验证时才可出现，否则为 `null` 且质量状态为降级。
+
+## 1. 责任边界
+
+后续已验证的语义适配层负责把 RAY-117 上游契约转换为本契约：
+
+```text
+physical-array-session/1.0
+  → 已验证的已知载荷标定、有效面积和安装方向
+  → 板面到身体 ML/AP 坐标换算
+  → 真实物理坐标和真实法向力（仅在证据充分时）
   → physical-pressure-session/1.0
 ```
 
@@ -45,7 +62,7 @@ physical-pressure-session/1.0
 | `active_area_mm2` | 单个感应点的有效感应面积，单位 mm² |
 | `timestamp_s` | 会话单调时间，单位 s；必须严格递增 |
 
-硬件层必须完成板面坐标到身体 ML/AP 坐标的转换。受试者正站、固定左转 90°以及左右脚在前时，算法看到的坐标语义始终不变。
+后续经过验证的坐标语义适配层必须完成板面坐标到身体 ML/AP 坐标的转换。受试者正站、固定左转 90°以及左右脚在前时，算法看到的坐标语义始终不变；RAY-117 的板面物理层不推断这些语义。
 
 感应点可以来自规则矩阵，也可以是不等距或非矩形布局。算法按 `cell_id + ml_mm + ap_mm` 处理，不依据行号、列号或数组内存顺序推断物理位置。
 
@@ -94,7 +111,7 @@ physical-pressure-session/1.0
 
 JSON 仅用于说明字段语义；正式传输和存储可以采用更高效的二进制或列式格式，但语义必须一致并受 `schema_version` 约束。
 
-`stages` 中的阶段边界、动作完成状态和前脚信息由测试工作流产生，标准输入组装器只做版本化透传；硬件适配器不得推断、改写或替代客户端动作状态机。硬件适配器只负责物理帧、身体坐标、实际时间和测量质量。
+`stages` 中的阶段边界、动作完成状态和前脚信息由测试工作流产生，标准输入组装器只做版本化透传；硬件适配器不得推断、改写或替代客户端动作状态机。RAY-117 硬件适配器只负责板面物理帧、实际时间和测量质量；身体坐标属于后续语义适配层。
 
 ## 4. 必填信息
 
