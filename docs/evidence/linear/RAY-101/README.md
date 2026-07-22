@@ -66,6 +66,7 @@
 ## 2026-07-21 UI 连接补充
 
 - Linear 重新抓取：2026-07-22T02:29:31.738Z；RAY-101 从 `In Review` 退回 `In Progress` 后已回读确认。
+- 完成状态回读：2026-07-22T02:53:46.502Z；RAY-101 已确认恢复为 `In Review`。
 - 关联 UI issue：RAY-104、RAY-109、RAY-110 均在本轮开始时为 `Backlog`；工作树中已有其未提交视觉实现，本轮不修改、不暂存、不认领这些文件。
 - 范围更新：启动设备初始化、5 秒空载传感器校验及其状态机、页面、算法已移交独立任务；本轮未实现或认领 RAY-113、RAY-114、RAY-115。P-05 只保留现有 `PreflightPort` 注入点。
 
@@ -116,4 +117,4 @@ QT_QPA_PLATFORM=offscreen \
 ### 补充提交
 
 - UI 连接 implementation commit：`b9addb350d4b36b317a68b1e50ee02196b6a4305`
-- SHA/evidence 回填 commit：`PENDING`
+- SHA/evidence 回填 commit：`8079bd4308d8ba20332a9075c4e5d3f950ec0619`
