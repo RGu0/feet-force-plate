@@ -56,4 +56,4 @@ are performed.
 
 ## Commit
 
-Pending commit SHA.
+Implementation commit: `56f995d` — `Implement encrypted session spool recovery`.
