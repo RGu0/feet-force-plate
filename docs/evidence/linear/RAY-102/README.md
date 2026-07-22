@@ -93,3 +93,21 @@
 - 自动：等待受控 uv 环境后执行；当前没有可声称的新 V1 自动测试结果。
 - 真机：RAY-117/RAY-78 仍需力值、坐标、方向、时间和跨适配器证据。
 - 人工/临床：冻结 60+ 参考工件、操作员一致性、PDF/打印与临床/前瞻性验证均未完成。
+
+## 2026-07-22 标准物理输入消费者切片
+
+- 实现文件：`cloud/analysis/physical_input.py`
+- 测试文件：`tests/cloud/analysis/test_physical_input.py`
+- 关键决策：
+  - 只接受 `physical-pressure-session/1.0`、`SUBJECT_ML_AP`、mm/N/mm2/s；未知设备字段在边界拒绝。
+  - 固定四阶段顺序、方向和左右前脚语义；每点几何和每帧力向量长度严格匹配。
+  - 拒绝重复 cell、非正面积、负/非有限力、非递增时间、越界/不连续阶段和非法协议元数据。
+  - 保留 `TECHNICAL_INVALID` 等业务状态供后续规则层区分，不在输入层将其解释为受试者风险。
+- 自动验证：
+  - `./scripts/local-env.sh python -m pytest tests/cloud/analysis/test_physical_input.py -q`
+    - `19 passed`
+  - `./scripts/local-env.sh python -m pytest tests/cloud -q`
+    - `81 passed, 9 subtests passed`
+  - `git diff --check`
+    - 待本切片提交前执行。
+- 验证边界：上述为合成 payload 的自动测试；尚未证明 DO-P4864 或任何真实适配器能生成通过契约的真实物理数据。RAY-117/RAY-78 真机、参考人群、目标环境性能、操作员、PDF/打印与临床验证仍未完成。
