@@ -30,7 +30,7 @@
 - `scripts/capture_startup_validation.py`
   - deterministic capture for connection, 5-second collection, pass, failure, and long-copy states.
 
-Implementation commit: `PENDING_COMMIT_SHA`
+Implementation commit: `35c691f4d35676ee5a42895fd4b55ac2f6082a32`
 
 ## Automated verification
 
