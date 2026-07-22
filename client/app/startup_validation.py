@@ -253,6 +253,7 @@ class StartupValidationWindow(QMainWindow):
             StartupValidationState.LOAD_NOT_EMPTY,
             StartupValidationState.STREAM_INTERRUPTED,
             StartupValidationState.SIGNAL_INVALID,
+            StartupValidationState.SERVICE_REQUIRED,
             StartupValidationState.INTERNAL_ERROR,
         }:
             asset = "status-warning.svg"

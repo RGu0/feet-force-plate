@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -77,6 +77,7 @@ class NewTestDecision:
 class RecoveryResult:
     sessions_marked_incomplete: int
     uploads_requeued: int
+    telemetry_requeued: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,24 @@ class CleanupCandidate:
     segment_id: str
     relative_path: str
     byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryEvent:
+    event_id: str
+    event_type: str
+    schema_version: str
+    payload_json: bytes
+    state: str
+    attempt_count: int
+    created_at_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class StoredValidationResult:
+    validation_run_id: str
+    outcome: str
+    reason: str | None
 
 
 _MIGRATION_1 = """
@@ -139,6 +158,38 @@ INSERT OR IGNORE INTO terminal_state(singleton, last_successful_online_ns)
 VALUES (1, NULL);
 CREATE INDEX IF NOT EXISTS idx_segments_pending ON segments(state, session_id);
 CREATE INDEX IF NOT EXISTS idx_segments_cleanup ON segments(state, retain_until_ns);
+"""
+
+
+_MIGRATION_2 = """
+CREATE TABLE IF NOT EXISTS device_validation_runs (
+    validation_run_id TEXT PRIMARY KEY,
+    previous_validation_run_id TEXT,
+    terminal_id TEXT NOT NULL,
+    device_ref TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    outcome TEXT NOT NULL,
+    reason TEXT,
+    error_code TEXT,
+    diagnostic_id TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    payload_json BLOB NOT NULL,
+    started_at_ns INTEGER NOT NULL,
+    completed_at_ns INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    payload_json BLOB NOT NULL,
+    state TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    created_at_ns INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_device_history
+ON device_validation_runs(device_ref, completed_at_ns DESC, attempt_number DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_pending
+ON telemetry_events(state, created_at_ns, event_id);
 """
 
 
@@ -206,6 +257,144 @@ class StateStore:
             if version < 1:
                 self._connection.executescript(_MIGRATION_1)
                 self._connection.execute("PRAGMA user_version=1")
+            if version < 2:
+                self._connection.executescript(_MIGRATION_2)
+                self._connection.execute("PRAGMA user_version=2")
+
+    def record_validation_audit(
+        self,
+        *,
+        validation_run_id: str,
+        previous_validation_run_id: str | None,
+        terminal_id: str,
+        device_ref: str,
+        attempt_number: int,
+        outcome: str,
+        reason: str | None,
+        error_code: str | None,
+        diagnostic_id: str,
+        schema_version: str,
+        payload_json: bytes,
+        started_at_ns: int,
+        completed_at_ns: int,
+        telemetry_event_id: str,
+        telemetry_schema_version: str,
+        created_at_ns: int,
+    ) -> None:
+        """Atomically persist a safe run summary and queue its telemetry event."""
+
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO device_validation_runs(
+                    validation_run_id, previous_validation_run_id, terminal_id,
+                    device_ref, attempt_number, outcome, reason, error_code,
+                    diagnostic_id, schema_version, payload_json, started_at_ns,
+                    completed_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    validation_run_id,
+                    previous_validation_run_id,
+                    terminal_id,
+                    device_ref,
+                    attempt_number,
+                    outcome,
+                    reason,
+                    error_code,
+                    diagnostic_id,
+                    schema_version,
+                    payload_json,
+                    started_at_ns,
+                    completed_at_ns,
+                ),
+            )
+            self._connection.execute(
+                """INSERT INTO telemetry_events(
+                    event_id, event_type, schema_version, payload_json, state,
+                    attempt_count, created_at_ns
+                ) VALUES (?, 'DEVICE_VALIDATION_RUN', ?, ?, 'PENDING', 0, ?)""",
+                (
+                    telemetry_event_id,
+                    telemetry_schema_version,
+                    payload_json,
+                    created_at_ns,
+                ),
+            )
+
+    def validation_run_payload(self, validation_run_id: str) -> bytes:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT payload_json FROM device_validation_runs
+                WHERE validation_run_id=?""",
+                (validation_run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(validation_run_id)
+        return bytes(row[0])
+
+    def recent_validation_results(
+        self,
+        device_ref: str,
+        *,
+        limit: int,
+    ) -> list[StoredValidationResult]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT validation_run_id, outcome, reason
+                FROM device_validation_runs WHERE device_ref=?
+                ORDER BY completed_at_ns DESC, attempt_number DESC
+                LIMIT ?""",
+                (device_ref, limit),
+            ).fetchall()
+        return [
+            StoredValidationResult(str(row[0]), str(row[1]), row[2])
+            for row in rows
+        ]
+
+    def pending_telemetry_events(self, *, limit: int) -> list[TelemetryEvent]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT event_id, event_type, schema_version, payload_json,
+                    state, attempt_count, created_at_ns
+                FROM telemetry_events WHERE state='PENDING'
+                ORDER BY created_at_ns, event_id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            TelemetryEvent(
+                event_id=str(row[0]),
+                event_type=str(row[1]),
+                schema_version=str(row[2]),
+                payload_json=bytes(row[3]),
+                state=str(row[4]),
+                attempt_count=int(row[5]),
+                created_at_ns=int(row[6]),
+            )
+            for row in rows
+        ]
+
+    def set_telemetry_event_state(
+        self,
+        event_id: str,
+        *,
+        state: str,
+        increment_attempt: bool = False,
+    ) -> None:
+        allowed_states = {"PENDING", "UPLOADING", "ACKNOWLEDGED", "QUARANTINED"}
+        if state not in allowed_states:
+            raise ValueError("unsupported telemetry state")
+        increment = 1 if increment_attempt else 0
+        with self._lock, self._connection:
+            updated = self._connection.execute(
+                """UPDATE telemetry_events SET state=?, attempt_count=attempt_count+?
+                WHERE event_id=?""",
+                (state, increment, event_id),
+            ).rowcount
+        if not updated:
+            raise KeyError(event_id)
 
     def put_subject_ref(self, subject_uuid: str, plaintext: bytes) -> None:
         encrypted = self._codec.encrypt(
@@ -384,7 +573,12 @@ class StateStore:
             uploads = self._connection.execute(
                 "UPDATE upload_tasks SET state='PENDING' WHERE state='UPLOADING'"
             ).rowcount
-        return RecoveryResult(sessions, uploads)
+            telemetry = self._connection.execute(
+                """UPDATE telemetry_events
+                SET state='PENDING', attempt_count=attempt_count+1
+                WHERE state='UPLOADING'"""
+            ).rowcount
+        return RecoveryResult(sessions, uploads, telemetry)
 
     def quarantine_segment_path(self, relative_path: str) -> int:
         """Make a verified-bad on-disk segment permanently ineligible for upload."""

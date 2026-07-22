@@ -43,6 +43,7 @@ class StartupValidationState(StrEnum):
     LOAD_NOT_EMPTY = "LOAD_NOT_EMPTY"
     STREAM_INTERRUPTED = "STREAM_INTERRUPTED"
     SIGNAL_INVALID = "SIGNAL_INVALID"
+    SERVICE_REQUIRED = "SERVICE_REQUIRED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -111,6 +112,10 @@ _STATE_COPY: dict[StartupValidationState, tuple[str, str]] = {
         "设备状态需要重新确认",
         "请保持设备表面空载，然后重新校验。",
     ),
+    StartupValidationState.SERVICE_REQUIRED: (
+        "设备需要技术支持",
+        "请记录诊断编号并联系技术支持。您也可以在确认设备表面空载后再次校验。",
+    ),
     StartupValidationState.INTERNAL_ERROR: (
         "暂时无法完成启动检查",
         "请重新启动软件；如仍无法完成，请记录诊断编号并联系支持。",
@@ -123,6 +128,7 @@ _FAILURE_ACTIONS = {
     StartupValidationState.LOAD_NOT_EMPTY: "清空设备",
     StartupValidationState.STREAM_INTERRUPTED: "重新校验",
     StartupValidationState.SIGNAL_INVALID: "重新校验",
+    StartupValidationState.SERVICE_REQUIRED: "再次校验",
     StartupValidationState.INTERNAL_ERROR: "重试启动检查",
 }
 
@@ -132,6 +138,7 @@ _FAILURE_CODES = {
     StartupValidationState.LOAD_NOT_EMPTY: "E-DEV-103",
     StartupValidationState.STREAM_INTERRUPTED: "E-ACQ-104",
     StartupValidationState.SIGNAL_INVALID: "E-DEV-109",
+    StartupValidationState.SERVICE_REQUIRED: "E-DEV-109",
     StartupValidationState.INTERNAL_ERROR: "E-INI-006",
 }
 
@@ -211,6 +218,8 @@ class StartupValidationCoordinator:
         terminal_id: str,
         app_version: str,
         on_presentation: Callable[[StartupPresentation], None] | None = None,
+        run_policy: Callable[[DeviceValidationRun], DeviceValidationRun] | None = None,
+        run_sink: Callable[[DeviceValidationRun], None] | None = None,
         wall_time_ns: Callable[[], int] = time.time_ns,
         id_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
     ) -> None:
@@ -219,6 +228,8 @@ class StartupValidationCoordinator:
         self._terminal_id = terminal_id
         self._app_version = app_version
         self._on_presentation = on_presentation or (lambda _model: None)
+        self._run_policy = run_policy or (lambda run: run)
+        self._run_sink = run_sink or (lambda _run: None)
         self._wall_time_ns = wall_time_ns
         self._id_factory = id_factory
         self._presentation = presentation_for(StartupValidationState.BOOTSTRAPPING)
@@ -281,11 +292,17 @@ class StartupValidationCoordinator:
                 attempt,
                 device_ref=connection.device_ref,
             )
+        run = self._run_policy(run)
+        self._run_sink(run)
         self._last_run = run
         if run.outcome is ValidationOutcome.PASS:
             self._emit(StartupValidationState.PASSED)
             return run
-        state = self._failure_state(run.reason)
+        state = (
+            StartupValidationState.SERVICE_REQUIRED
+            if run.outcome is ValidationOutcome.SERVICE_REQUIRED
+            else self._failure_state(run.reason)
+        )
         self._emit(state, error_code=run.error_code)
         return run
 
@@ -352,9 +369,16 @@ class StartupValidationCoordinator:
                 state.value,
             ),
         )
-        self._last_run = run
-        self._emit(state, error_code=run.error_code)
-        return run
+        resolved_run = self._run_policy(run)
+        self._run_sink(resolved_run)
+        self._last_run = resolved_run
+        resolved_state = (
+            StartupValidationState.SERVICE_REQUIRED
+            if resolved_run.outcome is ValidationOutcome.SERVICE_REQUIRED
+            else state
+        )
+        self._emit(resolved_state, error_code=resolved_run.error_code)
+        return resolved_run
 
     @staticmethod
     def _failure_state(reason: ValidationReason | None) -> StartupValidationState:

@@ -123,6 +123,7 @@ class DeviceValidationRun:
     statistics: ValidationStatistics | None
     transition_names: tuple[str, ...]
     partial_window_discarded: bool = False
+    failure_policy_version: str = "startup-failure-escalation/1"
     schema_version: str = field(default="device-validation-run/1", init=False)
 
     def __post_init__(self) -> None:
@@ -135,6 +136,7 @@ class DeviceValidationRun:
             self.data_mode_version,
             self.rules_version,
             self.threshold_version,
+            self.failure_policy_version,
             self.diagnostic_id,
         )
         if any(not value for value in required):
@@ -162,6 +164,7 @@ class DeviceValidationRun:
                 "data_mode": self.data_mode_version,
                 "rules": self.rules_version,
                 "threshold": self.threshold_version,
+                "failure_policy": self.failure_policy_version,
             },
             "started_at_wall_ns": self.started_at_wall_ns,
             "completed_at_wall_ns": self.completed_at_wall_ns,

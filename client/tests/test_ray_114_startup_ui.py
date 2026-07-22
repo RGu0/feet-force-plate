@@ -115,3 +115,58 @@ def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -
     assert (assets / "status-success.svg").is_file()
     assert (assets / "status-warning.svg").is_file()
     assert 'Tree("client/app/assets"' in packaging_spec
+
+
+def test_repeated_signal_failure_prompts_support_without_technical_leak(qtbot) -> None:
+    window = StartupValidationWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    window.present(presentation_for(StartupValidationState.SERVICE_REQUIRED))
+
+    assert window.findChild(QLabel, "startupTitle").text() == "设备需要技术支持"
+    assert "联系技术支持" in window.findChild(QLabel, "startupMessage").text()
+    assert [button.text() for button in _primary_buttons(window)] == ["再次校验"]
+    public_copy = " ".join(label.text() for label in window.findChildren(QLabel))
+    assert all(
+        term not in public_copy
+        for term in ("CheckSum", "阈值", "坏点", "堆栈", "串口", "Traceback")
+    )
+
+
+def test_every_failure_state_has_one_primary_action_and_safe_public_copy(qtbot) -> None:
+    window = StartupValidationWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    for state in (
+        StartupValidationState.DEVICE_NOT_FOUND,
+        StartupValidationState.DEVICE_BUSY,
+        StartupValidationState.LOAD_NOT_EMPTY,
+        StartupValidationState.STREAM_INTERRUPTED,
+        StartupValidationState.SIGNAL_INVALID,
+        StartupValidationState.SERVICE_REQUIRED,
+        StartupValidationState.INTERNAL_ERROR,
+    ):
+        window.present(presentation_for(state))
+
+        assert len(_primary_buttons(window)) == 1
+        assert window.findChild(QPushButton, "EXIT_APPLICATION").isVisible()
+        assert window.findChild(QLabel, "startupErrorCode").text().startswith(
+            "诊断编号 E-"
+        )
+        public_copy = " ".join(label.text() for label in window.findChildren(QLabel))
+        assert all(
+            term not in public_copy
+            for term in (
+                "CheckSum",
+                "checksum",
+                "阈值",
+                "坏点",
+                "堆栈",
+                "串口",
+                "Traceback",
+                "/dev/",
+                "COM7",
+            )
+        )

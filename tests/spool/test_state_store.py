@@ -34,7 +34,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 1)
+        self.assertEqual(self.store.schema_version, 2)
         expected = {
             "subject_refs",
             "consent_records",
@@ -43,6 +43,8 @@ class StateStoreTests(unittest.TestCase):
             "upload_tasks",
             "report_versions",
             "terminal_state",
+            "device_validation_runs",
+            "telemetry_events",
         }
         self.assertTrue(expected.issubset(self.store.table_names()))
 

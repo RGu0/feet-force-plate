@@ -81,6 +81,8 @@ def _coordinator(
     *,
     connector: _Connector | None = None,
     result: DeviceValidationRun | None = None,
+    run_policy=None,
+    run_sink=None,
 ):
     service = _Service(result or _run())
     observed = []
@@ -90,6 +92,8 @@ def _coordinator(
         terminal_id="terminal-1",
         app_version="0.1.0-test",
         on_presentation=observed.append,
+        run_policy=run_policy,
+        run_sink=run_sink,
     )
     return coordinator, service, observed
 
@@ -187,3 +191,63 @@ def test_public_presentation_requires_real_progress_not_fake_percentage() -> Non
     assert collecting.progress_mode is StartupProgressMode.DETERMINATE
     assert collecting.progress_fraction == 0.2
     assert collecting.countdown_seconds == 4
+
+
+def test_policy_runs_before_audit_and_service_required_stays_blocked() -> None:
+    recorded = []
+
+    def escalate(run: DeviceValidationRun) -> DeviceValidationRun:
+        return replace(run, outcome=ValidationOutcome.SERVICE_REQUIRED)
+
+    coordinator, _service, observed = _coordinator(
+        result=_run(
+            outcome=ValidationOutcome.RETRYABLE_FAIL,
+            reason=ValidationReason.SIGNAL_INVALID,
+        ),
+        run_policy=escalate,
+        run_sink=recorded.append,
+    )
+
+    run = coordinator.run()
+
+    assert run.outcome is ValidationOutcome.SERVICE_REQUIRED
+    assert recorded == [run]
+    assert observed[-1].state is StartupValidationState.SERVICE_REQUIRED
+    assert "联系" in observed[-1].message
+    assert not coordinator.can_enter_workbench
+
+
+def test_connection_failures_are_also_written_to_the_audit_sink() -> None:
+    recorded = []
+    coordinator, _service, _observed = _coordinator(
+        connector=_Connector([DeviceNotFound("none")]),
+        run_sink=recorded.append,
+    )
+
+    run = coordinator.run()
+
+    assert recorded == [run]
+    assert run.reason is ValidationReason.DEVICE_NOT_FOUND
+
+
+def test_unexpected_errors_use_stable_public_code_and_unique_diagnostic_ids() -> None:
+    ids = iter(("run-1", "diagnostic-1", "run-2", "diagnostic-2"))
+    observed = []
+    connector = _Connector([RuntimeError("private stack one"), RuntimeError("private stack two")])
+    coordinator = StartupValidationCoordinator(
+        connector=connector,
+        service_factory=lambda _connection: _Service(_run()),
+        terminal_id="terminal-1",
+        app_version="0.1.0-test",
+        on_presentation=observed.append,
+        id_factory=lambda: next(ids),
+    )
+
+    first = coordinator.run()
+    second = coordinator.retry()
+
+    assert first.error_code == second.error_code == "E-INI-006"
+    assert first.diagnostic_id != second.diagnostic_id
+    assert observed[-1].state is StartupValidationState.INTERNAL_ERROR
+    public_text = f"{observed[-1].title} {observed[-1].message}"
+    assert "private stack" not in public_text

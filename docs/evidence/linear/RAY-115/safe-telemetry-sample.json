@@ -1,0 +1,37 @@
+{
+  "event_id": "event-opaque-001",
+  "event_type": "DEVICE_VALIDATION_RUN",
+  "schema_version": "device-validation-telemetry/1",
+  "state": "PENDING",
+  "attempt_count": 0,
+  "payload": {
+    "schema_version": "device-validation-run/1",
+    "validation_run_id": "run-opaque-003",
+    "previous_validation_run_id": "run-opaque-002",
+    "terminal_id": "terminal-opaque-001",
+    "device_ref": "ch340-0123456789abcdef0123",
+    "attempt_number": 3,
+    "versions": {
+      "app": "0.1.0",
+      "protocol": "do-p4864-observed-compact-8bit/1",
+      "data_mode": "48x64-uint8-column-major/1",
+      "rules": "startup-baseline/1",
+      "threshold": "startup-baseline-thresholds/1",
+      "failure_policy": "startup-failure-escalation/1"
+    },
+    "started_at_wall_ns": 1784690000000000000,
+    "completed_at_wall_ns": 1784690005000000000,
+    "outcome": "SERVICE_REQUIRED",
+    "reason": "SIGNAL_INVALID",
+    "error_code": "E-DEV-109",
+    "diagnostic_id": "diagnostic-opaque-003",
+    "statistics": null,
+    "transitions": [
+      "WAITING_FOR_EMPTY",
+      "COLLECTING_BASELINE",
+      "VALIDATING",
+      "SERVICE_REQUIRED"
+    ],
+    "partial_window_discarded": true
+  }
+}
