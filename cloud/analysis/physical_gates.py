@@ -95,7 +95,9 @@ def evaluate_physical_capability(
         reasons.append("FEATURE_PIPELINE_MISMATCH")
     if context.sample_rate_hz < 18.0:
         reasons.append("SAMPLE_RATE_TOO_LOW")
-    if context.completed_valid_duration_s < 19.0:
+    if context.completed_valid_duration_s < 19.0 or any(
+        stage.completion_time_s < 19.0 for stage in features.stages
+    ):
         reasons.append("DURATION_TOO_SHORT")
     if context.valid_frame_ratio < 0.95:
         reasons.append("VALID_FRAME_RATIO_TOO_LOW")
