@@ -107,3 +107,7 @@ QT_QPA_PLATFORM=offscreen \
 
 - 已完成：fixture、Qt offscreen 和高 DPI 栅格自检；这是显示副本处理，不改变物理数据或任何报告结论。
 - 尚未完成：真机 DO-P4864→UI latest-frame 桥接端到端、真实脚印观感、12 Hz 实时节律、Windows 目标显示器/缩放及操作员人工验收。完成前保持 `In Review`，不得标 `Done`。
+
+### 本补充关联提交
+
+- 显示美化实现、测试、图像和初始 evidence：`60eed819bc09defd9cdb1639f9efeec456dad63c`。
