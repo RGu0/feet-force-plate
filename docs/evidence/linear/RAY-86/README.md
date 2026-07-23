@@ -6,7 +6,7 @@
 
 ## Acceptance snapshot
 
-- [x] Host gap, parser integrity/resync, queue timeout, storage failure and disconnect all produce `INVALID` and delete the active staging directory.
+- [x] Disconnect, storage failure and continuous five-second loss of valid decoded signal produce `INVALID` and delete the active staging directory; a single structural error/resynchronization is audited rather than invalidating the whole session.
 - [x] Automated quality gate covers no bad point, one/two isolated repaired bad points, adjacent clusters, edge cells, excess baseline-noisy cells and saturation/conversion failure.
 - [x] `INVALID` capture has no formal SQLite session, network handoff, derived artifact or report/algorithm input.
 - [x] CheckSum remains observe-only for the observed compact profile; no device-side sequence/timestamp claim is made.
@@ -27,9 +27,9 @@ state store for recovery verification. It never writes raw matrices or key bytes
 summary. The tool has not yet been exercised against the currently detected real device.
 
 Before the first frame, `HardwareSessionRuntime` freezes the protocol profile, device/geometry,
-baseline, bad-point and force-conversion versions plus the host-gap/idle-read/storage-timeout
-policies into every immutable segment and session manifest. This makes a later replay independent
-of changed process defaults.
+baseline, bad-point and force-conversion versions plus the fixed five-second valid-signal,
+reconstruction and storage-timeout policies into every immutable segment and session manifest.
+This makes a later replay independent of changed process defaults.
 
 The same runtime converts exceptions from quality evaluation, encrypted derived-artifact writing or
 valid-session finalization into an invalid capture. It deletes the staging directory and does not
@@ -44,7 +44,18 @@ Automated command run on 2026-07-23:
 ./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
 ```
 
-Result: **105 passed**. `git diff --check` also passed.
+Superseding automated run for the current continuity policy:
+
+```text
+./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+```
+
+Result: **113 passed**. `git diff --check` also passed.
+
+The full project suite after this change reported **267 passed, 2 failed**. Both failures are
+pre-existing startup-validation persistence assertions that expect SQLite `schema_version == 2`
+while the current shared `StateStore` reports schema version 5; this RAY-86 change does not modify
+`client/spool/state_store.py` or those tests.
 
 Existing real-device evidence under `docs/evidence/linear/RAY-78/` proves an observed 10-minute
 raw structural capture at about 20.6 Hz, but it predates this validity-gated runtime and therefore
@@ -90,9 +101,28 @@ CheckSum mismatched all frames as expected under its unresolved observe-only rul
 counted as a structural failure. Full sanitized metrics:
 [`communication-stability-10m-20260723.json`](communication-stability-10m-20260723.json).
 
-This confirms that normal cadence is good but the channel is not yet reliable enough for the
-strict valid-session policy. The correct action remains physical/serial link investigation and a
-new clean P1 run, not weakening frame-integrity handling.
+This confirms that normal cadence is good but structural errors must remain visible to the
+operator and in evidence. It does not replace an end-to-end P1 run under the current policy.
+
+## 2026-07-22 superseding valid-signal continuity policy
+
+The operator changed the session rule after the historical strict-runtime attempts above: a single
+invalid wire candidate, noise region or parser resynchronization must **not** discard the entire
+session. The current runtime records an ordered integrity event and, only when both adjacent
+successful frames exist, creates an explicitly flagged derived-only interpolation of the missing
+matrix. The AES-GCM raw segments retain only successful real decoded frames.
+
+The session becomes `INVALID` if the serial transport disconnects, durable storage fails, quality
+gate fails, or **5 continuous seconds** pass without a successfully decoded frame. Thus
+the 2026-07-23 strict failures remain historical link observations, not acceptance evidence for
+the replacement policy. The remaining real-device acceptance is a new ten-minute run with this
+implementation, plus cable/power/disk/operator checks.
+
+Automatic regression for the replacement policy verifies: (1) one and two consecutive bad tails
+between valid frames do not invalidate; (2) the raw committed manifest counts only real frames;
+(3) the encrypted derived observation contains the reconstructed frame, its flags and the
+communication audit; and (4) both an empty read and a late non-empty read after five seconds
+remain invalid. Automated evidence is not real-device evidence.
 
 ## Commit
 

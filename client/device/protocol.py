@@ -173,6 +173,22 @@ class RawFrame:
     quality_flags: frozenset[str]
 
 
+@dataclass(frozen=True, slots=True)
+class ProtocolIntegrityEvent:
+    """One parser-side structural anomaly, ordered relative to valid frames.
+
+    The event deliberately carries no candidate payload: an invalid wire frame
+    is not a trustworthy raw matrix.  Acquisition may later derive a separate
+    reconstructed processing frame only after it sees valid neighbours.
+    """
+
+    event_index: int
+    valid_frames_before: int
+    failure_kind: str
+    invalid_frame_count: int
+    discarded_bytes: int
+
+
 @dataclass(slots=True)
 class ProtocolStatistics:
     """Bounded aggregate evidence about the host receive path."""
@@ -244,12 +260,21 @@ class DaoOneP4864Parser:
         self._wall_time_ns = wall_time_ns
         self._buffer = bytearray()
         self._next_source_index = 0
+        self._next_integrity_event_index = 0
+        self._integrity_events: list[ProtocolIntegrityEvent] = []
         self._max_buffer_bytes = resolved_max_buffer_bytes
         self.statistics = ProtocolStatistics()
 
     @property
     def buffered_bytes(self) -> int:
         return len(self._buffer)
+
+    def take_integrity_events(self) -> tuple[ProtocolIntegrityEvent, ...]:
+        """Return and clear parser anomalies since the last acquisition handoff."""
+
+        events = tuple(self._integrity_events)
+        self._integrity_events.clear()
+        return events
 
     def feed(self, chunk: bytes | bytearray | memoryview) -> list[RawFrame]:
         """Consume arbitrary byte chunks and return every complete valid frame."""
@@ -289,7 +314,13 @@ class DaoOneP4864Parser:
                     counter_name,
                     getattr(self.statistics, counter_name) + 1,
                 )
+            discarded_before = self.statistics.discarded_bytes
             self._discard_to_next_header()
+            self._record_integrity_event(
+                failure_kind=failure.upper(),
+                invalid_frame_count=1,
+                discarded_bytes=self.statistics.discarded_bytes - discarded_before,
+            )
         return decoded
 
     def _validation_failure(self, frame: bytes) -> str | None:
@@ -317,11 +348,21 @@ class DaoOneP4864Parser:
             return True
         if index > 0:
             self._discard_prefix(index)
+            self._record_integrity_event(
+                failure_kind="NOISE_OR_RESYNCHRONIZATION",
+                invalid_frame_count=0,
+                discarded_bytes=index,
+            )
             return True
         keep = 1 if self._buffer.endswith(HEADER[:1]) else 0
         discard = len(self._buffer) - keep
         if discard:
             self._discard_prefix(discard)
+            self._record_integrity_event(
+                failure_kind="NOISE_OR_RESYNCHRONIZATION",
+                invalid_frame_count=0,
+                discarded_bytes=discard,
+            )
         return False
 
     def _discard_to_next_header(self) -> None:
@@ -338,6 +379,22 @@ class DaoOneP4864Parser:
         del self._buffer[:count]
         self.statistics.resynchronizations += 1
         self.statistics.discarded_bytes += count
+
+    def _record_integrity_event(
+        self, *, failure_kind: str, invalid_frame_count: int, discarded_bytes: int
+    ) -> None:
+        if discarded_bytes <= 0 and invalid_frame_count <= 0:
+            return
+        self._integrity_events.append(
+            ProtocolIntegrityEvent(
+                event_index=self._next_integrity_event_index,
+                valid_frames_before=self._next_source_index,
+                failure_kind=failure_kind,
+                invalid_frame_count=invalid_frame_count,
+                discarded_bytes=discarded_bytes,
+            )
+        )
+        self._next_integrity_event_index += 1
 
     def _decode(self, frame: bytes) -> RawFrame:
         payload = frame[self.profile.payload_offset : self.profile.checksum_offset]

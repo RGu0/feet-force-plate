@@ -147,20 +147,19 @@ class AcquisitionRunnerTests(unittest.TestCase):
             def read(self, max_bytes):
                 return b""
 
-        clock = iter((0, 1, 3))
+        clock = iter((0, 5_000_000_000))
         result = AcquisitionRunner(
             transport=SilentTransport(),
             parser=_parser(),
             durable_sink=DurableFrameQueue(capacity=1),
             latest_mailbox=LatestFrameMailbox(),
             connection=self._ready_machine(),
-            maximum_idle_read_ns=2,
             monotonic_ns=lambda: next(clock),
         ).run(session_id="idle-stream", target_frames=1)
 
         self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
         self.assertEqual(result.frames_stored, 0)
-        self.assertIn("idle interval", result.reason or "")
+        self.assertIn("no valid decoded signal for five seconds", result.reason or "")
 
     def test_disconnect_marks_result_incomplete_and_requires_reconnect(self) -> None:
         transport = SyntheticP4864Transport(
@@ -186,6 +185,47 @@ class AcquisitionRunnerTests(unittest.TestCase):
         machine.start_connecting()
         machine.mark_ready()
         self.assertEqual(machine.state, ConnectionState.READY)
+
+    def test_late_nonempty_read_cannot_bypass_five_second_valid_signal_limit(self) -> None:
+        class FakeClock:
+            def __init__(self) -> None:
+                self.now_ns = 0
+
+            def monotonic_ns(self) -> int:
+                return self.now_ns
+
+            def sleep(self, seconds: float) -> None:
+                self.now_ns += round(seconds * 1_000_000_000)
+
+        clock = FakeClock()
+        result = AcquisitionRunner(
+            transport=SyntheticP4864Transport(
+                _profile(),
+                realtime=True,
+                rate_hz=10.0,
+                max_frames=2,
+                monotonic_ns=clock.monotonic_ns,
+                sleep=clock.sleep,
+                fault_plan=FaultPlan(
+                    events={0: (FaultKind.LONG_INTERVAL,)},
+                    long_interval_multiplier=60.0,
+                ),
+            ),
+            parser=DaoOneP4864Parser(
+                _profile(),
+                allow_unverified=True,
+                monotonic_ns=clock.monotonic_ns,
+                wall_time_ns=lambda: 2_000,
+            ),
+            durable_sink=DurableFrameQueue(capacity=2),
+            latest_mailbox=LatestFrameMailbox(),
+            connection=self._ready_machine(),
+            monotonic_ns=clock.monotonic_ns,
+        ).run(session_id="late-nonempty-read", target_frames=2)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
+        self.assertEqual(result.frames_stored, 1)
+        self.assertIn("no valid decoded signal for five seconds", result.reason or "")
 
     def test_failed_runner_cannot_stitch_a_reconnected_session(self) -> None:
         machine = self._ready_machine()
@@ -250,7 +290,7 @@ class AcquisitionRunnerTests(unittest.TestCase):
         self.assertIn("storage handoff failed", result.reason or "")
         self.assertEqual(machine.state, ConnectionState.INVALID)
 
-    def test_parser_resynchronization_invalidates_and_discards_the_active_session(self) -> None:
+    def test_parser_resynchronization_is_audited_and_reconstructed_without_mutating_raw_frames(self) -> None:
         class DiscardingSink:
             def __init__(self) -> None:
                 self.frames: list[int] = []
@@ -268,19 +308,69 @@ class AcquisitionRunnerTests(unittest.TestCase):
             transport=SyntheticP4864Transport(
                 _profile(),
                 realtime=False,
-                max_frames=3,
+                max_frames=4,
                 fault_plan=FaultPlan(events={1: (FaultKind.BAD_TAIL,)}),
+                frame_source=lambda index: np.full(
+                    (48, 64), (index + 1) * 10, dtype=np.uint8
+                ),
             ),
-            parser=_parser(),
+            parser=DaoOneP4864Parser(
+                _profile(),
+                allow_unverified=True,
+                monotonic_ns=iter(range(10_000, 100_000, 100)).__next__,
+                wall_time_ns=lambda: 2_000,
+            ),
             durable_sink=sink,
             latest_mailbox=LatestFrameMailbox(),
             connection=machine,
         ).run(session_id="session-resync", target_frames=3)
 
-        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
-        self.assertEqual(sink.frames, [0])
-        self.assertIn("resynchronization", sink.reason)
-        self.assertEqual(machine.state, ConnectionState.INVALID)
+        self.assertEqual(result.outcome, AcquisitionOutcome.COMPLETED, result.reason)
+        self.assertEqual(sink.frames, [0, 1, 2])
+        self.assertIsNone(sink.reason)
+        self.assertEqual(machine.state, ConnectionState.READY)
+        self.assertEqual(len(result.integrity_events), 1)
+        self.assertEqual(result.integrity_events[0].failure_kind, "TAIL")
+        self.assertEqual(result.integrity_events[0].reconstructed_frame_count, 1)
+        self.assertEqual(len(result.reconstructed_frames), 1)
+        reconstructed = result.reconstructed_frames[0]
+        self.assertEqual(int(reconstructed.values[0, 0]), 20)
+        self.assertIn("RECONSTRUCTED_FROM_NEIGHBORS", reconstructed.quality_flags)
+        self.assertIn("RAW_FRAME_UNAVAILABLE", reconstructed.quality_flags)
+
+    def test_short_sequence_of_invalid_frames_is_reconstructed_from_its_valid_neighbours(self) -> None:
+        result = AcquisitionRunner(
+            transport=SyntheticP4864Transport(
+                _profile(),
+                realtime=False,
+                max_frames=5,
+                fault_plan=FaultPlan(
+                    events={
+                        1: (FaultKind.BAD_TAIL,),
+                        2: (FaultKind.BAD_TAIL,),
+                    }
+                ),
+                frame_source=lambda index: np.full(
+                    (48, 64), (index + 1) * 10, dtype=np.uint8
+                ),
+            ),
+            parser=DaoOneP4864Parser(
+                _profile(),
+                allow_unverified=True,
+                monotonic_ns=iter(range(20_000, 100_000, 100)).__next__,
+                wall_time_ns=lambda: 2_000,
+            ),
+            durable_sink=DurableFrameQueue(capacity=4),
+            latest_mailbox=LatestFrameMailbox(),
+            connection=self._ready_machine(),
+        ).run(session_id="two-bad-frames", target_frames=3)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.COMPLETED, result.reason)
+        self.assertEqual([event.invalid_frame_count for event in result.integrity_events], [1, 1])
+        self.assertEqual(
+            [int(frame.values[0, 0]) for frame in result.reconstructed_frames],
+            [20, 30],
+        )
 
     def test_worker_executes_blocking_reader_outside_calling_thread(self) -> None:
         caller_thread = threading.get_ident()

@@ -52,7 +52,6 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
         session_id: str,
         transport: SyntheticP4864Transport,
         parser: DaoOneP4864Parser,
-        maximum_host_gap_ns: int | None = None,
     ) -> HardwareSessionRuntime:
         stager = ValidSessionStager(
             self.root / "data",
@@ -79,7 +78,6 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
                     )
                 },
             )(),
-            maximum_host_gap_ns=maximum_host_gap_ns,
             wall_time_ns=lambda: 10,
         )
 
@@ -89,24 +87,28 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.session_status(session_id)
 
-    def test_wire_integrity_fault_invalidates_and_discards_the_whole_session(self) -> None:
+    def test_short_wire_integrity_fault_is_committed_with_an_audit_record(self) -> None:
         session_id = "bad-tail"
         transport = SyntheticP4864Transport(
             _profile(),
             realtime=False,
-            max_frames=2,
-            fault_plan=FaultPlan(events={0: (FaultKind.BAD_TAIL,)}),
-            frame_source=lambda _: np.full((48, 64), 10, dtype=np.uint8),
+            max_frames=4,
+            fault_plan=FaultPlan(events={1: (FaultKind.BAD_TAIL,)}),
+            frame_source=lambda index: np.full((48, 64), 10 + index, dtype=np.uint8),
         )
         result = self._runtime(
             session_id=session_id,
             transport=transport,
             parser=DaoOneP4864Parser(_profile(), allow_unverified=True),
-        ).capture(session_id=session_id, target_frames=2)
+        ).capture(session_id=session_id, target_frames=3)
 
-        self.assertEqual(result.validity, SessionValidity.INVALID)
-        self.assertIn("parser integrity", result.reason or "")
-        self._assert_no_formal_session(session_id)
+        self.assertEqual(result.validity, SessionValidity.VALID)
+        self.assertTrue(result.committed)
+        self.assertEqual(result.acquisition.frames_stored, 3)
+        self.assertEqual(len(result.acquisition.integrity_events), 1)
+        self.assertEqual(result.acquisition.integrity_events[0].failure_kind, "TAIL")
+        self.assertEqual(len(result.acquisition.reconstructed_frames), 1)
+        self.assertEqual(self.store.session_status(session_id), ("CLOSED", "VALID", 10))
 
     def test_disconnect_after_a_frame_invalidates_and_discards_the_whole_session(self) -> None:
         session_id = "disconnect"
@@ -148,7 +150,7 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
             monotonic_ns=clock.monotonic_ns,
             sleep=clock.sleep,
             fault_plan=FaultPlan(
-                events={1: (FaultKind.LONG_INTERVAL,)}, long_interval_multiplier=25.0
+                events={1: (FaultKind.LONG_INTERVAL,)}, long_interval_multiplier=60.0
             ),
             frame_source=lambda _: np.full((48, 64), 10, dtype=np.uint8),
         )
@@ -161,11 +163,10 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
                 monotonic_ns=clock.monotonic_ns,
                 wall_time_ns=lambda: 1,
             ),
-            maximum_host_gap_ns=1_000_000_000,
         ).capture(session_id=session_id, target_frames=3)
 
         self.assertEqual(result.validity, SessionValidity.INVALID)
-        self.assertIn("arrival gap", result.reason or "")
+        self.assertIn("no valid decoded signal for five seconds", result.reason or "")
         self._assert_no_formal_session(session_id)
 
 

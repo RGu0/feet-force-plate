@@ -11,6 +11,7 @@ from typing import Protocol
 from client.spool.session_commit import StagedFrameSink, ValidSessionStager
 
 from .acquisition import (
+    MAXIMUM_NO_VALID_SIGNAL_NS,
     AcquisitionOutcome,
     AcquisitionResult,
     AcquisitionRunner,
@@ -64,8 +65,6 @@ class HardwareSessionRuntime:
         mailbox: LatestFrameMailbox,
         stager: ValidSessionStager,
         quality_gate: HardwareQualityGate,
-        maximum_host_gap_ns: int | None = None,
-        maximum_idle_read_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
         wall_time_ns: Callable[[], int] = time.time_ns,
     ) -> None:
@@ -75,8 +74,6 @@ class HardwareSessionRuntime:
         self._mailbox = mailbox
         self._stager = stager
         self._quality_gate = quality_gate
-        self._maximum_host_gap_ns = maximum_host_gap_ns
-        self._maximum_idle_read_ns = maximum_idle_read_ns
         self._storage_append_timeout_s = storage_append_timeout_s
         self._wall_time_ns = wall_time_ns
 
@@ -94,8 +91,6 @@ class HardwareSessionRuntime:
             durable_sink=StagedFrameSink(self._stager),
             latest_mailbox=self._mailbox,
             connection=self._connection,
-            maximum_host_gap_ns=self._maximum_host_gap_ns,
-            maximum_idle_read_ns=self._maximum_idle_read_ns,
             storage_append_timeout_s=self._storage_append_timeout_s,
         ).run(
             session_id=session_id,
@@ -107,8 +102,15 @@ class HardwareSessionRuntime:
                 acquisition, SessionValidity.INVALID, acquisition.reason, False
             )
         try:
+            captured_frames = self._stager.staged_frames()
+            processing_frames = tuple(
+                sorted(
+                    (*captured_frames, *acquisition.reconstructed_frames),
+                    key=lambda frame: frame.host_monotonic_ns,
+                )
+            )
             decision = self._quality_gate.evaluate(
-                session_id=session_id, frames=self._stager.staged_frames()
+                session_id=session_id, frames=processing_frames
             )
         except Exception as exc:
             return self._discard_after_acquisition_failure(
@@ -124,9 +126,31 @@ class HardwareSessionRuntime:
         try:
             physical_session = getattr(decision, "physical_session", None)
             if physical_session is not None:
+                processing_metadata = dict(
+                    getattr(decision, "processing_metadata", None) or {}
+                )
+                processing_metadata["communication_integrity"] = {
+                    "policy_version": "do-p4864-valid-signal-continuity/1",
+                    "maximum_no_valid_signal_ns": MAXIMUM_NO_VALID_SIGNAL_NS,
+                    "reconstructed_frame_count": len(acquisition.reconstructed_frames),
+                    "events": [
+                        {
+                            "event_index": event.event_index,
+                            "failure_kind": event.failure_kind,
+                            "invalid_frame_count": event.invalid_frame_count,
+                            "discarded_bytes": event.discarded_bytes,
+                            "preceding_source_index": event.preceding_source_index,
+                            "following_source_index": event.following_source_index,
+                            "valid_signal_gap_ns": event.valid_signal_gap_ns,
+                            "reconstructed_frame_count": event.reconstructed_frame_count,
+                            "resolution": event.resolution,
+                        }
+                        for event in acquisition.integrity_events
+                    ],
+                }
                 self._stager.stage_derived_observation(
                     physical_session,
-                    processing_metadata=getattr(decision, "processing_metadata", None),
+                    processing_metadata=processing_metadata,
                 )
             self._stager.commit_valid(ended_at_ns=self._wall_time_ns())
         except Exception as exc:
@@ -147,8 +171,8 @@ class HardwareSessionRuntime:
     def _frozen_runtime_versions(self) -> dict[str, str]:
         versions = {
             "protocol_profile": self._parser.profile.version,
-            "maximum_host_gap_ns": str(self._maximum_host_gap_ns),
-            "maximum_idle_read_ns": str(self._maximum_idle_read_ns),
+            "maximum_no_valid_signal_ns": str(MAXIMUM_NO_VALID_SIGNAL_NS),
+            "reconstruction_policy": "interpolate-adjacent-valid-frames/1",
             "storage_append_timeout_ms": str(
                 None
                 if self._storage_append_timeout_s is None

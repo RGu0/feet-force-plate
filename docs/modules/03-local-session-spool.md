@@ -60,7 +60,8 @@ flowchart LR
 6. 原子重命名；
 7. 对整项会话执行硬件质量门；
 8. 仅 `VALID` 会话先写入可恢复的登记标记，再原子移动到 `sessions/<id>`；随后在同一
-   SQLite 事务登记会话、原始分段、派生力学文件和 `READY_FOR_NETWORK` 交接；
+   SQLite 事务登记会话、原始分段、派生力学文件和 `READY_FOR_NETWORK` 交接。原始分段
+   只含成功解码的真实帧；派生文件可额外含按相邻真实帧插值的重建帧及其通信完整性审计；
 9. 登记成功后删除登记标记。若在“目录已提升、SQLite 未提交”之间断电，启动扫描根据
    标记精确补登记一次；若仍是 `.staging/<id>`，则删除而非恢复部分采集；
 10. `INVALID` 会话删除 `.staging/<id>`，不写正式 SQLite 会话记录，也不产生同步任务。
@@ -80,6 +81,10 @@ device / protocol / calibration / schema versions
 local_quality_outcome
 manifest_hash
 ```
+
+通信完整性审计（无效候选帧数、丢弃字节、重建数量、前后成功帧序号和 5 秒策略版本）写入
+加密派生观测的 `hardware_processing.communication_integrity`；它不是上传层可据以重放的
+原始串口数据。
 
 清单本身版本化并签名或绑定终端认证上下文。服务端确认清单前，会话不能标记为云端完整。
 

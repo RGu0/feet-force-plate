@@ -9,7 +9,14 @@ import threading
 import time
 from typing import Callable, Protocol
 
-from .protocol import FRAME_LENGTH, DaoOneP4864Parser, RawFrame
+import numpy as np
+
+from .protocol import (
+    FRAME_LENGTH,
+    DaoOneP4864Parser,
+    ProtocolIntegrityEvent,
+    RawFrame,
+)
 from .transport import ByteTransport, TransportDisconnected
 
 
@@ -26,6 +33,9 @@ class AcquisitionOutcome(StrEnum):
     COMPLETED = "COMPLETED"
     INCOMPLETE = "INCOMPLETE"
     INVALID = "INVALID"
+
+
+MAXIMUM_NO_VALID_SIGNAL_NS = 5_000_000_000
 
 
 class IllegalConnectionTransition(RuntimeError):
@@ -191,6 +201,23 @@ class AcquisitionResult:
     outcome: AcquisitionOutcome
     frames_stored: int
     reason: str | None = None
+    integrity_events: tuple["AcquisitionIntegrityEvent", ...] = ()
+    reconstructed_frames: tuple[RawFrame, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionIntegrityEvent:
+    """Audit of an invalid wire region and any derived-only reconstruction."""
+
+    event_index: int
+    failure_kind: str
+    invalid_frame_count: int
+    discarded_bytes: int
+    preceding_source_index: int | None
+    following_source_index: int | None
+    valid_signal_gap_ns: int | None
+    reconstructed_frame_count: int
+    resolution: str
 
 
 class AcquisitionRunner:
@@ -205,17 +232,14 @@ class AcquisitionRunner:
         latest_mailbox: LatestFrameMailbox,
         connection: ConnectionStateMachine,
         read_size: int = FRAME_LENGTH,
-        maximum_host_gap_ns: int | None = None,
-        maximum_idle_read_ns: int | None = None,
+        maximum_no_valid_signal_ns: int = MAXIMUM_NO_VALID_SIGNAL_NS,
         storage_append_timeout_s: float | None = None,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         if read_size <= 0:
             raise ValueError("read_size must be positive")
-        if maximum_host_gap_ns is not None and maximum_host_gap_ns <= 0:
-            raise ValueError("maximum_host_gap_ns must be positive when set")
-        if maximum_idle_read_ns is not None and maximum_idle_read_ns <= 0:
-            raise ValueError("maximum_idle_read_ns must be positive when set")
+        if maximum_no_valid_signal_ns != MAXIMUM_NO_VALID_SIGNAL_NS:
+            raise ValueError("maximum_no_valid_signal_ns is fixed at five seconds")
         if storage_append_timeout_s is not None and storage_append_timeout_s < 0:
             raise ValueError("storage_append_timeout_s must not be negative when set")
         self._transport = transport
@@ -224,14 +248,19 @@ class AcquisitionRunner:
         self._latest_mailbox = latest_mailbox
         self._connection = connection
         self._read_size = read_size
-        self._maximum_host_gap_ns = maximum_host_gap_ns
-        self._maximum_idle_read_ns = maximum_idle_read_ns
+        self._maximum_no_valid_signal_ns = maximum_no_valid_signal_ns
         self._storage_append_timeout_s = storage_append_timeout_s
         self._monotonic_ns = monotonic_ns
         self._used = False
 
     def _invalidate(
-        self, session_id: str, *, frames_stored: int, reason: str
+        self,
+        session_id: str,
+        *,
+        frames_stored: int,
+        reason: str,
+        integrity_events: list[AcquisitionIntegrityEvent],
+        reconstructed_frames: list[RawFrame],
     ) -> AcquisitionResult:
         if hasattr(self._durable_sink, "discard"):
             try:
@@ -239,7 +268,14 @@ class AcquisitionRunner:
             except Exception as cleanup_error:
                 reason = f"{reason}; temporary cleanup failed: {type(cleanup_error).__name__}"
         self._connection.mark_invalid(reason)
-        return AcquisitionResult(session_id, AcquisitionOutcome.INVALID, frames_stored, reason)
+        return AcquisitionResult(
+            session_id,
+            AcquisitionOutcome.INVALID,
+            frames_stored,
+            reason,
+            tuple(integrity_events),
+            tuple(reconstructed_frames),
+        )
 
     def run(
         self,
@@ -263,49 +299,63 @@ class AcquisitionRunner:
         self._used = True
         self._connection.start_acquiring()
         frames_stored = 0
-        previous_host_monotonic_ns: int | None = None
+        previous_frame: RawFrame | None = None
         first_host_monotonic_ns: int | None = None
-        last_byte_monotonic_ns = self._monotonic_ns()
+        last_valid_observed_ns = self._monotonic_ns()
+        pending_events: list[ProtocolIntegrityEvent] = []
+        integrity_events: list[AcquisitionIntegrityEvent] = []
+        reconstructed_frames: list[RawFrame] = []
         try:
             while True:
                 chunk = self._transport.read(self._read_size)
                 if not chunk:
-                    if (
-                        self._maximum_idle_read_ns is not None
-                        and self._monotonic_ns() - last_byte_monotonic_ns
-                        > self._maximum_idle_read_ns
-                    ):
+                    if self._monotonic_ns() - last_valid_observed_ns >= self._maximum_no_valid_signal_ns:
                         return self._invalidate(
                             session_id,
                             frames_stored=frames_stored,
-                            reason="serial byte idle interval exceeded policy",
+                            reason="no valid decoded signal for five seconds",
+                            integrity_events=integrity_events,
+                            reconstructed_frames=reconstructed_frames,
                         )
                     continue
-                last_byte_monotonic_ns = self._monotonic_ns()
-                invalid_before = self._parser.statistics.invalid_frames
-                resync_before = self._parser.statistics.resynchronizations
-                decoded = self._parser.feed(chunk)
+                # Serial transports are expected to use bounded reads, but do
+                # not let an implementation that returns a late non-empty
+                # chunk bypass the same five-second continuity requirement.
                 if (
-                    self._parser.statistics.invalid_frames != invalid_before
-                    or self._parser.statistics.resynchronizations != resync_before
+                    self._monotonic_ns() - last_valid_observed_ns
+                    >= self._maximum_no_valid_signal_ns
                 ):
                     return self._invalidate(
                         session_id,
                         frames_stored=frames_stored,
-                        reason="parser integrity failure or resynchronization",
+                        reason="no valid decoded signal for five seconds",
+                        integrity_events=integrity_events,
+                        reconstructed_frames=reconstructed_frames,
                     )
+                decoded = self._parser.feed(chunk)
+                pending_events.extend(self._parser.take_integrity_events())
                 for frame in decoded:
-                    if (
-                        previous_host_monotonic_ns is not None
-                        and self._maximum_host_gap_ns is not None
-                        and frame.host_monotonic_ns - previous_host_monotonic_ns
-                        > self._maximum_host_gap_ns
+                    if previous_frame is not None and (
+                        frame.host_monotonic_ns - previous_frame.host_monotonic_ns
+                        >= self._maximum_no_valid_signal_ns
                     ):
                         return self._invalidate(
                             session_id,
                             frames_stored=frames_stored,
-                            reason="host frame arrival gap exceeded policy",
+                            reason="no valid decoded signal for five seconds",
+                            integrity_events=integrity_events,
+                            reconstructed_frames=reconstructed_frames,
                         )
+                    resolved, reconstructed = self._resolve_events_before_frame(
+                        pending_events, previous_frame, frame
+                    )
+                    integrity_events.extend(resolved)
+                    reconstructed_frames.extend(reconstructed)
+                    pending_events = [
+                        event
+                        for event in pending_events
+                        if event.valid_frames_before > frame.source_index
+                    ]
                     try:
                         self._durable_sink.append(
                             session_id,
@@ -315,10 +365,15 @@ class AcquisitionRunner:
                     except Exception as exc:
                         reason = f"storage handoff failed: {type(exc).__name__}: {exc}"
                         return self._invalidate(
-                            session_id, frames_stored=frames_stored, reason=reason
+                            session_id,
+                            frames_stored=frames_stored,
+                            reason=reason,
+                            integrity_events=integrity_events,
+                            reconstructed_frames=reconstructed_frames,
                         )
                     self._latest_mailbox.publish(frame)
-                    previous_host_monotonic_ns = frame.host_monotonic_ns
+                    previous_frame = frame
+                    last_valid_observed_ns = self._monotonic_ns()
                     if first_host_monotonic_ns is None:
                         first_host_monotonic_ns = frame.host_monotonic_ns
                     frames_stored += 1
@@ -330,26 +385,165 @@ class AcquisitionRunner:
                         or frame.host_monotonic_ns - first_host_monotonic_ns
                         >= minimum_duration_ns
                     )
-                    if has_target_frame_count and has_minimum_duration:
+                    if (
+                        has_target_frame_count
+                        and has_minimum_duration
+                        and not pending_events
+                    ):
                         break
                 if (
                     (target_frames is None or frames_stored >= target_frames)
-                    and minimum_duration_ns is not None
-                    and first_host_monotonic_ns is not None
-                    and previous_host_monotonic_ns is not None
-                    and previous_host_monotonic_ns - first_host_monotonic_ns
-                    >= minimum_duration_ns
+                    and (
+                        minimum_duration_ns is None
+                        or (
+                            first_host_monotonic_ns is not None
+                            and previous_frame is not None
+                            and previous_frame.host_monotonic_ns
+                            - first_host_monotonic_ns
+                            >= minimum_duration_ns
+                        )
+                    )
+                    and not pending_events
                 ):
                     break
         except TransportDisconnected as exc:
             reason = f"transport disconnected: {exc}"
             return self._invalidate(
-                session_id, frames_stored=frames_stored, reason=reason
+                session_id,
+                frames_stored=frames_stored,
+                reason=reason,
+                integrity_events=integrity_events,
+                reconstructed_frames=reconstructed_frames,
             )
         self._connection.finish_acquiring()
         return AcquisitionResult(
-            session_id, AcquisitionOutcome.COMPLETED, frames_stored
+            session_id,
+            AcquisitionOutcome.COMPLETED,
+            frames_stored,
+            integrity_events=tuple(integrity_events),
+            reconstructed_frames=tuple(reconstructed_frames),
         )
+
+    @staticmethod
+    def _resolve_events_before_frame(
+        pending_events: list[ProtocolIntegrityEvent],
+        previous_frame: RawFrame | None,
+        following_frame: RawFrame,
+    ) -> tuple[list[AcquisitionIntegrityEvent], list[RawFrame]]:
+        relevant = [
+            event
+            for event in pending_events
+            if event.valid_frames_before <= following_frame.source_index
+        ]
+        if not relevant:
+            return [], []
+        if previous_frame is None:
+            return (
+                [
+                    AcquisitionIntegrityEvent(
+                        event_index=event.event_index,
+                        failure_kind=event.failure_kind,
+                        invalid_frame_count=event.invalid_frame_count,
+                        discarded_bytes=event.discarded_bytes,
+                        preceding_source_index=None,
+                        following_source_index=following_frame.source_index,
+                        valid_signal_gap_ns=None,
+                        reconstructed_frame_count=0,
+                        resolution="NO_PRECEDING_VALID_FRAME",
+                    )
+                    for event in relevant
+                ],
+                [],
+            )
+        gap_ns = following_frame.host_monotonic_ns - previous_frame.host_monotonic_ns
+        invalid_count = sum(event.invalid_frame_count for event in relevant)
+        reconstructed = AcquisitionRunner._interpolate_invalid_frames(
+            previous_frame, following_frame, invalid_count, relevant
+        )
+        audit: list[AcquisitionIntegrityEvent] = []
+        remaining = len(reconstructed)
+        for event in relevant:
+            count = min(event.invalid_frame_count, remaining)
+            remaining -= count
+            audit.append(
+                AcquisitionIntegrityEvent(
+                    event_index=event.event_index,
+                    failure_kind=event.failure_kind,
+                    invalid_frame_count=event.invalid_frame_count,
+                    discarded_bytes=event.discarded_bytes,
+                    preceding_source_index=previous_frame.source_index,
+                    following_source_index=following_frame.source_index,
+                    valid_signal_gap_ns=gap_ns,
+                    reconstructed_frame_count=count,
+                    resolution=(
+                        "RECONSTRUCTED_FROM_NEIGHBORS"
+                        if count
+                        else "RECORDED_NO_MATRIX_RECONSTRUCTION"
+                    ),
+                )
+            )
+        return audit, reconstructed
+
+    @staticmethod
+    def _interpolate_invalid_frames(
+        previous_frame: RawFrame,
+        following_frame: RawFrame,
+        count: int,
+        events: list[ProtocolIntegrityEvent],
+    ) -> list[RawFrame]:
+        if count <= 0:
+            return []
+        # A derived frame must retain a strictly ordered host timeline.  On a
+        # real serial stream the neighbour gap is many milliseconds, but do
+        # not manufacture an ambiguous timestamp for a synthetic or faulty
+        # clock with insufficient nanosecond resolution.
+        if (
+            following_frame.host_monotonic_ns - previous_frame.host_monotonic_ns
+            <= count
+        ):
+            return []
+        previous = previous_frame.values.astype(np.float64)
+        following = following_frame.values.astype(np.float64)
+        event_ids = ",".join(str(event.event_index) for event in events)
+        reconstructed: list[RawFrame] = []
+        for index in range(1, count + 1):
+            fraction = index / (count + 1)
+            values = np.rint(previous + fraction * (following - previous)).astype(
+                np.uint8
+            )
+            values.setflags(write=False)
+            reconstructed.append(
+                RawFrame(
+                    values=values,
+                    host_monotonic_ns=round(
+                        previous_frame.host_monotonic_ns
+                        + fraction
+                        * (
+                            following_frame.host_monotonic_ns
+                            - previous_frame.host_monotonic_ns
+                        )
+                    ),
+                    host_wall_time_ns=round(
+                        previous_frame.host_wall_time_ns
+                        + fraction
+                        * (
+                            following_frame.host_wall_time_ns
+                            - previous_frame.host_wall_time_ns
+                        )
+                    ),
+                    source_index=following_frame.source_index,
+                    device_frame_seq=None,
+                    device_timestamp_ns=None,
+                    quality_flags=frozenset(
+                        {
+                            "RECONSTRUCTED_FROM_NEIGHBORS",
+                            "RAW_FRAME_UNAVAILABLE",
+                            f"INTEGRITY_EVENTS_{event_ids}",
+                        }
+                    ),
+                )
+            )
+        return reconstructed
 
 
 class AcquisitionWorker:

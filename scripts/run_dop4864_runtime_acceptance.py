@@ -26,7 +26,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from client.device.acquisition import ConnectionStateMachine, LatestFrameMailbox
+from client.device.acquisition import (
+    MAXIMUM_NO_VALID_SIGNAL_NS,
+    ConnectionStateMachine,
+    LatestFrameMailbox,
+)
 from client.device.protocol import DaoOneP4864Parser, ProtocolProfile, RawFrame
 from client.device.serial_transport import SerialByteTransport
 from client.device.session_runtime import HardwareSessionRuntime
@@ -78,23 +82,20 @@ def _collect_baseline(
     transport = SerialByteTransport.open(device, timeout_seconds=0.5)
     frames: list[RawFrame] = []
     first_ns: int | None = None
+    last_valid_signal_ns = time.monotonic_ns()
     try:
         while first_ns is None or frames[-1].host_monotonic_ns - first_ns < duration_ns:
-            invalid_before = parser.statistics.invalid_frames
-            resync_before = parser.statistics.resynchronizations
             chunk = transport.read(16_384)
             if not chunk:
+                if time.monotonic_ns() - last_valid_signal_ns >= MAXIMUM_NO_VALID_SIGNAL_NS:
+                    raise RuntimeError("baseline received no valid decoded signal for five seconds")
                 continue
             decoded = parser.feed(chunk)
-            if (
-                parser.statistics.invalid_frames != invalid_before
-                or parser.statistics.resynchronizations != resync_before
-            ):
-                raise RuntimeError("baseline parser integrity failure or resynchronization")
             for frame in decoded:
                 if first_ns is None:
                     first_ns = frame.host_monotonic_ns
                 frames.append(frame)
+                last_valid_signal_ns = time.monotonic_ns()
     except TransportDisconnected as exc:
         raise RuntimeError(f"baseline transport disconnected: {exc}") from exc
     finally:
@@ -103,6 +104,8 @@ def _collect_baseline(
         "decoded_frames": parser.statistics.valid_frames,
         "checksum_observations": parser.statistics.checksum_observations,
         "checksum_mismatches": parser.statistics.checksum_mismatches,
+        "invalid_frames": parser.statistics.invalid_frames,
+        "resynchronizations": parser.statistics.resynchronizations,
     }
 
 
@@ -199,8 +202,6 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
                 mailbox=LatestFrameMailbox(),
                 stager=stager,
                 quality_gate=DoP4864HardwareQualityGate(baseline_reference=baseline),
-                maximum_host_gap_ns=round(args.maximum_host_gap_ms * 1_000_000),
-                maximum_idle_read_ns=round(args.maximum_idle_read_ms * 1_000_000),
                 storage_append_timeout_s=args.storage_append_timeout_seconds,
             ).capture(
                 session_id=session_id,
@@ -236,6 +237,27 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
             "reason": result.reason,
             "validity": result.validity.value,
             "committed": result.committed,
+            "communication_integrity": {
+                "policy_version": "do-p4864-valid-signal-continuity/1",
+                "maximum_no_valid_signal_ns": MAXIMUM_NO_VALID_SIGNAL_NS,
+                "reconstructed_frame_count": len(
+                    result.acquisition.reconstructed_frames
+                ),
+                "events": [
+                    {
+                        "event_index": event.event_index,
+                        "failure_kind": event.failure_kind,
+                        "invalid_frame_count": event.invalid_frame_count,
+                        "discarded_bytes": event.discarded_bytes,
+                        "preceding_source_index": event.preceding_source_index,
+                        "following_source_index": event.following_source_index,
+                        "valid_signal_gap_ns": event.valid_signal_gap_ns,
+                        "reconstructed_frame_count": event.reconstructed_frame_count,
+                        "resolution": event.resolution,
+                    }
+                    for event in result.acquisition.integrity_events
+                ],
+            },
             "parser": {
                 "valid_frames": parser.statistics.valid_frames,
                 "invalid_frames": parser.statistics.invalid_frames,
@@ -267,8 +289,6 @@ def main() -> int:
     parser.add_argument("--baseline-seconds", type=float, default=5.0)
     parser.add_argument("--capture-seconds", type=float, default=600.0)
     parser.add_argument("--maximum-empty-count", type=float, default=5.0)
-    parser.add_argument("--maximum-host-gap-ms", type=float, default=250.0)
-    parser.add_argument("--maximum-idle-read-ms", type=float, default=2_000.0)
     parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
     parser.add_argument("--storage-append-timeout-seconds", type=float, default=2.0)
     args = parser.parse_args()
