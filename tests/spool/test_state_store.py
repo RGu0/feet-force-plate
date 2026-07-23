@@ -34,7 +34,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 4)
+        self.assertEqual(self.store.schema_version, 5)
         expected = {
             "subject_refs",
             "consent_records",
@@ -168,7 +168,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertTrue(decision.allow_existing_report_view)
         self.assertTrue(decision.allow_upload)
 
-    def test_cleanup_only_selects_acknowledged_segments_past_retention(self) -> None:
+    def test_acknowledgement_never_creates_an_automatic_cleanup_candidate(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")
         self.store.create_session(
             "session-1",
@@ -194,12 +194,10 @@ class StateStoreTests(unittest.TestCase):
                 retain_until_ns=retain_until,
             )
 
-        candidates = self.store.cleanup_candidates(now_ns=100)
-        self.assertEqual([item.segment_id for item in candidates], ["eligible"])
-        with self.assertRaises(ValueError):
-            self.store.finalize_segment_cleanup("pending", now_ns=100)
-        self.store.finalize_segment_cleanup("eligible", now_ns=100)
-        self.assertFalse(self.store.segment_exists("eligible"))
+        self.assertEqual(self.store.cleanup_candidates(now_ns=100), [])
+        with self.assertRaisesRegex(RuntimeError, "automatic segment cleanup"):
+            self.store.finalize_segment_cleanup("eligible", now_ns=100)
+        self.assertTrue(self.store.segment_exists("eligible"))
         self.assertTrue(self.store.segment_exists("pending"))
         self.assertTrue(self.store.segment_exists("retained"))
 

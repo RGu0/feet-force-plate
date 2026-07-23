@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -121,6 +121,14 @@ class ValidArtifactRecord:
     relative_path: str
     ciphertext_sha256: str
     byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ValidLocalStorageSnapshot:
+    valid_session_count: int
+    stored_bytes: int
+    pending_handoff_count: int
+    last_cloud_confirmed_at_ns: int | None
 
 
 _MIGRATION_1 = """
@@ -312,6 +320,8 @@ class StateStore:
             if version < 4:
                 self._connection.executescript(_MIGRATION_4)
                 self._connection.execute("PRAGMA user_version=4")
+            if version < 5:
+                self._connection.execute("PRAGMA user_version=5")
 
     def record_validation_audit(
         self,
@@ -655,6 +665,57 @@ class StateStore:
         if not changed:
             raise KeyError(session_id)
 
+    def valid_local_storage_snapshot(self) -> ValidLocalStorageSnapshot:
+        """Describe retained valid data without treating cloud receipt as deletion."""
+
+        with self._lock:
+            session_count = self._connection.execute(
+                "SELECT COUNT(*) FROM sessions WHERE validity_status='VALID'"
+            ).fetchone()[0]
+            raw_bytes = self._connection.execute(
+                """SELECT COALESCE(SUM(segments.byte_count), 0)
+                FROM segments JOIN sessions USING(session_id)
+                WHERE sessions.validity_status='VALID'"""
+            ).fetchone()[0]
+            artifact_bytes = self._connection.execute(
+                """SELECT COALESCE(SUM(session_artifacts.byte_count), 0)
+                FROM session_artifacts JOIN sessions USING(session_id)
+                WHERE sessions.validity_status='VALID'"""
+            ).fetchone()[0]
+            pending_handoff_count = self._connection.execute(
+                "SELECT COUNT(*) FROM sync_handoffs WHERE state != 'CLOUD_CONFIRMED'"
+            ).fetchone()[0]
+            last_confirmed = self._connection.execute(
+                "SELECT MAX(cloud_confirmed_at_ns) FROM sync_handoffs"
+            ).fetchone()[0]
+        return ValidLocalStorageSnapshot(
+            valid_session_count=int(session_count),
+            stored_bytes=int(raw_bytes) + int(artifact_bytes),
+            pending_handoff_count=int(pending_handoff_count),
+            last_cloud_confirmed_at_ns=last_confirmed,
+        )
+
+    def delete_completed_valid_session(self, session_id: str) -> None:
+        """Delete one operator-selected formal session index; never bulk/ACK cleanup."""
+
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """SELECT lifecycle_status, validity_status FROM sessions
+                WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(session_id)
+            if tuple(row) != ("CLOSED", "VALID"):
+                raise ValueError("only completed valid sessions may be manually deleted")
+            report_count = self._connection.execute(
+                "SELECT COUNT(*) FROM report_versions WHERE session_id=?", (session_id,)
+            ).fetchone()[0]
+            if report_count:
+                raise ValueError("session with retained reports cannot be manually deleted")
+            self._connection.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
+            self._connection.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+
     def add_segment(
         self,
         segment_id: str,
@@ -842,30 +903,14 @@ class StateStore:
         return NewTestDecision(not reasons, tuple(reasons))
 
     def cleanup_candidates(self, *, now_ns: int) -> list[CleanupCandidate]:
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT segment_id, relative_path, byte_count FROM segments
-                WHERE state='ACKNOWLEDGED' AND acknowledged_at_ns IS NOT NULL
-                  AND retain_until_ns IS NOT NULL AND retain_until_ns <= ?
-                ORDER BY sealed_at_ns, segment_id""",
-                (now_ns,),
-            ).fetchall()
-        return [CleanupCandidate(str(row[0]), str(row[1]), int(row[2])) for row in rows]
+        """Automatic ACK/retention cleanup is intentionally disabled for the MVP."""
+
+        del now_ns
+        return []
 
     def finalize_segment_cleanup(self, segment_id: str, *, now_ns: int) -> None:
-        with self._lock, self._connection:
-            row = self._connection.execute(
-                """SELECT state, acknowledged_at_ns, retain_until_ns
-                FROM segments WHERE segment_id=?""",
-                (segment_id,),
-            ).fetchone()
-            if row is None:
-                raise KeyError(segment_id)
-            if row[0] != "ACKNOWLEDGED" or row[1] is None or row[2] is None or row[2] > now_ns:
-                raise ValueError("segment is not acknowledged and past retention")
-            self._connection.execute(
-                "DELETE FROM segments WHERE segment_id=?", (segment_id,)
-            )
+        del segment_id, now_ns
+        raise RuntimeError("automatic segment cleanup is disabled; use manual session deletion")
 
     def segment_exists(self, segment_id: str) -> bool:
         with self._lock:

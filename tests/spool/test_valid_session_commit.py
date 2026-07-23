@@ -9,7 +9,7 @@ from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapt
 from client.hardware_standardization.models import BaselineReference
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.spool.derived_artifact import read_derived_observation
-from client.spool.session_commit import ValidSessionStager
+from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
 
@@ -133,6 +133,28 @@ class ValidSessionStagerTests(unittest.TestCase):
         assert isinstance(first, dict)
         self.assertIsNotNone(first["estimated_force_n"])
         self.assertNotIn("raw_count", first)
+
+    def test_cloud_confirmation_retains_data_until_one_manual_session_delete(self) -> None:
+        stager = self._stager("manual-delete")
+        stager.append(_frame(10))
+        stager.commit_valid(ended_at_ns=1_100_000_000)
+        self.store.mark_cloud_confirmed("manual-delete", confirmed_at_ns=1_200_000_000)
+
+        snapshot = self.store.valid_local_storage_snapshot()
+        self.assertEqual(snapshot.valid_session_count, 1)
+        self.assertGreater(snapshot.stored_bytes, 0)
+        self.assertEqual(snapshot.pending_handoff_count, 0)
+        self.assertEqual(snapshot.last_cloud_confirmed_at_ns, 1_200_000_000)
+        self.assertTrue((self.root / "data" / "sessions" / "manual-delete").exists())
+
+        delete_completed_valid_session(
+            self.root / "data", session_id="manual-delete", store=self.store
+        )
+
+        self.assertFalse((self.root / "data" / "sessions" / "manual-delete").exists())
+        with self.assertRaises(KeyError):
+            self.store.session_status("manual-delete")
+        self.assertEqual(self.store.valid_local_storage_snapshot().valid_session_count, 0)
 
 
 if __name__ == "__main__":

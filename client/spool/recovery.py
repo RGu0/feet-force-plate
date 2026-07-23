@@ -81,30 +81,10 @@ def cleanup_acknowledged_segments(
     *,
     now_ns: int,
 ) -> CleanupResult:
-    """Delete only eligible acknowledged files, then finalize their DB records.
+    """Compatibility no-op: ACK may never trigger automatic local deletion."""
 
-    A crash after unlink but before SQLite finalization is safe: a subsequent run
-    sees the eligible record, observes the missing file, and finalizes that record.
-    A deletion error is propagated before the record can be removed.
-    """
-
-    root = Path(repository_root).resolve()
-    files_deleted = 0
-    records_finalized = 0
-    for candidate in store.cleanup_candidates(now_ns=now_ns):
-        path = (root / candidate.relative_path).resolve()
-        if root not in path.parents:
-            raise ValueError("cleanup candidate escapes the configured repository root")
-        if path.exists():
-            path.unlink()
-            _fsync_directory(path.parent)
-            files_deleted += 1
-        store.finalize_segment_cleanup(candidate.segment_id, now_ns=now_ns)
-        records_finalized += 1
-    return CleanupResult(
-        files_deleted=files_deleted,
-        records_finalized=records_finalized,
-    )
+    del store, repository_root, now_ns
+    return CleanupResult()
 
 
 class RecoveryScanner:

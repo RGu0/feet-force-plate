@@ -122,7 +122,7 @@ class RecoveryScannerTests(unittest.TestCase):
             (sealed.path.parent / "quarantine" / f"{sealed.path.name}.corrupt").exists()
         )
 
-    def test_acknowledged_file_is_deleted_before_its_state_record_is_finalized(self) -> None:
+    def test_acknowledged_file_is_retained_when_automatic_cleanup_runs(self) -> None:
         relative_path = "segments/session-1/eligible.ffps"
         file_path = self.root / relative_path
         file_path.parent.mkdir(parents=True)
@@ -140,12 +140,12 @@ class RecoveryScannerTests(unittest.TestCase):
 
         result = cleanup_acknowledged_segments(self.store, self.root, now_ns=100)
 
-        self.assertEqual(result.files_deleted, 1)
-        self.assertEqual(result.records_finalized, 1)
-        self.assertFalse(file_path.exists())
-        self.assertFalse(self.store.segment_exists("eligible"))
+        self.assertEqual(result.files_deleted, 0)
+        self.assertEqual(result.records_finalized, 0)
+        self.assertTrue(file_path.exists())
+        self.assertTrue(self.store.segment_exists("eligible"))
 
-    def test_cleanup_delete_error_keeps_acknowledged_state_record(self) -> None:
+    def test_cleanup_noop_does_not_touch_acknowledged_file(self) -> None:
         relative_path = "segments/session-1/eligible.ffps"
         file_path = self.root / relative_path
         file_path.parent.mkdir(parents=True)
@@ -161,10 +161,9 @@ class RecoveryScannerTests(unittest.TestCase):
             retain_until_ns=50,
         )
 
-        with patch.object(Path, "unlink", side_effect=OSError("simulated disk error")):
-            with self.assertRaises(OSError):
-                cleanup_acknowledged_segments(self.store, self.root, now_ns=100)
+        result = cleanup_acknowledged_segments(self.store, self.root, now_ns=100)
 
+        self.assertEqual(result, type(result)())
         self.assertTrue(file_path.exists())
         self.assertTrue(self.store.segment_exists("eligible"))
 

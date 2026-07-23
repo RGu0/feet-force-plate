@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import uuid
 
 from client.device.protocol import RawFrame
 from client.hardware_standardization.models import PhysicalArraySession
@@ -245,3 +246,35 @@ class StagedFrameSink:
 
     def discard(self, *, reason: str) -> None:
         self._stager.discard(reason=reason)
+
+
+def delete_completed_valid_session(
+    root: str | Path, *, session_id: str, store: StateStore
+) -> None:
+    """Operator-only single-session deletion with a reversible index-failure window."""
+
+    root_path = Path(root)
+    sessions_root = root_path / "sessions"
+    session_directory = sessions_root / session_id
+    if not session_directory.is_dir():
+        raise FileNotFoundError(session_directory)
+    deleting_root = root_path / ".deleting"
+    deleting_root.mkdir(parents=True, exist_ok=True)
+    pending = deleting_root / f"{session_id}-{uuid.uuid4()}"
+    os.replace(session_directory, pending)
+    _fsync_directory(sessions_root)
+    _fsync_directory(deleting_root)
+    try:
+        store.delete_completed_valid_session(session_id)
+    except Exception:
+        os.replace(pending, session_directory)
+        _fsync_directory(deleting_root)
+        _fsync_directory(sessions_root)
+        raise
+    try:
+        shutil.rmtree(pending)
+        _fsync_directory(deleting_root)
+    except Exception as exc:
+        raise RuntimeError(
+            "database index removed but manual-deletion files require recovery"
+        ) from exc

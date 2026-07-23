@@ -66,3 +66,24 @@ Detailed output: [verification.txt](verification.txt)
 ## Commit
 
 Implementation commit: `dc6042d` — `Harden offline quota and acknowledged cleanup`.
+
+## 2026-07-23 retention-policy revision
+
+The old ACK/retention cleanup behavior is superseded. `cleanup_acknowledged_segments` is now an
+intentional compatibility no-op, and `StateStore.cleanup_candidates()` returns no candidates:
+cloud confirmation never deletes a file or index automatically.
+
+`StateStore.valid_local_storage_snapshot()` reports the valid-session count, raw-plus-derived
+stored bytes, pending network handoffs and most recent cloud confirmation. `delete_completed_valid_session()`
+is an operator-only, single-session function: it atomically moves `sessions/<id>` to a hidden
+deletion directory, removes the completed valid session's SQLite references in one transaction,
+then removes the hidden directory. If the database operation fails the directory is moved back.
+Sessions with retained report references are refused rather than partially deleted.
+
+Automated verification on 2026-07-23:
+
+- `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` — **104 passed**.
+- `git diff --check` — passed.
+
+Physical crash-at-fsync, actual disk-full behavior, OS secure-storage adapter and operator UI
+confirmation of a delete action remain unverified; the issue must remain In Review.
