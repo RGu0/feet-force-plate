@@ -152,6 +152,8 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("baseline-seconds must be at least 5")
     if args.capture_seconds <= 0:
         raise ValueError("capture-seconds must be positive")
+    if args.serial_timeout_seconds <= 0:
+        raise ValueError("serial-timeout-seconds must be positive")
     root = args.output_root.resolve()
     spool_root = root / "spool"
     key_provider = FileAesKeyProvider(args.key_file.resolve())
@@ -176,17 +178,23 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
                 "protocol": _profile().version,
                 "quality": "quality-policy/do-p4864-mvp/1",
                 "runtime_acceptance": "do-p4864-runtime-acceptance/1",
+                "serial_read_timeout_ms": str(
+                    round(args.serial_timeout_seconds * 1_000)
+                ),
             },
             started_at_ns=time.time_ns(),
         )
         connection = ConnectionStateMachine()
         connection.start_connecting()
         connection.mark_ready()
-        transport = SerialByteTransport.open(args.device, timeout_seconds=0.5)
+        parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
+        transport = SerialByteTransport.open(
+            args.device, timeout_seconds=args.serial_timeout_seconds
+        )
         try:
             result = HardwareSessionRuntime(
                 transport=transport,
-                parser=DaoOneP4864Parser(_profile(), allow_unverified=True),
+                parser=parser,
                 connection=connection,
                 mailbox=LatestFrameMailbox(),
                 stager=stager,
@@ -228,6 +236,15 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
             "reason": result.reason,
             "validity": result.validity.value,
             "committed": result.committed,
+            "parser": {
+                "valid_frames": parser.statistics.valid_frames,
+                "invalid_frames": parser.statistics.invalid_frames,
+                "resynchronizations": parser.statistics.resynchronizations,
+                "length_failures": parser.statistics.length_failures,
+                "function_failures": parser.statistics.function_failures,
+                "tail_failures": parser.statistics.tail_failures,
+                "checksum_mismatches": parser.statistics.checksum_mismatches,
+            },
         },
         "post_restart": {
             "session_status": status,
@@ -252,6 +269,7 @@ def main() -> int:
     parser.add_argument("--maximum-empty-count", type=float, default=5.0)
     parser.add_argument("--maximum-host-gap-ms", type=float, default=250.0)
     parser.add_argument("--maximum-idle-read-ms", type=float, default=2_000.0)
+    parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
     parser.add_argument("--storage-append-timeout-seconds", type=float, default=2.0)
     args = parser.parse_args()
     result = run_acceptance(args)

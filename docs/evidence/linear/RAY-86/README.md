@@ -60,9 +60,24 @@ acceptance run.
 
 ## Boundary, failures, and limits
 
-The required real 10-minute and manual/operator checks cannot be marked complete without new
-evidence. The earlier 30-minute requirement has been superseded by the confirmed 10-minute P1
-acceptance, but neither duration authorizes a Done state until the current runtime is exercised.
+### 2026-07-23 real-device result: P1 failed safely
+
+The connected `1A86:7523` DO-P4864 was exercised through the current runtime after a qualifying
+empty-board baseline. Two requested 10-minute attempts became `INVALID` after 341 and 216 frames;
+a subsequent 60-second complete-runtime attempt became `INVALID` after 801 frames. The latter
+recorded one tail failure and one parser resynchronization. In every attempt the temporary staging
+data was removed; SQLite contains no formal session, handoff or derived observation.
+
+A separate 60.007-second single-frame-read diagnostic decoded 1,241 frames with no structural
+failure (arrival P50/P95/P99: 48.36/48.62/49.47 ms). It demonstrates that the failure is
+intermittent rather than a permanent parser mismatch, but does **not** satisfy the P1 requirement:
+the whole runtime must complete ten continuous clean minutes. Sanitized evidence is
+[`real-device-runtime-attempts-20260723.json`](real-device-runtime-attempts-20260723.json).
+
+The required real 10-minute and manual/operator checks cannot be marked complete without a clean
+run and investigation of the intermittent structural fault. The earlier 30-minute requirement has
+been superseded by the confirmed 10-minute P1 acceptance, but neither duration authorizes a Done
+state until the current runtime is exercised successfully.
 
 ## Commit
 
