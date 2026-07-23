@@ -109,3 +109,32 @@ def test_adjacent_or_saturated_bad_cells_invalidate_the_whole_capture() -> None:
     assert clustered.reasons == ("ADJACENT_BAD_CELL_CLUSTER",)
     assert saturated.validity is HardwareDataValidity.INVALID
     assert saturated.reasons == ("FORCE_CONVERSION_OR_SATURATION_FAILED",)
+
+
+def test_two_isolated_bad_cells_are_repaired_but_edge_or_unstable_baseline_is_rejected() -> None:
+    values = np.full((48, 64), 10, dtype=np.uint8)
+    first, second = 100, 700
+    for source_index in (first, second):
+        values[source_index % 48, source_index // 48] = 255
+    frames = (
+        _frame(values, timestamp_ns=10, source_index=0),
+        _frame(values, timestamp_ns=20, source_index=1),
+    )
+    repaired = DoP4864HardwareQualityGate(
+        baseline_reference=_baseline(),
+        policy=BadPointPolicy(known_bad_source_indices=frozenset({first, second})),
+    ).evaluate(session_id="two-isolated", frames=frames)
+    edge = DoP4864HardwareQualityGate(
+        baseline_reference=_baseline(),
+        policy=BadPointPolicy(known_bad_source_indices=frozenset({0})),
+    ).evaluate(session_id="edge", frames=frames)
+    unstable = DoP4864HardwareQualityGate(
+        baseline_reference=_baseline(noisy={100: 2.0, 700: 2.0, 1300: 2.0})
+    ).evaluate(session_id="unstable", frames=frames)
+
+    assert repaired.validity is HardwareDataValidity.VALID
+    assert repaired.repaired_source_indices == (first, second)
+    assert edge.validity is HardwareDataValidity.INVALID
+    assert edge.reasons == ("BAD_CELL_CANNOT_BE_REPAIRED_AT_BOARD_EDGE",)
+    assert unstable.validity is HardwareDataValidity.INVALID
+    assert unstable.reasons == ("TOO_MANY_PERSISTENT_BAD_CELLS",)
