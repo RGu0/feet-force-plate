@@ -71,7 +71,8 @@ retained in `sensor-defect-repair-reference-20260723.json`.
 ## Commit
 
 Initial implementation commit: `09542f4` (`Add generic sensor defect repair`).
-The single-frame follow-up commit is recorded before the Linear review comment.
+Single-frame follow-up commit: `b0ead9f` (`Repair sensor defects within each
+frame`).
 
 ## Evidence
 
