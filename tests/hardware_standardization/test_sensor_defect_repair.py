@@ -36,12 +36,14 @@ def test_single_horizontal_drop_line_uses_pre_interpolation_directional_interpol
     values[6, 2:15] = 0.0
 
     result = repair_sensor_defects(
-        _frames(values),
+        _frames(values, count=1),
         policy=SensorDefectRepairPolicy(maximum_repaired_fraction_per_frame=0.1),
     )
 
     assert result.valid
-    assert result.persistent_missing_rows == (6,)
+    assert result.detected_missing_rows_per_frame == ((6,),)
+    assert result.detected_missing_columns_per_frame == ((),)
+    assert result.persistent_missing_rows == ()
     assert np.all(result.frames[0].values[6, 2:15] == 100.0)
     assert np.all(result.frames[0].repair_mask[6, 2:15])
     assert {
@@ -58,7 +60,7 @@ def test_single_vertical_drop_line_uses_pre_interpolation_row_median_window_five
     values[2:11, 8] = 0.0
 
     result = repair_sensor_defects(
-        _frames(values),
+        _frames(values, count=1),
         policy=SensorDefectRepairPolicy(
             median_window=5,
             maximum_repaired_fraction_per_frame=0.1,
@@ -66,7 +68,8 @@ def test_single_vertical_drop_line_uses_pre_interpolation_row_median_window_five
     )
 
     assert result.valid
-    assert result.persistent_missing_columns == (8,)
+    assert result.detected_missing_columns_per_frame == ((8,),)
+    assert result.persistent_missing_columns == ()
     assert np.all(result.frames[0].values[2:11, 8] == 100.0)
     assert np.all(result.frames[0].repair_mask[2:11, 8])
 
@@ -82,7 +85,7 @@ def test_directional_interpolation_preserves_a_cross_line_gradient() -> None:
     values[9, 2:15] = 130.0
 
     result = repair_sensor_defects(
-        _frames(values),
+        _frames(values, count=1),
         policy=SensorDefectRepairPolicy(maximum_repaired_fraction_per_frame=0.1),
     )
 
@@ -95,10 +98,21 @@ def test_sparse_gap_is_not_repaired_as_a_sensor_line() -> None:
     values[3:10, 2:15] = 100.0
     values[6, 2:7] = 0.0
 
-    result = repair_sensor_defects(_frames(values))
+    result = repair_sensor_defects(_frames(values, count=1))
 
     assert result.valid
     assert result.persistent_missing_rows == ()
+    assert not np.any(result.frames[0].repair_mask)
+
+
+def test_one_sided_contact_edge_is_not_repaired_as_a_sensor_line() -> None:
+    values = np.zeros((13, 17), dtype=np.float64)
+    values[3:6, 2:15] = 100.0
+
+    result = repair_sensor_defects(_frames(values, count=1))
+
+    assert result.valid
+    assert result.detected_missing_rows_per_frame == ((),)
     assert not np.any(result.frames[0].repair_mask)
 
 
@@ -110,11 +124,11 @@ def test_edge_cluster_multi_line_and_excessive_coverage_are_rejected() -> None:
     )
     values[4, :] = 0.0
     values[8, :] = 0.0
-    multi_line = repair_sensor_defects(_frames(values))
+    multi_line = repair_sensor_defects(_frames(values, count=1))
 
     assert edge.reasons == ("BAD_CELL_CANNOT_BE_REPAIRED_AT_BOARD_EDGE",)
     assert cluster.reasons == ("ADJACENT_BAD_CELL_CLUSTER",)
-    assert multi_line.reasons == ("TOO_MANY_PERSISTENT_DEFECT_LINES",)
+    assert multi_line.reasons == ("TOO_MANY_SENSOR_DEFECT_LINES_IN_FRAME",)
 
 
 def test_single_line_over_the_declared_repair_coverage_limit_is_rejected() -> None:
@@ -122,7 +136,7 @@ def test_single_line_over_the_declared_repair_coverage_limit_is_rejected() -> No
     values[3:10, 2:15] = 100.0
     values[6, 2:15] = 0.0
 
-    result = repair_sensor_defects(_frames(values))
+    result = repair_sensor_defects(_frames(values, count=1))
 
     assert result.reasons == ("EXCESSIVE_SENSOR_REPAIR_COVERAGE",)
 

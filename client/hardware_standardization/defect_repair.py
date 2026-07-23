@@ -30,14 +30,15 @@ class SensorRepairMethod(StrEnum):
 class SensorDefectRepairPolicy:
     """Versioned, conservative rules for repairable board-local defects."""
 
-    version: str = "sensor-defect-repair/generic-grid/2"
+    version: str = "sensor-defect-repair/generic-grid/3"
     median_window: int = 3
     maximum_isolated_bad_cells: int = 2
     line_minimum_supported_cells: int = 8
     line_missing_ratio: float = 0.85
     line_support_relative_threshold: float = 0.08
+    # Audit only: repairs do not wait for this many matching frames.
     line_minimum_persistent_frames: int = 3
-    maximum_persistent_lines: int = 1
+    maximum_detected_lines_per_frame: int = 1
     maximum_repaired_fraction_per_frame: float = 0.03
 
     def __post_init__(self) -> None:
@@ -55,8 +56,8 @@ class SensorDefectRepairPolicy:
             raise ValueError("line_support_relative_threshold must be within (0, 1]")
         if self.line_minimum_persistent_frames < 1:
             raise ValueError("line_minimum_persistent_frames must be positive")
-        if self.maximum_persistent_lines < 0:
-            raise ValueError("maximum_persistent_lines must not be negative")
+        if self.maximum_detected_lines_per_frame < 0:
+            raise ValueError("maximum_detected_lines_per_frame must not be negative")
         if not 0 < self.maximum_repaired_fraction_per_frame <= 1:
             raise ValueError("maximum_repaired_fraction_per_frame must be within (0, 1]")
 
@@ -75,6 +76,8 @@ class SensorDefectRepairResult:
     """A complete session-level repair decision with audit-friendly summaries."""
 
     frames: tuple[RepairedSensorFrame, ...]
+    detected_missing_rows_per_frame: tuple[tuple[int, ...], ...]
+    detected_missing_columns_per_frame: tuple[tuple[int, ...], ...]
     persistent_missing_rows: tuple[int, ...]
     persistent_missing_columns: tuple[int, ...]
     method_counts: tuple[tuple[str, int], ...]
@@ -97,13 +100,14 @@ def repair_sensor_defects(
 ) -> SensorDefectRepairResult:
     """Repair only high-confidence defects before baseline/analysis/display.
 
-    ``known_bad_cells`` is supplied by baseline/diagnostic evidence.  Dynamic
-    single-line repairs require the same defect signature in several frames:
-    a large fraction of a row (or column) is low while immediate opposite-side
-    neighbours are supported.  A line cell is restored by pairwise directional
-    interpolation across the defect, with a median across the available pairs.
-    Natural contours, sparse gaps, boundaries and multi-line defects therefore
-    remain unmodified or invalidate the session.
+    ``known_bad_cells`` is supplied by baseline/diagnostic evidence.  Each
+    incoming frame independently detects a repairable line when a large
+    fraction of an interior row (or column) is low while immediate opposite
+    sides are supported.  A line cell is restored immediately by pairwise
+    directional interpolation across the defect, with a median across the
+    available pairs.  Cross-frame repetition is recorded as audit confidence,
+    not required before repair. Natural contours, sparse gaps, boundaries and
+    multi-line defects therefore remain unmodified or invalidate the frame.
     """
     source = _validate_matrices(matrices)
     shape = source[0].shape
@@ -115,23 +119,30 @@ def repair_sensor_defects(
         _repair_known_isolated_cells(matrix, known_bad_cells, policy)
         for matrix in source
     )
-    row_candidates = _persistent_line_indices(
-        static_frames, axis=0, policy=policy
+    rows_per_frame = tuple(
+        _line_candidates(frame.values, axis=0, policy=policy)
+        for frame in static_frames
     )
-    column_candidates = _persistent_line_indices(
-        static_frames, axis=1, policy=policy
+    columns_per_frame = tuple(
+        _line_candidates(frame.values, axis=1, policy=policy)
+        for frame in static_frames
     )
-    if len(row_candidates) + len(column_candidates) > policy.maximum_persistent_lines:
-        return _invalid(source, "TOO_MANY_PERSISTENT_DEFECT_LINES")
+    if any(
+        len(rows) + len(columns) > policy.maximum_detected_lines_per_frame
+        for rows, columns in zip(rows_per_frame, columns_per_frame, strict=True)
+    ):
+        return _invalid(source, "TOO_MANY_SENSOR_DEFECT_LINES_IN_FRAME")
 
     repaired_frames = tuple(
         _repair_detected_lines(
             frame,
-            rows=row_candidates,
-            columns=column_candidates,
+            rows=rows,
+            columns=columns,
             policy=policy,
         )
-        for frame in static_frames
+        for frame, rows, columns in zip(
+            static_frames, rows_per_frame, columns_per_frame, strict=True
+        )
     )
     if any(
         np.count_nonzero(frame.repair_mask) / frame.repair_mask.size
@@ -146,8 +157,10 @@ def repair_sensor_defects(
     )
     return SensorDefectRepairResult(
         frames=repaired_frames,
-        persistent_missing_rows=row_candidates,
-        persistent_missing_columns=column_candidates,
+        detected_missing_rows_per_frame=rows_per_frame,
+        detected_missing_columns_per_frame=columns_per_frame,
+        persistent_missing_rows=_persistent_line_indices(rows_per_frame, policy),
+        persistent_missing_columns=_persistent_line_indices(columns_per_frame, policy),
         method_counts=tuple(sorted(counts.items())),
     )
 
@@ -234,14 +247,12 @@ def _repair_known_isolated_cells(
 
 
 def _persistent_line_indices(
-    frames: tuple[RepairedSensorFrame, ...],
-    *,
-    axis: int,
+    candidates_per_frame: tuple[tuple[int, ...], ...],
     policy: SensorDefectRepairPolicy,
 ) -> tuple[int, ...]:
     candidates = Counter()
-    for frame in frames:
-        for index in _line_candidates(frame.values, axis=axis, policy=policy):
+    for frame_candidates in candidates_per_frame:
+        for index in frame_candidates:
             candidates[index] += 1
     return tuple(
         sorted(
@@ -379,6 +390,8 @@ def _invalid(
     frames = tuple(_empty_frame(matrix) for matrix in source)
     return SensorDefectRepairResult(
         frames=frames,
+        detected_missing_rows_per_frame=(),
+        detected_missing_columns_per_frame=(),
         persistent_missing_rows=(),
         persistent_missing_columns=(),
         method_counts=(),

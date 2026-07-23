@@ -140,7 +140,7 @@ def test_two_isolated_bad_cells_are_repaired_but_edge_or_unstable_baseline_is_re
     assert unstable.reasons == ("TOO_MANY_PERSISTENT_BAD_CELLS",)
 
 
-def test_persistent_horizontal_line_is_repaired_before_standardization_with_audit_metadata() -> None:
+def test_single_frame_horizontal_line_is_repaired_before_standardization_with_audit_metadata() -> None:
     values = np.full((48, 64), 10, dtype=np.uint8)
     values[20, :] = 0
     raw_before = values.copy()
@@ -148,8 +148,6 @@ def test_persistent_horizontal_line_is_repaired_before_standardization_with_audi
         session_id="line-repair",
         frames=(
             _frame(values, timestamp_ns=10, source_index=0),
-            _frame(values, timestamp_ns=20, source_index=1),
-            _frame(values, timestamp_ns=30, source_index=2),
         ),
     )
 
@@ -166,10 +164,12 @@ def test_persistent_horizontal_line_is_repaired_before_standardization_with_audi
     assert len(result.repaired_source_indices) == 64
     assert result.processing_metadata is not None
     repair = result.processing_metadata["sensor_defect_repair"]
-    assert repair["persistent_missing_rows"] == [20]
+    assert repair["detected_missing_rows_per_frame"] == [[20]]
+    assert repair["detected_missing_columns_per_frame"] == [[]]
+    assert repair["persistent_missing_rows"] == []
     assert repair["persistent_missing_columns"] == []
     assert (
         repair["method_counts"]["HORIZONTAL_LINE_DIRECTIONAL_INTERPOLATION"]
-        == 192
+        == 64
     )
     assert np.array_equal(values, raw_before)

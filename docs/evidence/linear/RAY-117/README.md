@@ -1,7 +1,7 @@
 # RAY-117 — 硬件标准化层：原始阵列到 MVP 标准会话
 
 - Issue: [RAY-117](https://linear.app/ray-app/issue/RAY-117/硬件标准化层原始阵列到-mvp-标准会话)
-- Evidence captured: 2026-07-23T08:46:33Z
+- Evidence refreshed: 2026-07-23T08:52:11Z
 - State after automated verification: `In Review`; milestone: `P0：硬件基线`; priority: `Urgent`
 - Project: `足底压力健康筛查与分析平台`
 
@@ -9,7 +9,7 @@
 
 - [x] Adapter emits a traceable derived output for 1–2 isolated, repairable
   cells without mutating the immutable raw frame.
-- [x] Persistent single horizontal/vertical line detection is conservative and
+- [x] Single-frame horizontal/vertical line detection is conservative and
   produces a separately masked, directionally interpolated processing matrix.
 - [x] Bad-cell clusters, edge cells, excessive repair coverage, multiple lines,
   baseline anomalies, saturation and conversion failures invalidate the session.
@@ -23,10 +23,12 @@
 - `client/hardware_standardization/defect_repair.py` is layout-neutral: it takes
   finite non-negative 2-D matrices and emits new immutable matrices, masks and
   per-cell methods. It has no serial, UI, COP, scoring or report dependency.
-- Isolated declared cells use a local 3×3/5×5 spatial median. A confirmed
-  single bad row/column uses paired directional interpolation across the defect;
-  a 5-wide window takes the median of multiple pairwise interpolation estimates.
-  This retains a pressure gradient and resists one noisy neighbour.
+- Isolated declared cells use a local 3×3/5×5 spatial median. A single frame
+  can repair one high-confidence bad row/column by paired directional
+  interpolation across the defect; a 5-wide window takes the median of multiple
+  pairwise interpolation estimates. Cross-frame repetition is audit confidence,
+  not a repair prerequisite. This retains a pressure gradient and resists one
+  noisy neighbour.
 - `DoP4864HardwareQualityGate` applies that repair *before* zero correction and
   standardization. Raw frames remain unchanged; `repaired_count`,
   `repaired_cell_mask`, processing metadata and the existing physical session
@@ -49,7 +51,7 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
   --junitxml=docs/evidence/linear/RAY-117/pytest-sensor-defect-repair-20260723.xml
 ```
 
-Result: `61 passed in 1.36s`. The JUnit output is retained as
+Result: `62 passed in 1.34s`. The JUnit output is retained as
 `pytest-sensor-defect-repair-20260723.xml`; the relevant fixture observation is
 retained in `sensor-defect-repair-reference-20260723.json`.
 
@@ -57,10 +59,10 @@ retained in `sensor-defect-repair-reference-20260723.json`.
 
 - The repair is derived data only: no source matrix is overwritten and it is
   not a calibration, physical-force, clinical or diagnostic assertion.
-- Detection is deliberately limited to one persistent interior row or column,
-  with a support/coverage gate. A different hardware profile must select and
-  version its own policy; it is not safe to assume this fixture proves every
-  sensor defect.
+- Detection is deliberately limited to one interior row or column per frame,
+  with opposite-side support and coverage gates. A different hardware profile
+  must select and version its own policy; it is not safe to assume this fixture
+  proves every sensor defect.
 - The replay fixture is de-identified and contains no raw customer identity or
   serial capture. Real-device acceptance, cross-device confirmation and the
   runtime UI bridge remain required before this issue can be `Done`.
@@ -68,7 +70,8 @@ retained in `sensor-defect-repair-reference-20260723.json`.
 
 ## Commit
 
-Implementation commit: `09542f4` (`Add generic sensor defect repair`).
+Initial implementation commit: `09542f4` (`Add generic sensor defect repair`).
+The single-frame follow-up commit is recorded before the Linear review comment.
 
 ## Evidence
 

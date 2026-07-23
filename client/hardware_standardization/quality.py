@@ -23,7 +23,7 @@ class HardwareDataValidity(StrEnum):
 class BadPointPolicy:
     """DO-P4864 binding of the generic pre-interpolation repair policy."""
 
-    version: str = "quality-policy/do-p4864-mvp/2"
+    version: str = "quality-policy/do-p4864-mvp/3"
     maximum_bad_cells: int = 2
     maximum_baseline_mad_count: float = 1.0
     known_bad_source_indices: frozenset[int] = frozenset()
@@ -32,7 +32,7 @@ class BadPointPolicy:
     line_missing_ratio: float = 0.85
     line_support_relative_threshold: float = 0.08
     line_minimum_persistent_frames: int = 3
-    maximum_persistent_lines: int = 1
+    maximum_detected_lines_per_frame: int = 1
     maximum_repaired_fraction_per_frame: float = 0.03
 
     def __post_init__(self) -> None:
@@ -52,7 +52,7 @@ class BadPointPolicy:
             line_missing_ratio=self.line_missing_ratio,
             line_support_relative_threshold=self.line_support_relative_threshold,
             line_minimum_persistent_frames=self.line_minimum_persistent_frames,
-            maximum_persistent_lines=self.maximum_persistent_lines,
+            maximum_detected_lines_per_frame=self.maximum_detected_lines_per_frame,
             maximum_repaired_fraction_per_frame=self.maximum_repaired_fraction_per_frame,
         )
 
@@ -77,8 +77,8 @@ class DoP4864HardwareQualityGate:
 
     The raw immutable frames remain untouched.  The separate processing matrix is
     repaired before zero correction and V1 force conversion by the layout-neutral
-    policy (isolated-cell spatial median, or persistent single-line robust
-    directional interpolation only).
+    policy (isolated-cell spatial median, or a single-frame robust directional
+    interpolation of a detected line).
     """
 
     def __init__(
@@ -151,6 +151,13 @@ class DoP4864HardwareQualityGate:
                     "line_support_relative_threshold": (
                         self._policy.line_support_relative_threshold
                     ),
+                    "detected_missing_rows_per_frame": [
+                        list(rows) for rows in repair.detected_missing_rows_per_frame
+                    ],
+                    "detected_missing_columns_per_frame": [
+                        list(columns)
+                        for columns in repair.detected_missing_columns_per_frame
+                    ],
                     "persistent_missing_rows": list(repair.persistent_missing_rows),
                     "persistent_missing_columns": list(repair.persistent_missing_columns),
                     "method_counts": dict(repair.method_counts),
