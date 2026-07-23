@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QLabel
 
-from client.app.heatmap import HeatmapWidget, PhysicalGridOverlay
+from client.app.heatmap import HeatmapWidget, PhysicalGridOverlay, _relative_color
 from client.app.heatmap_display import HeatmapDisplayConfig
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -55,6 +55,12 @@ def test_physical_grid_uses_declared_board_dimensions_and_centimetre_ticks(qtbot
     assert target.width() / target.height() == pytest.approx(
         grid.width_mm / grid.height_mm
     )
+
+
+def test_low_pressure_display_color_fades_into_the_black_board() -> None:
+    assert _relative_color(28.0 / 255.0).alpha() == 0
+    assert _relative_color(0.2).alpha() < _relative_color(0.5).alpha()
+    assert _relative_color(1.0).alpha() == 255
 
 
 def test_heatmap_widget_high_dpi_render_is_not_blank(qtbot) -> None:

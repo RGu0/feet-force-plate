@@ -95,6 +95,7 @@ class HeatmapWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.fillRect(self.rect(), QColor("#F6FAFD"))
         target = self._board_rect()
+        painter.fillRect(target, QColor("#000000"))
         frame = self._display_frame
         if frame is None:
             self._draw_physical_grid(painter, target)
@@ -160,18 +161,18 @@ class HeatmapWidget(QWidget):
         grid = self._physical_grid
         x_at = lambda mm: target.left() + mm / grid.width_mm * target.width()
         y_at = lambda mm: target.top() + mm / grid.height_mm * target.height()
-        painter.setPen(QPen(QColor(15, 23, 42, 30), 0.8))
+        painter.setPen(QPen(QColor(226, 232, 240, 24), 0.8))
         for x_mm in grid.minor_x_mm:
             painter.drawLine(QPointF(x_at(x_mm), target.top()), QPointF(x_at(x_mm), target.bottom()))
         for y_mm in grid.minor_y_mm:
             painter.drawLine(QPointF(target.left(), y_at(y_mm)), QPointF(target.right(), y_at(y_mm)))
-        painter.setPen(QPen(QColor(15, 23, 42, 82), 1.2))
+        painter.setPen(QPen(QColor(226, 232, 240, 72), 1.2))
         for x_mm in grid.major_x_mm:
             painter.drawLine(QPointF(x_at(x_mm), target.top()), QPointF(x_at(x_mm), target.bottom()))
         for y_mm in grid.major_y_mm:
             painter.drawLine(QPointF(target.left(), y_at(y_mm)), QPointF(target.right(), y_at(y_mm)))
         if target.width() >= 360 and target.height() >= 240:
-            painter.setPen(QColor(15, 23, 42, 155))
+            painter.setPen(QColor(226, 232, 240, 170))
             for x_mm in grid.major_x_mm:
                 painter.drawText(QPointF(x_at(x_mm) + 3.0, target.top() + 14.0), f"{x_mm / 10:.0f}")
             for y_mm in grid.major_y_mm:
@@ -221,7 +222,10 @@ def _relative_color(value: float) -> QColor:
         QColor("#E25539"),
     )
     bounded = max(0.0, min(1.0, value))
-    if bounded <= 0.015:
+    # Keep the actual P-07 board consistent with the heatmap replay: low
+    # pressure fades fully into the black board instead of forming blue blocks.
+    fade_start = 28.0 / 255.0
+    if bounded <= fade_start:
         return QColor(246, 250, 253, 0)
     position = bounded * (len(stops) - 1)
     lower = int(position)
@@ -233,6 +237,6 @@ def _relative_color(value: float) -> QColor:
         round(start.green() + (end.green() - start.green()) * ratio),
         round(start.blue() + (end.blue() - start.blue()) * ratio),
     )
-    # Let weak contact fade into the light canvas, as prescribed by viz.css.
-    color.setAlphaF(min(0.92, 0.18 + bounded**0.72 * 0.74))
+    pressure = (bounded - fade_start) / (1.0 - fade_start)
+    color.setAlphaF(pressure**1.25)
     return color

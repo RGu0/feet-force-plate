@@ -145,10 +145,13 @@ QT_QPA_PLATFORM=offscreen \
   DO-P4864 设备规格中已声明的板面 `509.3 × 381.3 mm`，在实际 P-07
   `HeatmapWidget` 上叠加 1 cm 细网格、5 cm 主刻度和厘米标签。热图栅格和
   COP 共同 letterbox 到同一物理纵横比，报告小热图不再为填满卡片而拉伸。
+- 主题修正：网格区域使用黑底；低于 `28/255` 的相对显示值不绘制，其余低压
+  按幂曲线透明淡出。网格线改为低对比浅色，因此足印外沿与回放页一致地融入
+  黑色背景，而非露出白底或固定蓝色块。
 - 边界：网格是操作员视觉参考，不是新传感数据、压力标定或临床测量。它仅在
   `QPainter` 显示层绘制，不读取/修改 `DisplayFrame`、COP、负重、可靠存储、
   本地分析或报告数据。
-- 自动验证：以下离屏命令结果为 `17 passed in 1.61s`；同时
+- 自动验证：以下离屏命令结果为 `18 passed in 1.74s`；同时
   `./scripts/local-env.sh python -m compileall -q client/app` 通过。
 
 ```bash
@@ -165,7 +168,8 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
 
 - 目视证据：[physical-grid-preview-20260723.png](physical-grid-preview-20260723.png)
   （合成 `DesignDemoController` 数据的 Qt offscreen 截图；SHA-256：
-  `40a4d98c28b4559942801aa520e775370d3a290b51095206ef855ed701ca7b37`）。
+  `41d21e062e24f47d0b1642cdd4a4e137b01eed0b4b77f8908238d3e6f75127f6`）。
   它证明实际组件绘制、比例、刻度与 COP 对齐；不构成真机、Windows 高 DPI 或
   现场人工验收。
-- 实现提交：`6df1845`（`Add physical grid to live heatmap`）。
+- 初始物理网格提交：`6df1845`（`Add physical grid to live heatmap`）。黑底
+  主题修正提交将在写入 Linear 审核评论前回填。
