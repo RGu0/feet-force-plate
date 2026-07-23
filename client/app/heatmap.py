@@ -6,11 +6,13 @@ from PySide6.QtWidgets import QWidget
 
 from client.local_analysis.display import DisplayFrame
 
+from .heatmap_display import HeatmapDisplayConfig, HeatmapDisplayRefiner
+
 
 class HeatmapWidget(QWidget):
     """High-DPI vector overlay over a 64x48 display-only raster."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, display_config: HeatmapDisplayConfig | None = None) -> None:
         super().__init__()
         self.setObjectName("heatmapHost")
         self.setAccessibleName("48×64 实时相对压力热力图与 COP")
@@ -19,15 +21,21 @@ class HeatmapWidget(QWidget):
         )
         self.setMinimumHeight(320)
         self._display_frame: DisplayFrame | None = None
-        self._smoothed_heatmap: tuple[tuple[float, ...], ...] | None = None
+        self._refiner = HeatmapDisplayRefiner(display_config)
+        self._rendered_heatmap: tuple[tuple[float, ...], ...] | None = None
 
     @property
     def display_frame(self) -> DisplayFrame | None:
         return self._display_frame
 
+    @property
+    def rendered_heatmap(self) -> tuple[tuple[float, ...], ...] | None:
+        """The UI-only copy; never use it for COP, analysis, storage, or reports."""
+        return self._rendered_heatmap
+
     def set_display_frame(self, frame: DisplayFrame) -> None:
         self._display_frame = frame
-        self._smoothed_heatmap = _smooth_heatmap(frame.relative_heatmap)
+        self._rendered_heatmap = self._refiner.refine(frame.relative_heatmap)
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -50,7 +58,7 @@ class HeatmapWidget(QWidget):
             )
             return
         image = QImage(64, 48, QImage.Format.Format_RGBA8888)
-        values_by_row = self._smoothed_heatmap or frame.relative_heatmap
+        values_by_row = self._rendered_heatmap or frame.relative_heatmap
         for row, values in enumerate(values_by_row):
             for column, value in enumerate(values):
                 image.setPixelColor(column, row, _relative_color(value))
@@ -133,28 +141,3 @@ def _relative_color(value: float) -> QColor:
     # Let weak contact fade into the light canvas, as prescribed by viz.css.
     color.setAlphaF(min(0.92, 0.18 + bounded**0.72 * 0.74))
     return color
-
-
-def _smooth_heatmap(
-    values: tuple[tuple[float, ...], ...],
-    radius: int = 2,
-) -> tuple[tuple[float, ...], ...]:
-    """Small separable box blur for a calm, data-driven pressure surface."""
-    if not values:
-        return values
-    height, width = len(values), len(values[0])
-    horizontal: list[list[float]] = [[0.0] * width for _ in range(height)]
-    for row in range(height):
-        for column in range(width):
-            start, end = max(0, column - radius), min(width, column + radius + 1)
-            horizontal[row][column] = sum(values[row][start:end]) / (end - start)
-    vertical: list[tuple[float, ...]] = []
-    for row in range(height):
-        start, end = max(0, row - radius), min(height, row + radius + 1)
-        vertical.append(
-            tuple(
-                sum(horizontal[index][column] for index in range(start, end)) / (end - start)
-                for column in range(width)
-            )
-        )
-    return tuple(vertical)
