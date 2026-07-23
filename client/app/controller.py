@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import time
 from typing import Protocol
 
 from PySide6.QtCore import QTimer
@@ -14,6 +15,7 @@ from client.workflow.consent import (
     RequiredConsentDeclined,
 )
 from client.workflow.models import WorkflowState
+from client.workflow.state_machine import ScreeningStep
 from client.local_analysis.display import DisplayRefreshController
 from client.workflow.participant import (
     AnalysisProfile,
@@ -25,6 +27,7 @@ from client.workflow.participant import (
 )
 
 from .pages import PageId
+from .live_display import LiveDisplayProjection
 from .qt_shell import ScreeningWindow
 from .ui_models import UiReadModelPort
 
@@ -90,6 +93,7 @@ class ApplicationController:
         consent: ConsentWorkflow | None = None,
         consent_policy: ConsentPolicy | None = None,
         display_refresh: DisplayRefreshController | None = None,
+        live_display: LiveDisplayProjection | None = None,
         read_models: UiReadModelPort | None = None,
         device_support: _DeviceSupportPort | None = None,
     ) -> None:
@@ -99,6 +103,7 @@ class ApplicationController:
         self._consent = consent
         self._consent_policy = consent_policy
         self._display_refresh = display_refresh
+        self._live_display = live_display
         self._read_models = read_models
         self._device_support = device_support
         onboarding_dependencies = (participant, consent, consent_policy)
@@ -109,6 +114,9 @@ class ApplicationController:
                 "participant, consent, and consent_policy must be configured together"
             )
         self.window = ScreeningWindow(on_action=self.dispatch)
+        self._live_display_timer = QTimer(self.window)
+        self._live_display_timer.setInterval(16)
+        self._live_display_timer.timeout.connect(self._on_live_display_timer)
         self.refresh()
 
     def dispatch(self, action: str) -> None:
@@ -171,6 +179,7 @@ class ApplicationController:
 
     def refresh(self) -> None:
         self.window.present_state(self._coordinator.state)
+        self._sync_live_display_timer()
         if self._read_models is None:
             return
         self.window.present_dashboard(self._read_models.dashboard_snapshot())
@@ -215,6 +224,24 @@ class ApplicationController:
             return False
         self.window.present_display_frame(frame)
         return True
+
+    def _sync_live_display_timer(self) -> None:
+        should_run = (
+            self._live_display is not None
+            and self._display_refresh is not None
+            and self._coordinator.state.step is ScreeningStep.ACQUIRING
+        )
+        if should_run and not self._live_display_timer.isActive():
+            self._live_display_timer.start()
+        elif not should_run and self._live_display_timer.isActive():
+            self._live_display_timer.stop()
+
+    def _on_live_display_timer(self) -> None:
+        """Run entirely in the Qt thread; hardware reads stay behind its port."""
+        if self._live_display is None:
+            return
+        self._live_display.poll()
+        self.on_display_tick(time.monotonic())
 
     def _run_preflight(self) -> None:
         self._coordinator.run_preflight()

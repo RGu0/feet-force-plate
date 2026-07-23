@@ -23,6 +23,7 @@ from client.workflow.ports import (
 from client.workflow.protocol import ScreeningProtocol
 
 from .controller import ApplicationController
+from .live_display import LiveDisplayProjection
 from .pages import PageId
 
 
@@ -238,6 +239,7 @@ def build_connected_ui(
     spooler: object,
     telemetry: TelemetryPort,
     display_refresh: DisplayRefreshController | None = None,
+    live_display: LiveDisplayProjection | None = None,
     export_destination: Callable[[], Path | None] | None = None,
     protocol: ScreeningProtocol | None = None,
     controller_options: dict[str, object] | None = None,
@@ -261,6 +263,8 @@ def build_connected_ui(
     options = dict(controller_options or {})
     if display_refresh is not None:
         options["display_refresh"] = display_refresh
+    if live_display is not None:
+        options["live_display"] = live_display
     if export_destination is not None:
         options["export_destination"] = export_destination
     controller = ReportConnectedController(

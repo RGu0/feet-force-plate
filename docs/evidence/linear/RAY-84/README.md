@@ -119,3 +119,13 @@ QT_QPA_PLATFORM=offscreen \
 - 目视结论：默认配置让实际足底主体的颜色过渡更连续，并弱化了原图中零星离散触点；这是视觉可用性观察，不是压力精度、标定或医学解释。
 - 隐私：原始字节流和两张真实帧预览仅存于 `/private/tmp/feetforceplate-ray84-live/`，不纳入仓库或 Linear 附件；仓库只保留脱敏计数与边界。
 - 仍未验证：真实采集→latest-frame mailbox→P-07 窗口的生产运行时桥接、连续约 12 Hz 下的肉眼稳定性、Windows 高 DPI/目标显示器和操作员现场验收。因此完成本次回放后仍为 `In Review`，不得标 `Done`。
+
+## 2026-07-23 实时硬件到 P-07 桥接
+
+- 实现：`client/app/live_display.py` 的 `LiveDisplayProjection` 通过只读 `LatestRawFramePort` 读取设备层的 latest-only `RawFrame`，仅将新 `source_index` 投影为独立 `DisplayFrame`。它保留 COP/总载荷显示历史，不保留、修改或写入原始矩阵。
+- UI 接线：`ApplicationController` 只在 `ACQUIRING` 状态启动 Qt 定时器；定时器先投影硬件 latest frame，再按 `DisplayRefreshController` 的 30 Hz 上限渲染 P-07。离开检测状态即停止定时器。`build_connected_ui` 接受 `live_display` 端口对象，由组合根提供设备邮箱，客户端不直接打开串口或访问本地私表。
+- 可重复真机命令：`scripts/run_dop4864_live_display_validation.py --device <串口> --seconds 10 --screenshot /private/tmp/...png`。这是显示验证工具，不创建受试者、可靠会话、分析结果或报告；正式会话仍应由设备采集/可靠存储组合根提供同一个 hardware mailbox。
+- 自动验证：`11 passed in 1.70s`，JUnit：[pytest-live-display-bridge.xml](pytest-live-display-bridge.xml)。覆盖真实硬件邮箱类型到显示邮箱的源矩阵不可变投影，以及 Qt 定时器将新设备帧渲染至 P-07 的文字冗余指标。
+- 编译验证：`./scripts/local-env.sh python -m compileall -q client/app scripts/run_dop4864_live_display_validation.py` 通过。
+- 全量客户端回归：`133 passed, 1 failed`；失败仍是范围外 `client/tests/test_ray_114_startup_ui.py::test_failure_has_plain_copy_one_primary_recovery_and_safe_exit` 的按钮焦点断言。本轮未修改 RAY-114/启动校验代码。
+- 真机实时尝试：验证命令启动后，CH340 设备从系统串口列表消失，读取器在首帧前返回 `TransportDisconnected`；脱敏记录见 [live-display-validation-attempt-20260723.json](live-display-validation-attempt-20260723.json)。因此尚不能把实时真机 UI 验收视为完成。

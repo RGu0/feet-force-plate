@@ -1,0 +1,11 @@
+{
+  "schema_version": "do-p4864-live-display-validation/1",
+  "attempted_at_utc": "2026-07-23T07:45:00Z",
+  "requested_duration_seconds": 8,
+  "frames_observed": 0,
+  "last_source_index": -1,
+  "screenshot_saved": true,
+  "result": "NOT_VALIDATED",
+  "reason": "The CH340 serial device disappeared from the macOS device list after the validation started; the reader returned TransportDisconnected before any frame arrived.",
+  "privacy_boundary": "No raw matrices, screenshot, device path, or operator data are included in repository evidence."
+}
