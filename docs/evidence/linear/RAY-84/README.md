@@ -172,4 +172,4 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
   它证明实际组件绘制、比例、刻度与 COP 对齐；不构成真机、Windows 高 DPI 或
   现场人工验收。
 - 初始物理网格提交：`6df1845`（`Add physical grid to live heatmap`）。黑底
-  主题修正提交将在写入 Linear 审核评论前回填。
+  主题修正提交：`9fd42bf`（`Use black board for live heatmap grid`）。
