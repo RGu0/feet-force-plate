@@ -87,6 +87,7 @@ class HardwareSessionRuntime:
         target_frames: int | None = None,
         minimum_duration_ns: int | None = None,
     ) -> HardwareSessionResult:
+        self._stager.freeze_versions(self._frozen_runtime_versions())
         acquisition = AcquisitionRunner(
             transport=self._transport,
             parser=self._parser,
@@ -123,3 +124,21 @@ class HardwareSessionRuntime:
             )
         self._stager.commit_valid(ended_at_ns=self._wall_time_ns())
         return HardwareSessionResult(acquisition, SessionValidity.VALID, None, True)
+
+    def _frozen_runtime_versions(self) -> dict[str, str]:
+        versions = {
+            "protocol_profile": self._parser.profile.version,
+            "maximum_host_gap_ns": str(self._maximum_host_gap_ns),
+            "maximum_idle_read_ns": str(self._maximum_idle_read_ns),
+            "storage_append_timeout_ms": str(
+                None
+                if self._storage_append_timeout_s is None
+                else round(self._storage_append_timeout_s * 1_000)
+            ),
+        }
+        quality_versions = getattr(
+            self._quality_gate, "frozen_configuration_versions", None
+        )
+        if callable(quality_versions):
+            versions.update(quality_versions())
+        return versions

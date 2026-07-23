@@ -99,6 +99,14 @@ class ValidSessionStager:
         if sealed is not None:
             self._sealed.append(sealed)
 
+    def freeze_versions(self, additional_versions: dict[str, str]) -> None:
+        """Bind acquisition policies before the first raw frame is accepted."""
+
+        if self._finished or self._sealed or self._has_open_frames:
+            raise RuntimeError("valid-session versions must be frozen before acquisition")
+        self._writer.freeze_versions(additional_versions)
+        self._versions.update(additional_versions)
+
     def append_from_sink(
         self, session_id: str, frame: RawFrame, *, timeout: float | None = None
     ) -> None:

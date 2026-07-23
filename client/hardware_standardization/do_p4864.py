@@ -35,6 +35,21 @@ class DoP4864StandardizationAdapter:
     def layout(self) -> BoardCoordinateLayout:
         return self._layout
 
+    @property
+    def frozen_configuration_versions(self) -> dict[str, str]:
+        """Version identifiers that must travel with every valid device session."""
+
+        specification = self._specification
+        return {
+            "device_specification": specification.specification_id,
+            "measurement_profile": specification.measurement_profile_version,
+            "baseline_profile": specification.baseline_profile_version,
+            "force_calibration_profile": specification.force_calibration_profile_version,
+            "force_validation": specification.force_validation,
+            "quality_policy": specification.quality_policy_version,
+            "geometry_validation": specification.geometry_validation,
+        }
+
     def standardize(
         self,
         session_id: str,

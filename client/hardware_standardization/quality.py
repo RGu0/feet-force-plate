@@ -122,6 +122,17 @@ class DoP4864HardwareQualityGate:
             },
         )
 
+    def frozen_configuration_versions(self) -> dict[str, str]:
+        """Expose the complete V1 quality/physical conversion selection for storage."""
+
+        return {
+            **self._adapter.frozen_configuration_versions,
+            "bad_point_policy": self._policy.version,
+            "baseline_window_id": self._baseline_reference.baseline_window_id,
+            "baseline_rules": self._baseline_reference.rules_version,
+            "baseline_threshold": self._baseline_reference.threshold_version,
+        }
+
     def _repairability_error(self, bad: set[int]) -> str | None:
         if len(bad) > self._policy.maximum_bad_cells:
             return "TOO_MANY_PERSISTENT_BAD_CELLS"

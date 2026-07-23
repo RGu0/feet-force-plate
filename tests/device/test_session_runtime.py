@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+import json
 import unittest
 
 import numpy as np
@@ -123,3 +124,17 @@ class SessionRuntimeTests(unittest.TestCase):
         artifacts = self.store.session_artifacts("s1")
         self.assertEqual(len(artifacts), 1)
         self.assertTrue((self.data_root / artifacts[0].relative_path).exists())
+        manifest = json.loads(
+            (self.data_root / "sessions" / "s1" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["versions"]["protocol_profile"], "runtime-test/1")
+        self.assertEqual(
+            manifest["versions"]["bad_point_policy"], "quality-policy/do-p4864-mvp/1"
+        )
+        self.assertEqual(
+            manifest["versions"]["force_calibration_profile"],
+            "do-p4864-voltage-force/mvp-screening-v1-20260722",
+        )
+        self.assertEqual(manifest["versions"]["maximum_host_gap_ns"], "None")

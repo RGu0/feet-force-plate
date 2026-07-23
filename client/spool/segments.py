@@ -106,6 +106,21 @@ class ImmutableSegmentWriter:
             return self.close()
         return None
 
+    def freeze_versions(self, additional_versions: dict[str, str]) -> None:
+        """Bind run-time policy identifiers before the first immutable frame."""
+
+        if self._frames:
+            raise RuntimeError("segment versions must be frozen before its first frame")
+        if not additional_versions or any(
+            not key or not value for key, value in additional_versions.items()
+        ):
+            raise ValueError("additional segment versions must be non-empty")
+        for key, value in additional_versions.items():
+            existing = self._versions.get(key)
+            if existing is not None and existing != value:
+                raise ValueError(f"version {key!r} is already frozen differently")
+        self._versions.update(additional_versions)
+
     def close(self) -> SealedSegment:
         if not self._frames:
             raise ValueError("cannot seal an empty segment")

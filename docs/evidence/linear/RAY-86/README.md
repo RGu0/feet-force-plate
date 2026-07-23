@@ -26,6 +26,11 @@ host-monotonic-time-bounded session, run preprocessing/quality, encrypt/commit i
 state store for recovery verification. It never writes raw matrices or key bytes to its JSON
 summary. The tool has not yet been exercised against the currently detected real device.
 
+Before the first frame, `HardwareSessionRuntime` freezes the protocol profile, device/geometry,
+baseline, bad-point and force-conversion versions plus the host-gap/idle-read/storage-timeout
+policies into every immutable segment and session manifest. This makes a later replay independent
+of changed process defaults.
+
 ## Verification
 
 Automated command run on 2026-07-23:
