@@ -139,7 +139,8 @@ QT_QPA_PLATFORM=offscreen \
 ## 2026-07-23 物理尺寸网格叠加
 
 - Linear：本补充于 2026-07-23T09:16:45Z 将 `RAY-84` 从 `In Review`
-  置为 `In Progress`；实现和自动验证完成后仍将回到 `In Review`，不标 `Done`。
+  置为 `In Progress`；自动验证完成后于 2026-07-23T09:18:34Z 重新读取确认
+  `In Review`，不标 `Done`。
 - 实现：`client/app/heatmap.py` 新增只读 `PhysicalGridOverlay`。它采用
   DO-P4864 设备规格中已声明的板面 `509.3 × 381.3 mm`，在实际 P-07
   `HeatmapWidget` 上叠加 1 cm 细网格、5 cm 主刻度和厘米标签。热图栅格和
@@ -167,4 +168,4 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
   `40a4d98c28b4559942801aa520e775370d3a290b51095206ef855ed701ca7b37`）。
   它证明实际组件绘制、比例、刻度与 COP 对齐；不构成真机、Windows 高 DPI 或
   现场人工验收。
-- 提交：待本补充实现提交后回填，并写入 Linear 审核评论。
+- 实现提交：`6df1845`（`Add physical grid to live heatmap`）。
