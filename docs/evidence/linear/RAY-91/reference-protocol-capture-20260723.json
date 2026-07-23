@@ -1,0 +1,52 @@
+{
+  "schema_version": "do-p4864-reference-protocol-evidence/1",
+  "captured_at_utc": "2026-07-23T08:00:27Z",
+  "protocol": "four-static-poses-engineering-reference",
+  "requested_total_duration_seconds": 80,
+  "requested_pose_duration_seconds": 20,
+  "poses": [
+    {
+      "id": "open_eyes_bilateral",
+      "label": "并足双脚站立，睁眼",
+      "elapsed_seconds": 20.0946,
+      "valid_frames": 414,
+      "invalid_candidates": 0,
+      "resynchronizations": 1,
+      "discarded_bytes": 1938
+    },
+    {
+      "id": "closed_eyes_bilateral",
+      "label": "并足双脚站立，闭眼",
+      "elapsed_seconds": 20.0878,
+      "valid_frames": 415,
+      "invalid_candidates": 0,
+      "resynchronizations": 1,
+      "discarded_bytes": 771
+    },
+    {
+      "id": "tandem_left_front",
+      "label": "串联站立，左脚在前、右脚在后",
+      "elapsed_seconds": 20.0749,
+      "valid_frames": 414,
+      "invalid_candidates": 1,
+      "resynchronizations": 1,
+      "discarded_bytes": 3037
+    },
+    {
+      "id": "tandem_right_front",
+      "label": "串联站立，右脚在前、左脚在后",
+      "elapsed_seconds": 20.0937,
+      "valid_frames": 415,
+      "invalid_candidates": 0,
+      "resynchronizations": 1,
+      "discarded_bytes": 1848
+    }
+  ],
+  "total_valid_frames": 1658,
+  "fixture": {
+    "path": "client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz",
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90",
+    "deidentification": "Relative 48x64 uint8 matrix sequences only; no raw serial bytes, timestamps, source indexes, absolute amplitude, device identifier, or operator identifier."
+  },
+  "boundary": "Engineering replay evidence only. The observed compact parser remains structurally observed rather than wire-verified. This does not validate clinical screening, calibrated pressure, extension-protocol release, or customer-report output."
+}
