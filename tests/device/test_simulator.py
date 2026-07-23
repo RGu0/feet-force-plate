@@ -177,6 +177,49 @@ class SimulatorFrameTests(unittest.TestCase):
         self.assertGreaterEqual(parser.statistics.tail_failures, 2)
         self.assertGreaterEqual(parser.statistics.resynchronizations, 1)
 
+    def test_long_interval_fault_expands_the_next_device_arrival_window(self) -> None:
+        simulator = importlib.import_module("client.device.simulator")
+
+        class FakeClock:
+            def __init__(self) -> None:
+                self.now_ns = 0
+
+            def monotonic_ns(self) -> int:
+                return self.now_ns
+
+            def sleep(self, seconds: float) -> None:
+                self.now_ns += round(seconds * 1_000_000_000)
+
+        clock = FakeClock()
+        transport = simulator.SyntheticP4864Transport(
+            _profile(),
+            realtime=True,
+            rate_hz=10.0,
+            max_frames=3,
+            monotonic_ns=clock.monotonic_ns,
+            sleep=clock.sleep,
+            fault_plan=simulator.FaultPlan(
+                events={1: (simulator.FaultKind.LONG_INTERVAL,)},
+                long_interval_multiplier=25.0,
+            ),
+        )
+        parser = DaoOneP4864Parser(
+            _profile(),
+            allow_unverified=True,
+            monotonic_ns=clock.monotonic_ns,
+            wall_time_ns=lambda: 1,
+        )
+
+        decoded = []
+        for _ in range(3):
+            decoded.extend(parser.feed(transport.read(3079)))
+
+        self.assertEqual(len(decoded), 3)
+        self.assertGreater(
+            decoded[2].host_monotonic_ns - decoded[1].host_monotonic_ns,
+            2_000_000_000,
+        )
+
     def test_capture_replay_verifies_digest_and_uses_byte_transport(self) -> None:
         simulator = importlib.import_module("client.device.simulator")
         replay_type = getattr(simulator, "CaptureReplayTransport", None)

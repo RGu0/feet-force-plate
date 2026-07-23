@@ -41,6 +41,7 @@ class FaultKind(StrEnum):
     BAD_CHECKSUM = "BAD_CHECKSUM"
     BAD_TAIL = "BAD_TAIL"
     TRUNCATE = "TRUNCATE"
+    LONG_INTERVAL = "LONG_INTERVAL"
     DISCONNECT = "DISCONNECT"
 
 
@@ -50,6 +51,11 @@ class FaultPlan:
 
     events: Mapping[int, tuple[FaultKind, ...]]
     noise_prefix: bytes = b"\x00\x13\x37"
+    long_interval_multiplier: float = 20.0
+
+    def __post_init__(self) -> None:
+        if self.long_interval_multiplier <= 1.0:
+            raise ValueError("long_interval_multiplier must exceed one")
 
     def apply(self, frame_index: int, wire_frame: bytes) -> bytes:
         events = self.events.get(frame_index, ())
@@ -68,6 +74,11 @@ class FaultPlan:
 
     def disconnects_at(self, frame_index: int) -> bool:
         return FaultKind.DISCONNECT in self.events.get(frame_index, ())
+
+    def interval_multiplier_after(self, frame_index: int) -> float:
+        if FaultKind.LONG_INTERVAL in self.events.get(frame_index, ()):
+            return self.long_interval_multiplier
+        return 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +211,7 @@ class SyntheticP4864Transport:
             if self._fault_plan.disconnects_at(self._frame_index):
                 self._disconnect_pending = True
                 break
-            self._pace()
+            self._pace(self._frame_index)
             wire_frame = encode_frame(
                 self._frame_source(self._frame_index), self.profile
             )
@@ -224,7 +235,7 @@ class SyntheticP4864Transport:
     def _generation_complete(self) -> bool:
         return self.max_frames is not None and self._frame_index >= self.max_frames
 
-    def _pace(self) -> None:
+    def _pace(self, frame_index: int) -> None:
         if not self.realtime:
             return
         now = self._monotonic_ns()
@@ -233,7 +244,12 @@ class SyntheticP4864Transport:
             now = self._next_frame_at_ns
         base_period_ns = 1_000_000_000 / self.rate_hz
         jitter = self._random.uniform(-self.jitter_fraction, self.jitter_fraction)
-        self._next_frame_at_ns = int(now + base_period_ns * (1.0 + jitter))
+        self._next_frame_at_ns = int(
+            now
+            + base_period_ns
+            * (1.0 + jitter)
+            * self._fault_plan.interval_multiplier_after(frame_index)
+        )
 
 
 class CaptureReplayTransport:

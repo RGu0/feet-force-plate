@@ -205,11 +205,14 @@ class AcquisitionRunner:
         connection: ConnectionStateMachine,
         read_size: int = FRAME_LENGTH,
         maximum_host_gap_ns: int | None = None,
+        storage_append_timeout_s: float | None = None,
     ) -> None:
         if read_size <= 0:
             raise ValueError("read_size must be positive")
         if maximum_host_gap_ns is not None and maximum_host_gap_ns <= 0:
             raise ValueError("maximum_host_gap_ns must be positive when set")
+        if storage_append_timeout_s is not None and storage_append_timeout_s < 0:
+            raise ValueError("storage_append_timeout_s must not be negative when set")
         self._transport = transport
         self._parser = parser
         self._durable_sink = durable_sink
@@ -217,6 +220,7 @@ class AcquisitionRunner:
         self._connection = connection
         self._read_size = read_size
         self._maximum_host_gap_ns = maximum_host_gap_ns
+        self._storage_append_timeout_s = storage_append_timeout_s
         self._used = False
 
     def _invalidate(
@@ -273,7 +277,11 @@ class AcquisitionRunner:
                             reason="host frame arrival gap exceeded policy",
                         )
                     try:
-                        self._durable_sink.append(session_id, frame)
+                        self._durable_sink.append(
+                            session_id,
+                            frame,
+                            timeout=self._storage_append_timeout_s,
+                        )
                     except Exception as exc:
                         reason = f"storage handoff failed: {type(exc).__name__}: {exc}"
                         return self._invalidate(

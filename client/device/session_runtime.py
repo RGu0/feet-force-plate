@@ -65,6 +65,7 @@ class HardwareSessionRuntime:
         stager: ValidSessionStager,
         quality_gate: HardwareQualityGate,
         maximum_host_gap_ns: int | None = None,
+        storage_append_timeout_s: float | None = None,
         wall_time_ns: Callable[[], int] = time.time_ns,
     ) -> None:
         self._transport = transport
@@ -74,6 +75,7 @@ class HardwareSessionRuntime:
         self._stager = stager
         self._quality_gate = quality_gate
         self._maximum_host_gap_ns = maximum_host_gap_ns
+        self._storage_append_timeout_s = storage_append_timeout_s
         self._wall_time_ns = wall_time_ns
 
     def capture(self, *, session_id: str, target_frames: int) -> HardwareSessionResult:
@@ -84,6 +86,7 @@ class HardwareSessionRuntime:
             latest_mailbox=self._mailbox,
             connection=self._connection,
             maximum_host_gap_ns=self._maximum_host_gap_ns,
+            storage_append_timeout_s=self._storage_append_timeout_s,
         ).run(session_id=session_id, target_frames=target_frames)
         if acquisition.outcome is not AcquisitionOutcome.COMPLETED:
             return HardwareSessionResult(

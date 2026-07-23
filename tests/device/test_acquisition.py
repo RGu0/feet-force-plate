@@ -189,6 +189,25 @@ class AcquisitionRunnerTests(unittest.TestCase):
         self.assertIsNone(latest.read())
         self.assertEqual(machine.state, ConnectionState.INVALID)
 
+    def test_full_durable_queue_times_out_and_invalidates_without_silent_drop(self) -> None:
+        machine = self._ready_machine()
+        queue = DurableFrameQueue(capacity=1)
+        result = AcquisitionRunner(
+            transport=SyntheticP4864Transport(
+                _profile(), realtime=False, max_frames=2
+            ),
+            parser=_parser(),
+            durable_sink=queue,
+            latest_mailbox=LatestFrameMailbox(),
+            connection=machine,
+            storage_append_timeout_s=0.0,
+        ).run(session_id="session-full-queue", target_frames=2)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
+        self.assertEqual(result.frames_stored, 1)
+        self.assertIn("storage handoff failed", result.reason or "")
+        self.assertEqual(machine.state, ConnectionState.INVALID)
+
     def test_parser_resynchronization_invalidates_and_discards_the_active_session(self) -> None:
         class DiscardingSink:
             def __init__(self) -> None:
