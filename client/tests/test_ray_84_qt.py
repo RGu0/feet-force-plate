@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PySide6.QtWidgets import QLabel
 
-from client.app.heatmap import HeatmapWidget
+from client.app.heatmap import HeatmapWidget, PhysicalGridOverlay
 from client.app.heatmap_display import HeatmapDisplayConfig
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -33,6 +34,27 @@ def test_acquisition_view_renders_heatmap_cop_and_redundant_text_summary(qtbot) 
     assert "左 75.0%" in page.findChild(QLabel, "loadSummary").text()
     assert "设备帧 #7" in page.findChild(QLabel, "frameFreshness").text()
     assert "48×64" in heatmap.accessibleName()
+    assert "1 厘米物理网格" in heatmap.accessibleDescription()
+
+
+def test_physical_grid_uses_declared_board_dimensions_and_centimetre_ticks(qtbot) -> None:
+    widget = HeatmapWidget()
+    qtbot.addWidget(widget)
+    widget.resize(640, 480)
+
+    grid = widget.physical_grid
+    target = widget._board_rect()
+
+    assert grid == PhysicalGridOverlay()
+    assert grid.width_mm == 509.3
+    assert grid.height_mm == 381.3
+    assert grid.minor_x_mm[:3] == (0.0, 10.0, 20.0)
+    assert grid.minor_x_mm[-1] == 500.0
+    assert grid.major_x_mm == tuple(float(value) for value in range(0, 501, 50))
+    assert grid.major_y_mm == tuple(float(value) for value in range(0, 351, 50))
+    assert target.width() / target.height() == pytest.approx(
+        grid.width_mm / grid.height_mm
+    )
 
 
 def test_heatmap_widget_high_dpi_render_is_not_blank(qtbot) -> None:

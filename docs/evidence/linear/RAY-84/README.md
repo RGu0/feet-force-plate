@@ -135,3 +135,36 @@ QT_QPA_PLATFORM=offscreen \
 - 连接恢复后，`/dev/cu.usbserial-1120` 在 10 秒验证内提供 201 个实际 compact 48×64 帧；最新设备序号为 200，读取器正常停止且未记录传输错误。
 - 同一运行中实际走过 `CH340 → hardware LatestFrameMailbox → LiveDisplayProjection → LatestDisplayFrameMailbox → DisplayRefreshController → P-07 Qt`。离屏 P-07 截图显示完整双脚热力图，且页面倒计时由 30 递减至 21；截图仅保留在 `/private/tmp/feetforceplate-ray84-live/`，不提交。
 - 脱敏结果：[live-display-validation-success-20260723.json](live-display-validation-success-20260723.json)。此结果证明实时显示链路，不等同于可靠会话/报告闭环、标定压力、临床解释、Windows 目标环境或现场操作员验收。
+
+## 2026-07-23 物理尺寸网格叠加
+
+- Linear：本补充于 2026-07-23T09:16:45Z 将 `RAY-84` 从 `In Review`
+  置为 `In Progress`；实现和自动验证完成后仍将回到 `In Review`，不标 `Done`。
+- 实现：`client/app/heatmap.py` 新增只读 `PhysicalGridOverlay`。它采用
+  DO-P4864 设备规格中已声明的板面 `509.3 × 381.3 mm`，在实际 P-07
+  `HeatmapWidget` 上叠加 1 cm 细网格、5 cm 主刻度和厘米标签。热图栅格和
+  COP 共同 letterbox 到同一物理纵横比，报告小热图不再为填满卡片而拉伸。
+- 边界：网格是操作员视觉参考，不是新传感数据、压力标定或临床测量。它仅在
+  `QPainter` 显示层绘制，不读取/修改 `DisplayFrame`、COP、负重、可靠存储、
+  本地分析或报告数据。
+- 自动验证：以下离屏命令结果为 `17 passed in 1.61s`；同时
+  `./scripts/local-env.sh python -m compileall -q client/app` 通过。
+
+```bash
+QT_QPA_PLATFORM=offscreen UV_OFFLINE=1 \
+UV_CACHE_DIR=/private/tmp/feetforceplate-uv-cache \
+FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
+./scripts/local-env.sh python -m pytest \
+  client/tests/test_ray_84_qt.py \
+  client/tests/test_ray_84_live_display_bridge.py \
+  client/tests/test_ray_84_display_model.py \
+  client/tests/test_ray_101_ui_integration.py -q \
+  --junitxml=docs/evidence/linear/RAY-84/pytest-physical-grid-20260723.xml
+```
+
+- 目视证据：[physical-grid-preview-20260723.png](physical-grid-preview-20260723.png)
+  （合成 `DesignDemoController` 数据的 Qt offscreen 截图；SHA-256：
+  `40a4d98c28b4559942801aa520e775370d3a290b51095206ef855ed701ca7b37`）。
+  它证明实际组件绘制、比例、刻度与 COP 对齐；不构成真机、Windows 高 DPI 或
+  现场人工验收。
+- 提交：待本补充实现提交后回填，并写入 Linear 审核评论。
