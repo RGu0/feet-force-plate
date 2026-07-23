@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from .baseline import apply_zero_reference
+from .calibration import VoltageToForceConverter
 from .geometry import BoardCoordinateLayout
 from .models import (
     BaselineReference,
@@ -39,8 +40,13 @@ class CalibratedArrayAdapter:
     """Applies only supplied, layout-matched references; it never invents force units."""
 
     layout: BoardCoordinateLayout
-    adapter_version: str = "generic-physical-array/1"
+    adapter_version: str = "generic-physical-pressure/1"
     source_schema_version: str = "raw-array/1"
+    raw_value_unit: str = "raw_count"
+    measurement_profile_version: str = "physical-pressure-profile/1"
+    geometry_validation: str = "DECLARED"
+    force_validation: str = "UNVALIDATED"
+    force_model: VoltageToForceConverter | None = None
 
     def standardize(
         self,
@@ -63,9 +69,20 @@ class CalibratedArrayAdapter:
         output_frames: list[PhysicalArrayFrame] = []
         for raw_frame in frames:
             flags = set(raw_frame.quality_flags)
-            flags.update({"FORCE_UNCALIBRATED", "ACTIVE_AREA_UNVALIDATED"})
+            flags.add("ACTIVE_AREA_UNVALIDATED")
+            if self.force_model is None:
+                flags.add("FORCE_UNCALIBRATED")
+            elif self.force_validation != "VALIDATED":
+                flags.add("FORCE_PROVISIONAL")
             zero_corrected: tuple[float, ...] | None = None
             relative_load: tuple[float, ...] | None = None
+            raw_voltage: tuple[float, ...] | None = None
+            zero_corrected_voltage: tuple[float, ...] | None = None
+            provisional_force: tuple[float | None, ...] | None = None
+            if self.force_model is not None:
+                raw_voltage = tuple(
+                    self.force_model.code_to_voltage(value) for value in raw_frame.values
+                )
             if baseline_reference is None:
                 flags.add("BASELINE_MISSING")
             else:
@@ -73,6 +90,17 @@ class CalibratedArrayAdapter:
                 zero_corrected = corrected.zero_corrected_count
                 relative_load = corrected.relative_load_count
                 flags.update(corrected.quality_flags)
+                if self.force_model is not None:
+                    zero_corrected_voltage = tuple(
+                        self.force_model.signed_count_to_voltage(value)
+                        for value in zero_corrected
+                    )
+                    provisional_force = tuple(
+                        self.force_model.force_from_voltage(max(value, 0.0))
+                        for value in zero_corrected_voltage
+                    )
+                    if any(value is None for value in provisional_force):
+                        flags.add("ADC_OR_FORCE_MODEL_SATURATED")
             output_frames.append(
                 PhysicalArrayFrame(
                     timestamp_s=(raw_frame.host_monotonic_ns - first_timestamp_ns)
@@ -83,24 +111,27 @@ class CalibratedArrayAdapter:
                     normal_force_n=(None,) * len(raw_frame.values),
                     quality=FrameQuality.DEGRADED,
                     quality_flags=frozenset(flags),
+                    raw_voltage_v=raw_voltage,
+                    zero_corrected_voltage_v=zero_corrected_voltage,
+                    provisional_force_n=provisional_force,
                 )
             )
 
         profile = MeasurementProfile(
-            profile_version="physical-array-profile/1",
-            geometry_validation="DECLARED",
+            profile_version=self.measurement_profile_version,
+            geometry_validation=self.geometry_validation,
             baseline_validation=("VALIDATED" if baseline_reference else "UNVALIDATED"),
-            force_validation="UNVALIDATED",
+            force_validation=self.force_validation,
             timing_validation="HOST_MONOTONIC",
             active_area_validation="UNVALIDATED",
             uncertainty_profile_version="uncertainty/unknown/1",
         )
         session = PhysicalArraySession(
-            schema_version="physical-array-session/1.0",
+            schema_version="physical-sensor-observation/1.0",
             session_id=session_id,
             coordinate_frame=self.layout.coordinate_frame,
             coordinate_unit="mm",
-            raw_value_unit="uint8_count",
+            raw_value_unit=self.raw_value_unit,
             relative_value_unit="relative_count",
             force_unit="N",
             measurement_profile=profile,
@@ -121,5 +152,12 @@ class CalibratedArrayAdapter:
         return StandardizationOutcome(
             status=StandardizationStatus.DEGRADED,
             session=session,
-            reasons=("FORCE_UNCALIBRATED", "ACTIVE_AREA_UNVALIDATED"),
+            reasons=(
+                (
+                    "FORCE_UNCALIBRATED"
+                    if self.force_model is None
+                    else "FORCE_PROVISIONAL"
+                ),
+                "ACTIVE_AREA_UNVALIDATED",
+            ),
         )

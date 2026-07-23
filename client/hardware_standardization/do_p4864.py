@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import numpy as np
+from pathlib import Path
 
 from client.device.protocol import RawFrame
 
 from .calibrated_array import CalibratedArrayAdapter, RawArrayFrame
+from .device_specification import DeviceSpecification, load_device_specification
 from .geometry import BoardCoordinateLayout
 from .models import BaselineReference, StandardizationOutcome
 
@@ -14,26 +16,20 @@ from .models import BaselineReference, StandardizationOutcome
 class DoP4864StandardizationAdapter:
     """Expose the verified compact 8-bit column-major board declaration."""
 
-    def __init__(self, layout: BoardCoordinateLayout) -> None:
-        self._layout = layout
-        self._adapter = CalibratedArrayAdapter(
-            layout,
-            adapter_version="do-p4864-observed-compact-8bit/1",
-            source_schema_version="do-p4864-decoded-raw-frame/1",
-        )
+    def __init__(self, specification: DeviceSpecification) -> None:
+        if not specification.specification_id.startswith("do-p4864/"):
+            raise ValueError("DO-P4864 adapter requires the DO-P4864 device specification")
+        self._specification = specification
+        self._layout = specification.layout
+        self._adapter = specification.make_adapter()
 
     @classmethod
     def observed_compact_8bit(cls) -> DoP4864StandardizationAdapter:
-        return cls(
-            BoardCoordinateLayout.top_left_grid(
-                rows=48,
-                columns=64,
-                pitch_x_mm=7.99,
-                pitch_y_mm=7.99,
-                geometry_version="do-p4864-board-top-left-7.99mm/1",
-                nominal_active_area_mm2=36.0,
-            )
+        specification_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs/hardware/device-specifications/do-p4864/1.0.json"
         )
+        return cls(load_device_specification(specification_path))
 
     @property
     def layout(self) -> BoardCoordinateLayout:
@@ -48,12 +44,24 @@ class DoP4864StandardizationAdapter:
     ) -> StandardizationOutcome:
         decoded_frames: list[RawArrayFrame] = []
         for frame in raw_frames:
-            if frame.values.shape != (48, 64) or frame.values.dtype != np.uint8:
-                raise ValueError("DO-P4864 adapter requires decoded 48x64 uint8 frames")
+            expected_dtype = np.dtype(self._specification.decoded_value_dtype)
+            if (
+                frame.values.shape != self._specification.matrix_shape
+                or frame.values.dtype != expected_dtype
+            ):
+                raise ValueError(
+                    "DO-P4864 adapter requires frames matching its device specification"
+                )
+            flatten_order = {
+                "COLUMN_MAJOR": "F",
+                "ROW_MAJOR": "C",
+            }[self._specification.payload_value_order]
             decoded_frames.append(
                 RawArrayFrame(
                     host_monotonic_ns=frame.host_monotonic_ns,
-                    values=tuple(int(value) for value in frame.values.reshape(-1, order="F")),
+                    values=tuple(
+                        int(value) for value in frame.values.reshape(-1, order=flatten_order)
+                    ),
                     quality_flags=frame.quality_flags | frozenset({"SOURCE_INTEGRITY_UNVERIFIED"}),
                 )
             )

@@ -41,5 +41,6 @@
 核心算法输入以 [`standard-physical-input-contract.md`](standard-physical-input-contract.md) 为准，不依赖设备型号、阵列行列数、点尺寸、点间距、原始值类型或通信协议。首款 DO-P4864 的解析和物理换算属于上游硬件适配层，以 [`docs/通信接口设计文档.md`](../通信接口设计文档.md) 为准；在适配器未能输出通过验证的标准物理数据前，不得进入正式物理指标和综合评分。
 # 算法与输入契约索引
 
-- [上游板面物理阵列模式：physical-array-session/1.0](schemas/physical-array-session-1.0.schema.json)
+- [板面物理压力输入模式：physical-pressure-session/1.0](schemas/physical-pressure-session-1.0.schema.json)
+- [硬件内部观测模式：physical-sensor-observation/1.0](schemas/physical-sensor-observation-1.0.schema.json)
 - [标准物理输入契约与下游身体语义边界](standard-physical-input-contract.md)

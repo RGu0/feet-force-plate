@@ -1,0 +1,61 @@
+{
+  "schema_version": "hardware-device-specification/1.0",
+  "specification_id": "do-p4864/1.0",
+  "device_family": "DO-P4864",
+  "adapter_version": "adapter/do-p4864/1.0",
+  "source_schema_version": "do-p4864-decoded-frame/1",
+  "raw_value_unit": "uint8_count",
+  "decoded_value_dtype": "uint8",
+  "payload_value_order": "COLUMN_MAJOR",
+  "measurement_profile_version": "physical-pressure-profile/do-p4864/1",
+  "adc": {
+    "resolution_bits": 8,
+    "reference_voltage_v": 4.096,
+    "coding": "UNIPOLAR_STRAIGHT_BINARY"
+  },
+  "geometry": {
+    "kind": "top_left_grid",
+    "geometry_version": "geometry/do-p4864/1",
+    "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
+    "rows": 48,
+    "columns": 64,
+    "origin_x_mm": 0.0,
+    "origin_y_mm": 0.0,
+    "pitch_x_mm": 7.99,
+    "pitch_y_mm": 7.99,
+    "physical_region_width_mm": 509.3,
+    "physical_region_height_mm": 381.3,
+    "nominal_active_area_mm2": null,
+    "geometry_validation": "DECLARED_USER_MEASURED"
+  },
+  "baseline": {
+    "profile_version": "do-p4864-unloaded-baseline/1",
+    "minimum_duration_s": 5.0
+  },
+  "force_calibration": {
+    "profile_version": "do-p4864-voltage-force/provisional-unified-known-weight-v1-20260722",
+    "validation": "PROVISIONAL_UNIFIED_KNOWN_WEIGHT_AND_HUMAN_REPLAY",
+    "input": "ZERO_CORRECTED_VOLTAGE_V",
+    "output_unit": "N",
+    "model": "voltage-to-force/two-slope-monotonic/1",
+    "valid_load_range_kg": [4.5, 8.0],
+    "spatial_integration": {
+      "method": "BILINEAR_PRESSURE_INTERPOLATION",
+      "sensor_shape_assumption": "CIRCLE",
+      "sensor_diameter_mm": 6.0,
+      "active_point_rule": "DELTA_COUNT_GT_MAX_1_OR_3_BASELINE_MAD"
+    },
+    "parameters": {
+      "log_gain": -0.416054290108397,
+      "log_low_slope": -2.057009203457983,
+      "log_high_slope": -0.5532326211611178,
+      "knot_log_ratio": -0.6755514186685658
+    }
+  },
+  "quality_policy": {
+    "profile_version": "do-p4864-quality/1",
+    "checksum_policy": "OBSERVE_ONLY",
+    "observed_host_interval_p50_ms": 48.38,
+    "observed_host_interval_status": "OBSERVED_NOT_NOMINAL"
+  }
+}

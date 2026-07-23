@@ -1,70 +1,47 @@
-# 标准物理输入契约
+# 标准物理压力输入契约
 
 | 项目 | 内容 |
 |---|---|
 | 契约 ID | `physical-pressure-session` |
 | 契约版本 | `1.0` |
-| 使用方 | 静态平衡特征管线、评分规则和报告生成 |
-| 生产方 | 各硬件型号对应的采集、标定和物理换算层 |
-| 核心原则 | 算法不读取串口帧、ADC/计数值、行列顺序或设备专用标定参数 |
+| 生产方 | 硬件标准化层；测试会话组装器透传阶段元数据 |
+| 消费方 | 本地/云端算法层 |
+| 核心原则 | 算法只读取实际物理信息，不读取设备、协议、阵列或标定细节 |
 | Linear 实施任务 | [RAY-117：硬件标准化层](https://linear.app/ray-app/issue/RAY-117/硬件标准化层任意传感器阵列到统一物理输入) |
 
-> **实施边界（2026-07-22）**：本文件的 `physical-pressure-session/1.0` 是下游、身体语义和绝对物理量已经验证后的契约，不是当前 RAY-117 的直接输出。RAY-117 首先交付上游 `physical-array-session/1.0`：板面坐标、不可变原始计数、5 秒空载窗口得出的零点/噪声参考、相对载荷、主机单调时间、质量与版本。未验证已知载荷标定、有效面积或板面到身体方向时，绝不写成 N、Pa、ML/AP 或 COP。
+## 1. 边界
 
-## 0. 上游物理阵列契约
+本契约是算法层的一级物理输入，而不是硬件内部的采集或标定中间数据：
 
 ```text
-decoded immutable sensor array
-  → board geometry + raw_count
-  → qualifying 5-second unloaded baseline
-  → zero_corrected_count + relative_load_count
-  → physical-array-session/1.0
-  → later verified coordinate/force semantic adapter
+设备协议、原始计数、阵列行列、零偏与载荷标定
+  → 硬件标准化层
   → physical-pressure-session/1.0
+      每点实际板面坐标（mm）
+      每点法向力（N）
+      每点有效面积（已验证时）
+      实际单调时间与质量
+  → 算法层内部的特征与规则计算
 ```
 
-`physical-array-session/1.0` 坐标系为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`。当前 DO-P4864 的用户确认约定为：左上第一个点 `(0, 0) mm`，x 向右、y 向下，48×64 网格，两个方向的点间距均为 `7.99 mm`；源索引是列主序 `column × 48 + row`。供应商图中的 6×6 mm 和 7×7 mm 仅是名义来源数据，电学有效面积仍未验证。
+COP、轨迹、速度、RMS、范围、椭圆、阶段比较、风险、评分和报告均是算法层的二级结果；它们不是本契约字段，硬件层不得计算或传递。
 
-5 秒空载只产生逐点 `zero_offset_count` 与 `noise_mad_count`。当前帧保留 `raw_count`，并分别输出有符号 `zero_corrected_count = raw - zero_offset` 和非负 `relative_load_count = max(zero_corrected, 0)`；不覆盖原始值。`normal_force_n` 仅在已知载荷曲线和不确定性已验证时才可出现，否则为 `null` 且质量状态为降级。
+硬件层必须在内部保留不可变原始数据及其校准证据，但算法层不读取它们。若硬件尚不能提供经过批准的 N 语义，不能生成可被算法消费的本契约；必须以 `DEGRADED` 或 `UNSUPPORTED` 的能力结果阻断正式分析，绝不将计数或相对载荷伪装成 N 或 Pa。
 
-## 1. 责任边界
+## 2. 坐标、单位和感应点
 
-后续已验证的语义适配层负责把 RAY-117 上游契约转换为本契约：
+`coordinate_frame` 固定为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`：左上角第一个感应点中心为 `(0, 0)`，X 向右为正，Y 向下为正。感应点坐标是实际板面位置；算法不得从阵列行列、标称间距或设备型号重建坐标。
 
-```text
-physical-array-session/1.0
-  → 已验证的已知载荷标定、有效面积和安装方向
-  → 板面到身体 ML/AP 坐标换算
-  → 真实物理坐标和真实法向力（仅在证据充分时）
-  → physical-pressure-session/1.0
-```
+当前 DO-P4864 的声明几何为：48×64、列主序源映射、首点 `(0, 0) mm`，X/Y 点间距均为 `7.99 mm`。这是该硬件配置，不是算法接口对任何阵列的假设。
 
-核心算法只接收契约输出：
-
-```text
-physical-pressure-session/1.0
-  → ML/AP 压力中心轨迹
-  → 位移、速度、范围、面积和阶段差异
-  → 风险规则、综合评分和报告
-```
-
-更换传感器阵列时，只新增或修改硬件适配器；静态平衡算法、评分规则和报告字段不因设备行列数、感应点尺寸或通信协议改变。
-
-## 2. 统一坐标和单位
-
-标准输入必须使用受试者身体坐标系：
-
-| 字段 | 规定 |
+| 字段 | 语义 |
 |---|---|
-| `ml_mm` | 左右轴，单位 mm；向受试者右侧为正 |
-| `ap_mm` | 前后轴，单位 mm；向受试者前方为正 |
-| `normal_force_n` | 单个感应点在该帧的法向力，单位 N |
-| `active_area_mm2` | 单个感应点的有效感应面积，单位 mm² |
-| `timestamp_s` | 会话单调时间，单位 s；必须严格递增 |
+| `board_x_mm` / `board_y_mm` | 感应点有效区域中心的实际板面坐标，单位 mm |
+| `normal_force_n` | 该帧该点已验证的法向力，单位 N |
+| `active_area_mm2` | 已验证的有效感应面积；未知时为 `null` |
+| `timestamp_s` | 相对会话起点的实际单调时间，单位 s，严格递增 |
 
-后续经过验证的坐标语义适配层必须完成板面坐标到身体 ML/AP 坐标的转换。受试者正站、固定左转 90°以及左右脚在前时，算法看到的坐标语义始终不变；RAY-117 的板面物理层不推断这些语义。
-
-感应点可以来自规则矩阵，也可以是不等距或非矩形布局。算法按 `cell_id + ml_mm + ap_mm` 处理，不依据行号、列号或数组内存顺序推断物理位置。
+每个会话给出不可变的 `cells[]` 表；`cell_id` 在会话内唯一、顺序稳定。规则矩阵、不等距阵列和非规则布局均由逐点坐标表达。`status` 至少支持 `ACTIVE` 和 `EXCLUDED`；饱和是每帧质量，不是固定点状态。
 
 ## 3. 会话结构
 
@@ -72,121 +49,60 @@ physical-pressure-session/1.0
 {
   "schema_version": "physical-pressure-session/1.0",
   "session_id": "uuid",
-  "coordinate_frame": "SUBJECT_ML_AP",
+  "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
   "coordinate_unit": "mm",
   "force_unit": "N",
+  "area_unit": "mm2",
+  "time_unit": "s",
   "measurement_profile": {
     "profile_version": "string",
-    "physical_validation": "VALIDATED",
+    "force_validation": "VALIDATED",
+    "geometry_validation": "VALIDATED",
     "timing_validation": "VALIDATED",
-    "coordinate_validation": "VALIDATED",
     "uncertainty_profile_version": "string"
   },
   "cells": [
     {
       "cell_id": "string",
-      "ml_mm": 0.0,
-      "ap_mm": 0.0,
-      "active_area_mm2": 25.0,
+      "board_x_mm": 0.0,
+      "board_y_mm": 0.0,
+      "active_area_mm2": null,
       "status": "ACTIVE"
-    }
-  ],
-  "stages": [
-    {
-      "stage_id": "BIPEDAL_EO",
-      "start_s": 0.0,
-      "end_s": 20.0,
-      "completion_status": "COMPLETED"
     }
   ],
   "frames": [
     {
       "timestamp_s": 0.0,
       "normal_force_n": [0.0],
-      "quality": "VALID"
+      "quality": "VALID",
+      "quality_flags": []
     }
   ]
 }
 ```
 
-JSON 仅用于说明字段语义；正式传输和存储可以采用更高效的二进制或列式格式，但语义必须一致并受 `schema_version` 约束。
+`normal_force_n` 的长度和顺序必须与 `cells[]` 完全一致，值必须为有限且非负的 N 数值。缺帧不得补成零载荷；丢帧、长间隔、饱和、坏点、时间异常和测量不确定性必须通过 `quality` 与结构化 `quality_flags` 传递。
 
-`stages` 中的阶段边界、动作完成状态和前脚信息由测试工作流产生，标准输入组装器只做版本化透传；硬件适配器不得推断、改写或替代客户端动作状态机。RAY-117 硬件适配器只负责板面物理帧、实际时间和测量质量；身体坐标属于后续语义适配层。
+`measurement_profile` 只声明算法所需的物理有效性和可复现版本，不暴露设备专用标定方法。适配器、几何、测量一致性或不确定性版本变化必须使分析运行产生新的身份，不能覆盖历史结果。
 
-## 4. 必填信息
+## 4. 阶段元数据与责任
 
-### 4.1 固定感应点表
+阶段边界、动作完成状态、前脚和安全事件可随同算法输入组装为 `stages[]`，并与 `frames[]` 使用同一时间域。它们由测试工作流产生；硬件适配器不得推断、改写或替代客户端动作状态机。
 
-每个会话必须提供一份不可变的感应点表：
+| 信息 | 硬件标准化层 | 算法层 |
+|---|---:|---:|
+| 协议解析、原始计数、零偏和载荷标定 | 负责 | 不读取 |
+| 板面坐标、N、面积、实际时间和质量 | 负责 | 消费 |
+| COP 与其他二级特征 | 不负责 | 内部计算 |
+| 风险、评分和报告 | 不负责 | 内部计算 |
+| 阶段/安全事件 | 透传，不推断 | 消费与解释 |
 
-- `cell_id` 在会话内唯一且顺序稳定；
-- `ml_mm / ap_mm` 是感应点有效区域中心的真实身体坐标；
-- `active_area_mm2 > 0`；
-- `status` 至少支持 `ACTIVE / EXCLUDED`；
-- 每帧 `normal_force_n` 数量和顺序必须与感应点表完全一致。
+## 5. 接收与能力门控
 
-### 4.2 实际时间轴
+算法接收方必须拒绝或隔离以下输入：未知 schema 或单位、坐标系不支持、重复 `cell_id`、非有限坐标、`normal_force_n` 长度不匹配或负值、非递增时间、未验证却标为 `VALIDATED` 的物理量，以及把二级特征塞入本契约的输入。
 
-- 使用实际采样时间，不根据名义采样率伪造等间隔时间；
-- `timestamp_s` 严格递增；
-- 阶段边界与帧使用同一个单调时间域；
-- 丢帧、长间隔和时钟异常在进入算法前形成标准质量标志。
+只有力、几何和时间满足所需测量有效性，并且对应帧质量允许时，算法才可发布正式指标。任何不能满足条件的硬件输入应产生明确的能力状态，而不是 0 分或静默的正式结果。
 
-### 4.3 物理有效性
+## 6. 一致性验证
 
-进入正式评分的输入必须同时满足：
-
-```text
-physical_validation   = VALIDATED
-timing_validation     = VALIDATED
-coordinate_validation = VALIDATED
-```
-
-算法不接收“原始计数但字段名称写成 N”的数据，也不在内部猜测单位、间距、旋转方向或标定曲线。
-
-## 5. 核心算法的统一计算
-
-对有效感应点 `k` 和时刻 `t`：
-
-```text
-F(t)  = Σ Fk(t)
-ML(t) = Σ(Fk(t) × mlk) / F(t)
-AP(t) = Σ(Fk(t) × apk) / F(t)
-```
-
-其中 `Fk(t)` 为 `normal_force_n`。当总力低于版本化有效载荷阈值时，该帧不可用于压力中心计算。
-
-相邻有效帧的速度使用真实时间差：
-
-```text
-vML(t) = ΔML / Δt
-vAP(t) = ΔAP / Δt
-v(t)   = sqrt(vML(t)^2 + vAP(t)^2)
-```
-
-输出单位分别为 `mm`、`mm/s`，面积指标为 `mm²`。同一组公式适用于不同点数、点距、点尺寸和阵列形状。
-
-## 6. 能力门控
-
-硬件无关不等于忽略测量能力。每个指标仍声明：
-
-- 最低实际采样率和允许的最大时间间隔；
-- 最短有效时长和最低有效帧比例；
-- 所需物理量、坐标和时间验证等级；
-- 允许的测量不确定度和坏点比例；
-- 适用测试协议、特征管线和参考人群版本。
-
-算法按标准能力字段门控，不按 `device_model` 写分支。满足同一测量一致性规范的设备应得到同一算法能力；不满足时返回 `UNSUPPORTED / DEGRADED / INVALID`，不得静默降级为正式评分。
-
-## 7. 一致性验证
-
-每个新硬件适配器必须通过与算法分离的契约测试：
-
-1. 已知载荷夹具验证每点力值和总力；
-2. 已知物理位置验证 ML/AP 坐标、原点、方向和旋转；
-3. 已知时间序列验证时间戳、采样间隔和速度；
-4. 同一标准物理 fixture 输入不同适配器后，核心特征结果在容差内一致；
-5. 坏点、饱和、低载荷、缺帧和无效标定能够被明确拒绝；
-6. 输出记录适配器版本、测量规范版本和输入摘要，支持历史重算。
-
-DO-P4864 是本项目首个硬件适配器，但不是本契约或核心算法的组成部分。其串口帧、列优先映射、原始 `uint8` 和设备采样特征只存在于设备接入层及通信接口文档中。
+每个新硬件适配器必须独立证明：已知载荷下的逐点/总力、已知物理位置下的坐标、实际时间序列、坏点/饱和/丢帧质量标志，以及跨适配器输入同一标准物理 fixture 时的等价物理输出。DO-P4864 只是首个适配器；其串口帧、列优先映射与原始 `uint8` 不属于本契约。

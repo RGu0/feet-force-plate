@@ -24,7 +24,7 @@ def test_serialization_emits_board_coordinates_and_null_force_without_body_field
     assert outcome.session is not None
     payload = physical_array_session_to_dict(outcome.session)
 
-    assert payload["schema_version"] == "physical-array-session/1.0"
+    assert payload["schema_version"] == "physical-sensor-observation/1.0"
     assert payload["coordinate_frame"] == "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"
     assert payload["cells"][1]["board_x_mm"] == 7.99
     assert payload["frames"][0]["normal_force_n"] == [None, None]

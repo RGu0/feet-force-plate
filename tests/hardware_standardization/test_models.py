@@ -49,7 +49,7 @@ def _uncertainty() -> MeasurementUncertainty:
 
 def test_session_preserves_raw_and_relative_values_without_claiming_force() -> None:
     session = PhysicalArraySession(
-        schema_version="physical-array-session/1.0",
+        schema_version="physical-sensor-observation/1.0",
         session_id="session-1",
         coordinate_frame="BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
         coordinate_unit="mm",
@@ -81,6 +81,36 @@ def test_session_preserves_raw_and_relative_values_without_claiming_force() -> N
     assert session.uncertainty.validation == "UNVALIDATED"
 
 
+def test_algorithm_physical_pressure_session_rejects_unvalidated_or_missing_newtons() -> None:
+    frame = PhysicalArrayFrame(
+        timestamp_s=0.0,
+        raw_count=(1,),
+        zero_corrected_count=(0.0,),
+        relative_load_count=(0.0,),
+        normal_force_n=(None,),
+        quality=FrameQuality.DEGRADED,
+        quality_flags=frozenset({"FORCE_UNCALIBRATED"}),
+    )
+
+    with pytest.raises(ValueError, match="validated normal force"):
+        PhysicalArraySession(
+            schema_version="physical-pressure-session/1.0",
+            session_id="not-ready-for-algorithm",
+            coordinate_frame="BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
+            coordinate_unit="mm",
+            raw_value_unit="uint8_count",
+            relative_value_unit="relative_count",
+            force_unit="N",
+            measurement_profile=_profile(),
+            uncertainty=_uncertainty(),
+            cells=(_cell("cell-0", 0, 0.0, 0.0),),
+            frames=(frame,),
+            adapter_version="test-adapter/1",
+            geometry_version="test-geometry/1",
+            source_schema_version="raw-array/1",
+        )
+
+
 def test_session_rejects_duplicate_source_indices_and_non_increasing_time() -> None:
     frame = PhysicalArrayFrame(
         timestamp_s=0.0,
@@ -95,7 +125,7 @@ def test_session_rejects_duplicate_source_indices_and_non_increasing_time() -> N
 
     with pytest.raises(ValueError, match="source_index"):
         PhysicalArraySession(
-            schema_version="physical-array-session/1.0",
+            schema_version="physical-sensor-observation/1.0",
             session_id="session-1",
             coordinate_frame="BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
             coordinate_unit="mm",

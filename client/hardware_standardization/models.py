@@ -109,6 +109,9 @@ class PhysicalArrayFrame:
     normal_force_n: tuple[float | None, ...]
     quality: FrameQuality
     quality_flags: frozenset[str]
+    raw_voltage_v: tuple[float, ...] | None = None
+    zero_corrected_voltage_v: tuple[float, ...] | None = None
+    provisional_force_n: tuple[float | None, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isfinite(self.timestamp_s) or self.timestamp_s < 0:
@@ -136,6 +139,24 @@ class PhysicalArrayFrame:
             value is not None and not isfinite(value) for value in self.normal_force_n
         ):
             raise ValueError("normal_force_n must match raw_count length and be finite or null")
+        for field_name, values in (
+            ("raw_voltage_v", self.raw_voltage_v),
+            ("zero_corrected_voltage_v", self.zero_corrected_voltage_v),
+        ):
+            if values is not None and (
+                len(values) != expected or any(not isfinite(value) for value in values)
+            ):
+                raise ValueError(f"{field_name} must be finite and match raw_count length")
+        if self.provisional_force_n is not None and (
+            len(self.provisional_force_n) != expected
+            or any(
+                value is not None and (not isfinite(value) or value < 0)
+                for value in self.provisional_force_n
+            )
+        ):
+            raise ValueError(
+                "provisional_force_n must be non-negative finite values or nulls matching raw_count"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +177,11 @@ class PhysicalArraySession:
     source_schema_version: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != "physical-array-session/1.0":
-            raise ValueError("unsupported physical-array schema version")
+        if self.schema_version not in {
+            "physical-sensor-observation/1.0",
+            "physical-pressure-session/1.0",
+        }:
+            raise ValueError("unsupported physical hardware schema version")
         if not self.session_id:
             raise ValueError("session_id is required")
         if self.coordinate_frame != "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN":
@@ -186,6 +210,17 @@ class PhysicalArraySession:
             )
         ):
             raise ValueError("adapter, geometry, and source schema versions are required")
+        if self.schema_version == "physical-pressure-session/1.0" and (
+            self.measurement_profile.force_validation != "VALIDATED"
+            or any(
+                value is None or value < 0
+                for frame in self.frames
+                for value in frame.normal_force_n
+            )
+        ):
+            raise ValueError(
+                "physical-pressure sessions require validated normal force values in N"
+            )
 
 
 @dataclass(frozen=True, slots=True)

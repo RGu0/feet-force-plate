@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "physical-array-session/1.0",
-  "title": "Physical array session",
+  "$id": "physical-sensor-observation/1.0",
+  "title": "Physical sensor observation",
+  "description": "Hardware-internal raw and zero-corrected observation; never an algorithm input.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,7 +11,7 @@
     "cells", "frames", "provenance"
   ],
   "properties": {
-    "schema_version": {"const": "physical-array-session/1.0"},
+    "schema_version": {"const": "physical-sensor-observation/1.0"},
     "session_id": {"type": "string", "minLength": 1},
     "coordinate_frame": {"const": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"},
     "coordinate_unit": {"const": "mm"},
