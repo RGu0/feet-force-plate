@@ -26,6 +26,7 @@ from client.workflow.participant import (
 
 from .pages import PageId
 from .qt_shell import ScreeningWindow
+from .ui_models import UiReadModelPort
 
 
 class _CoordinatorPort(Protocol):
@@ -71,6 +72,14 @@ class _CoordinatorPort(Protocol):
     def start_next_screening(self) -> None: ...
 
 
+class _DeviceSupportPort(Protocol):
+    """Optional adapter boundary for privileged support operations."""
+
+    def recheck_system(self) -> None: ...
+
+    def export_diagnostic_bundle(self) -> None: ...
+
+
 class ApplicationController:
     def __init__(
         self,
@@ -81,6 +90,8 @@ class ApplicationController:
         consent: ConsentWorkflow | None = None,
         consent_policy: ConsentPolicy | None = None,
         display_refresh: DisplayRefreshController | None = None,
+        read_models: UiReadModelPort | None = None,
+        device_support: _DeviceSupportPort | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
@@ -88,6 +99,8 @@ class ApplicationController:
         self._consent = consent
         self._consent_policy = consent_policy
         self._display_refresh = display_refresh
+        self._read_models = read_models
+        self._device_support = device_support
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -130,6 +143,9 @@ class ApplicationController:
         if action == "PRINT_REPORT":
             self._coordinator.print_current_report()
             return
+        if action in {"RECHECK_SYSTEM", "EXPORT_DIAGNOSTIC"}:
+            self._dispatch_device_support(action)
+            return
         if action == "CONFIRM_CONSENT":
             self._coordinator.confirm_consent()
             self.refresh()
@@ -155,6 +171,11 @@ class ApplicationController:
 
     def refresh(self) -> None:
         self.window.present_state(self._coordinator.state)
+        if self._read_models is None:
+            return
+        self.window.present_dashboard(self._read_models.dashboard_snapshot())
+        self.window.present_records(self._read_models.recent_records())
+        self.window.present_support(self._read_models.support_snapshot())
 
     def on_acquisition_completed(self) -> None:
         self._coordinator.complete_acquisition()
@@ -211,6 +232,15 @@ class ApplicationController:
             self._consent.reset()
         self._coordinator.start_next_screening()
 
+    def _dispatch_device_support(self, action: str) -> None:
+        if self._device_support is None:
+            self.window.show_form_error("设备支持功能尚未接入当前运行环境")
+            return
+        if action == "RECHECK_SYSTEM":
+            self._device_support.recheck_system()
+        else:
+            self._device_support.export_diagnostic_bundle()
+
     def _dispatch_onboarding(self, action: str) -> None:
         try:
             if action == "LOOKUP_SUBJECT":
@@ -256,7 +286,10 @@ class ApplicationController:
             SubjectResolutionStatus.NOT_FOUND: "未找到档案；确认后将按此机构编号建档",
             SubjectResolutionStatus.CONFLICT: "找到多个可能档案，无法自动选择，请核对编号",
         }
-        self.window.set_subject_match_summary(summaries[resolution.status])
+        if resolution.status is SubjectResolutionStatus.CONFLICT:
+            self.window.show_subject_conflict()
+        else:
+            self.window.set_subject_match_summary(summaries[resolution.status])
 
     def _confirm_selected_subject(self) -> None:
         participant_state = self._participant.state

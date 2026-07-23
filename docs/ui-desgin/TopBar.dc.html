@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/effects.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/viz.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/styles.css">
+  <script src="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/_ds_bundle.js"></script>
+</helmet>
+<header style="height:64px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-8);background:var(--bg-surface);border-bottom:1px solid var(--border-default);font-family:var(--font-ui);box-sizing:border-box">
+  <div style="display:flex;align-items:center;gap:var(--space-4)">
+    <img src="assets/logo-horizontal-trimmed.png" alt="天富智柔 TechFlex" style="height:28px;width:auto;display:block">
+    <span style="width:1px;height:20px;background:var(--border-default)"></span>
+    <span style="font:var(--text-body);color:var(--text-secondary)">{{ institution }}</span>
+  </div>
+  <nav style="display:flex;align-items:center;gap:var(--space-6);height:100%">
+    <span style="height:100%;display:flex;align-items:center;font:var(--text-body);font-weight:{{ navWorkbenchWeight }};color:{{ navWorkbenchColor }};border-bottom:2px solid {{ navWorkbenchBorder }};box-sizing:border-box;cursor:pointer">工作台</span>
+    <span style="height:100%;display:flex;align-items:center;font:var(--text-body);font-weight:{{ navRecordsWeight }};color:{{ navRecordsColor }};border-bottom:2px solid {{ navRecordsBorder }};box-sizing:border-box;cursor:pointer">检测记录</span>
+    <span style="height:100%;display:flex;align-items:center;font:var(--text-body);font-weight:{{ navSupportWeight }};color:{{ navSupportColor }};border-bottom:2px solid {{ navSupportBorder }};box-sizing:border-box;cursor:pointer">设备与支持</span>
+  </nav>
+  <div style="display:flex;align-items:center;gap:var(--space-3)">
+    <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="{{ devTone }}" icon="{{ devIcon }}" hint-size="120px,32px">{{ devLabel }}</x-import>
+    <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="{{ netTone }}" icon="{{ netIcon }}" hint-size="120px,32px">{{ netLabel }}</x-import>
+  </div>
+</header>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:64},&quot;institution&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;社区健康服务中心&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;nav&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;workbench&quot;,&quot;records&quot;,&quot;support&quot;],&quot;default&quot;:&quot;workbench&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;net&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;ok&quot;,&quot;warn&quot;,&quot;threshold&quot;],&quot;default&quot;:&quot;ok&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;device&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;ready&quot;,&quot;off&quot;],&quot;default&quot;:&quot;ready&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const netMap = {
+      ok: { tone: "success", icon: "dot", label: "网络正常" },
+      warn: { tone: "warning", icon: "warning", label: "网络待恢复" },
+      threshold: { tone: "danger", icon: "x", label: "网络已超时" },
+    };
+    const devMap = {
+      ready: { tone: "success", icon: "dot", label: "设备已就绪" },
+      off: { tone: "danger", icon: "x", label: "设备未连接" },
+    };
+    const n = netMap[this.props.net] || netMap.ok;
+    const d = devMap[this.props.device] || devMap.ready;
+    const active = this.props.nav || "workbench";
+    const on = { weight: 600, color: "var(--brand-primary)", border: "var(--brand-primary)" };
+    const off = { weight: 400, color: "var(--text-secondary)", border: "transparent" };
+    const nv = (k) => (active === k ? on : off);
+    const w = nv("workbench"), r = nv("records"), s = nv("support");
+    return {
+      institution: this.props.institution || "康健社区健康服务中心",
+      netTone: n.tone, netIcon: n.icon, netLabel: n.label,
+      devTone: d.tone, devIcon: d.icon, devLabel: d.label,
+      navWorkbenchWeight: w.weight, navWorkbenchColor: w.color, navWorkbenchBorder: w.border,
+      navRecordsWeight: r.weight, navRecordsColor: r.color, navRecordsBorder: r.border,
+      navSupportWeight: s.weight, navSupportColor: s.color, navSupportBorder: s.border,
+    };
+  }
+}
+</script>
+</body>
+</html>

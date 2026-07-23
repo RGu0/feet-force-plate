@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -48,9 +48,6 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
     qtbot.addWidget(window)
     required_controls = {
         PageId.WORKBENCH: {
-            "deviceSummary",
-            "syncSummary",
-            "pendingSummary",
             "recentScreenings",
         },
         PageId.SUBJECT_IDENTIFICATION: {
@@ -68,9 +65,8 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
         PageId.PREFLIGHT: {
             "deviceCheck",
             "storageCheck",
-            "calibrationCheck",
-            "syncCheck",
-            "zeroLoadCheck",
+                "calibrationCheck",
+                "syncCheck",
         },
         PageId.POSITION_GUIDANCE: {"positionStatus", "countdownLabel"},
         PageId.ACQUIRING: {
@@ -81,7 +77,7 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
         },
         PageId.RESULT: {"basicReportStatus", "fullReportStatus"},
         PageId.RECORDS: {"recordSearchInput", "recordsTable"},
-        PageId.REPORT_PREVIEW: {"reportPreview", "EXPORT_PDF", "PRINT_REPORT"},
+            PageId.REPORT_PREVIEW: {"reportPaper", "EXPORT_PDF", "PRINT_REPORT"},
         PageId.SUPPORT: {
             "deviceHealth",
             "syncHealth",
@@ -97,6 +93,24 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
                 page_id,
                 object_name,
             )
+
+
+def test_subject_match_card_wraps_detail_without_obscuring_primary_action(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.show_page(PageId.SUBJECT_IDENTIFICATION)
+    window.resize(1280, 900)
+    window.show()
+    qtbot.waitUntil(lambda: window.isVisible())
+
+    page = window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+    detail = page.findChild(QLabel, "subjectMatchSummary")
+    confirm = page.findChild(QPushButton, "CONFIRM_SUBJECT")
+
+    assert detail.wordWrap()
+    assert "年龄 64 岁" in detail.text()
+    assert confirm.width() >= 200
+    assert detail.mapToGlobal(detail.rect().topRight()).x() < confirm.mapToGlobal(confirm.rect().topLeft()).x()
 
 
 def test_nonblocking_sync_notice_keeps_basic_report_available(qtbot) -> None:

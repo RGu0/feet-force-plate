@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
 
 from client.app.controller import ApplicationController
 from client.app.pages import PageId
+from client.app.ui_models import DashboardSnapshot, ScreeningRecordRow, SupportSnapshot
 from client.workflow.models import WorkflowState
 from client.workflow.state_machine import ScreeningStep
 
@@ -63,6 +64,26 @@ class _Coordinator:
 
     def start_next_screening(self) -> None:
         self._state = WorkflowState(step=ScreeningStep.SUBJECT_IDENTIFICATION)
+
+
+class _ReadModels:
+    def dashboard_snapshot(self) -> DashboardSnapshot:
+        return DashboardSnapshot(
+            organization_name="验收机构",
+            device_status="设备已就绪",
+            sync_status="数据已同步",
+            pending_summary="待同步数据：0 次",
+            recent_records=(
+                ScreeningRecordRow("**9999", "07-21 11:00", "静态筛查", "完整报告"),
+            ),
+        )
+
+    def recent_records(self, *, query: str = "") -> tuple[ScreeningRecordRow, ...]:
+        records = self.dashboard_snapshot().recent_records
+        return tuple(row for row in records if query in row.subject_display_id)
+
+    def support_snapshot(self) -> SupportSnapshot:
+        return SupportSnapshot("已连接", "正常", "待同步数据：0 次", "1.0-test")
 
 
 def test_primary_button_dispatches_to_coordinator_and_refreshes_page(qtbot) -> None:
@@ -145,3 +166,23 @@ def test_start_next_action_returns_to_subject_identification(qtbot) -> None:
     controller.dispatch("START_NEXT_SCREENING")
 
     assert controller.window.current_page_id == PageId.SUBJECT_IDENTIFICATION
+
+
+def test_controller_refreshes_optional_ui_read_models(qtbot) -> None:
+    controller = ApplicationController(_Coordinator(), read_models=_ReadModels())
+    qtbot.addWidget(controller.window)
+
+    assert controller.window.findChild(QPushButton, "START_NEW_SCREENING") is not None
+    assert controller.window.findChild(QPushButton, "START_NEW_SCREENING").isEnabled()
+    assert controller.window.findChild(QLabel, "organizationName").text() == "验收机构"
+    assert controller.window.findChild(QTableWidget, "recentScreenings").rowCount() == 1
+
+
+def test_device_support_actions_do_not_raise_when_adapter_is_not_configured(qtbot) -> None:
+    controller = ApplicationController(_Coordinator())
+    qtbot.addWidget(controller.window)
+
+    controller.dispatch("RECHECK_SYSTEM")
+    controller.dispatch("EXPORT_DIAGNOSTIC")
+
+    assert "设备支持" in controller.window.error_text

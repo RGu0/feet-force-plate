@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/effects.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/tokens/viz.css">
+  <link rel="stylesheet" href="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/styles.css">
+  <script src="_ds/steady-health-design-system-40065384-1a4c-4f8f-93eb-4d067444d67f/_ds_bundle.js"></script>
+  <style>
+    body{margin:0;background:#e7ebf1}
+    *{box-sizing:border-box}
+    .wrap{padding:56px 64px 120px;font-family:var(--font-ui,system-ui)}
+    .h-eyebrow{font:600 13px/1 var(--font-ui);letter-spacing:2px;color:var(--brand-primary);text-transform:uppercase}
+    .h-title{font:600 36px/1.2 var(--font-ui);color:#0f172a;margin:10px 0 0}
+    .h-sub{font:400 16px/1.6 var(--font-ui);color:#475569;margin:14px 0 0;max-width:1000px}
+    .h-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+    .chip{font:500 13px var(--font-ui);color:#334155;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:7px 13px}
+    .sec{margin-top:72px}
+    .sec-h{display:flex;align-items:center;gap:13px;margin:0 0 30px;padding-bottom:14px;border-bottom:2px solid #cbd5e1;max-width:1300px}
+    .sec-n{font:600 12px ui-monospace,Menlo,monospace;color:#fff;background:var(--brand-primary);padding:5px 10px;border-radius:6px}
+    .sec-t{font:600 22px var(--font-ui);color:#0f172a}
+    .sec-d{font:400 14px var(--font-ui);color:#64748b;margin-left:4px}
+    .grp{display:flex;flex-wrap:wrap;gap:60px;align-items:flex-start}
+    .frame{display:flex;flex-direction:column;gap:13px}
+    .flabel{display:flex;align-items:center;gap:11px}
+    .fbadge{font:600 12px ui-monospace,Menlo,monospace;color:#0f172a;background:#fff;border:1px solid #cbd5e1;padding:5px 10px;border-radius:6px}
+    .fname{font:600 15px var(--font-ui);color:#1e293b}
+    .fnote{font:400 13px var(--font-ui);color:#64748b}
+    .screen{width:1440px;height:900px;background:var(--bg-page);border:1px solid #cbd5e1;border-radius:16px;box-shadow:0 18px 50px rgba(15,23,42,.12);overflow:hidden;display:flex;flex-direction:column;position:relative}
+    .wz-head{height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 32px;background:var(--bg-surface);border-bottom:1px solid var(--border-default)}
+    .wz-title{font:var(--text-h3);color:var(--text-primary)}
+    .wz-bar{background:var(--bg-surface);border-bottom:1px solid var(--border-default);padding:18px 32px}
+    .wz-bar-inner{max-width:720px;margin:0 auto}
+    .wz-body{flex:1;overflow:hidden;padding:48px 32px}
+    .wz-inner{max-width:720px;margin:0 auto}
+    .wz-foot{flex:none;background:var(--bg-surface);border-top:1px solid var(--border-default);padding:18px 32px}
+    .wz-foot-inner{max-width:720px;margin:0 auto;display:flex;align-items:center;justify-content:space-between}
+    .card{background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-card);box-shadow:var(--shadow-card)}
+    .h2{font:var(--text-h2);color:var(--text-primary);margin:0}
+    .lead{font:var(--text-body);color:var(--text-secondary);line-height:1.7}
+    .fld-l{font:var(--text-secondary-size);font-weight:600;color:var(--text-primary);display:block;margin-bottom:8px}
+    .selbox{height:48px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg-surface);display:flex;align-items:center;justify-content:space-between;padding:0 14px;font:var(--text-body);color:var(--text-primary)}
+    .selbox.ph-sel{color:var(--text-disabled)}
+    .kv{display:flex;align-items:center;justify-content:space-between;padding:20px 0;border-bottom:1px solid var(--border-default)}
+    .kv:last-child{border-bottom:none}
+    .kv-k{font:var(--text-body);color:var(--text-secondary)}
+    .kv-v{font:var(--text-body);font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums}
+    .ph{background:#eef2f7;border-radius:5px}
+    .ph-b{background:#f2f5f9;border:1px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font:var(--text-secondary-size);text-align:center}
+    .ck{width:20px;height:20px;flex:none;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+    .ck-on{border:1px solid var(--brand-primary);background:var(--brand-primary)}
+    .ck-off{border:1px solid var(--border-strong);background:var(--bg-surface)}
+    .filter{height:44px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg-surface);display:flex;align-items:center;gap:8px;padding:0 14px;font:var(--text-secondary-size);color:var(--text-secondary)}
+  </style>
+</helmet>
+<div class="wrap">
+  <div class="h-eyebrow">FeetForcePlate · 稳步 Steady Health</div>
+  <h1 class="h-title">足底压力健康筛查与分析平台 — 完整界面集</h1>
+  <p class="h-sub">依据产品需求文档（PRD v1.0）P-01 至 P-11 与全局交互规范，覆盖工作台、建档授权、检测流程、结果与报告四大流程及关键状态。全部界面基于 Steady Health 设计系统组件构建，1440×900 桌面基线，浅色单主题，简体中文。</p>
+  <div class="h-meta">
+    <span class="chip">桌面端 1440×900</span>
+    <span class="chip">Pulse Blue 单一主色</span>
+    <span class="chip">图标 + 文字 + 颜色三者并用</span>
+    <span class="chip">热力图色标物理隔离</span>
+    <span class="chip">筛查工具 · 非诊断</span>
+  </div>
+
+  <!-- ============ SECTION 0 ============ -->
+  <div class="sec">
+    <div class="sec-h"><span class="sec-n">00</span><span class="sec-t">机构登录</span><span class="sec-d">平台入口 · 机构账号登录 · 品牌居中</span></div>
+    <div class="grp">
+
+      <!-- P-00 login -->
+      <div class="frame" id="p00">
+        <div class="flabel"><span class="fbadge">P-00</span><span class="fname">机构登录</span><span class="fnote">操作员使用机构账号登录后进入工作台</span></div>
+        <div class="screen" style="display:block;background:var(--bg-page)">
+          <div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px">
+            <div style="text-align:center;margin-bottom:40px">
+              
+              <img src="assets/logo-horizontal-trimmed.png" alt="天富智柔 TechFlex" style="height: 72px; width: auto; display: block; margin: 0 auto 24px"><h1 style="margin:0;font:var(--text-display);color:var(--text-primary)">足底压力健康筛查与分析平台</h1>
+              <p style="margin:12px 0 0;font:var(--text-body-lg);color:var(--text-secondary)">请使用机构账号登录后开始检测</p>
+            </div>
+            <div class="card" style="width:100%;max-width:420px;padding:32px">
+              <div style="margin-bottom:20px"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="机构账号" value="community-kangjian" on-change="{{ noop }}" hint="由平台统一分配的机构编号" hint-size="100%,78px"></x-import></div>
+              <div style="margin-bottom:24px"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="登录密码" type="password" value="••••••••" on-change="{{ noop }}" hint-size="100%,78px"></x-import></div>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" size="lg" full-width="true" hint-size="100%,64px">登录</x-import>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:20px">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="success" icon="dot" hint-size="90px,32px">设备已就绪</x-import>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="120px,44px">无法登录？</x-import>
+              </div>
+              <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border-default);display:flex;align-items:center;justify-content:center;gap:8px">
+                <span style="font:var(--text-secondary-size);color:var(--text-secondary)">还没有机构账户？</span>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="150px,44px">使用 License 注册</x-import>
+              </div>
+            </div>
+            <p style="margin:32px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">康健社区健康服务中心 · 软件版本 1.0.0 · 本平台为健康筛查与分析工具，非临床诊断</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-00b register with license -->
+      <div class="frame" id="p00b">
+        <div class="flabel"><span class="fbadge">P-00b</span><span class="fname">License 注册</span><span class="fnote">凭平台发放的 License 激活并创建机构账户</span></div>
+        <div class="screen" style="display:block;background:var(--bg-page)">
+          <div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px">
+            <div class="card" style="width:100%;max-width:920px;padding:0;overflow:hidden;display:flex">
+              <div style="width:340px;flex:none;background:var(--brand-primary-subtle);border-right:1px solid var(--border-default);padding:40px 32px;display:flex;flex-direction:column">
+                <img src="assets/logo-horizontal-trimmed.png" alt="天富智柔 TechFlex" style="height:40px;width:auto;align-self:flex-start;display:block;margin-bottom:32px">
+                <h1 style="margin:0;font:var(--text-h2);color:var(--text-primary)">使用 License 注册</h1>
+                <p style="margin:12px 0 28px;font:var(--text-body);color:var(--text-secondary);line-height:1.7">输入随设备发放的 License 授权码，激活后即可创建本机构的登录账户。</p>
+                <div style="margin-top:auto;display:flex;flex-direction:column;gap:14px;font:var(--text-secondary-size);color:var(--text-secondary);line-height:1.6">
+                  <div style="display:flex;gap:10px"><span style="color:var(--brand-primary);font-weight:600">1</span><span>输入 License 授权码并校验</span></div>
+                  <div style="display:flex;gap:10px"><span style="color:var(--brand-primary);font-weight:600">2</span><span>填写机构信息与登录凭据</span></div>
+                  <div style="display:flex;gap:10px"><span style="color:var(--brand-primary);font-weight:600">3</span><span>激活并创建机构账户</span></div>
+                </div>
+              </div>
+              <div style="flex:1;padding:36px 40px">
+                <span class="fld-l" style="font:var(--text-secondary-size);font-weight:600;color:var(--text-primary)">License 授权码</span>
+                <div style="display:flex;gap:12px;align-items:flex-start;margin:8px 0 10px">
+                  <div style="flex:1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" value="FFP-2026-XXXX-XXXX" on-change="{{ noop }}" hint-size="100%,48px"></x-import></div>
+                  <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" hint-size="80px,48px">校验</x-import>
+                </div>
+                <div style="display:inline-flex;margin-bottom:24px"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="success" icon="check" hint-size="150px,32px">授权码有效 · 社区版</x-import></div>
+                <div style="height:1px;background:var(--border-default);margin-bottom:24px"></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                  <div style="grid-column:1 / -1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="机构名称" value="康健社区健康服务中心" on-change="{{ noop }}" hint-size="100%,78px"></x-import></div>
+                  <div style="grid-column:1 / -1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="设置机构账号" value="community-kangjian" on-change="{{ noop }}" hint="登录时使用，创建后不可更改" hint-size="100%,78px"></x-import></div>
+                  <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="登录密码" type="password" value="••••••••" on-change="{{ noop }}" hint-size="100%,78px"></x-import>
+                  <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="确认密码" type="password" value="••••••••" on-change="{{ noop }}" hint-size="100%,78px"></x-import>
+                </div>
+                <div style="display:flex;align-items:center;gap:16px;margin-top:28px">
+                  <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="110px,56px">← 返回登录</x-import>
+                  <div style="flex:1"></div>
+                  <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" size="lg" hint-size="180px,56px">激活并创建账户</x-import>
+                </div>
+              </div>
+            </div>
+            <p style="margin:24px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">License 由天富智柔随设备发放，每个授权码仅可激活一个机构账户</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ SECTION 1 ============ -->
+  <div class="sec">
+    <div class="sec-h"><span class="sec-n">01</span><span class="sec-t">工作台与记录</span><span class="sec-d">入口 · 一级导航仅保留 工作台 / 检测记录 / 设备与支持</span></div>
+    <div class="grp">
+
+      <!-- P-01 ready -->
+      <div class="frame" id="p01-ready">
+        <div class="flabel"><span class="fbadge">P-01</span><span class="fname">工作台</span><span class="fnote">设备就绪 · 单一主动作居中</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="workbench" net="ok" device="ready" hint-size="1440px,64px"></dc-import>
+          <div style="flex:1;overflow:hidden">
+            <div style="max-width:1120px;margin:0 auto;padding:64px 32px 40px;height:100%;display:flex;flex-direction:column">
+              <div style="text-align:center;padding:44px 0 64px">
+                <h1 style="margin:0;font:var(--text-display);color:var(--text-primary)">足底压力健康筛查</h1>
+                <p style="margin:14px 0 40px;font:var(--text-body-lg);color:var(--text-secondary)">请引导受试者到达压力垫前，准备就绪后开始新的检测。</p>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" size="lg" hint-size="220px,64px">开始新的检测</x-import>
+              </div>
+              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px">
+                <h2 style="margin:0;font:var(--text-h3);color:var(--text-primary)">最近检测</h2>
+                <span style="font:var(--text-secondary-size);color:var(--text-secondary)">今日 5 条 · 完整列表进入检测记录</span>
+              </div>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.DataTable" columns="{{ recentCols }}" rows="{{ recentRows }}" on-row-action="{{ noop }}" action-label="查看" hint-size="100%,300px"></x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-01 threshold -->
+      <div class="frame" id="p01-gate">
+        <div class="flabel"><span class="fbadge">P-01</span><span class="fname">工作台 · 联网门槛受限</span><span class="fnote">超过 24 小时未联网 → 主按钮替换为「检查网络」</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="workbench" net="threshold" device="ready" hint-size="1440px,64px"></dc-import>
+          <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Banner" tone="danger" title="已超过 24 小时未成功联网" hint-size="100%,72px">为保证数据可追溯，暂时无法开始新的检测。当前已完成的检测与报告不受影响，恢复网络后将自动继续上传。</x-import>
+          <div style="flex:1;overflow:hidden">
+            <div style="max-width:1120px;margin:0 auto;padding:56px 32px 40px;height:100%;display:flex;flex-direction:column">
+              <div style="text-align:center;padding:36px 0 56px">
+                <h1 style="margin:0;font:var(--text-display);color:var(--text-primary)">足底压力健康筛查</h1>
+                <p style="margin:14px 0 40px;font:var(--text-body-lg);color:var(--text-secondary)">需要先恢复网络连接，才能开始新的检测。</p>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" size="lg" hint-size="180px,64px">检查网络</x-import>
+              </div>
+              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px">
+                <h2 style="margin:0;font:var(--text-h3);color:var(--text-primary)">最近检测</h2>
+                <span style="font:var(--text-secondary-size);color:var(--text-secondary)">仍可查看既有报告并继续上传</span>
+              </div>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.DataTable" columns="{{ recentCols }}" rows="{{ recentRows }}" on-row-action="{{ noop }}" action-label="查看" hint-size="100%,300px"></x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-09 records -->
+      <div class="frame" id="p09">
+        <div class="flabel"><span class="fbadge">P-09</span><span class="fname">检测记录</span><span class="fnote">本机构最新记录 · 状态用文字+图标</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="records" net="ok" device="ready" hint-size="1440px,64px"></dc-import>
+          <div style="flex:1;overflow:hidden">
+            <div style="max-width:1120px;margin:0 auto;padding:48px 32px 40px;height:100%;display:flex;flex-direction:column">
+              <h1 style="margin:0 0 8px;font:var(--text-h1);color:var(--text-primary)">检测记录</h1>
+              <p style="margin:0 0 24px;font:var(--text-body);color:var(--text-secondary)">默认显示本机构最新记录，搜索仅在当前机构范围内执行。</p>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+                <div style="position:relative;flex:1;max-width:360px">
+                  <div style="height:44px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg-surface);display:flex;align-items:center;padding:0 14px;font:var(--text-body);color:var(--text-disabled)">按机构编号 / 病历号搜索</div>
+                </div>
+                <div class="filter">报告状态：全部 <span style="color:var(--text-disabled)">▾</span></div>
+                <div class="filter">日期：今日 <span style="color:var(--text-disabled)">▾</span></div>
+                <div style="flex:1"></div>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" hint-size="88px,44px">搜索</x-import>
+              </div>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.DataTable" columns="{{ recordsCols }}" rows="{{ recordsRows }}" on-row-action="{{ noop }}" action-label="查看" hint-size="100%,440px"></x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-11 support -->
+      <div class="frame" id="p11">
+        <div class="flabel"><span class="fbadge">P-11</span><span class="fname">设备与支持</span><span class="fnote">普通操作员仅见摘要与安全动作</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="support" net="ok" device="ready" hint-size="1440px,64px"></dc-import>
+          <div style="flex:1;overflow:auto;display:flex;justify-content:center;padding:64px 32px">
+            <div style="width:100%;max-width:720px">
+              <h1 style="margin:0 0 8px;font:var(--text-h1);color:var(--text-primary)">设备与支持</h1>
+              <p style="margin:0 0 28px;font:var(--text-body);color:var(--text-secondary)">如遇持续错误，请记录错误编号后联系平台支持，串口、队列与日志细节不在此展示。</p>
+              <div class="card" style="padding:8px 24px">
+                <div class="kv"><span class="kv-k">压力设备</span><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="success" icon="dot" hint-size="90px,32px">已连接</x-import></div>
+                <div class="kv"><span class="kv-k">数据同步</span><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="success" icon="dot" hint-size="80px,32px">正常</x-import></div>
+                <div class="kv"><span class="kv-k">待同步数据</span><span class="kv-v">0 次</span></div>
+                <div class="kv"><span class="kv-k">上次成功联网</span><span class="kv-v">2026-07-20 10:18</span></div>
+                <div class="kv"><span class="kv-k">软件版本</span><span class="kv-v">1.0.0</span></div>
+              </div>
+              <div style="display:flex;gap:12px;margin-top:28px">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" hint-size="120px,48px">重新检查</x-import>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="160px,48px">导出问题诊断包</x-import>
+              </div>
+              <p style="margin:24px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">诊断包默认不含原始会话与身份明文；附加会话数据需要独立确认。支持热线 400-820-1120。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ SECTION 2 ============ -->
+  <div class="sec">
+    <div class="sec-h"><span class="sec-n">02</span><span class="sec-t">建档与授权</span><span class="sec-d">数据最小化 · 不强制实名 · 首次授权后复用</span></div>
+    <div class="grp">
+
+      <!-- P-02 identify -->
+      <div class="frame" id="p02">
+        <div class="flabel"><span class="fbadge">P-02</span><span class="fname">受试者识别 · 找到档案</span><span class="fnote">脱敏编号 + 少量核对信息，防错人</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="120px,44px">← 返回工作台</x-import>
+            <span class="wz-title">受试者信息</span>
+            <span style="width:120px"></span>
+          </div>
+          <div class="wz-bar"><div class="wz-bar-inner"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StepBar" steps="{{ stepLabels }}" current="{{ step0 }}" hint-size="100%,32px"></x-import></div></div>
+          <div class="wz-body"><div class="wz-inner">
+            <div style="display:flex;gap:12px;align-items:flex-end">
+              <div style="flex:1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="机构档案号 / 病历号 / 体检号" value="2024-0731" on-change="{{ noop }}" hint="支持扫描枪与手动输入" hint-size="100%,78px"></x-import></div>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" hint-size="88px,48px">查找</x-import>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;margin:28px 0">
+              <span style="flex:1;height:1px;background:var(--border-default)"></span>
+              <span style="font:var(--text-secondary-size);color:var(--text-disabled)">或</span>
+              <span style="flex:1;height:1px;background:var(--border-default)"></span>
+            </div>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="220px,48px">无机构编号，快速建档</x-import>
+            <div class="card" style="margin-top:32px;padding:24px;border-color:var(--brand-primary-border);background:var(--brand-primary-subtle)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div>
+                  <div style="font:var(--text-secondary-size);color:var(--brand-primary);font-weight:600;margin-bottom:6px">已找到匹配档案</div>
+                  <div style="font:var(--text-h3);color:var(--text-primary);font-variant-numeric:tabular-nums">编号 ＊＊2781</div>
+                  <div style="font:var(--text-body);color:var(--text-secondary);margin-top:6px">年龄段 60–69　性别 女　上次检测 07-12</div>
+                </div>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="140px,56px">确认并继续</x-import>
+              </div>
+              <p style="margin:16px 0 0;font:var(--text-secondary-size);color:var(--text-secondary)">请核对是否为本人，避免同名或错号档案；如信息不符请返回重新查找。</p>
+            </div>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- P-02 conflict -->
+      <div class="frame" id="p02-conflict">
+        <div class="flabel"><span class="fbadge">P-02</span><span class="fname">档案冲突确认</span><span class="fnote">不自动合并 → 受控确认页</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 返回</x-import>
+            <span class="wz-title">档案冲突确认</span>
+            <span style="width:80px"></span>
+          </div>
+          <div class="wz-body"><div class="wz-inner">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Banner" tone="warning" title="发现多个匹配档案" hint-size="100%,72px">同一机构编号存在多条档案。系统不会自动合并，请人工确认对应受试者后再继续。</x-import>
+            <div style="display:flex;gap:16px;margin-top:24px">
+              <div class="card" style="flex:1;padding:20px">
+                <div style="font:var(--text-h3);color:var(--text-primary);font-variant-numeric:tabular-nums">＊＊2781</div>
+                <div style="font:var(--text-secondary-size);color:var(--text-secondary);margin:12px 0 20px;line-height:1.9">年龄段　60–69<br>建档时间　2024-03-11<br>上次检测　07-12</div>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" full-width="true" hint-size="100%,48px">选择此档案</x-import>
+              </div>
+              <div class="card" style="flex:1;padding:20px">
+                <div style="font:var(--text-h3);color:var(--text-primary);font-variant-numeric:tabular-nums">＊＊2781</div>
+                <div style="font:var(--text-secondary-size);color:var(--text-secondary);margin:12px 0 20px;line-height:1.9">年龄段　40–49<br>建档时间　2025-09-02<br>上次检测　06-28</div>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" full-width="true" hint-size="100%,48px">选择此档案</x-import>
+              </div>
+            </div>
+            <div style="margin-top:24px;text-align:center">
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="200px,48px">都不是，以此编号新建档案</x-import>
+            </div>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- P-03 profile -->
+      <div class="frame" id="p03">
+        <div class="flabel"><span class="fbadge">P-03</span><span class="fname">选填档案</span><span class="fnote">未选择与明确「无」分开 · 可直接继续</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 返回</x-import>
+            <span class="wz-title">基础信息（选填）</span>
+            <span style="width:80px"></span>
+          </div>
+          <div class="wz-bar"><div class="wz-bar-inner"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StepBar" steps="{{ stepLabels }}" current="{{ step1 }}" hint-size="100%,32px"></x-import></div></div>
+          <div class="wz-body"><div class="wz-inner">
+            <h2 class="h2" style="margin-bottom:8px">基础信息（选填，可直接继续）</h2>
+            <p class="lead" style="margin:0 0 28px">以下信息用于提高分析参考性，可跳过；标签为「本人/机构提供」，不作为临床确诊。</p>
+            <div style="display:flex;gap:16px;margin-bottom:24px">
+              <div style="flex:1"><span class="fld-l">年龄段</span><div class="selbox">60–69 <span style="color:var(--text-disabled)">▾</span></div></div>
+              <div style="flex:1"><span class="fld-l">性别</span><div class="selbox ph-sel">请选择 / 不提供 <span>▾</span></div></div>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:28px">
+              <div style="flex:1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="身高" unit="cm" value="162" on-change="{{ noop }}" hint-size="100%,78px"></x-import></div>
+              <div style="flex:1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="体重" unit="kg" value="58" on-change="{{ noop }}" hint-size="100%,78px"></x-import></div>
+            </div>
+            <span class="fld-l">基础情况（本人/机构提供，可多选）</span>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChipGroup" options="{{ chipOpts }}" value="{{ chipSel }}" on-change="{{ noop }}" hint-size="100%,90px"></x-import>
+          </div></div>
+          <div class="wz-foot"><div class="wz-foot-inner">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="80px,48px">跳过</x-import>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="140px,56px">保存并继续</x-import>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- P-04 consent -->
+      <div class="frame" id="p04">
+        <div class="flabel"><span class="fbadge">P-04</span><span class="fname">授权确认</span><span class="fnote">不默认勾选 · 必需与额外用途分开</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 返回</x-import>
+            <span class="wz-title">数据使用说明</span>
+            <span style="width:80px"></span>
+          </div>
+          <div class="wz-bar"><div class="wz-bar-inner"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StepBar" steps="{{ stepLabels }}" current="{{ step2 }}" hint-size="100%,32px"></x-import></div></div>
+          <div class="wz-body"><div class="wz-inner">
+            <h2 class="h2" style="margin-bottom:16px">数据使用说明</h2>
+            <p class="lead" style="margin:0 0 20px">本次筛查将采集足底压力和您自愿提供的基础信息，数据会加密上传，用于生成基础及完整分析报告、保存历次记录并保障服务运行。数据在本机构范围内处理，不用于自动诊断。</p>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="200px,48px">查看完整信息处理规则</x-import>
+            <div style="margin-top:28px;display:flex;flex-direction:column;gap:20px">
+              <div style="display:flex;gap:12px;align-items:flex-start">
+                <span class="ck ck-on"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                <span style="font:var(--text-body);color:var(--text-primary)">我已了解并同意上述必要处理</span>
+              </div>
+              <div style="display:flex;gap:12px;align-items:flex-start">
+                <span class="ck ck-off"></span>
+                <span style="font:var(--text-body);color:var(--text-secondary)">我同意将去标识化数据用于额外算法研究（选填）</span>
+              </div>
+            </div>
+            <p style="margin:24px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">拒绝必要处理将无法进入上传型筛查服务；相同有效授权的返回受试者会自动跳过本页。</p>
+          </div></div>
+          <div class="wz-foot"><div class="wz-foot-inner">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="80px,48px">← 返回</x-import>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="140px,56px">同意并继续</x-import>
+          </div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ SECTION 3 ============ -->
+  <div class="sec">
+    <div class="sec-h"><span class="sec-n">03</span><span class="sec-t">检测流程</span><span class="sec-d">自动优先 · 一个主要动作 · 失败安全</span></div>
+    <div class="grp">
+
+      <!-- P-05 precheck pass -->
+      <div class="frame" id="p05-ok">
+        <div class="flabel"><span class="fbadge">P-05</span><span class="fname">自动检查 · 全部通过</span><span class="fnote">并行检查 · 通过后自动进入站位</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 返回</x-import>
+            <span class="wz-title">正在准备检测</span>
+            <span style="width:80px"></span>
+          </div>
+          <div class="wz-bar"><div class="wz-bar-inner"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StepBar" steps="{{ stepLabels }}" current="{{ step3 }}" hint-size="100%,32px"></x-import></div></div>
+          <div class="wz-body"><div class="wz-inner">
+            <div class="card" style="padding:8px 24px">
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="压力设备" hint="已连接" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="数据存储" hint="空间充足" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="标定状态" hint="最近校准 07-20" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="数据同步" hint="已同步" hint-size="100%,64px"></x-import>
+            </div>
+            <p style="text-align:center;margin:32px 0 0;font:var(--text-body-lg);color:var(--text-secondary)">请确保压力垫上暂时无人站立</p>
+            <p style="text-align:center;margin:8px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">全部通过后将自动进入站位引导</p>
+          </div></div>
+          <div class="wz-foot"><div class="wz-foot-inner">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="100px,48px">重新检查</x-import>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="150px,56px">进入站位引导</x-import>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- P-05 precheck fail -->
+      <div class="frame" id="p05-fail">
+        <div class="flabel"><span class="fbadge">P-05</span><span class="fname">自动检查 · 需处理</span><span class="fnote">失败项只显示可执行说明</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 返回</x-import>
+            <span class="wz-title">正在准备检测</span>
+            <span style="width:80px"></span>
+          </div>
+          <div class="wz-bar"><div class="wz-bar-inner"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StepBar" steps="{{ stepLabels }}" current="{{ step3 }}" hint-size="100%,32px"></x-import></div></div>
+          <div class="wz-body"><div class="wz-inner">
+            <div class="card" style="padding:8px 24px">
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="压力设备" hint="已连接" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="数据存储" hint="空间充足" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="pass" label="标定状态" hint="最近校准 07-20" hint-size="100%,64px"></x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.ChecklistItem" status="fail" label="数据同步" hint="网络待恢复，请检查网络后重新检查" hint-size="100%,64px"></x-import>
+            </div>
+            <p style="text-align:center;margin:32px 0 0;font:var(--text-body-lg);color:var(--text-secondary)">请处理上述提示后重新检查</p>
+          </div></div>
+          <div class="wz-foot"><div class="wz-foot-inner">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" hint-size="80px,48px">← 返回</x-import>
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="120px,56px">重新检查</x-import>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- P-06 stance -->
+      <div class="frame" id="p06">
+        <div class="flabel"><span class="fbadge">P-06</span><span class="fname">站位引导</span><span class="fnote">受试者面向 · 以动作指令为主</span></div>
+        <div class="screen">
+          <div class="wz-head">
+            <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="80px,44px">← 取消</x-import>
+            <span class="wz-title">站位引导</span>
+            <span style="width:80px"></span>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center">
+            <h1 style="margin:0 0 8px;font:var(--text-display);font-size:40px;color:var(--text-primary)">请站到压力垫中央</h1>
+            <p style="margin:0 0 32px;font:var(--text-body-lg);color:var(--text-secondary)">双脚自然站立，保持身体放松，目视前方</p>
+            <div style="position:relative;width:460px;height:380px;border-radius:var(--radius-card);background:var(--viz-canvas);border:1px solid var(--viz-canvas-border);background-image:linear-gradient(var(--viz-grid) 1px,transparent 1px),linear-gradient(90deg,var(--viz-grid) 1px,transparent 1px);background-size:28px 28px;overflow:hidden">
+              <div style="position:absolute;inset:40px;border:2px dashed var(--brand-primary-border);border-radius:20px"></div>
+              <svg viewBox="0 0 460 380" width="460" height="380" style="position:absolute;inset:0">
+                <g fill="var(--viz-footprint)" fill-opacity="0.55" stroke="var(--viz-footprint)" stroke-opacity="0.8" stroke-width="2">
+                  <ellipse cx="185" cy="150" rx="42" ry="38"></ellipse>
+                  <rect x="170" y="178" width="34" height="64" rx="17"></rect>
+                  <ellipse cx="182" cy="252" rx="30" ry="38"></ellipse>
+                  <ellipse cx="275" cy="150" rx="42" ry="38"></ellipse>
+                  <rect x="256" y="178" width="34" height="64" rx="17"></rect>
+                  <ellipse cx="278" cy="252" rx="30" ry="38"></ellipse>
+                </g>
+              </svg>
+              <div style="position:absolute;top:12px;left:12px;font:var(--text-secondary-size);color:var(--viz-axis-label);background:rgba(255,255,255,.75);padding:2px 8px;border-radius:6px">实时足印示意</div>
+            </div>
+            <div style="margin-top:32px;display:flex;align-items:center;gap:24px">
+              <div style="text-align:left">
+                <div style="font:var(--text-secondary-size);color:var(--text-secondary)">检测到稳定站位后将自动开始</div>
+                <div style="display:flex;align-items:baseline;gap:12px;margin-top:4px">
+                  <span style="font:var(--text-body-lg);color:var(--text-primary);font-weight:600">稳定中…</span>
+                  <span style="font:700 48px/1 var(--font-num);color:var(--brand-primary);font-variant-numeric:tabular-nums">3</span>
+                </div>
+              </div>
+              <span style="width:1px;height:48px;background:var(--border-default)"></span>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="130px,56px">手动开始</x-import>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-07 detecting -->
+      <div class="frame" id="p07">
+        <div class="flabel"><span class="fbadge">P-07</span><span class="fname">检测进行中</span><span class="fnote">上传后台化 · 单一停止动作</span></div>
+        <div class="screen">
+          <div style="height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 32px;background:var(--bg-surface);border-bottom:1px solid var(--border-default)">
+            <span style="font:var(--text-h3);color:var(--text-primary)">检测进行中</span>
+            <div style="display:flex;align-items:center;gap:8px"><span style="font:var(--text-secondary-size);color:var(--text-secondary)">剩余</span><span style="font:600 20px/1 var(--font-num);color:var(--text-primary);font-variant-numeric:tabular-nums">00:18</span></div>
+          </div>
+          <div style="flex:1;display:flex;min-height:0">
+            <div style="flex-basis:60%;padding:32px;display:flex;min-height:0">
+              <x-import component-from-global-scope="Heatmap" from="./Heatmap.jsx" live="true" side="both" hint-size="100%,100%"></x-import>
+            </div>
+            <div style="flex:1;border-left:1px solid var(--border-default);background:var(--bg-surface);padding:48px 32px;display:flex;flex-direction:column;position:relative">
+              <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:32px">
+                <div>
+                  <div style="font:var(--text-secondary-size);color:var(--brand-primary);font-weight:600;letter-spacing:2px">正在采集</div>
+                  <p style="font:var(--text-body-lg);font-size:24px;line-height:1.5;color:var(--text-primary);margin:8px 0 0;max-width:360px">请保持自然站立，<br>不要说话或大幅移动。</p>
+                </div>
+                <div>
+                  <div style="font:700 96px/1 var(--font-num);color:var(--brand-primary);font-variant-numeric:tabular-nums">18</div>
+                  <div style="font:var(--text-body);color:var(--text-secondary);margin-top:8px">剩余采集时间（秒）</div>
+                </div>
+                <div>
+                  <div style="height:8px;border-radius:999px;background:var(--bg-sunken);overflow:hidden;max-width:360px"><div style="height:100%;width:60%;background:var(--brand-bright);border-radius:999px"></div></div>
+                  <div style="font:var(--text-secondary-size);color:var(--text-secondary);margin-top:8px">采集进行中，请勿离开压力垫</div>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:flex-end">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="danger" size="sm" hint-size="110px,48px">停止检测</x-import>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-07 stop confirm -->
+      <div class="frame" id="p07-stop">
+        <div class="flabel"><span class="fbadge">P-07</span><span class="fname">停止确认</span><span class="fnote">次级危险动作 · 唯一填充红按钮</span></div>
+        <div class="screen">
+          <div style="height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 32px;background:var(--bg-surface);border-bottom:1px solid var(--border-default)">
+            <span style="font:var(--text-h3);color:var(--text-primary)">检测进行中</span>
+            <div style="display:flex;align-items:center;gap:8px"><span style="font:var(--text-secondary-size);color:var(--text-secondary)">剩余</span><span style="font:600 20px/1 var(--font-num);color:var(--text-primary);font-variant-numeric:tabular-nums">00:18</span></div>
+          </div>
+          <div style="flex:1;display:flex;min-height:0">
+            <div style="flex-basis:60%;padding:32px;display:flex;min-height:0">
+              <x-import component-from-global-scope="Heatmap" from="./Heatmap.jsx" side="both" hint-size="100%,100%"></x-import>
+            </div>
+            <div style="flex:1;border-left:1px solid var(--border-default);background:var(--bg-surface)"></div>
+          </div>
+          <div style="position:absolute;inset:0;background:var(--overlay);display:flex;align-items:center;justify-content:center;padding:24px">
+            <div style="width:100%;max-width:480px;background:var(--bg-surface);border-radius:var(--radius-card);box-shadow:var(--shadow-dialog);padding:24px">
+              <h3 style="margin:0;font:var(--text-h3);color:var(--text-primary)">停止本次检测？</h3>
+              <p style="margin:12px 0 24px;font:var(--text-body);color:var(--text-secondary)">已采集的数据将不生成报告，可立即重新开始。</p>
+              <div style="display:flex;justify-content:flex-end;gap:12px">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" hint-size="110px,48px">继续检测</x-import>
+                <button type="button" style="display:inline-flex;align-items:center;justify-content:center;height:48px;padding:0 24px;border-radius:var(--radius-control);font:var(--text-body-lg);font-weight:600;line-height:1;color:var(--text-on-brand);background:var(--danger-fg);border:1px solid transparent;cursor:pointer">停止检测</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ SECTION 4 ============ -->
+  <div class="sec">
+    <div class="sec-h"><span class="sec-n">04</span><span class="sec-t">结果与报告</span><span class="sec-d">报告渐进完成 · 非诊断措辞 · 版本不可变</span></div>
+    <div class="grp">
+
+      <!-- P-08 basic -->
+      <div class="frame" id="p08-ok">
+        <div class="flabel"><span class="fbadge">P-08</span><span class="fname">检测完成 · 基础报告</span><span class="fnote">完整分析后台异步生成</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="workbench" net="ok" device="ready" hint-size="1440px,64px"></dc-import>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:32px">
+            <div class="card" style="width:100%;max-width:560px;padding:48px;text-align:center">
+              <div style="width:72px;height:72px;border-radius:999px;background:var(--success-bg);border:1px solid var(--success-border);display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+              </div>
+              <h1 style="font:var(--text-h1);margin:0 0 12px;color:var(--text-primary)">基础报告已生成</h1>
+              <p style="font:var(--text-body);color:var(--text-secondary);margin:0 0 24px;line-height:1.7">本次足底压力筛查已完成质量校核，基础报告可立即查看。</p>
+              <div style="display:inline-flex;margin-bottom:32px"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="info" icon="spinner" spin="true" hint-size="220px,32px">完整分析报告正在后台生成</x-import></div>
+              <div style="display:flex;gap:12px;justify-content:center">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" hint-size="150px,56px">开始下一位检测</x-import>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="150px,56px">查看基础报告</x-import>
+              </div>
+              <p style="margin:24px 0 0;font:var(--text-secondary-size);color:var(--text-disabled)">网络恢复后系统会自动完成完整分析，当前无需操作。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-08 quality fail -->
+      <div class="frame" id="p08-fail">
+        <div class="flabel"><span class="fbadge">P-08</span><span class="fname">质量未通过</span><span class="fnote">不显示「检测完成」· 不生成报告</span></div>
+        <div class="screen">
+          <dc-import name="TopBar" nav="workbench" net="ok" device="ready" hint-size="1440px,64px"></dc-import>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:32px">
+            <div class="card" style="width:100%;max-width:560px;padding:48px;text-align:center">
+              <div style="width:72px;height:72px;border-radius:999px;background:var(--warning-bg);border:1px solid var(--warning-border);display:inline-flex;align-items:center;justify-content:center;margin-bottom:24px">
+                <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+              </div>
+              <h1 style="font:var(--text-h1);margin:0 0 12px;color:var(--text-primary)">本次检测未完成</h1>
+              <p style="font:var(--text-body);color:var(--text-secondary);margin:0 0 24px;line-height:1.7">本次采集未通过质量校核，未生成报告。请协助受试者重新站稳后再次检测。</p>
+              <div style="display:inline-flex;margin-bottom:32px"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="warning" icon="warning" hint-size="180px,32px">质量校核未通过</x-import></div>
+              <div style="display:flex;gap:12px;justify-content:center">
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" hint-size="130px,56px">返回工作台</x-import>
+                <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="primary" hint-size="120px,56px">重新检测</x-import>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P-10 report preview -->
+      <div class="frame" id="p10">
+        <div class="flabel"><span class="fbadge">P-10</span><span class="fname">报告预览</span><span class="fnote">A4 纵向 · 版面占位示意</span></div>
+        <div class="screen">
+          <div style="height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:var(--bg-surface);border-bottom:1px solid var(--border-default)">
+            <div style="display:flex;align-items:center;gap:16px">
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="ghost" size="sm" hint-size="110px,44px">← 检测记录</x-import>
+              <span style="font:var(--text-h3);color:var(--text-primary)">完整分析报告</span>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.StatusPill" tone="neutral" icon="dot" hint-size="90px,32px">完整版 v2</x-import>
+            </div>
+            <div style="display:flex;gap:12px">
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" hint-size="110px,48px">导出 PDF</x-import>
+              <x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Button" variant="secondary" size="sm" hint-size="80px,48px">打印</x-import>
+            </div>
+          </div>
+          <div style="height:44px;flex:none;display:flex;align-items:center;gap:16px;padding:0 24px;background:var(--info-bg);border-bottom:1px solid var(--info-border);font:var(--text-secondary-size);color:var(--text-secondary)">
+            <span>机构编号 ＊＊2781</span><span style="color:var(--border-strong)">·</span><span>生成时间 2026-07-20 10:22</span><span style="color:var(--border-strong)">·</span><span>报告编号 R-20260720-0007</span>
+            <span style="flex:1"></span>
+            <span style="color:var(--brand-primary);font-weight:600">已有更新版本 v3，可切换查看</span>
+          </div>
+          <div style="flex:1;overflow:auto;background:#dbe1e9;display:flex;justify-content:center;padding:32px">
+            <div style="width:566px;flex:none;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.16);padding:40px 44px">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:2px solid var(--brand-primary)">
+                <div>
+                  <div style="font:600 18px var(--font-ui);color:var(--text-primary)">足底压力健康筛查报告</div>
+                  <div style="font:var(--text-secondary-size);color:var(--text-secondary);margin-top:4px">康健社区健康服务中心 · 完整分析版</div>
+                </div>
+                <img src="assets/logo-horizontal-trimmed.png" alt="天富智柔" style="height:24px">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;margin:16px 0 24px;font:var(--text-secondary-size);color:var(--text-secondary)">
+                <span>受试者编号　＊＊2781</span><span>测试时间　2026-07-20 10:20</span>
+                <span>测试项目　静态筛查</span><span>报告版本　完整 v2</span>
+              </div>
+              <div style="font:600 14px var(--font-ui);color:var(--brand-primary);margin-bottom:10px">筛查摘要</div>
+              <div style="display:flex;gap:8px;margin-bottom:10px"><span style="font:var(--text-secondary-size);color:var(--warning-fg);background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:999px;padding:3px 10px">建议关注</span><span style="font:var(--text-secondary-size);color:var(--info-fg);background:var(--info-bg);border:1px solid var(--info-border);border-radius:999px;padding:3px 10px">建议复测</span></div>
+              <div class="ph" style="height:11px;width:100%;margin-bottom:6px"></div>
+              <div class="ph" style="height:11px;width:92%;margin-bottom:6px"></div>
+              <div class="ph" style="height:11px;width:78%;margin-bottom:22px"></div>
+              <div style="font:600 14px var(--font-ui);color:var(--brand-primary);margin-bottom:10px">核心指标</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:22px">
+                <div class="metric"><div class="ph" style="height:22px;width:60%;margin-bottom:8px"></div><div class="ph" style="height:9px;width:80%"></div></div>
+                <div class="metric"><div class="ph" style="height:22px;width:60%;margin-bottom:8px"></div><div class="ph" style="height:9px;width:80%"></div></div>
+                <div class="metric"><div class="ph" style="height:22px;width:60%;margin-bottom:8px"></div><div class="ph" style="height:9px;width:80%"></div></div>
+              </div>
+              <div style="font:600 14px var(--font-ui);color:var(--brand-primary);margin-bottom:10px">图表</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px">
+                <div style="height:150px;border-radius:8px;overflow:hidden;border:1px solid var(--viz-canvas-border)"><x-import component-from-global-scope="Heatmap" from="./Heatmap.jsx" side="both" hint-size="100%,150px"></x-import></div>
+                <div class="ph-b" style="height:150px">COP 轨迹 / 载荷曲线<br>（图表占位）</div>
+              </div>
+              <div style="font:600 14px var(--font-ui);color:var(--brand-primary);margin-bottom:10px">专业参数</div>
+              <div class="ph" style="height:9px;width:100%;margin-bottom:5px"></div>
+              <div class="ph" style="height:9px;width:96%;margin-bottom:5px"></div>
+              <div class="ph" style="height:9px;width:88%;margin-bottom:22px"></div>
+              <div style="border-top:1px solid var(--border-default);padding-top:12px;font:400 12px var(--font-ui);color:var(--text-disabled)">报告编号 R-20260720-0007 · 完整 v2 · 生成 2026-07-20 10:22 · 软件 1.0.0 / 算法 fp-2026.7 · 本报告为健康筛查与分析，非临床诊断。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() {
+    const APP = window.SteadyHealthDesignSystem_400653 || {};
+    const status = (APP.DataTable && APP.DataTable.status) ? APP.DataTable.status : (v) => (v ? v.label : "");
+    const recentCols = [
+      { key: "id", header: "编号" },
+      { key: "proj", header: "测试项目" },
+      { key: "time", header: "时间", numeric: true },
+      { key: "status", header: "报告状态", render: status },
+    ];
+    const recentRows = [
+      { id: "＊＊2781", proj: "静态筛查", time: "10:20", status: { tone: "success", icon: "check", label: "完整报告" } },
+      { id: "临时034", proj: "静态筛查", time: "10:05", status: { tone: "success", icon: "check", label: "基础报告" } },
+      { id: "＊＊1052", proj: "静态筛查", time: "09:42", status: { tone: "info", icon: "spinner", spin: true, label: "生成中" } },
+      { id: "＊＊0973", proj: "静态筛查", time: "09:18", status: { tone: "danger", icon: "x", label: "未完成" } },
+      { id: "＊＊0841", proj: "静态筛查", time: "08:55", status: { tone: "success", icon: "check", label: "完整报告" } },
+    ];
+    const recordsCols = [
+      { key: "id", header: "编号" },
+      { key: "time", header: "时间", numeric: true },
+      { key: "proj", header: "测试项目" },
+      { key: "status", header: "报告状态", render: status },
+    ];
+    const recordsRows = [
+      { id: "＊＊2781", time: "07-20 10:20", proj: "静态筛查", status: { tone: "success", icon: "check", label: "完整报告" } },
+      { id: "临时034", time: "07-20 10:05", proj: "静态筛查", status: { tone: "success", icon: "check", label: "基础报告" } },
+      { id: "＊＊1052", time: "07-20 09:42", proj: "静态筛查", status: { tone: "info", icon: "spinner", spin: true, label: "生成中" } },
+      { id: "＊＊0973", time: "07-20 09:18", proj: "静态筛查", status: { tone: "danger", icon: "x", label: "未完成" } },
+      { id: "＊＊0841", time: "07-20 08:55", proj: "静态筛查", status: { tone: "success", icon: "check", label: "完整报告" } },
+      { id: "临时029", time: "07-19 16:33", proj: "静态筛查", status: { tone: "success", icon: "check", label: "基础报告" } },
+      { id: "＊＊0712", time: "07-19 15:10", proj: "静态筛查", status: { tone: "success", icon: "check", label: "完整报告" } },
+    ];
+    return {
+      noop: () => {},
+      step0: 0, step1: 1, step2: 2, step3: 3,
+      stepLabels: ["受试者", "选填信息", "授权确认", "设备预检", "站位引导"],
+      chipOpts: ["高血压", "糖尿病", "既往下肢损伤", "关节炎", "周围神经病变", "足部手术史"],
+      chipSel: ["高血压", "既往下肢损伤"],
+      recentCols, recentRows, recordsCols, recordsRows,
+    };
+  }
+}
+</script>
+</body>
+</html>

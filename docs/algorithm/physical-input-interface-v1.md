@@ -15,16 +15,16 @@
 ```text
 设备原始协议 / 原始计数
   → physical-pressure-session/1.0
-      每点板面坐标（mm）
+      每点板面坐标（mm；左上首点为原点，向右/向下为正）
       每点法向载荷（N）
       每帧实际时间
       几何/面积、质量、标定和版本
-  → 算法层
+  → 算法层内部计算
       姿态归一化、COP、速度、RMS、范围、椭圆、阶段差异
       风险规则、综合评分和报告
 ```
 
-硬件层不计算或传输 COP、位移、速度、RMS、步态、跌倒风险、报告字段或客户端特征。所有压力分析和特征提取由算法层完成。
+硬件层不计算或传输 COP、位移、速度、RMS、步态、跌倒风险、报告字段或客户端特征。所有压力分析和特征提取由算法层完成。COP、速度、RMS、范围、椭圆、阶段差异、风险、评分和报告均为算法层二级结果，不是本接口字段，也不得由硬件层传递或预先计算。
 
 如果硬件只有原始计数、零点修正计数或相对载荷，没有经批准的法向载荷 N 语义，则输出必须为 `DEGRADED/UNSUPPORTED`，不得把相对计数改名为 N 或 Pa 进入正式分析。
 
@@ -63,7 +63,7 @@
 {
   "schema_version": "physical-pressure-session/1.0",
   "session_id": "uuid",
-  "coordinate_frame": "BOARD_X_RIGHT_Y_DOWN",
+  "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
   "coordinate_unit": "mm",
   "force_unit": "N",
   "area_unit": "mm2",
@@ -76,6 +76,8 @@
 ```
 
 生产环境必须拒绝未知顶层字段。`schema_version`、`session_id`、单位、`measurement_profile`、`cells`、`stages` 和 `frames` 均为必填。
+
+`coordinate_frame` 固定为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`：`cells[]` 中左上角第一个感应点的中心为 `(0, 0)`；X 向右为正，Y 向下为正。坐标表示感应点中心的实际板面位置，算法不得根据行列数、标称间距或设备型号自行重建它。
 
 ### 3.2 `measurement_profile`
 
@@ -102,8 +104,8 @@
 | 字段 | 类型 | 规则 |
 |---|---|---|
 | `cell_id` | string | 会话内唯一，顺序稳定 |
-| `x_mm` | number | 感应点有效区域中心的板面 X 坐标 |
-| `y_mm` | number | 感应点有效区域中心的板面 Y 坐标 |
+| `board_x_mm` | number | 感应点有效区域中心的板面 X 坐标 |
+| `board_y_mm` | number | 感应点有效区域中心的板面 Y 坐标 |
 | `active_area_mm2` | number/null | 经验证有效面积；未知时为 `null`，不得伪造 |
 | `status` | enum | `ACTIVE` / `EXCLUDED` |
 
