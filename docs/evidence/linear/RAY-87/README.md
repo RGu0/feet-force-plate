@@ -57,3 +57,38 @@ are performed.
 ## Commit
 
 Implementation commit: `56f995d` — `Implement encrypted session spool recovery`.
+
+## 2026-07-22 scope revision: valid-session-only persistence
+
+The product decision now requires that hardware persist only a complete, valid
+session. The previous per-segment `SEALED`/upload queue behavior remains legacy
+recovery coverage; the current MVP path is:
+
+```text
+encrypted temporary segments
+  → whole-session quality/preprocessing decision
+  → atomically promote valid directory
+  → atomically register CLOSED/VALID SQLite session and READY_FOR_NETWORK handoff
+```
+
+Invalid, interrupted, or recovery-failed captures are not formal sessions: their
+temporary raw/derived artifacts are deleted and no `Session`/`Segment` database
+record is created. A cloud confirmation can only change the handoff state; it
+does not delete any valid local data.
+
+Current implementation files:
+
+- `client/spool/session_commit.py`: staging, invalid discard, valid promotion and
+  startup removal of interrupted staging directories.
+- `client/spool/state_store.py`: migration 3, atomic valid-session registration
+  and the `sync_handoffs` state boundary.
+- `tests/spool/test_valid_session_commit.py`: valid promotion, invalid discard and
+  interrupted-staging recovery regression tests.
+
+Verification after the scope revision:
+
+- `./scripts/local-env.sh python -m pytest tests/spool -q` — 22 passed.
+- `git diff --check` — passed before commit.
+
+Remaining external/manual boundary: actual power loss, full-disk behavior and a
+real-device run are still required before RAY-87 can be marked Done.

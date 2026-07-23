@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -105,6 +105,14 @@ class StoredValidationResult:
     reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ValidSegmentRecord:
+    segment_id: str
+    relative_path: str
+    byte_count: int
+    sealed_at_ns: int
+
+
 _MIGRATION_1 = """
 CREATE TABLE IF NOT EXISTS subject_refs (
     subject_uuid TEXT PRIMARY KEY,
@@ -193,6 +201,19 @@ ON telemetry_events(state, created_at_ns, event_id);
 """
 
 
+_MIGRATION_3 = """
+CREATE TABLE IF NOT EXISTS sync_handoffs (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+    manifest_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at_ns INTEGER NOT NULL,
+    cloud_confirmed_at_ns INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sync_handoffs_state
+ON sync_handoffs(state, created_at_ns, session_id);
+"""
+
+
 class StateStore:
     """Thread-safe SQLite repository with explicit transaction boundaries."""
 
@@ -260,6 +281,9 @@ class StateStore:
             if version < 2:
                 self._connection.executescript(_MIGRATION_2)
                 self._connection.execute("PRAGMA user_version=2")
+            if version < 3:
+                self._connection.executescript(_MIGRATION_3)
+                self._connection.execute("PRAGMA user_version=3")
 
     def record_validation_audit(
         self,
@@ -480,6 +504,87 @@ class StateStore:
                     versions_json,
                 ),
             )
+
+    def commit_valid_session(
+        self,
+        session_id: str,
+        *,
+        subject_uuid: str,
+        consent_id: str | None,
+        versions_json: bytes,
+        started_at_ns: int,
+        ended_at_ns: int,
+        manifest_sha256: str,
+        segments: tuple[ValidSegmentRecord, ...],
+    ) -> None:
+        """Atomically register only a fully validated, already-promoted session."""
+
+        if not session_id or not subject_uuid or not versions_json:
+            raise ValueError("session identity and versions are required")
+        if ended_at_ns < started_at_ns:
+            raise ValueError("ended_at_ns must not precede started_at_ns")
+        if len(manifest_sha256) != 64 or not segments:
+            raise ValueError("a manifest digest and at least one segment are required")
+        if len({segment.segment_id for segment in segments}) != len(segments):
+            raise ValueError("segment ids must be unique")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO sessions(
+                    session_id, subject_uuid, consent_id, lifecycle_status,
+                    validity_status, started_at_ns, ended_at_ns, versions_json
+                ) VALUES (?, ?, ?, 'CLOSED', 'VALID', ?, ?, ?)""",
+                (
+                    session_id,
+                    subject_uuid,
+                    consent_id,
+                    started_at_ns,
+                    ended_at_ns,
+                    versions_json,
+                ),
+            )
+            self._connection.executemany(
+                """INSERT INTO segments(
+                    segment_id, session_id, relative_path, byte_count, state, sealed_at_ns
+                ) VALUES (?, ?, ?, ?, 'READY_FOR_NETWORK', ?)""",
+                [
+                    (
+                        segment.segment_id,
+                        session_id,
+                        segment.relative_path,
+                        segment.byte_count,
+                        segment.sealed_at_ns,
+                    )
+                    for segment in segments
+                ],
+            )
+            self._connection.execute(
+                """INSERT INTO sync_handoffs(
+                    session_id, manifest_sha256, state, created_at_ns
+                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?)""",
+                (session_id, manifest_sha256, ended_at_ns),
+            )
+
+    def sync_handoff_state(self, session_id: str) -> str:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT state FROM sync_handoffs WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return str(row[0])
+
+    def mark_cloud_confirmed(self, session_id: str, *, confirmed_at_ns: int) -> None:
+        """Record cloud receipt without granting local deletion eligibility."""
+
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs
+                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?
+                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING')""",
+                (confirmed_at_ns, session_id),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
 
     def add_segment(
         self,
