@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 import json
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -101,6 +102,45 @@ class SessionRuntimeTests(unittest.TestCase):
         self.assertFalse((self.data_root / ".staging" / "s1").exists())
         with self.assertRaises(KeyError):
             self.store.session_status("s1")
+
+    def test_finalization_failure_discards_staging_and_never_creates_a_session(self) -> None:
+        ticks = iter(range(1_000_000, 2_000_000))
+        stager = ValidSessionStager(
+            self.data_root,
+            session_id="finalization-failure",
+            key_provider=Key(),
+            store=self.store,
+            subject_uuid="subject",
+            consent_id=None,
+            versions={"protocol": "test/1", "quality": "test/1"},
+            started_at_ns=1,
+        )
+        runtime = HardwareSessionRuntime(
+            transport=SyntheticP4864Transport(
+                _profile(), realtime=False, max_frames=2,
+                frame_source=lambda i: np.full((48, 64), i + 1, dtype=np.uint8),
+            ),
+            parser=DaoOneP4864Parser(
+                _profile(), allow_unverified=True,
+                monotonic_ns=lambda: next(ticks), wall_time_ns=lambda: 2,
+            ),
+            connection=_ready(),
+            mailbox=LatestFrameMailbox(),
+            stager=stager,
+            quality_gate=type(
+                "Gate", (), {"evaluate": lambda _, *, session_id, frames: QualityDecision(SessionValidity.VALID)}
+            )(),
+            wall_time_ns=lambda: 10,
+        )
+        with patch.object(stager, "commit_valid", side_effect=OSError("disk full")):
+            result = runtime.capture(session_id="finalization-failure", target_frames=2)
+
+        self.assertFalse(result.committed)
+        self.assertEqual(result.validity, SessionValidity.INVALID)
+        self.assertIn("finalization failed", result.reason or "")
+        self.assertFalse((self.data_root / ".staging" / "finalization-failure").exists())
+        with self.assertRaises(KeyError):
+            self.store.session_status("finalization-failure")
 
     def test_runtime_commits_raw_and_encrypted_v1_force_data_after_quality_gate(self) -> None:
         adapter = DoP4864StandardizationAdapter.observed_compact_8bit()

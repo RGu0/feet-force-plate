@@ -106,9 +106,14 @@ class HardwareSessionRuntime:
             return HardwareSessionResult(
                 acquisition, SessionValidity.INVALID, acquisition.reason, False
             )
-        decision = self._quality_gate.evaluate(
-            session_id=session_id, frames=self._stager.staged_frames()
-        )
+        try:
+            decision = self._quality_gate.evaluate(
+                session_id=session_id, frames=self._stager.staged_frames()
+            )
+        except Exception as exc:
+            return self._discard_after_acquisition_failure(
+                acquisition, reason=f"hardware quality evaluation failed: {type(exc).__name__}"
+            )
         decision_value = getattr(decision.validity, "value", decision.validity)
         reason = getattr(decision, "reason", None)
         if reason is None and hasattr(decision, "reasons"):
@@ -116,14 +121,28 @@ class HardwareSessionRuntime:
         if decision_value == SessionValidity.INVALID.value:
             self._stager.discard(reason=reason or "hardware quality gate failed")
             return HardwareSessionResult(acquisition, SessionValidity.INVALID, reason, False)
-        physical_session = getattr(decision, "physical_session", None)
-        if physical_session is not None:
-            self._stager.stage_derived_observation(
-                physical_session,
-                processing_metadata=getattr(decision, "processing_metadata", None),
+        try:
+            physical_session = getattr(decision, "physical_session", None)
+            if physical_session is not None:
+                self._stager.stage_derived_observation(
+                    physical_session,
+                    processing_metadata=getattr(decision, "processing_metadata", None),
+                )
+            self._stager.commit_valid(ended_at_ns=self._wall_time_ns())
+        except Exception as exc:
+            return self._discard_after_acquisition_failure(
+                acquisition, reason=f"valid-session finalization failed: {type(exc).__name__}"
             )
-        self._stager.commit_valid(ended_at_ns=self._wall_time_ns())
         return HardwareSessionResult(acquisition, SessionValidity.VALID, None, True)
+
+    def _discard_after_acquisition_failure(
+        self, acquisition: AcquisitionResult, *, reason: str
+    ) -> HardwareSessionResult:
+        try:
+            self._stager.discard(reason=reason)
+        except Exception as cleanup_error:
+            reason = f"{reason}; temporary cleanup failed: {type(cleanup_error).__name__}"
+        return HardwareSessionResult(acquisition, SessionValidity.INVALID, reason, False)
 
     def _frozen_runtime_versions(self) -> dict[str, str]:
         versions = {

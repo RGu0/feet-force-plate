@@ -31,6 +31,11 @@ baseline, bad-point and force-conversion versions plus the host-gap/idle-read/st
 policies into every immutable segment and session manifest. This makes a later replay independent
 of changed process defaults.
 
+The same runtime converts exceptions from quality evaluation, encrypted derived-artifact writing or
+valid-session finalization into an invalid capture. It deletes the staging directory and does not
+create a SQLite session, network handoff or algorithm input; a focused regression injects a
+simulated disk-full finalization failure.
+
 ## Verification
 
 Automated command run on 2026-07-23:
