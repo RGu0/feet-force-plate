@@ -1,0 +1,44 @@
+{
+  "schema_version": "do-p4864-communication-stability/1",
+  "captured_at_utc": "2026-07-23T06:11:44Z",
+  "scope": "empty-board, local-only, parser-observation test; this is not a valid-session acceptance run",
+  "device": {
+    "vid_pid": "1A86:7523",
+    "serial": "1,000,000 baud 8N1"
+  },
+  "profile": {
+    "version": "do-p4864/observed-compact-column-major-48x64-20260721",
+    "frame_length_bytes": 3079,
+    "read_size_bytes": 3079,
+    "checksum_policy": "OBSERVE_ONLY"
+  },
+  "duration_seconds": 600.004574541,
+  "received_bytes": 38191916,
+  "raw_capture_sha256": "7680db95b226d543003279b8cee90e1b19aa1096a2a2d0ef0083c7b5f13bba8a",
+  "parser": {
+    "decoded_frames": 12370,
+    "decoded_frame_rate_hz": 20.61650945984824,
+    "invalid_frames": 36,
+    "structural_candidate_count": 12406,
+    "invalid_structural_candidate_rate": 0.002901821699177817,
+    "resynchronizations": 37,
+    "discarded_bytes": 104594,
+    "discarded_byte_equivalent_frames": 33.970120168885995,
+    "buffered_bytes_at_end": 92,
+    "checksum_observations": 12370,
+    "checksum_mismatches": 12370,
+    "host_frame_intervals_ms": {
+      "p50": 48.358959,
+      "p95": 48.6172332,
+      "p99": 50.38382656,
+      "maximum": 492.065625
+    }
+  },
+  "interpretation": {
+    "steady_state": "The normal host arrival cadence is about 20.62 Hz with low P50/P95/P99 jitter.",
+    "reliability": "The observed 36 structural failures and 37 resynchronizations mean the current physical link does not meet the MVP rule that any parser integrity error invalidates a capture.",
+    "checksum": "100% candidate checksum mismatch is expected under the unresolved OBSERVE_ONLY compact-frame checksum profile; it is not counted as a communication structural failure.",
+    "acceptance": "This observation is evidence of an intermittent communication fault, not P1 acceptance. Do not relax parser integrity filtering to make the session appear valid."
+  },
+  "privacy_boundary": "The raw byte capture remains only in /private/tmp and is not committed. This evidence contains aggregate counters and a digest only."
+}

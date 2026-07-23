@@ -79,6 +79,21 @@ run and investigation of the intermittent structural fault. The earlier 30-minut
 been superseded by the confirmed 10-minute P1 acceptance, but neither duration authorizes a Done
 state until the current runtime is exercised successfully.
 
+### 2026-07-23 10-minute communication stability observation
+
+The operator requested a non-gating, parser-observation run to quantify the physical link. With
+the same 3,079-byte single-frame read size used by the runtime, 600.005 seconds produced 12,370
+decoded frames (**20.62 Hz**) and normal arrival P50/P95/P99 of **48.36/48.62/50.38 ms**. However,
+there were 36 invalid structural candidates (0.290%), 37 resynchronizations, 104,594 discarded
+bytes (about 33.97 frame-equivalents), and a 492.07 ms maximum host interval. The candidate
+CheckSum mismatched all frames as expected under its unresolved observe-only rule and is not
+counted as a structural failure. Full sanitized metrics:
+[`communication-stability-10m-20260723.json`](communication-stability-10m-20260723.json).
+
+This confirms that normal cadence is good but the channel is not yet reliable enough for the
+strict valid-session policy. The correct action remains physical/serial link investigation and a
+new clean P1 run, not weakening frame-integrity handling.
+
 ## Commit
 
 Automated acceptance evidence commit: pending.
