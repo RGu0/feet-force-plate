@@ -1,0 +1,16 @@
+{
+  "snapshot_schema_version": "linear-issue-snapshot/1",
+  "captured_at": "2026-07-22",
+  "issue": {
+    "identifier": "RAY-117",
+    "title": "硬件标准化层：任意传感器阵列到统一物理输入",
+    "status": "In Progress",
+    "project": "足底压力健康筛查与分析平台",
+    "milestone": "P0：硬件基线",
+    "blocked_by": ["RAY-78"],
+    "related_to": ["RAY-113", "RAY-83", "RAY-95"],
+    "url": "https://linear.app/ray-app/issue/RAY-117/硬件标准化层任意传感器阵列到统一物理输入"
+  },
+  "start_comment_id": "0fef6a0c-d938-451e-95a7-f792e812a723",
+  "completion_state": "IN_REVIEW_PENDING_REAL_DEVICE_VALIDATION"
+}

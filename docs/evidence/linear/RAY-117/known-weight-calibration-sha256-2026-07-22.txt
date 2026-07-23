@@ -1,0 +1,14 @@
+0989ac771cb6d8f91abbf793004555f16934ef25cbd6747c9c334dc562811f12  raw/group-a-original-contact/baseline/dop4864-parser-capture-20260723T014248Z.bin
+7ed97dce32e09d4f01d163a64123fdc7f50af999c89803e1af964ee1d39b2c9a  raw/group-a-original-contact/loads/3500g/dop4864-parser-capture-20260723T014406Z.bin
+848c05e78755cecd591bbaa0bd07b49d5ea4fb8be4390a037ca56aed78d6d396  raw/group-a-original-contact/loads/4500g/dop4864-parser-capture-20260723T014524Z.bin
+9ab6dcf317b11ac659f63f6d89684fe763da573df1f878dbb2f7e05623a29f8d  raw/group-a-original-contact/loads/5500g/dop4864-parser-capture-20260723T014614Z.bin
+9b776c70f603411f1f60f3ffa2ad348df1abac95ce8d81d81edfd62a514ad39a  raw/group-a-original-contact/loads/6500g/dop4864-parser-capture-20260723T014716Z.bin
+04ed115d437d04f15bdf20dac675ca91ff219bab0074537d8d24c5e3ad845ede  raw/group-a-original-contact/loads/7500g/dop4864-parser-capture-20260723T014808Z.bin
+21e11df2f88be9878f1b0c97325d570d2d1fa066292b19a72ead660343fbdffe  raw/group-a-original-contact/loads/8000g/dop4864-parser-capture-20260723T015039Z.bin
+03e3482cdf566da09948b6e7b1a2a2f5bb771c2c7c0a9c5d617a45fbd57dfd9c  raw/group-b-small-contact/baseline/dop4864-parser-capture-20260723T021406Z.bin
+280cb34afdb7fe0a82e5bab74b0427d41e08f30d94e2b2e169bc2bca3704a2c0  raw/group-b-small-contact/loads/4500g/dop4864-parser-capture-20260723T021517Z.bin
+4ddac0a7f22210a10aa00926544c77122b45148c7d741237d06a1f9bc9848308  raw/group-b-small-contact/loads/5500g/dop4864-parser-capture-20260723T021615Z.bin
+cd71acc4b7d2e0036dd8a90314a6b56fb61888c96c242a1ecc3bfeb067a7957d  raw/group-b-small-contact/loads/6000g/dop4864-parser-capture-20260723T021653Z.bin
+1dcd41326b8bf24470a839842c68686372bfd35de741f33642c6509949127460  raw/group-b-small-contact/loads/6500g/dop4864-parser-capture-20260723T021800Z.bin
+6be4daf2fbca24463d6c420f23fcd426d94eb6d0eaa9cd326fc863704e40aa39  raw/group-b-small-contact/loads/7500g/dop4864-parser-capture-20260723T021920Z.bin
+7788bedc00b4356e60acd4c7a4ba96f690b33e73936d65e5910abd27306de875  raw/group-b-small-contact/loads/8000g/dop4864-parser-capture-20260723T022001Z.bin
