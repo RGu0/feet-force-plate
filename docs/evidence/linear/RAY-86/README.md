@@ -85,10 +85,9 @@ intermittent rather than a permanent parser mismatch, but does **not** satisfy t
 the whole runtime must complete ten continuous clean minutes. Sanitized evidence is
 [`real-device-runtime-attempts-20260723.json`](real-device-runtime-attempts-20260723.json).
 
-The required real 10-minute and manual/operator checks cannot be marked complete without a clean
-run and investigation of the intermittent structural fault. The earlier 30-minute requirement has
-been superseded by the confirmed 10-minute P1 acceptance, but neither duration authorizes a Done
-state until the current runtime is exercised successfully.
+This historical strict-policy conclusion is superseded by the later current-policy continuity run
+below. The earlier 30-minute requirement has been superseded by the confirmed 10-minute P1
+acceptance; manual/operator failure scenarios still prevent a Done state.
 
 ### 2026-07-23 10-minute communication stability observation
 
@@ -115,14 +114,31 @@ matrix. The AES-GCM raw segments retain only successful real decoded frames.
 The session becomes `INVALID` if the serial transport disconnects, durable storage fails, quality
 gate fails, or **5 continuous seconds** pass without a successfully decoded frame. Thus
 the 2026-07-23 strict failures remain historical link observations, not acceptance evidence for
-the replacement policy. The remaining real-device acceptance is a new ten-minute run with this
-implementation, plus cable/power/disk/operator checks.
+the replacement policy. The replacement-policy real-device run is recorded below; cable/power/
+disk/operator checks remain.
 
 Automatic regression for the replacement policy verifies: (1) one and two consecutive bad tails
 between valid frames do not invalidate; (2) the raw committed manifest counts only real frames;
 (3) the encrypted derived observation contains the reconstructed frame, its flags and the
 communication audit; and (4) both an empty read and a late non-empty read after five seconds
 remain invalid. Automated evidence is not real-device evidence.
+
+## 2026-07-23 real-device 10-minute continuity acceptance
+
+The replacement runtime was exercised on `/dev/cu.usbserial-130` (CH340, `1A86:7523`) with a
+5.139-second unloaded baseline, then a requested 600-second capture. It completed and committed
+`VALID`: **12,396 real decoded raw frames**, **12 tail-error audit events**, and **12 derived-only
+reconstructed frames**. The largest adjacent-successful-frame interval around any reconstruction
+was **114.800167 ms**, below the 5-second invalidation limit. No length or function failures
+occurred. Candidate CheckSum mismatched all real frames as expected under the observe-only profile.
+
+After close, a new `StateStore` and `RecoveryScanner` reported `CLOSED/VALID`, one derived artifact
+and no temporary recovery/quarantine/requeue action. This demonstrates the current 5-second rule,
+raw-versus-derived separation, local commit and restart scan on the true device. Sanitized result:
+[`real-device-runtime-continuity-10m-20260723.json`](real-device-runtime-continuity-10m-20260723.json).
+
+This is not permission to mark the issue Done: actual cable removal, disk-full, power interruption,
+OS secure-storage failure, operator retest and explicit export validation remain outstanding.
 
 ## Commit
 
