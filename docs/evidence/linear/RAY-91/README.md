@@ -75,6 +75,25 @@ QT_QPA_PLATFORM=offscreen /private/tmp/feetforceplate-subtask-b-venv/bin/python 
 
 每次后续软件/UI 验证先运行这一回放集；只有它不能复现或需要考察连接、吞吐、串口异常等物理层问题时，才重新连接真机。
 
+### 2026-07-23 测试资产归位
+
+规范夹具已归位到根目录测试资产
+`tests/fixtures/device/dop4864_reference_protocol_v1/`，由
+`a85fee82922a436e33aa633c6b7a5b100a141f57` 提交。客户端旧路径保留为兼容副本，
+回归测试会验证其 SHA-256 与规范夹具相同；新的测试消费者均从根目录测试资产读取。
+
+验证命令：
+
+```bash
+UV_OFFLINE=1 UV_CACHE_DIR=/private/tmp/feetforceplate-uv-cache \
+FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
+./scripts/local-env.sh python -m pytest \
+  client/tests/test_ray_91_reference_protocol_fixture.py \
+  tests/hardware_standardization/test_sensor_defect_repair.py -q
+```
+
+结果：`19 passed in 0.62s`。这仍是去标识化工程回放，未改变本 evidence 中的真机、临床和人工验收边界。
+
 ```bash
 UV_OFFLINE=1 UV_CACHE_DIR=/private/tmp/feetforceplate-uv-cache \
 FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
