@@ -34,6 +34,14 @@ Existing real-device evidence under `docs/evidence/linear/RAY-78/` proves an obs
 raw structural capture at about 20.6 Hz, but it predates this validity-gated runtime and therefore
 is not P1 end-to-end acceptance evidence.
 
+## 2026-07-23 crash-window regression
+
+The valid-session path now has an automated restart test for the post-promotion/pre-SQLite
+window. A simulated process loss leaves no consumer-visible formal session until `RecoveryScanner`
+validates the promoted files and completes exactly one SQLite registration. This strengthens
+automatic P1 fault coverage but does not replace the required real 10-minute and cable/power/disk
+acceptance run.
+
 ## Boundary, failures, and limits
 
 The required real 10-minute and manual/operator checks cannot be marked complete without new

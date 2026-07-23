@@ -91,6 +91,37 @@ class ValidSessionStagerTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.session_status("interrupted")
 
+    def test_recovery_finishes_registration_after_promotion_before_sqlite_commit(self) -> None:
+        stager = self._stager("post-promotion-crash")
+        stager.append(_frame(10))
+        original = self.store.commit_valid_session
+
+        def simulated_power_loss(*args, **kwargs):
+            raise SystemExit("simulated process loss")
+
+        self.store.commit_valid_session = simulated_power_loss  # type: ignore[method-assign]
+        try:
+            with self.assertRaises(SystemExit):
+                stager.commit_valid(ended_at_ns=1_100_000_000)
+        finally:
+            self.store.commit_valid_session = original  # type: ignore[method-assign]
+
+        final = self.root / "data" / "sessions" / "post-promotion-crash"
+        self.assertTrue((final / "registration.json").exists())
+        with self.assertRaises(KeyError):
+            self.store.session_status("post-promotion-crash")
+
+        recovered = ValidSessionStager.recover_promoted_sessions(
+            self.root / "data", self.store, self.keys
+        )
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(
+            self.store.session_status("post-promotion-crash"),
+            ("CLOSED", "VALID", 1_100_000_000),
+        )
+        self.assertFalse((final / "registration.json").exists())
+
     def test_valid_session_retains_an_encrypted_repaired_force_observation(self) -> None:
         stager = self._stager("derived")
         frames = tuple(_frame(index + 10) for index in range(2))

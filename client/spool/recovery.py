@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
+from .session_commit import ValidSessionStager
 from .segments import (
     ImmutableSegmentWriter,
     SealedSegment,
@@ -23,6 +24,7 @@ class ScanResult:
     orphan_segments_registered: int = 0
     sessions_marked_incomplete: int = 0
     uploads_requeued: int = 0
+    promoted_sessions_recovered: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,14 @@ class RecoveryScanner:
 
     def scan(self, *, recovered_at_ns: int) -> ScanResult:
         self._segment_root.mkdir(parents=True, exist_ok=True)
+        # A registration marker is written before a valid staged directory is
+        # atomically promoted.  If power is lost between that rename and the
+        # SQLite transaction, finish the transaction before considering raw
+        # segment orphan recovery.  Thus a valid session becomes all-or-none
+        # from the consumer's perspective.
+        promoted_sessions_recovered = ValidSessionStager.recover_promoted_sessions(
+            self._repository_root, self._store, self._key_provider
+        )
         recovered = 0
         quarantined = 0
         sealed_quarantined = 0
@@ -140,4 +150,5 @@ class RecoveryScanner:
             orphan_segments_registered=registered,
             sessions_marked_incomplete=interrupted.sessions_marked_incomplete,
             uploads_requeued=interrupted.uploads_requeued,
+            promoted_sessions_recovered=promoted_sessions_recovered,
         )

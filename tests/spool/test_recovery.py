@@ -10,6 +10,7 @@ from client.spool.recovery import (
 )
 from client.spool.segments import ImmutableSegmentWriter
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.spool.session_commit import ValidSessionStager
 from tests.spool.test_segments import StaticKeyProvider, _frame
 
 
@@ -85,6 +86,41 @@ class RecoveryScannerTests(unittest.TestCase):
         self.assertFalse(temporary.exists())
         self.assertTrue(sealed.path.exists())
         self.assertEqual(self.store.segment_state(sealed.segment_id), "SEALED")
+
+    def test_scan_finishes_promoted_valid_session_registration(self) -> None:
+        self.store.put_subject_ref("subject-2", b"opaque")
+        stager = ValidSessionStager(
+            self.root,
+            session_id="post-promotion",
+            key_provider=self.keys,
+            store=self.store,
+            subject_uuid="subject-2",
+            consent_id=None,
+            versions={"protocol": "observed-compact/1"},
+            started_at_ns=1,
+        )
+        stager.append(_frame(0))
+        original_commit = self.store.commit_valid_session
+
+        def simulated_power_loss(*args, **kwargs):
+            raise SystemExit("simulated process loss")
+
+        self.store.commit_valid_session = simulated_power_loss  # type: ignore[method-assign]
+        try:
+            with self.assertRaises(SystemExit):
+                stager.commit_valid(ended_at_ns=2)
+        finally:
+            self.store.commit_valid_session = original_commit  # type: ignore[method-assign]
+
+        result = RecoveryScanner(
+            self.root / "segments", self.store, self.keys, self.root
+        ).scan(recovered_at_ns=3)
+
+        self.assertEqual(result.promoted_sessions_recovered, 1)
+        self.assertEqual(self.store.session_status("post-promotion"), ("CLOSED", "VALID", 2))
+        self.assertFalse(
+            (self.root / "sessions" / "post-promotion" / "registration.json").exists()
+        )
 
     def test_invalid_tmp_is_quarantined_and_never_registered(self) -> None:
         session_dir = self.root / "segments" / "session-1"

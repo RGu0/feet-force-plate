@@ -108,3 +108,20 @@ Automated verification on 2026-07-23:
 
 - `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` — **98 passed**.
 - `git diff --check` — passed.
+
+## 2026-07-23 promotion-to-SQLite crash-window update
+
+`client/spool/session_commit.py` now writes an fsync'ed, versioned registration marker before
+the valid staging directory is atomically promoted. `RecoveryScanner` consumes that marker on
+startup: a crash after the directory rename but before the SQLite transaction is completed is
+recovered exactly once, then the marker is deleted. An ordinary SQLite exception is rolled back
+to the discardable staging directory; an uncompleted staging directory remains non-session data.
+
+Automated fault-injection verification:
+
+- `./scripts/local-env.sh python -m pytest tests/spool/test_recovery.py tests/spool/test_valid_session_commit.py tests/device/test_session_runtime.py -q` — **17 passed**.
+- Injected `SystemExit` after directory promotion confirms next-startup registration produces
+  one `CLOSED` / `VALID` session and removes `registration.json`.
+
+This is process-level simulation, not a physical power-cut or full-disk result; those RAY-87
+external checks remain required.

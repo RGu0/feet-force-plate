@@ -12,7 +12,11 @@ import uuid
 from client.device.protocol import RawFrame
 from client.hardware_standardization.models import PhysicalArraySession
 
-from .derived_artifact import DerivedArtifact, write_derived_observation
+from .derived_artifact import (
+    DerivedArtifact,
+    read_derived_observation,
+    write_derived_observation,
+)
 from .segments import ImmutableSegmentWriter, SealedSegment, read_segment, write_session_manifest
 from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
 
@@ -23,6 +27,16 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _write_atomic_json(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("x", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    _fsync_directory(path.parent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,14 +177,6 @@ class ValidSessionStager:
                 for artifact in self._artifacts
             ],
         )
-        staging = self.staging_directory
-        final = self._sessions_root / self._session_id
-        if final.exists():
-            raise FileExistsError(f"local session already exists: {self._session_id}")
-        self._sessions_root.mkdir(parents=True, exist_ok=True)
-        os.replace(staging, final)
-        _fsync_directory(self._staging_root)
-        _fsync_directory(self._sessions_root)
         records = tuple(
             ValidSegmentRecord(
                 segment_id=segment.segment_id,
@@ -193,6 +199,45 @@ class ValidSessionStager:
             )
             for artifact in self._artifacts
         )
+        registration = {
+            "registration_version": "ffps-valid-session-registration/1",
+            "session_id": self._session_id,
+            "subject_uuid": self._subject_uuid,
+            "consent_id": self._consent_id,
+            "versions_json": json.dumps(self._versions, sort_keys=True),
+            "started_at_ns": self._started_at_ns,
+            "ended_at_ns": ended_at_ns,
+            "manifest_sha256": str(manifest["manifest_sha256"]),
+            "segments": [
+                {
+                    "segment_id": record.segment_id,
+                    "relative_path": record.relative_path,
+                    "byte_count": record.byte_count,
+                    "sealed_at_ns": record.sealed_at_ns,
+                }
+                for record in records
+            ],
+            "artifacts": [
+                {
+                    "artifact_id": record.artifact_id,
+                    "kind": record.kind,
+                    "schema_version": record.schema_version,
+                    "relative_path": record.relative_path,
+                    "ciphertext_sha256": record.ciphertext_sha256,
+                    "byte_count": record.byte_count,
+                }
+                for record in artifact_records
+            ],
+        }
+        _write_atomic_json(self.staging_directory / "registration.json", registration)
+        staging = self.staging_directory
+        final = self._sessions_root / self._session_id
+        if final.exists():
+            raise FileExistsError(f"local session already exists: {self._session_id}")
+        self._sessions_root.mkdir(parents=True, exist_ok=True)
+        os.replace(staging, final)
+        _fsync_directory(self._staging_root)
+        _fsync_directory(self._sessions_root)
         try:
             self._store.commit_valid_session(
                 self._session_id,
@@ -210,6 +255,8 @@ class ValidSessionStager:
             _fsync_directory(self._sessions_root)
             _fsync_directory(self._staging_root)
             raise
+        (final / "registration.json").unlink()
+        _fsync_directory(final)
         self._finished = True
         return CommittedValidSession(
             session_id=self._session_id,
@@ -231,6 +278,75 @@ class ValidSessionStager:
         if count:
             _fsync_directory(staging_root)
         return count
+
+    @classmethod
+    def recover_promoted_sessions(
+        cls, root: str | Path, store: StateStore, key_provider: KeyProvider
+    ) -> int:
+        """Finish a crash-interrupted post-promotion SQLite registration exactly once."""
+
+        sessions_root = Path(root) / "sessions"
+        if not sessions_root.exists():
+            return 0
+        recovered = 0
+        for directory in sessions_root.iterdir():
+            registration_path = directory / "registration.json"
+            if not directory.is_dir() or not registration_path.is_file():
+                continue
+            payload = json.loads(registration_path.read_text(encoding="utf-8"))
+            if payload.get("registration_version") != "ffps-valid-session-registration/1":
+                raise ValueError("unsupported valid-session registration recovery record")
+            session_id = str(payload["session_id"])
+            if directory.name != session_id:
+                raise ValueError("registration session id does not match directory")
+            try:
+                store.session_status(session_id)
+            except KeyError:
+                segments = tuple(
+                    ValidSegmentRecord(
+                        segment_id=str(item["segment_id"]),
+                        relative_path=str(item["relative_path"]),
+                        byte_count=int(item["byte_count"]),
+                        sealed_at_ns=int(item["sealed_at_ns"]),
+                    )
+                    for item in payload["segments"]
+                )
+                artifacts = tuple(
+                    ValidArtifactRecord(
+                        artifact_id=str(item["artifact_id"]),
+                        kind=str(item["kind"]),
+                        schema_version=str(item["schema_version"]),
+                        relative_path=str(item["relative_path"]),
+                        ciphertext_sha256=str(item["ciphertext_sha256"]),
+                        byte_count=int(item["byte_count"]),
+                    )
+                    for item in payload["artifacts"]
+                )
+                for record in segments:
+                    restored = read_segment(Path(root) / record.relative_path, key_provider)
+                    if restored.session_id != session_id or restored.segment_id != record.segment_id:
+                        raise ValueError("promoted raw segment identity mismatch")
+                for record in artifacts:
+                    derived = read_derived_observation(
+                        Path(root) / record.relative_path, key_provider=key_provider
+                    )
+                    if derived.get("session_id") != session_id:
+                        raise ValueError("promoted derived artifact session mismatch")
+                store.commit_valid_session(
+                    session_id,
+                    subject_uuid=str(payload["subject_uuid"]),
+                    consent_id=payload["consent_id"],
+                    versions_json=str(payload["versions_json"]).encode("utf-8"),
+                    started_at_ns=int(payload["started_at_ns"]),
+                    ended_at_ns=int(payload["ended_at_ns"]),
+                    manifest_sha256=str(payload["manifest_sha256"]),
+                    segments=segments,
+                    artifacts=artifacts,
+                )
+                recovered += 1
+            registration_path.unlink()
+            _fsync_directory(directory)
+        return recovered
 
 
 class StagedFrameSink:
