@@ -70,8 +70,8 @@ QT_QPA_PLATFORM=offscreen /private/tmp/feetforceplate-subtask-b-venv/bin/python 
 原始串口字节仅留在本机临时受控目录，不进入仓库或 evidence。仓库提交的是去标识化、逐段 P99 相对归一化的 `uint8` 矩阵序列及聚合统计：
 
 - [采集聚合记录](reference-protocol-capture-20260723.json)
-- [回放 fixture 说明](../../../../client/tests/fixtures/dop4864_reference_protocol_v1/README.md)
-- `client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz`
+- [回放 fixture 说明](../../../../tests/fixtures/device/dop4864_reference_protocol_v1/README.md)
+- `tests/fixtures/device/dop4864_reference_protocol_v1/reference-poses.npz`
 
 每次后续软件/UI 验证先运行这一回放集；只有它不能复现或需要考察连接、吞吐、串口异常等物理层问题时，才重新连接真机。
 

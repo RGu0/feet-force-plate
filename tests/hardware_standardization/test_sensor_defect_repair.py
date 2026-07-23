@@ -144,7 +144,7 @@ def test_single_line_over_the_declared_repair_coverage_limit_is_rejected() -> No
 def test_saved_tandem_reference_replays_a_persistent_horizontal_line_before_display_scaling() -> None:
     fixture_path = (
         Path(__file__).resolve().parents[2]
-        / "client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz"
+        / "tests/fixtures/device/dop4864_reference_protocol_v1/reference-poses.npz"
     )
     with np.load(fixture_path, allow_pickle=False) as fixture:
         source = fixture["tandem_left_front"]

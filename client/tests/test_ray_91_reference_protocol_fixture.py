@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,9 +13,15 @@ from client.device.protocol import RawFrame
 from client.local_analysis.display import LatestDisplayFrameMailbox
 
 
-FIXTURE_DIRECTORY = Path(__file__).parent / "fixtures" / "dop4864_reference_protocol_v1"
+FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[2]
+    / "tests/fixtures/device/dop4864_reference_protocol_v1"
+)
 FIXTURE = FIXTURE_DIRECTORY / "reference-poses.npz"
 METADATA = FIXTURE_DIRECTORY / "metadata.json"
+COMPATIBILITY_MIRROR = (
+    Path(__file__).parent / "fixtures" / "dop4864_reference_protocol_v1" / "reference-poses.npz"
+)
 POSES = (
     "open_eyes_bilateral",
     "closed_eyes_bilateral",
@@ -26,6 +33,9 @@ POSES = (
 def test_reference_protocol_fixture_has_all_deidentified_20_second_pose_sequences() -> None:
     metadata = json.loads(METADATA.read_text(encoding="utf-8"))
     assert metadata["schema_version"] == "do-p4864-reference-protocol/1"
+    assert metadata["canonical_fixture_path"] == (
+        "tests/fixtures/device/dop4864_reference_protocol_v1/reference-poses.npz"
+    )
     assert metadata["nominal_frame_interval_ms"] == 50
     assert metadata["deidentification"]["retained"] == "per-pose relative 48x64 matrix sequence only"
     assert "serial bytes" in metadata["deidentification"]["removed"]
@@ -42,6 +52,14 @@ def test_reference_protocol_fixture_has_all_deidentified_20_second_pose_sequence
             assert values.max() > 0
             assert values.min() >= 0
             assert metadata["poses"][pose]["frames"] == values.shape[0]
+
+
+def test_compatibility_mirror_matches_the_canonical_test_fixture() -> None:
+    assert FIXTURE.is_file()
+    assert COMPATIBILITY_MIRROR.is_file()
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == hashlib.sha256(
+        COMPATIBILITY_MIRROR.read_bytes()
+    ).hexdigest()
 
 
 @pytest.mark.parametrize("pose", POSES)

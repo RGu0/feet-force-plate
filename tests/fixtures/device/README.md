@@ -2,6 +2,11 @@
 
 No physical serial golden fixture is present yet.
 
+`dop4864_reference_protocol_v1/` is intentionally different: it contains a
+de-identified, derived 48×64 matrix replay from a physical four-pose run. It
+is the canonical software/UI replay input, not a raw serial golden fixture.
+Its README and metadata define its integrity hash and usage boundary.
+
 The DAOONE `.csv` and `.txt` files under `refs/` are decoded 48x64 matrix
 exports, not wire captures: they do not contain the header, transmitted length
 bytes, function code, CheckSum byte, or tail. They therefore cannot establish

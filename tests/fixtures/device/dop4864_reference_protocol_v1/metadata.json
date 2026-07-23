@@ -1,0 +1,49 @@
+{
+  "schema_version": "do-p4864-reference-protocol/1",
+  "canonical_fixture_path": "tests/fixtures/device/dop4864_reference_protocol_v1/reference-poses.npz",
+  "compatibility_mirror_path": "client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz",
+  "fixture_sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90",
+  "nominal_frame_interval_ms": 50,
+  "poses": {
+    "open_eyes_bilateral": {
+      "frames": 414,
+      "shape": [
+        48,
+        64
+      ]
+    },
+    "closed_eyes_bilateral": {
+      "frames": 415,
+      "shape": [
+        48,
+        64
+      ]
+    },
+    "tandem_left_front": {
+      "frames": 414,
+      "shape": [
+        48,
+        64
+      ]
+    },
+    "tandem_right_front": {
+      "frames": 415,
+      "shape": [
+        48,
+        64
+      ]
+    }
+  },
+  "deidentification": {
+    "retained": "per-pose relative 48x64 matrix sequence only",
+    "removed": [
+      "serial bytes",
+      "capture timestamps",
+      "source indexes",
+      "absolute amplitude",
+      "operator and device identifiers"
+    ]
+  },
+  "usage": "Use as the first input for UI and algorithm replay tests before reconnecting a physical device.",
+  "boundary": "Reference engineering fixture; not a clinical dataset, calibrated pressure record, or customer report input."
+}

@@ -2,7 +2,7 @@
   "schema_version": "ray-117-sensor-defect-repair-reference/1",
   "captured_at": "2026-07-23T08:52:11Z",
   "fixture": {
-    "path": "client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz",
+    "path": "tests/fixtures/device/dop4864_reference_protocol_v1/reference-poses.npz",
     "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90",
     "data_boundary": "de-identified replay fixture; values are not duplicated in this evidence"
   },
