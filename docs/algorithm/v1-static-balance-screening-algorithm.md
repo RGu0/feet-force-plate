@@ -14,6 +14,8 @@
 
 ## 1. 设计结论
 
+本文只适用于 `VALIDATED_RELEASE`：即输入已经满足 `physical-pressure-session/1.0` 的正式物理验证要求，并且可以进入机构端筛查结论与报告。当前 DO-P4864 首版候选力可以支持算法开发、回放和特征迭代，但必须走 `PROVISIONAL_RESEARCH` 路径；具体边界见 [算法层架构与输入分流](01-algorithm-layer-architecture.md) 与 [首版候选力算法实现说明](02-provisional-force-implementation.md)。
+
 V1 采用“背景风险优先、动作完成参与判断、压力指标补充和发现隐匿风险”的分层规则模型，不采用固定百分比权重相加。
 
 算法按以下顺序执行：
