@@ -111,3 +111,11 @@ QT_QPA_PLATFORM=offscreen \
 ### 本补充关联提交
 
 - 显示美化实现、测试、图像和初始 evidence：`60eed819bc09defd9cdb1639f9efeec456dad63c`。
+
+## 2026-07-23 真机显示回放（脱敏）
+
+- 真机连接：CH340 设备在 `/dev/cu.usbserial-1130` 出现后，以 1 Mbps、8N1 采集 5.04 秒 observed compact 帧流；解析到 104 帧，`invalid_frames=0`、`resynchronizations=0`。脱敏摘要见 [real-device-display-replay-20260723.json](real-device-display-replay-20260723.json)。
+- 回放：选择同一实际接触时段的末帧（source index 92），以前两帧作为仅显示组件的三帧时间中值历史；分别用 `enabled=False` 和默认显示美化配置离屏渲染。实际源矩阵逐元素保持不变。
+- 目视结论：默认配置让实际足底主体的颜色过渡更连续，并弱化了原图中零星离散触点；这是视觉可用性观察，不是压力精度、标定或医学解释。
+- 隐私：原始字节流和两张真实帧预览仅存于 `/private/tmp/feetforceplate-ray84-live/`，不纳入仓库或 Linear 附件；仓库只保留脱敏计数与边界。
+- 仍未验证：真实采集→latest-frame mailbox→P-07 窗口的生产运行时桥接、连续约 12 Hz 下的肉眼稳定性、Windows 高 DPI/目标显示器和操作员现场验收。因此完成本次回放后仍为 `In Review`，不得标 `Done`。
