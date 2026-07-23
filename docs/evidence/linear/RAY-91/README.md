@@ -102,4 +102,4 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
 
 - 实现与本 evidence：`68bbbeeed7e447a3100b03754ce196fc9c822864`。
 - SHA 回填：`1155e048a273f383354105b1befbddfd67325b6d`。
-- 本次回放 fixture、采集汇总与验证证据：待本次提交后回填。
+- 本次回放 fixture、采集汇总与验证证据（实现提交）：`841b738c2f5381bfb755151b6146b42f58f10835`。
