@@ -20,6 +20,12 @@ encrypted staging → hardware quality gate → formal valid session`. Quality p
 force provenance are recorded in the encrypted derived artifact. The parser's source index and
 timestamps are host-generated; the hardware does not provide device sequence or clock data.
 
+`scripts/run_dop4864_runtime_acceptance.py` is the operator-facing local-only P1 tool. It captures
+at least five seconds of an unloaded baseline, then uses the same runtime to collect a
+host-monotonic-time-bounded session, run preprocessing/quality, encrypt/commit it and reopen the
+state store for recovery verification. It never writes raw matrices or key bytes to its JSON
+summary. The tool has not yet been exercised against the currently detected real device.
+
 ## Verification
 
 Automated command run on 2026-07-23:

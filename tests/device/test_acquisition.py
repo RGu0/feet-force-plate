@@ -120,6 +120,48 @@ class AcquisitionRunnerTests(unittest.TestCase):
         self.assertEqual(latest.read().source_index, 2)
         self.assertEqual(latest.read().host_monotonic_ns, 1_002)
 
+    def test_duration_mode_uses_host_monotonic_frame_span_not_estimated_rate(self) -> None:
+        durable = DurableFrameQueue(capacity=4)
+        result = AcquisitionRunner(
+            transport=SyntheticP4864Transport(
+                _profile(),
+                realtime=False,
+                max_frames=4,
+                frame_source=lambda index: np.full((48, 64), index + 1, dtype=np.uint8),
+            ),
+            parser=_parser(),
+            durable_sink=durable,
+            latest_mailbox=LatestFrameMailbox(),
+            connection=self._ready_machine(),
+        ).run(session_id="duration-mode", minimum_duration_ns=2)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.COMPLETED)
+        self.assertEqual(result.frames_stored, 3)
+        captured = [durable.get_nowait().frame for _ in range(3)]
+        self.assertEqual(
+            captured[-1].host_monotonic_ns - captured[0].host_monotonic_ns, 2
+        )
+
+    def test_idle_serial_stream_invalidates_instead_of_waiting_forever(self) -> None:
+        class SilentTransport:
+            def read(self, max_bytes):
+                return b""
+
+        clock = iter((0, 1, 3))
+        result = AcquisitionRunner(
+            transport=SilentTransport(),
+            parser=_parser(),
+            durable_sink=DurableFrameQueue(capacity=1),
+            latest_mailbox=LatestFrameMailbox(),
+            connection=self._ready_machine(),
+            maximum_idle_read_ns=2,
+            monotonic_ns=lambda: next(clock),
+        ).run(session_id="idle-stream", target_frames=1)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
+        self.assertEqual(result.frames_stored, 0)
+        self.assertIn("idle interval", result.reason or "")
+
     def test_disconnect_marks_result_incomplete_and_requires_reconnect(self) -> None:
         transport = SyntheticP4864Transport(
             _profile(),

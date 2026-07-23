@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from queue import Queue
 import threading
-from typing import Protocol
+import time
+from typing import Callable, Protocol
 
 from .protocol import FRAME_LENGTH, DaoOneP4864Parser, RawFrame
 from .transport import ByteTransport, TransportDisconnected
@@ -205,12 +206,16 @@ class AcquisitionRunner:
         connection: ConnectionStateMachine,
         read_size: int = FRAME_LENGTH,
         maximum_host_gap_ns: int | None = None,
+        maximum_idle_read_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
+        monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         if read_size <= 0:
             raise ValueError("read_size must be positive")
         if maximum_host_gap_ns is not None and maximum_host_gap_ns <= 0:
             raise ValueError("maximum_host_gap_ns must be positive when set")
+        if maximum_idle_read_ns is not None and maximum_idle_read_ns <= 0:
+            raise ValueError("maximum_idle_read_ns must be positive when set")
         if storage_append_timeout_s is not None and storage_append_timeout_s < 0:
             raise ValueError("storage_append_timeout_s must not be negative when set")
         self._transport = transport
@@ -220,7 +225,9 @@ class AcquisitionRunner:
         self._connection = connection
         self._read_size = read_size
         self._maximum_host_gap_ns = maximum_host_gap_ns
+        self._maximum_idle_read_ns = maximum_idle_read_ns
         self._storage_append_timeout_s = storage_append_timeout_s
+        self._monotonic_ns = monotonic_ns
         self._used = False
 
     def _invalidate(
@@ -234,24 +241,47 @@ class AcquisitionRunner:
         self._connection.mark_invalid(reason)
         return AcquisitionResult(session_id, AcquisitionOutcome.INVALID, frames_stored, reason)
 
-    def run(self, *, session_id: str, target_frames: int) -> AcquisitionResult:
+    def run(
+        self,
+        *,
+        session_id: str,
+        target_frames: int | None = None,
+        minimum_duration_ns: int | None = None,
+    ) -> AcquisitionResult:
         if self._used:
             raise RuntimeError(
                 "an acquisition runner is single-use; reconnect must create a new session runner"
             )
         if not session_id:
             raise ValueError("session_id is required")
-        if target_frames <= 0:
-            raise ValueError("target_frames must be positive")
+        if target_frames is not None and target_frames <= 0:
+            raise ValueError("target_frames must be positive when set")
+        if minimum_duration_ns is not None and minimum_duration_ns <= 0:
+            raise ValueError("minimum_duration_ns must be positive when set")
+        if target_frames is None and minimum_duration_ns is None:
+            raise ValueError("target_frames or minimum_duration_ns is required")
         self._used = True
         self._connection.start_acquiring()
         frames_stored = 0
         previous_host_monotonic_ns: int | None = None
+        first_host_monotonic_ns: int | None = None
+        last_byte_monotonic_ns = self._monotonic_ns()
         try:
-            while frames_stored < target_frames:
+            while True:
                 chunk = self._transport.read(self._read_size)
                 if not chunk:
+                    if (
+                        self._maximum_idle_read_ns is not None
+                        and self._monotonic_ns() - last_byte_monotonic_ns
+                        > self._maximum_idle_read_ns
+                    ):
+                        return self._invalidate(
+                            session_id,
+                            frames_stored=frames_stored,
+                            reason="serial byte idle interval exceeded policy",
+                        )
                     continue
+                last_byte_monotonic_ns = self._monotonic_ns()
                 invalid_before = self._parser.statistics.invalid_frames
                 resync_before = self._parser.statistics.resynchronizations
                 decoded = self._parser.feed(chunk)
@@ -289,9 +319,28 @@ class AcquisitionRunner:
                         )
                     self._latest_mailbox.publish(frame)
                     previous_host_monotonic_ns = frame.host_monotonic_ns
+                    if first_host_monotonic_ns is None:
+                        first_host_monotonic_ns = frame.host_monotonic_ns
                     frames_stored += 1
-                    if frames_stored >= target_frames:
+                    has_target_frame_count = (
+                        target_frames is None or frames_stored >= target_frames
+                    )
+                    has_minimum_duration = (
+                        minimum_duration_ns is None
+                        or frame.host_monotonic_ns - first_host_monotonic_ns
+                        >= minimum_duration_ns
+                    )
+                    if has_target_frame_count and has_minimum_duration:
                         break
+                if (
+                    (target_frames is None or frames_stored >= target_frames)
+                    and minimum_duration_ns is not None
+                    and first_host_monotonic_ns is not None
+                    and previous_host_monotonic_ns is not None
+                    and previous_host_monotonic_ns - first_host_monotonic_ns
+                    >= minimum_duration_ns
+                ):
+                    break
         except TransportDisconnected as exc:
             reason = f"transport disconnected: {exc}"
             return self._invalidate(
