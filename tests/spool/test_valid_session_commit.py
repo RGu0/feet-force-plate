@@ -159,7 +159,7 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertEqual(restored["session_id"], "derived")
         processing = restored["hardware_processing"]
         assert isinstance(processing, dict)
-        self.assertEqual(processing["bad_point_policy_version"], "quality-policy/do-p4864-mvp/1")
+        self.assertEqual(processing["bad_point_policy_version"], "quality-policy/do-p4864-mvp/2")
         first = restored["frames"][0]
         assert isinstance(first, dict)
         self.assertIsNotNone(first["estimated_force_n"])

@@ -138,3 +138,38 @@ def test_two_isolated_bad_cells_are_repaired_but_edge_or_unstable_baseline_is_re
     assert edge.reasons == ("BAD_CELL_CANNOT_BE_REPAIRED_AT_BOARD_EDGE",)
     assert unstable.validity is HardwareDataValidity.INVALID
     assert unstable.reasons == ("TOO_MANY_PERSISTENT_BAD_CELLS",)
+
+
+def test_persistent_horizontal_line_is_repaired_before_standardization_with_audit_metadata() -> None:
+    values = np.full((48, 64), 10, dtype=np.uint8)
+    values[20, :] = 0
+    raw_before = values.copy()
+    result = DoP4864HardwareQualityGate(baseline_reference=_baseline()).evaluate(
+        session_id="line-repair",
+        frames=(
+            _frame(values, timestamp_ns=10, source_index=0),
+            _frame(values, timestamp_ns=20, source_index=1),
+            _frame(values, timestamp_ns=30, source_index=2),
+        ),
+    )
+
+    assert result.validity is HardwareDataValidity.VALID
+    assert result.physical_session is not None
+    output = result.physical_session.frames[0]
+    assert output.raw_count[20] == 0
+    assert output.repaired_count is not None
+    assert output.repaired_count[20] == 10.0
+    assert output.repaired_cell_mask is not None
+    assert output.repaired_cell_mask[20]
+    assert output.relative_load_count is not None
+    assert output.relative_load_count[20] == 10.0
+    assert len(result.repaired_source_indices) == 64
+    assert result.processing_metadata is not None
+    repair = result.processing_metadata["sensor_defect_repair"]
+    assert repair["persistent_missing_rows"] == [20]
+    assert repair["persistent_missing_columns"] == []
+    assert (
+        repair["method_counts"]["HORIZONTAL_LINE_DIRECTIONAL_INTERPOLATION"]
+        == 192
+    )
+    assert np.array_equal(values, raw_before)

@@ -1,0 +1,54 @@
+{
+  "schema_version": "ray-117-sensor-defect-repair-reference/1",
+  "captured_at": "2026-07-23T08:46:33Z",
+  "fixture": {
+    "path": "client/tests/fixtures/dop4864_reference_protocol_v1/reference-poses.npz",
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90",
+    "data_boundary": "de-identified replay fixture; values are not duplicated in this evidence"
+  },
+  "policy": {
+    "version": "sensor-defect-repair/generic-grid/2",
+    "isolated_cell_method": "ISOLATED_SPATIAL_MEDIAN",
+    "line_method": "paired directional interpolation with median across available pairs",
+    "median_window": 3,
+    "line_minimum_supported_cells": 8,
+    "line_missing_ratio": 0.85,
+    "line_support_relative_threshold": 0.08,
+    "line_minimum_persistent_frames": 3,
+    "maximum_persistent_lines": 1,
+    "maximum_repaired_fraction_per_frame": 0.03
+  },
+  "results": {
+    "open_eyes_bilateral": {
+      "frames": 414,
+      "persistent_missing_rows_0_based": [],
+      "persistent_missing_columns_0_based": [],
+      "repaired_cells": 0
+    },
+    "closed_eyes_bilateral": {
+      "frames": 415,
+      "persistent_missing_rows_0_based": [],
+      "persistent_missing_columns_0_based": [],
+      "repaired_cells": 0
+    },
+    "tandem_left_front": {
+      "frames": 414,
+      "persistent_missing_rows_0_based": [27],
+      "persistent_missing_columns_0_based": [],
+      "method_counts": {
+        "HORIZONTAL_LINE_DIRECTIONAL_INTERPOLATION": 3432
+      },
+      "repaired_cells": 3432
+    },
+    "tandem_right_front": {
+      "frames": 415,
+      "persistent_missing_rows_0_based": [27],
+      "persistent_missing_columns_0_based": [],
+      "method_counts": {
+        "HORIZONTAL_LINE_DIRECTIONAL_INTERPOLATION": 4085
+      },
+      "repaired_cells": 4085
+    }
+  },
+  "conclusion": "The generic policy detects and repairs the observed replay line before display scaling without mutating the fixture. This is automated replay evidence only, not proof of a hardware defect or clinical/force validation."
+}

@@ -173,7 +173,7 @@ class SessionRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(manifest["versions"]["protocol_profile"], "runtime-test/1")
         self.assertEqual(
-            manifest["versions"]["bad_point_policy"], "quality-policy/do-p4864-mvp/1"
+            manifest["versions"]["bad_point_policy"], "quality-policy/do-p4864-mvp/2"
         )
         self.assertEqual(
             manifest["versions"]["force_calibration_profile"],

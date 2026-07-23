@@ -3,6 +3,13 @@
 from .baseline import apply_zero_reference, build_baseline_reference
 from .calibration import TwoSlopeMonotonicVoltageToForceModel, VoltageToForceModel
 from .device_specification import DeviceSpecification, load_device_specification
+from .defect_repair import (
+    RepairedSensorFrame,
+    SensorDefectRepairPolicy,
+    SensorDefectRepairResult,
+    SensorRepairMethod,
+    repair_sensor_defects,
+)
 from .geometry import BoardCoordinateLayout
 from .spatial_integration import SpatialForceIntegration, integrate_regular_grid_force
 from .models import (
@@ -26,6 +33,10 @@ __all__ = (
     "BoardCoordinateLayout",
     "CellStatus",
     "DeviceSpecification",
+    "RepairedSensorFrame",
+    "SensorDefectRepairPolicy",
+    "SensorDefectRepairResult",
+    "SensorRepairMethod",
     "FrameQuality",
     "MeasurementProfile",
     "MeasurementUncertainty",
@@ -41,5 +52,6 @@ __all__ = (
     "apply_zero_reference",
     "build_baseline_reference",
     "load_device_specification",
+    "repair_sensor_defects",
     "integrate_regular_grid_force",
 )
