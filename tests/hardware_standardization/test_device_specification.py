@@ -27,7 +27,7 @@ def test_do_p4864_specification_owns_device_geometry_and_measurement_configurati
     assert specification.layout.cell_by_source_index(0).board_y_mm == 0.0
     assert specification.layout.cell_by_source_index(48).board_x_mm == 7.99
     assert specification.baseline_min_duration_s == 5.0
-    assert specification.force_validation == "PROVISIONAL_UNIFIED_KNOWN_WEIGHT_AND_HUMAN_REPLAY"
+    assert specification.force_validation == "MVP_SCREENING_ESTIMATED_V1"
     assert specification.quality_policy_version == "do-p4864-quality/1"
     assert specification.force_model.output_unit == "N"
 
@@ -49,7 +49,7 @@ def test_specification_creates_a_matching_adapter_without_hard_coding_device_val
     assert outcome.session.measurement_profile.profile_version == "physical-pressure-profile/do-p4864/1"
 
 
-def test_specification_restores_adc_voltage_and_applies_provisional_newton_model_after_baseline() -> None:
+def test_specification_restores_adc_voltage_and_applies_v1_estimated_newton_model_after_baseline() -> None:
     specification = load_device_specification(SPECIFICATION_PATH)
     adapter = specification.make_adapter()
     reference = BaselineReference(
@@ -75,11 +75,11 @@ def test_specification_restores_adc_voltage_and_applies_provisional_newton_model
     expected_force = specification.force_model.force_from_voltage(expected_voltage)
     assert frame.raw_voltage_v is not None
     assert frame.zero_corrected_voltage_v is not None
-    assert frame.provisional_force_n is not None
+    assert frame.estimated_force_n is not None
     assert frame.raw_voltage_v[0] == expected_voltage
     assert frame.zero_corrected_voltage_v[0] == expected_voltage
-    assert frame.provisional_force_n[0] == expected_force
-    assert "FORCE_PROVISIONAL" in frame.quality_flags
+    assert frame.estimated_force_n[0] == expected_force
+    assert "ESTIMATED_FORCE_V1" in frame.quality_flags
 
 
 def test_specification_marks_reference_voltage_as_saturated() -> None:

@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -111,6 +111,16 @@ class ValidSegmentRecord:
     relative_path: str
     byte_count: int
     sealed_at_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class ValidArtifactRecord:
+    artifact_id: str
+    kind: str
+    schema_version: str
+    relative_path: str
+    ciphertext_sha256: str
+    byte_count: int
 
 
 _MIGRATION_1 = """
@@ -214,6 +224,21 @@ ON sync_handoffs(state, created_at_ns, session_id);
 """
 
 
+_MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS session_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    relative_path TEXT NOT NULL UNIQUE,
+    ciphertext_sha256 TEXT NOT NULL,
+    byte_count INTEGER NOT NULL CHECK (byte_count >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_session_artifacts_session
+ON session_artifacts(session_id, kind);
+"""
+
+
 class StateStore:
     """Thread-safe SQLite repository with explicit transaction boundaries."""
 
@@ -284,6 +309,9 @@ class StateStore:
             if version < 3:
                 self._connection.executescript(_MIGRATION_3)
                 self._connection.execute("PRAGMA user_version=3")
+            if version < 4:
+                self._connection.executescript(_MIGRATION_4)
+                self._connection.execute("PRAGMA user_version=4")
 
     def record_validation_audit(
         self,
@@ -516,6 +544,7 @@ class StateStore:
         ended_at_ns: int,
         manifest_sha256: str,
         segments: tuple[ValidSegmentRecord, ...],
+        artifacts: tuple[ValidArtifactRecord, ...] = (),
     ) -> None:
         """Atomically register only a fully validated, already-promoted session."""
 
@@ -527,6 +556,8 @@ class StateStore:
             raise ValueError("a manifest digest and at least one segment are required")
         if len({segment.segment_id for segment in segments}) != len(segments):
             raise ValueError("segment ids must be unique")
+        if len({artifact.artifact_id for artifact in artifacts}) != len(artifacts):
+            raise ValueError("artifact ids must be unique")
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT INTO sessions(
@@ -557,6 +588,24 @@ class StateStore:
                     for segment in segments
                 ],
             )
+            self._connection.executemany(
+                """INSERT INTO session_artifacts(
+                    artifact_id, session_id, kind, schema_version, relative_path,
+                    ciphertext_sha256, byte_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        artifact.artifact_id,
+                        session_id,
+                        artifact.kind,
+                        artifact.schema_version,
+                        artifact.relative_path,
+                        artifact.ciphertext_sha256,
+                        artifact.byte_count,
+                    )
+                    for artifact in artifacts
+                ],
+            )
             self._connection.execute(
                 """INSERT INTO sync_handoffs(
                     session_id, manifest_sha256, state, created_at_ns
@@ -572,6 +621,26 @@ class StateStore:
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
+
+    def session_artifacts(self, session_id: str) -> list[ValidArtifactRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT artifact_id, kind, schema_version, relative_path,
+                    ciphertext_sha256, byte_count
+                FROM session_artifacts WHERE session_id=? ORDER BY artifact_id""",
+                (session_id,),
+            ).fetchall()
+        return [
+            ValidArtifactRecord(
+                artifact_id=str(row[0]),
+                kind=str(row[1]),
+                schema_version=str(row[2]),
+                relative_path=str(row[3]),
+                ciphertext_sha256=str(row[4]),
+                byte_count=int(row[5]),
+            )
+            for row in rows
+        ]
 
     def mark_cloud_confirmed(self, session_id: str, *, confirmed_at_ns: int) -> None:
         """Record cloud receipt without granting local deletion eligibility."""

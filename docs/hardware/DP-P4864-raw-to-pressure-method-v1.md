@@ -2,7 +2,7 @@
 
 ## 目的与适用范围
 
-本文定义 DO-P4864 在硬件层把已解码的原始阵列计数转换为**可追溯的候选物理量**的首版方法。它属于设备规格与硬件适配器，不属于算法层；算法层不应知道 ADC 位宽、阵列尺寸、间距、零校正或拟合曲线细节。
+本文定义 DO-P4864 在硬件层把已解码的原始阵列计数转换为**可追溯的 V1 初筛力学信息**的方法。它属于设备规格与硬件适配器，不属于算法层；算法层不应知道 ADC 位宽、阵列尺寸、间距、零校正、坏点修复或拟合曲线细节。
 
 当前可配置实现见 [设备规格 1.0](device-specifications/do-p4864/1.0.json)，运行时由 `CalibratedArrayAdapter` 读取。输入原始帧不可改写；所有派生数组与质量标志同帧保存。
 
@@ -25,18 +25,19 @@
 
 ```text
 immutable raw_count[i]
+  → persistent bad-cell assessment / isolated-cell repair in a separate matrix
   → raw_voltage[i] = raw_count[i] / 255 × 4.096
-  → zero_corrected_count[i] = raw_count[i] - median_unloaded_count[i]
+  → zero_corrected_count[i] = repaired_count[i] - median_unloaded_count[i]
   → ΔV[i] = max(zero_corrected_count[i], 0) / 255 × 4.096
-  → provisional_force_n[i] = fitted_curve(ΔV[i])
-  → provisional_pressure[i] = provisional_force_n[i] / (π × 3² mm²)
+  → estimated_force_n[i] = fitted_curve(ΔV[i])
+  → estimated_pressure[i] = estimated_force_n[i] / (π × 3² mm²)
   → bilinear pressure interpolation + board-coordinate integration
   → provisional total force / mass-equivalent for calibration verification
 ```
 
 活动点使用逐点阈值 `max(1 count, 3 × baseline MAD)` 判断。低于阈值的点在积分网格中为零压边界；该规则只用于校准积分，并不删除或覆盖原始计数。
 
-若 `ΔV <= 0`，逐点候选力为 `0 N`；若 `ΔV >= 4.096 V`，该点为饱和/无效，候选力为 `null`，并带 `ADC_OR_FORCE_MODEL_SATURATED` 质量标志。原始值、零校正值和相对载荷仍可用于诊断。
+若 `ΔV <= 0`，逐点估计力为 `0 N`；若 `ΔV >= 4.096 V`，该点为饱和/无效，估计力为 `null`，并带 `ADC_OR_FORCE_MODEL_SATURATED` 质量标志。原始值、零校正值和相对载荷仍可用于诊断。
 
 ## 首版统一电压—力曲线
 
@@ -58,10 +59,20 @@ F_point_N = exp(
 
 为使不同接触面积的砝码可共同校准，积分不以固定受力半径估计总重，而是汇总全部响应点的候选载荷。单点暂按直径 6 mm 圆形，面积为 `π × 3² mm²`，得到候选离散压强（N/mm²；换算为 kPa 时乘 1000）；再做双线性插值并在 7.99 mm 网格上积分。
 
-这个压力量是校准计算中的**候选压强**，不等价于已验证的临床/计量 Pa：点有效面积、传感器间增益、非线性、迟滞、温漂、坏点和跨区域一致性尚未完成验证。因此面向算法层的已验证 `physical-pressure-session/1.0` 仍不得填入 `normal_force_n` 或声明已验证的 `active_area_mm2`；硬件层先输出附验证状态的 `provisional_force_n`、原始/零校正/电压数组和质量信息。
+这个压力量是 V1 初筛的**估计压强**，不等价于临床或计量认证 Pa：点有效面积、传感器间增益、非线性、迟滞、温漂和跨区域一致性仍需要后续验证。因此硬件层不会伪造已验证 `normal_force_n` 或 `active_area_mm2`，而是输出 `estimated_force_n`、原始分段引用、零校正/修复数组和质量信息，供后续算法层按版本使用。
 
 ## 质量、版本与后续校准
 
-每次采集必须携带设备规格版本、基线窗口标识、曲线 profile 版本、坐标/几何版本以及质量标志。`FORCE_PROVISIONAL` 必须存在，直到完成至少以下验证：固定治具下的多档重复加载/卸载、多个板面区域、独立留出载荷、温度/预热/漂移、饱和与坏点策略，以及跨设备复现。完成后才可生成新设备规格版本并将有效 `normal_force_n` 提供给算法层。
+每次采集必须携带设备规格版本、基线窗口标识、曲线 profile 版本、坐标/几何版本以及质量标志。V1 使用 `MVP_SCREENING_ESTIMATED_V1` 与 `ESTIMATED_FORCE_V1` 明确其产品定位。后续仍需进行固定治具多档重复加载/卸载、多个板面区域、独立留出载荷、温度/预热/漂移和跨设备复现；这些工作会形成下一版设备规格，不阻断当前初筛链路。
+
+## 坏点修复与整项有效性
+
+坏点审核属于硬件层，不交给算法层兜底。V1 仅允许至多 2 个持续坏点，且坏点之间不得
+八邻域相邻；每个坏点必须位于板内并拥有 4 个有效正交邻点。修复值为该帧 4 个正交
+邻点的均值，写入独立的 `repaired_count` 和 `repaired_cell_mask`，永不覆盖不可变原始帧。
+
+超过数量、成片相邻、边缘无法修复、基线 MAD 超出策略、饱和或任一点力学转换失败时，
+整项采集为 `INVALID`：删除暂存数据，不创建正式本地会话，也不交给网络或算法层。只有
+`VALID` 会话才保存原始加密分段、加密派生观测和 SQLite 索引。
 
 砝码原始采集、流程记录、拟合脚本和图表的证据索引在 [RAY-117 evidence](../evidence/linear/RAY-117/README.md)。

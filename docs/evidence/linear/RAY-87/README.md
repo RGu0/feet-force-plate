@@ -92,3 +92,19 @@ Verification after the scope revision:
 
 Remaining external/manual boundary: actual power loss, full-disk behavior and a
 real-device run are still required before RAY-87 can be marked Done.
+
+## 2026-07-23 derived-valid-session update
+
+Schema migration 4 adds `session_artifacts`: SQLite remains a WAL/FULL index and records the
+encrypted derived-observation artifact alongside raw segment references. The valid-session commit
+atomically promotes the directory, records raw segments, records the derived artifact and creates
+the `READY_FOR_NETWORK` handoff. A cloud confirmation still only changes handoff state.
+
+`client/spool/derived_artifact.py` uses a versioned AES-256-GCM container with random 96-bit
+nonce and ciphertext SHA-256. The payload contains only repaired/derived hardware observations
+and provenance; original high-rate raw matrices remain in their existing encrypted segments.
+
+Automated verification on 2026-07-23:
+
+- `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` — **98 passed**.
+- `git diff --check` — passed.

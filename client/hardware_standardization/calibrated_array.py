@@ -27,12 +27,18 @@ class RawArrayFrame:
     host_monotonic_ns: int
     values: tuple[int | float, ...]
     quality_flags: frozenset[str]
+    processing_values: tuple[int | float, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.host_monotonic_ns < 0:
             raise ValueError("host_monotonic_ns must be non-negative")
         if not self.values or any(not isfinite(float(value)) for value in self.values):
             raise ValueError("raw array values must be finite and non-empty")
+        if self.processing_values is not None and (
+            len(self.processing_values) != len(self.values)
+            or any(not isfinite(float(value)) for value in self.processing_values)
+        ):
+            raise ValueError("processing_values must be finite and match raw values")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,13 +78,18 @@ class CalibratedArrayAdapter:
             flags.add("ACTIVE_AREA_UNVALIDATED")
             if self.force_model is None:
                 flags.add("FORCE_UNCALIBRATED")
-            elif self.force_validation != "VALIDATED":
+            elif (
+                self.force_validation != "VALIDATED"
+                and not self.force_validation.startswith("MVP_SCREENING_ESTIMATED")
+            ):
                 flags.add("FORCE_PROVISIONAL")
             zero_corrected: tuple[float, ...] | None = None
             relative_load: tuple[float, ...] | None = None
             raw_voltage: tuple[float, ...] | None = None
             zero_corrected_voltage: tuple[float, ...] | None = None
             provisional_force: tuple[float | None, ...] | None = None
+            estimated_force: tuple[float | None, ...] | None = None
+            processing_values = raw_frame.processing_values or raw_frame.values
             if self.force_model is not None:
                 raw_voltage = tuple(
                     self.force_model.code_to_voltage(value) for value in raw_frame.values
@@ -86,7 +97,7 @@ class CalibratedArrayAdapter:
             if baseline_reference is None:
                 flags.add("BASELINE_MISSING")
             else:
-                corrected = apply_zero_reference(raw_frame.values, baseline_reference)
+                corrected = apply_zero_reference(processing_values, baseline_reference)
                 zero_corrected = corrected.zero_corrected_count
                 relative_load = corrected.relative_load_count
                 flags.update(corrected.quality_flags)
@@ -101,6 +112,27 @@ class CalibratedArrayAdapter:
                     )
                     if any(value is None for value in provisional_force):
                         flags.add("ADC_OR_FORCE_MODEL_SATURATED")
+                    elif self.force_validation.startswith("MVP_SCREENING_ESTIMATED"):
+                        estimated_force = provisional_force
+                        provisional_force = None
+                        flags.add("ESTIMATED_FORCE_V1")
+                    else:
+                        flags.add("FORCE_PROVISIONAL")
+            repaired = (
+                None
+                if raw_frame.processing_values is None
+                else tuple(float(value) for value in raw_frame.processing_values)
+            )
+            repaired_mask = (
+                None
+                if raw_frame.processing_values is None
+                else tuple(
+                    float(raw) != float(processed)
+                    for raw, processed in zip(
+                        raw_frame.values, raw_frame.processing_values, strict=True
+                    )
+                )
+            )
             output_frames.append(
                 PhysicalArrayFrame(
                     timestamp_s=(raw_frame.host_monotonic_ns - first_timestamp_ns)
@@ -114,6 +146,9 @@ class CalibratedArrayAdapter:
                     raw_voltage_v=raw_voltage,
                     zero_corrected_voltage_v=zero_corrected_voltage,
                     provisional_force_n=provisional_force,
+                    repaired_count=repaired,
+                    repaired_cell_mask=repaired_mask,
+                    estimated_force_n=estimated_force,
                 )
             )
 
@@ -156,7 +191,11 @@ class CalibratedArrayAdapter:
                 (
                     "FORCE_UNCALIBRATED"
                     if self.force_model is None
-                    else "FORCE_PROVISIONAL"
+                    else (
+                        "ESTIMATED_FORCE_V1"
+                        if self.force_validation.startswith("MVP_SCREENING_ESTIMATED")
+                        else "FORCE_PROVISIONAL"
+                    )
                 ),
                 "ACTIVE_AREA_UNVALIDATED",
             ),

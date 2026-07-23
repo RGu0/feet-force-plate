@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-把原始数据可靠地保存为可独立上传、校验和恢复的小分段，保证在断网、崩溃、断电或云端故障时数据仍然存在。该模块是采集端的数据完整性边界。
+把通过硬件质量门的会话可靠地保存为可独立同步、校验和恢复的小分段，保证在断网、崩溃、断电或云端故障时有效数据仍然存在。采集未通过时，临时数据必须丢弃，不能形成正式会话。
 
 ## 2. 职责边界
 
@@ -11,7 +11,7 @@
 - 本地会话元数据、状态和上传状态持久化；
 - 原始帧分段、压缩、加密、摘要和原子关闭；
 - 会话最终清单；
-- 启动恢复扫描、磁盘配额和服务端确认后的清理；
+- 启动恢复扫描、磁盘配额和人工删除前的本地保留；
 - 为回放、本地分析和上传提供只读数据源。
 
 ### 不负责
@@ -23,12 +23,15 @@
 
 ```mermaid
 flowchart LR
-    FRAME["RawFrame Queue"] --> WRITER["SegmentWriter"]
+    FRAME["RawFrame"] --> WRITER["Temporary SegmentWriter"]
     WRITER --> TEMP["segment.tmp"]
     TEMP --> SEAL["compress + encrypt + checksum + fsync"]
     SEAL --> FILE["segment-N.ffps"]
-    FILE --> DB["SQLite Segment Record"]
-    DB --> UPLOAD["Upload Queue"]
+    FILE --> QUALITY["Whole-session hardware quality gate"]
+    QUALITY -->|"VALID"| PROMOTE["Atomic promotion to sessions/<id>"]
+    PROMOTE --> DB["SQLite valid-session index"]
+    DB --> HANDOFF["READY_FOR_NETWORK handoff"]
+    QUALITY -->|"INVALID"| DISCARD["Delete .staging/<id>"]
     RECOVERY["RecoveryScanner"] --> TEMP
     RECOVERY --> DB
 ```
@@ -44,7 +47,7 @@ flowchart LR
 ## 4. 分段生命周期
 
 ```text
-WRITING → SEALED → PENDING_UPLOAD → UPLOADING → ACKNOWLEDGED → RETAINED/DELETED
+`.staging/<id>/WRITING → SEALED → whole-session VALID → sessions/<id>/READY_FOR_NETWORK → CLOUD_CONFIRMED → RETAINED`
 ```
 
 原子关闭顺序：
@@ -55,8 +58,10 @@ WRITING → SEALED → PENDING_UPLOAD → UPLOADING → ACKNOWLEDGED → RETAINE
 4. 计算密文摘要；
 5. flush + fsync；
 6. 原子重命名；
-7. 在 SQLite 事务中登记 `SEALED`；
-8. 发布可上传事件。
+7. 对整项会话执行硬件质量门；
+8. 仅 `VALID` 会话原子移动到 `sessions/<id>`，在同一 SQLite 事务登记会话、原始分段、
+   派生力学文件和 `READY_FOR_NETWORK` 交接；
+9. `INVALID` 会话删除 `.staging/<id>`，不写正式 SQLite 会话记录，也不产生同步任务。
 
 上传模块只读取 `SEALED` 及之后状态的不可变文件。
 
@@ -80,21 +85,19 @@ manifest_hash
 
 启动时：
 
-- 扫描 `.tmp`、已关闭分段和 SQLite 状态；
-- 可验证且已完整写入的临时文件恢复为 `SEALED`；
-- 无法验证的临时文件隔离，不拼入正式会话；
-- `ACQUIRING` 状态但无活动进程的会话标记 `INCOMPLETE`；
-- 所有未确认分段重新进入上传队列；
+- 扫描 `.staging`、已提升会话和 SQLite 状态；
+- 未完成的 `.staging/<id>` 一律删除，不把断电前的部分采集恢复成正式会话；
+- 已提升但无法验证的文件隔离，禁止进入网络交接；
+- 已通过 SQLite 登记但网络中断的正式会话保持 `READY_FOR_NETWORK`，由网络层重试；
 - 恢复过程产生内部审计日志。
 
 ## 7. 配额与清理
 
 - 测试前预检保守估算磁盘容量；容量不足时阻止开始；
-- 待上传上限 50 次或 2 GB，与 24 小时门槛共同生效；
-- 服务端确认前禁止普通用户删除；
-- 服务端确认后按配置保留本地报告和有限期限原始数据；
-- 清理任务按最旧已确认会话执行，不删除失败诊断所需证据；
-- 磁盘接近硬下限时优先停止新测试，不依赖清理“碰运气”。
+- 待网络交接上限 50 次或 2 GB，与磁盘预检共同生效；
+- 云端确认只更新 `CLOUD_CONFIRMED` 状态，**不会自动删除**本地原始或派生数据；
+- 当前版本仅允许用户发起的人工删除；删除实现必须同时删除文件和 SQLite 索引，并保留审计记录；
+- 磁盘接近硬下限时优先停止新测试，不依赖自动清理“碰运气”。
 
 ## 8. 设计原理
 

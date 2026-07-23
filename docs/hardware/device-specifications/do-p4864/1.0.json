@@ -33,8 +33,8 @@
     "minimum_duration_s": 5.0
   },
   "force_calibration": {
-    "profile_version": "do-p4864-voltage-force/provisional-unified-known-weight-v1-20260722",
-    "validation": "PROVISIONAL_UNIFIED_KNOWN_WEIGHT_AND_HUMAN_REPLAY",
+    "profile_version": "do-p4864-voltage-force/mvp-screening-v1-20260722",
+    "validation": "MVP_SCREENING_ESTIMATED_V1",
     "input": "ZERO_CORRECTED_VOLTAGE_V",
     "output_unit": "N",
     "model": "voltage-to-force/two-slope-monotonic/1",

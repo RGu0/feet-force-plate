@@ -5,6 +5,10 @@ import unittest
 import numpy as np
 
 from client.device.protocol import RawFrame
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
+from client.hardware_standardization.models import BaselineReference
+from client.hardware_standardization.quality import DoP4864HardwareQualityGate
+from client.spool.derived_artifact import read_derived_observation
 from client.spool.session_commit import ValidSessionStager
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
@@ -86,6 +90,49 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertFalse((self.root / "data" / ".staging" / "interrupted").exists())
         with self.assertRaises(KeyError):
             self.store.session_status("interrupted")
+
+    def test_valid_session_retains_an_encrypted_repaired_force_observation(self) -> None:
+        stager = self._stager("derived")
+        frames = tuple(_frame(index + 10) for index in range(2))
+        for frame in frames:
+            stager.append(frame)
+        adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
+        baseline = BaselineReference(
+            schema_version="baseline-reference/1",
+            baseline_window_id="baseline-1",
+            layout_digest=adapter.layout.digest,
+            zero_offset_count=(0.0,) * (48 * 64),
+            noise_mad_count=(0.0,) * (48 * 64),
+            rules_version="do-p4864-unloaded-baseline/1",
+            threshold_version="do-p4864-quality/1",
+            source_digest="a" * 64,
+        )
+        quality = DoP4864HardwareQualityGate(baseline_reference=baseline).evaluate(
+            session_id="derived", frames=stager.staged_frames()
+        )
+        self.assertEqual(quality.validity.value, "VALID")
+        assert quality.physical_session is not None
+        stager.stage_derived_observation(
+            quality.physical_session,
+            processing_metadata=quality.processing_metadata,
+        )
+        stager.commit_valid(ended_at_ns=1_100_000_000)
+
+        artifacts = self.store.session_artifacts("derived")
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].kind, "HARDWARE_DERIVED_OBSERVATION")
+        restored = read_derived_observation(
+            self.root / "data" / artifacts[0].relative_path, key_provider=self.keys
+        )
+        self.assertEqual(restored["schema_version"], "hardware-derived-observation/1")
+        self.assertEqual(restored["session_id"], "derived")
+        processing = restored["hardware_processing"]
+        assert isinstance(processing, dict)
+        self.assertEqual(processing["bad_point_policy_version"], "quality-policy/do-p4864-mvp/1")
+        first = restored["frames"][0]
+        assert isinstance(first, dict)
+        self.assertIsNotNone(first["estimated_force_n"])
+        self.assertNotIn("raw_count", first)
 
 
 if __name__ == "__main__":

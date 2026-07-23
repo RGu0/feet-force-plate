@@ -136,9 +136,9 @@ class AcquisitionRunnerTests(unittest.TestCase):
             connection=machine,
         ).run(session_id="session-disconnect", target_frames=5)
 
-        self.assertEqual(result.outcome, AcquisitionOutcome.INCOMPLETE)
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
         self.assertEqual(result.frames_stored, 2)
-        self.assertEqual(machine.state, ConnectionState.ERROR)
+        self.assertEqual(machine.state, ConnectionState.INVALID)
         with self.assertRaises(IllegalConnectionTransition):
             machine.start_acquiring()
         machine.start_connecting()
@@ -160,7 +160,7 @@ class AcquisitionRunnerTests(unittest.TestCase):
             connection=machine,
         )
         first = runner.run(session_id="session-before-reconnect", target_frames=1)
-        self.assertEqual(first.outcome, AcquisitionOutcome.INCOMPLETE)
+        self.assertEqual(first.outcome, AcquisitionOutcome.INVALID)
         machine.start_connecting()
         machine.mark_ready()
 
@@ -184,10 +184,42 @@ class AcquisitionRunnerTests(unittest.TestCase):
             connection=machine,
         ).run(session_id="session-storage-failure", target_frames=1)
 
-        self.assertEqual(result.outcome, AcquisitionOutcome.INCOMPLETE)
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
         self.assertEqual(result.frames_stored, 0)
         self.assertIsNone(latest.read())
-        self.assertEqual(machine.state, ConnectionState.ERROR)
+        self.assertEqual(machine.state, ConnectionState.INVALID)
+
+    def test_parser_resynchronization_invalidates_and_discards_the_active_session(self) -> None:
+        class DiscardingSink:
+            def __init__(self) -> None:
+                self.frames: list[int] = []
+                self.reason: str | None = None
+
+            def append(self, session_id, frame, *, timeout=None):
+                self.frames.append(frame.source_index)
+
+            def discard(self, *, reason: str) -> None:
+                self.reason = reason
+
+        sink = DiscardingSink()
+        machine = self._ready_machine()
+        result = AcquisitionRunner(
+            transport=SyntheticP4864Transport(
+                _profile(),
+                realtime=False,
+                max_frames=3,
+                fault_plan=FaultPlan(events={1: (FaultKind.BAD_TAIL,)}),
+            ),
+            parser=_parser(),
+            durable_sink=sink,
+            latest_mailbox=LatestFrameMailbox(),
+            connection=machine,
+        ).run(session_id="session-resync", target_frames=3)
+
+        self.assertEqual(result.outcome, AcquisitionOutcome.INVALID)
+        self.assertEqual(sink.frames, [0])
+        self.assertIn("resynchronization", sink.reason)
+        self.assertEqual(machine.state, ConnectionState.INVALID)
 
     def test_worker_executes_blocking_reader_outside_calling_thread(self) -> None:
         caller_thread = threading.get_ident()

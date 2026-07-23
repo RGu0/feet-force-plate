@@ -17,12 +17,14 @@ class ConnectionState(StrEnum):
     CONNECTING = "CONNECTING"
     READY = "READY"
     ACQUIRING = "ACQUIRING"
+    INVALID = "INVALID"
     ERROR = "ERROR"
 
 
 class AcquisitionOutcome(StrEnum):
     COMPLETED = "COMPLETED"
     INCOMPLETE = "INCOMPLETE"
+    INVALID = "INVALID"
 
 
 class IllegalConnectionTransition(RuntimeError):
@@ -49,7 +51,7 @@ class ConnectionStateMachine:
 
     def start_connecting(self) -> None:
         self._transition(
-            {ConnectionState.DISCONNECTED, ConnectionState.ERROR},
+            {ConnectionState.DISCONNECTED, ConnectionState.ERROR, ConnectionState.INVALID},
             ConnectionState.CONNECTING,
         )
 
@@ -64,12 +66,22 @@ class ConnectionStateMachine:
     def finish_acquiring(self) -> None:
         self._transition({ConnectionState.ACQUIRING}, ConnectionState.READY)
 
+    def mark_invalid(self, reason: str) -> None:
+        with self._lock:
+            if self._state is not ConnectionState.ACQUIRING:
+                raise IllegalConnectionTransition(
+                    f"cannot enter INVALID from {self._state.value}"
+                )
+            self._state = ConnectionState.INVALID
+            self._last_error = reason
+
     def mark_error(self, reason: str) -> None:
         with self._lock:
             if self._state not in {
                 ConnectionState.CONNECTING,
                 ConnectionState.READY,
                 ConnectionState.ACQUIRING,
+                ConnectionState.INVALID,
             }:
                 raise IllegalConnectionTransition(
                     f"cannot enter ERROR from {self._state.value}"
@@ -105,6 +117,10 @@ class DurableFrameSink(Protocol):
     def append(
         self, session_id: str, frame: RawFrame, *, timeout: float | None = None
     ) -> None: ...
+
+
+class InvalidatableFrameSink(DurableFrameSink, Protocol):
+    def discard(self, *, reason: str) -> None: ...
 
 
 class DurableFrameQueue:
@@ -188,16 +204,31 @@ class AcquisitionRunner:
         latest_mailbox: LatestFrameMailbox,
         connection: ConnectionStateMachine,
         read_size: int = FRAME_LENGTH,
+        maximum_host_gap_ns: int | None = None,
     ) -> None:
         if read_size <= 0:
             raise ValueError("read_size must be positive")
+        if maximum_host_gap_ns is not None and maximum_host_gap_ns <= 0:
+            raise ValueError("maximum_host_gap_ns must be positive when set")
         self._transport = transport
         self._parser = parser
         self._durable_sink = durable_sink
         self._latest_mailbox = latest_mailbox
         self._connection = connection
         self._read_size = read_size
+        self._maximum_host_gap_ns = maximum_host_gap_ns
         self._used = False
+
+    def _invalidate(
+        self, session_id: str, *, frames_stored: int, reason: str
+    ) -> AcquisitionResult:
+        if hasattr(self._durable_sink, "discard"):
+            try:
+                getattr(self._durable_sink, "discard")(reason=reason)
+            except Exception as cleanup_error:
+                reason = f"{reason}; temporary cleanup failed: {type(cleanup_error).__name__}"
+        self._connection.mark_invalid(reason)
+        return AcquisitionResult(session_id, AcquisitionOutcome.INVALID, frames_stored, reason)
 
     def run(self, *, session_id: str, target_frames: int) -> AcquisitionResult:
         if self._used:
@@ -211,35 +242,52 @@ class AcquisitionRunner:
         self._used = True
         self._connection.start_acquiring()
         frames_stored = 0
+        previous_host_monotonic_ns: int | None = None
         try:
             while frames_stored < target_frames:
                 chunk = self._transport.read(self._read_size)
                 if not chunk:
                     continue
-                for frame in self._parser.feed(chunk):
+                invalid_before = self._parser.statistics.invalid_frames
+                resync_before = self._parser.statistics.resynchronizations
+                decoded = self._parser.feed(chunk)
+                if (
+                    self._parser.statistics.invalid_frames != invalid_before
+                    or self._parser.statistics.resynchronizations != resync_before
+                ):
+                    return self._invalidate(
+                        session_id,
+                        frames_stored=frames_stored,
+                        reason="parser integrity failure or resynchronization",
+                    )
+                for frame in decoded:
+                    if (
+                        previous_host_monotonic_ns is not None
+                        and self._maximum_host_gap_ns is not None
+                        and frame.host_monotonic_ns - previous_host_monotonic_ns
+                        > self._maximum_host_gap_ns
+                    ):
+                        return self._invalidate(
+                            session_id,
+                            frames_stored=frames_stored,
+                            reason="host frame arrival gap exceeded policy",
+                        )
                     try:
                         self._durable_sink.append(session_id, frame)
                     except Exception as exc:
                         reason = f"storage handoff failed: {type(exc).__name__}: {exc}"
-                        self._connection.mark_error(reason)
-                        return AcquisitionResult(
-                            session_id,
-                            AcquisitionOutcome.INCOMPLETE,
-                            frames_stored,
-                            reason,
+                        return self._invalidate(
+                            session_id, frames_stored=frames_stored, reason=reason
                         )
                     self._latest_mailbox.publish(frame)
+                    previous_host_monotonic_ns = frame.host_monotonic_ns
                     frames_stored += 1
                     if frames_stored >= target_frames:
                         break
         except TransportDisconnected as exc:
             reason = f"transport disconnected: {exc}"
-            self._connection.mark_error(reason)
-            return AcquisitionResult(
-                session_id,
-                AcquisitionOutcome.INCOMPLETE,
-                frames_stored,
-                reason,
+            return self._invalidate(
+                session_id, frames_stored=frames_stored, reason=reason
             )
         self._connection.finish_acquiring()
         return AcquisitionResult(

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 
 from client.device.protocol import RawFrame
+from client.hardware_standardization.models import PhysicalArraySession
 
-from .segments import ImmutableSegmentWriter, SealedSegment, write_session_manifest
-from .state_store import KeyProvider, StateStore, ValidSegmentRecord
+from .derived_artifact import DerivedArtifact, write_derived_observation
+from .segments import ImmutableSegmentWriter, SealedSegment, read_segment, write_session_manifest
+from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
 
 
 def _fsync_directory(path: Path) -> None:
@@ -67,6 +68,7 @@ class ValidSessionStager:
             segment_duration_seconds=segment_duration_seconds,
         )
         self._sealed: list[SealedSegment] = []
+        self._artifacts: list[DerivedArtifact] = []
         self._has_open_frames = False
         self._finished = False
 
@@ -82,6 +84,15 @@ class ValidSessionStager:
         if sealed is not None:
             self._sealed.append(sealed)
 
+    def append_from_sink(
+        self, session_id: str, frame: RawFrame, *, timeout: float | None = None
+    ) -> None:
+        """DurableFrameSink-compatible adapter; timeout is owned by the caller queue."""
+
+        if session_id != self._session_id:
+            raise ValueError("staging sink cannot accept another session id")
+        self.append(frame)
+
     def discard(self, *, reason: str) -> None:
         if self._finished:
             raise RuntimeError("session staging is already finished")
@@ -92,12 +103,46 @@ class ValidSessionStager:
             shutil.rmtree(self.staging_directory)
             _fsync_directory(self._staging_root)
 
-    def commit_valid(self, *, ended_at_ns: int) -> CommittedValidSession:
+    def staged_frames(self) -> tuple[RawFrame, ...]:
+        """Seal any buffered data and return verified temporary frames for gating."""
+
         if self._finished:
             raise RuntimeError("session staging is already finished")
         if self._has_open_frames:
             self._sealed.append(self._writer.close())
             self._has_open_frames = False
+        if not self._sealed:
+            return ()
+        frames: list[RawFrame] = []
+        for sealed in sorted(self._sealed, key=lambda item: item.segment_index):
+            frames.extend(read_segment(sealed.path, self._key_provider).frames)
+        return tuple(frames)
+
+    def stage_derived_observation(
+        self,
+        observation: PhysicalArraySession,
+        *,
+        processing_metadata: dict[str, object] | None = None,
+    ) -> DerivedArtifact:
+        """Encrypt a derived observation while the session is still discardable."""
+
+        if self._finished:
+            raise RuntimeError("session staging is already finished")
+        if observation.session_id != self._session_id:
+            raise ValueError("derived observation must match the staged session id")
+        artifact = write_derived_observation(
+            self._staging_root,
+            session=observation,
+            key_provider=self._key_provider,
+            processing_metadata=processing_metadata,
+        )
+        self._artifacts.append(artifact)
+        return artifact
+
+    def commit_valid(self, *, ended_at_ns: int) -> CommittedValidSession:
+        if self._finished:
+            raise RuntimeError("session staging is already finished")
+        self.staged_frames()
         if not self._sealed:
             raise ValueError("cannot commit a session without frames")
         manifest = write_session_manifest(
@@ -106,6 +151,16 @@ class ValidSessionStager:
             segment_paths=[segment.path for segment in self._sealed],
             key_provider=self._key_provider,
             local_quality_outcome="VALID",
+            artifacts=[
+                {
+                    "artifact_id": artifact.artifact_id,
+                    "ciphertext_sha256": artifact.ciphertext_sha256,
+                    "kind": artifact.kind,
+                    "relative_path": artifact.path.name,
+                    "schema_version": artifact.schema_version,
+                }
+                for artifact in self._artifacts
+            ],
         )
         staging = self.staging_directory
         final = self._sessions_root / self._session_id
@@ -124,6 +179,19 @@ class ValidSessionStager:
             )
             for segment in self._sealed
         )
+        artifact_records = tuple(
+            ValidArtifactRecord(
+                artifact_id=artifact.artifact_id,
+                kind=artifact.kind,
+                schema_version=artifact.schema_version,
+                relative_path=str(
+                    Path("sessions") / self._session_id / artifact.path.name
+                ),
+                ciphertext_sha256=artifact.ciphertext_sha256,
+                byte_count=artifact.byte_count,
+            )
+            for artifact in self._artifacts
+        )
         try:
             self._store.commit_valid_session(
                 self._session_id,
@@ -134,6 +202,7 @@ class ValidSessionStager:
                 ended_at_ns=ended_at_ns,
                 manifest_sha256=str(manifest["manifest_sha256"]),
                 segments=records,
+                artifacts=artifact_records,
             )
         except Exception:
             os.replace(final, staging)
@@ -161,3 +230,18 @@ class ValidSessionStager:
         if count:
             _fsync_directory(staging_root)
         return count
+
+
+class StagedFrameSink:
+    """Acquisition-facing adapter that owns one temporary valid-session stager."""
+
+    def __init__(self, stager: ValidSessionStager) -> None:
+        self._stager = stager
+
+    def append(
+        self, session_id: str, frame: RawFrame, *, timeout: float | None = None
+    ) -> None:
+        self._stager.append_from_sink(session_id, frame, timeout=timeout)
+
+    def discard(self, *, reason: str) -> None:
+        self._stager.discard(reason=reason)

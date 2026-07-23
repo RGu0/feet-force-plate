@@ -41,9 +41,12 @@ class DoP4864StandardizationAdapter:
         raw_frames: tuple[RawFrame, ...],
         *,
         baseline_reference: BaselineReference | None = None,
+        processing_matrices: tuple[np.ndarray, ...] | None = None,
     ) -> StandardizationOutcome:
+        if processing_matrices is not None and len(processing_matrices) != len(raw_frames):
+            raise ValueError("processing matrices must align with raw frames")
         decoded_frames: list[RawArrayFrame] = []
-        for frame in raw_frames:
+        for index, frame in enumerate(raw_frames):
             expected_dtype = np.dtype(self._specification.decoded_value_dtype)
             if (
                 frame.values.shape != self._specification.matrix_shape
@@ -56,13 +59,24 @@ class DoP4864StandardizationAdapter:
                 "COLUMN_MAJOR": "F",
                 "ROW_MAJOR": "C",
             }[self._specification.payload_value_order]
+            processing_values: tuple[float, ...] | None = None
+            quality_flags = frame.quality_flags | frozenset({"SOURCE_INTEGRITY_UNVERIFIED"})
+            if processing_matrices is not None:
+                matrix = np.asarray(processing_matrices[index])
+                if matrix.shape != self._specification.matrix_shape:
+                    raise ValueError("processing matrices must match the device matrix shape")
+                processing_values = tuple(
+                    float(value) for value in matrix.reshape(-1, order=flatten_order)
+                )
+                quality_flags = quality_flags | frozenset({"BAD_POINT_REPAIRED"})
             decoded_frames.append(
                 RawArrayFrame(
                     host_monotonic_ns=frame.host_monotonic_ns,
                     values=tuple(
                         int(value) for value in frame.values.reshape(-1, order=flatten_order)
                     ),
-                    quality_flags=frame.quality_flags | frozenset({"SOURCE_INTEGRITY_UNVERIFIED"}),
+                    quality_flags=quality_flags,
+                    processing_values=processing_values,
                 )
             )
         return self._adapter.standardize(

@@ -74,6 +74,19 @@ def physical_array_session_to_dict(session: PhysicalArraySession) -> dict[str, o
                     if frame.provisional_force_n is None
                     else list(frame.provisional_force_n)
                 ),
+                "repaired_count": (
+                    None if frame.repaired_count is None else list(frame.repaired_count)
+                ),
+                "repaired_cell_mask": (
+                    None
+                    if frame.repaired_cell_mask is None
+                    else list(frame.repaired_cell_mask)
+                ),
+                "estimated_force_n": (
+                    None
+                    if frame.estimated_force_n is None
+                    else list(frame.estimated_force_n)
+                ),
             }
             for frame in session.frames
         ],

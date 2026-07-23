@@ -63,3 +63,23 @@ Implementation/tests/verification commit:
 `c470478455349fc6afb2d1e13a96f106ade3080e`.
 
 Evidence metadata commits: `66a88af` and the current follow-up commit.
+
+## 2026-07-23 redesign implementation update
+
+The current accepted software path is `ByteTransport → incremental parser → encrypted
+temporary session → whole-session quality gate → formal valid-session storage`.
+`client/device/acquisition.py` now has an explicit `INVALID` state/outcome and discards
+temporary capture data on transport disconnect, storage failure, parser integrity
+failure/resynchronization, or a configured host-arrival gap. `client/device/session_runtime.py`
+is the composition root: it connects the parser, durable staging sink, independent latest-frame
+mailbox and whole-session gate, without importing UI, network upload, reports or product
+algorithms.
+
+Automated verification on 2026-07-23:
+
+- `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` — **98 passed**.
+- `git diff --check` — passed.
+
+This remains an automated result. Physical CH340 enumeration, target-machine 1 Mbps sustained
+read, cable removal, actual disk-full/power-loss behavior and a real baseline/quality run remain
+required before this issue can be marked Done.

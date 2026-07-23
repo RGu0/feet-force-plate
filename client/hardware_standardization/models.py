@@ -112,6 +112,9 @@ class PhysicalArrayFrame:
     raw_voltage_v: tuple[float, ...] | None = None
     zero_corrected_voltage_v: tuple[float, ...] | None = None
     provisional_force_n: tuple[float | None, ...] | None = None
+    repaired_count: tuple[float, ...] | None = None
+    repaired_cell_mask: tuple[bool, ...] | None = None
+    estimated_force_n: tuple[float | None, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isfinite(self.timestamp_s) or self.timestamp_s < 0:
@@ -156,6 +159,23 @@ class PhysicalArrayFrame:
         ):
             raise ValueError(
                 "provisional_force_n must be non-negative finite values or nulls matching raw_count"
+            )
+        if self.repaired_count is not None and (
+            len(self.repaired_count) != expected
+            or any(not isfinite(value) for value in self.repaired_count)
+        ):
+            raise ValueError("repaired_count must be finite and match raw_count length")
+        if self.repaired_cell_mask is not None and len(self.repaired_cell_mask) != expected:
+            raise ValueError("repaired_cell_mask must match raw_count length")
+        if self.estimated_force_n is not None and (
+            len(self.estimated_force_n) != expected
+            or any(
+                value is None or not isfinite(value) or value < 0
+                for value in self.estimated_force_n
+            )
+        ):
+            raise ValueError(
+                "estimated_force_n must be non-negative finite values matching raw_count"
             )
 
 

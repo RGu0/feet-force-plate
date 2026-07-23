@@ -64,3 +64,35 @@ Machine-readable benchmark: [benchmark.json](benchmark.json)
 
 Implementation/tests/benchmark/evidence commit:
 `83b0357cbee8d3c339fdd19f7003785ec87477bb`.
+
+## 2026-07-23 hardware preprocessing and standard-output update
+
+The current MVP no longer stops at raw-only display data. The implemented hardware gate is:
+
+```text
+immutable uint8 raw frame
+  → baseline/MAD bad-cell assessment
+  → isolated-cell repair in a separate matrix only
+  → zero correction and V1 estimated_force_n
+  → VALID: encrypted raw + encrypted derived observation + SQLite index
+  → INVALID: delete all temporary artifacts, no formal session
+```
+
+`client/hardware_standardization/quality.py` implements
+`quality-policy/do-p4864-mvp/1`: at most two persistent bad cells, no 8-neighbour adjacency,
+and four valid orthogonal neighbours required for repair. Edge cells, clusters, excess cells,
+baseline instability, saturation or an unusable V1 conversion invalidate the whole capture.
+`client/hardware_standardization/calibrated_array.py` preserves `raw_count` while exposing
+`repaired_count`, `repaired_cell_mask`, zero-corrected values and `estimated_force_n`.
+`client/spool/derived_artifact.py` persists the derived observation as a separately encrypted,
+authenticated immutable artifact; it includes the baseline and repair-policy provenance but does
+not duplicate raw matrices already held in encrypted raw segments.
+
+Automated verification on 2026-07-23:
+
+- `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` — **98 passed**.
+- `git diff --check` — passed.
+
+Not yet verified on physical hardware: a real ≥5-second unloaded baseline, bad-point injection
+against a board, saturation behavior, true sustained device timing and operator confirmation of
+the re-test flow. These are required before Done.

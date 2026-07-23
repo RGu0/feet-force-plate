@@ -290,6 +290,7 @@ def write_session_manifest(
     segment_paths: list[Path],
     key_provider: KeyProvider,
     local_quality_outcome: str,
+    artifacts: list[dict[str, object]] | None = None,
 ) -> dict:
     if not segment_paths or not local_quality_outcome:
         raise ValueError("segments and local quality outcome are required")
@@ -319,6 +320,7 @@ def write_session_manifest(
             }
             for item in restored
         ],
+        "artifacts": artifacts or [],
     }
     content["manifest_sha256"] = hashlib.sha256(_canonical_json(content)).hexdigest()
     session_dir = Path(root) / session_id

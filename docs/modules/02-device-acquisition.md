@@ -12,7 +12,7 @@
 - DO-P4864 帧同步、解码和校验；
 - 主机到达时间、成功解码序号和协议质量统计；
 - 设备模拟器和真实抓包回放；
-- 将原始帧发布给存储与本地分析端口。
+- 将原始帧发布给硬件质量门和本地显示端口。
 
 ### 不负责
 
@@ -50,7 +50,10 @@ flowchart LR
     READ --> BUFFER["Byte Accumulator"]
     BUFFER --> DECODER["DaoOneP4864Decoder"]
     DECODER --> FRAME["RawFrame"]
-    FRAME --> STORE["FrameSink: Durable Spool"]
+    FRAME --> TEMP["Temporary encrypted raw segments"]
+    TEMP --> GATE["Hardware quality gate"]
+    GATE -->|"VALID only"| STORE["Local valid-session store"]
+    GATE -->|"INVALID"| DISCARD["Discard temporary data + retest"]
     FRAME --> LATEST["LatestFrameSink: Local Analysis"]
     DECODER --> STATS["ProtocolStatistics"]
 ```
@@ -85,9 +88,11 @@ class RawFrame:
 ## 7. 设备异常策略
 
 - 开始前设备不可用：预检失败，不创建正式会话；
-- 采集中串口断开：停止会话并标记 `INCOMPLETE`，不尝试把断线前后数据拼成正式报告；
+- 采集中串口断开、解析重同步、存储交接失败或主机到达间隔超过会话策略：当前整项采集
+  立即判定 `INVALID`，删除暂存数据，不尝试把断线前后数据拼成正式会话；
 - 在 CheckSum 规则获得真机 fixture 验证前：记录不匹配与质量标记，不因候选不匹配丢帧；
-- 数据连续为零或饱和：记录内部质量标志，由质量门控决定；
+- 数据连续为零、饱和、无法修复的坏点或不稳定基线：记录内部质量标志，由硬件质量门
+  判定整项采集是否无效；
 - 自动重连只恢复设备到 `READY`，不自动续接上一正式会话。
 
 ## 8. 设计原理
@@ -96,6 +101,8 @@ class RawFrame:
 - **真实能力优先**：默认采集节律采用实测的 20.7 Hz；不在软件中虚构硬件序号、
   设备时钟、超出实测的采样能力和绝对单位。
 - **存储优先**：慢 UI 可以丢显示帧，存储队列不能静默丢帧。
+- **先判有效再入库**：采集中的原始帧只能进入可删除的加密暂存区；只有整项采集通过
+  结构、连续性、坏点修复和力学转换后，才提升为正式本地会话。
 - **模拟器同接口**：模拟器可生成字节流覆盖真实解析器，而不是绕过协议直接造 NumPy 帧。
 
 ## 9. 测试与验收
@@ -104,5 +111,5 @@ class RawFrame:
 - 覆盖逐字节、随机分块、粘包、噪声、错长度、错校验和错帧尾；
 - 模糊测试确保错误后可恢复且缓存有界；
 - 已完成 10 分钟结构候选接收观察；在已验证解析器上仍需量化逐帧抖动、校验失败、重同步与内存；
-- 强制拔线后状态准确、已完成分段仍可恢复；
+- 强制拔线、解析重同步、超时和存储失败后均无正式会话，且操作员得到“重新检测”结果；
 - 模拟器和真机通过相同 `ByteTransport` 契约测试。
