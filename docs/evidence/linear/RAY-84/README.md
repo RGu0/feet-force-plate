@@ -129,3 +129,9 @@ QT_QPA_PLATFORM=offscreen \
 - 编译验证：`./scripts/local-env.sh python -m compileall -q client/app scripts/run_dop4864_live_display_validation.py` 通过。
 - 全量客户端回归：`133 passed, 1 failed`；失败仍是范围外 `client/tests/test_ray_114_startup_ui.py::test_failure_has_plain_copy_one_primary_recovery_and_safe_exit` 的按钮焦点断言。本轮未修改 RAY-114/启动校验代码。
 - 真机实时尝试：验证命令启动后，CH340 设备从系统串口列表消失，读取器在首帧前返回 `TransportDisconnected`；脱敏记录见 [live-display-validation-attempt-20260723.json](live-display-validation-attempt-20260723.json)。因此尚不能把实时真机 UI 验收视为完成。
+
+### 真机复测成功
+
+- 连接恢复后，`/dev/cu.usbserial-1120` 在 10 秒验证内提供 201 个实际 compact 48×64 帧；最新设备序号为 200，读取器正常停止且未记录传输错误。
+- 同一运行中实际走过 `CH340 → hardware LatestFrameMailbox → LiveDisplayProjection → LatestDisplayFrameMailbox → DisplayRefreshController → P-07 Qt`。离屏 P-07 截图显示完整双脚热力图，且页面倒计时由 30 递减至 21；截图仅保留在 `/private/tmp/feetforceplate-ray84-live/`，不提交。
+- 脱敏结果：[live-display-validation-success-20260723.json](live-display-validation-success-20260723.json)。此结果证明实时显示链路，不等同于可靠会话/报告闭环、标定压力、临床解释、Windows 目标环境或现场操作员验收。

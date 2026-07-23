@@ -36,18 +36,20 @@ class _ValidationCoordinator:
     """Minimal UI-state port for a display-only validation run."""
 
     def __init__(self) -> None:
-        self._state = WorkflowState(
-            step=ScreeningStep.ACQUIRING,
-            remaining_seconds=30,
-            acquisition_instruction="请保持自然站立，不要说话或大幅移动",
-        )
+        self._remaining_seconds = 30
+        self._instruction = "请保持自然站立，不要说话或大幅移动"
 
     @property
     def state(self) -> WorkflowState:
-        return self._state
+        return WorkflowState(
+            step=ScreeningStep.ACQUIRING,
+            remaining_seconds=self._remaining_seconds,
+            acquisition_instruction=self._instruction,
+        )
 
     def observe_acquisition_elapsed(self, *, elapsed_seconds: int) -> int:
-        return max(0, 30 - elapsed_seconds)
+        self._remaining_seconds = max(0, 30 - elapsed_seconds)
+        return self._remaining_seconds
 
     def stop_acquisition(self) -> bool:
         return True
@@ -71,8 +73,9 @@ def validate(*, device: str, seconds: float, screenshot: Path | None) -> dict[st
     display_mailbox = LatestDisplayFrameMailbox()
     bridge = LiveDisplayProjection(source=raw_mailbox, destination=display_mailbox)
     app = QApplication.instance() or QApplication([])
+    coordinator = _ValidationCoordinator()
     controller = ApplicationController(
-        _ValidationCoordinator(),
+        coordinator,
         display_refresh=DisplayRefreshController(display_mailbox, maximum_refresh_hz=30.0),
         live_display=bridge,
     )
@@ -94,7 +97,8 @@ def validate(*, device: str, seconds: float, screenshot: Path | None) -> dict[st
                     raw_mailbox.publish(frame)
                     outcome["frames_observed"] += 1
         except (OSError, TransportDisconnected) as exc:
-            outcome["reader_error"] = f"{type(exc).__name__}: {exc}"
+            if not stop.is_set():
+                outcome["reader_error"] = f"{type(exc).__name__}: {exc}"
         finally:
             transport = transport_box["transport"]
             if transport is not None:
@@ -104,8 +108,19 @@ def validate(*, device: str, seconds: float, screenshot: Path | None) -> dict[st
         target=read_device, name="dop4864-live-display-validation", daemon=True
     )
     reader.start()
+    elapsed_seconds = 0
+    elapsed_timer = QTimer()
+
+    def advance_clock() -> None:
+        nonlocal elapsed_seconds
+        elapsed_seconds += 1
+        controller.on_acquisition_elapsed(elapsed_seconds)
+
+    elapsed_timer.timeout.connect(advance_clock)
+    elapsed_timer.start(1_000)
 
     def finish() -> None:
+        elapsed_timer.stop()
         app.processEvents()
         if screenshot is not None:
             screenshot.parent.mkdir(parents=True, exist_ok=True)
