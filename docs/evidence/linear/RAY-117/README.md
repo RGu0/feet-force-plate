@@ -2,7 +2,7 @@
 
 - Issue: [RAY-117](https://linear.app/ray-app/issue/RAY-117/硬件标准化层原始阵列到-mvp-标准会话)
 - Evidence captured: 2026-07-23T08:46:33Z
-- State when captured: `In Progress`; milestone: `P0：硬件基线`; priority: `Urgent`
+- State after automated verification: `In Review`; milestone: `P0：硬件基线`; priority: `Urgent`
 - Project: `足底压力健康筛查与分析平台`
 
 ## Acceptance snapshot
@@ -68,8 +68,7 @@ retained in `sensor-defect-repair-reference-20260723.json`.
 
 ## Commit
 
-Implementation commit: pending at evidence capture; this field is updated in
-the follow-up evidence commit before the Linear review comment.
+Implementation commit: `09542f4` (`Add generic sensor defect repair`).
 
 ## Evidence
 
