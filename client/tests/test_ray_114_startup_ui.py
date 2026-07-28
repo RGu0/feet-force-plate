@@ -68,6 +68,7 @@ def test_failure_has_plain_copy_one_primary_recovery_and_safe_exit(qtbot) -> Non
     assert window.findChild(QLabel, "startupErrorCode").text() == "诊断编号 E-DEV-102"
     all_copy = " ".join(label.text() for label in window.findChildren(QLabel))
     assert all(term not in all_copy for term in ("CheckSum", "checksum", "阈值", "坏点", "堆栈", "串口"))
+    qtbot.waitUntil(lambda: primary[0].hasFocus(), timeout=1_000)
     assert primary[0].hasFocus()
 
     qtbot.mouseClick(primary[0], Qt.MouseButton.LeftButton)

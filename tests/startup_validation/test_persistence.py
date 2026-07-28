@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.spool.state_store import SCHEMA_VERSION, SensitiveBlobCodec, StateStore
 from client.startup_validation.models import (
     DeviceValidationRun,
     ValidationOutcome,
@@ -63,7 +63,7 @@ def store(tmp_path: Path):
 
 
 def test_migration_adds_versioned_validation_audit_and_telemetry_queue(store) -> None:
-    assert store.schema_version == 2
+    assert store.schema_version == SCHEMA_VERSION
     assert {"device_validation_runs", "telemetry_events"}.issubset(
         store.table_names()
     )
@@ -159,7 +159,7 @@ def test_existing_schema_one_database_migrates_without_losing_old_table(tmp_path
 
     migrated = StateStore(path, SensitiveBlobCodec(_Keys()))
     try:
-        assert migrated.schema_version == 2
+        assert migrated.schema_version == SCHEMA_VERSION
         assert "existing_marker" in migrated.table_names()
         assert {"device_validation_runs", "telemetry_events"}.issubset(
             migrated.table_names()
