@@ -11,8 +11,8 @@ from .models import ValidationOutcome, ValidationReason, ValidationStatistics
 
 @dataclass(frozen=True, slots=True)
 class ValidationThresholds:
-    version: str = "startup-baseline-thresholds/1"
-    rules_version: str = "startup-baseline/1"
+    version: str = "startup-baseline-thresholds/2"
+    rules_version: str = "startup-baseline/2"
     window_duration_ns: int = 5_000_000_000
     observed_nominal_rate_hz: float = 20.7
     minimum_rate_hz: float = 12.0
@@ -23,7 +23,7 @@ class ValidationThresholds:
     unloaded_active_threshold: int = 8
     saturation_value: int = 255
     saturation_fraction_max: float = 0.001
-    unchanged_sensor_fraction_max: float = 0.995
+    minimum_changed_sensor_count: int = 1
     fixed_nonzero_fraction_max: float = 0.20
     local_persistent_value_max: float = 32.0
     temporal_noise_p95_max: float = 2.0
@@ -37,6 +37,8 @@ class ValidationThresholds:
             raise ValueError("receive-rate bounds are invalid")
         if self.maximum_gap_ns <= 0:
             raise ValueError("maximum_gap_ns must be positive")
+        if self.minimum_changed_sensor_count < 1:
+            raise ValueError("minimum_changed_sensor_count must be positive")
         if self.service_required_after <= 0:
             raise ValueError("service_required_after must be positive")
 
@@ -96,8 +98,8 @@ def evaluate_baseline(
 
     temporal_range = np.ptp(values, axis=0)
     sensor_means = np.mean(values, axis=0)
-    unchanged_fraction = float(np.mean(temporal_range == 0))
-    if unchanged_fraction > thresholds.unchanged_sensor_fraction_max:
+    changed_sensor_count = int(np.count_nonzero(temporal_range))
+    if changed_sensor_count < thresholds.minimum_changed_sensor_count:
         reasons.append(ValidationReason.NO_VARIATION)
     fixed_nonzero_fraction = float(
         np.mean(

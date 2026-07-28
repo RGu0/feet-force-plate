@@ -144,6 +144,24 @@ def test_rule_engine_rejects_no_variation_and_fixed_nonzero_area() -> None:
     assert ValidationReason.FIXED_VALUE_AREA in _reasons(fixed_nonzero)
 
 
+def test_rule_engine_accepts_sparse_real_empty_board_jitter() -> None:
+    """Stable real empty-board output need not vary across most 48x64 cells."""
+
+    frames = list(_healthy_frames())
+    for index, frame in enumerate(frames):
+        values = np.zeros((48, 64), dtype=np.uint8)
+        for row, column in ((0, 1), (3, 9), (11, 17), (19, 25)):
+            values[row, column] = index % 2
+        frames[index] = _frame(values, frame.host_monotonic_ns, frame.source_index)
+
+    evaluation = evaluate_baseline(
+        tuple(frames), _statistics(tuple(frames)), ValidationThresholds()
+    )
+
+    assert evaluation.outcome is ValidationOutcome.PASS
+    assert ValidationReason.NO_VARIATION not in evaluation.reasons
+
+
 def test_rule_engine_rejects_saturation_and_persistent_local_anomaly() -> None:
     saturated = list(_healthy_frames())
     for index, frame in enumerate(saturated):
