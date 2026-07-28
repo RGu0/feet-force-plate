@@ -192,6 +192,7 @@
 ## 2026-07-28 硬件物理压力流契约重对接
 
 - 抓取时间：2026-07-28；状态：`In Progress`（本切片自动验证完成后应转 `In Review`）。
+- 关联实现 commit：`203a0c66522aa7dca20bc5ae9e90ea27b608cdd2`（本次证据随提交修订为同一 commit）。
 - 本轮依据：仓库已更新的 `docs/algorithm/physical-input-interface-v1.md`、`docs/algorithm/standard-physical-input-contract.md` 及其 schema。Linear 项目/RAY-117 的旧描述仍提及质量、面积及设备私有校准资料；该差异已在 RAY-102 启动评论中记录，未在本任务擅自修改共享文档或接收协议。
 
 ### 已实现
