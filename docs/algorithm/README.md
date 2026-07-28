@@ -43,13 +43,18 @@
    - 算法层姿态归一化、特征提取和质量门控边界
    - 跨硬件一致性测试与版本要求
 
-6. [硬件层到云端算法的物理输入接口 V1](physical-input-interface-v1.md)
+6. [硬件层—算法层交互接口 V1](00-hardware-algorithm-interaction-v1.md)
+   - 设备私有观测与设备无关物理压力会话的边界
+   - 公开物理点场、时间、质量与版本字段
+   - 当前 `estimated_force_n` 实现与正式 `normal_force_n` 契约的差异
+
+7. [硬件层到云端算法的物理输入接口 V1](physical-input-interface-v1.md)
    - `physical-pressure-session/1.0` 硬件层唯一标准压力信息流
    - 算法层负责姿态归一化、COP 和全部压力特征
    - 阵列尺寸、点间距、有效面积、标定、时间和质量字段
    - 加解密边界、版本清单和拒绝规则
 
-7. [临床证据与设计依据](clinical-evidence-and-rationale.md)
+8. [临床证据与设计依据](clinical-evidence-and-rationale.md)
    - 指南、队列研究、系统综述和药物共识
    - 每项证据对本设计的影响
    - 可借用的临床结论与不可直接迁移的阈值
