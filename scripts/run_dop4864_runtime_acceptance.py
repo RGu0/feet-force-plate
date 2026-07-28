@@ -291,13 +291,39 @@ def main() -> int:
     parser.add_argument("--maximum-empty-count", type=float, default=5.0)
     parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
     parser.add_argument("--storage-append-timeout-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--summary-output",
+        type=Path,
+        help="optional sanitized summary path; use a separate volume when testing storage exhaustion",
+    )
     args = parser.parse_args()
-    result = run_acceptance(args)
-    args.output_root.mkdir(parents=True, exist_ok=True)
-    summary = args.output_root / "runtime-acceptance-summary.json"
+    exit_code = 0
+    try:
+        result = run_acceptance(args)
+        if not result["runtime"]["committed"]:
+            exit_code = 2
+    except Exception as exc:
+        exit_code = 2
+        result = {
+            "schema_version": "do-p4864-runtime-acceptance-result/1",
+            "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "device": args.device,
+            "requested_baseline_seconds": args.baseline_seconds,
+            "requested_capture_seconds": args.capture_seconds,
+            "runtime": {
+                "outcome": "INVALID",
+                "frames_stored": None,
+                "reason": f"acceptance runner failed: {type(exc).__name__}",
+                "validity": "INVALID",
+                "committed": False,
+            },
+            "local_only_boundary": "Failure summary contains no raw matrices, key material, or exception text.",
+        }
+    summary = args.summary_output or args.output_root / "runtime-acceptance-summary.json"
+    summary.parent.mkdir(parents=True, exist_ok=True)
     summary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result["runtime"]["committed"] else 2
+    return exit_code
 
 
 if __name__ == "__main__":

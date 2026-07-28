@@ -87,6 +87,33 @@ class RecoveryScannerTests(unittest.TestCase):
         self.assertTrue(sealed.path.exists())
         self.assertEqual(self.store.segment_state(sealed.segment_id), "SEALED")
 
+    def test_restart_discards_active_validity_gated_staging(self) -> None:
+        stager = ValidSessionStager(
+            self.root / "spool",
+            session_id="interrupted-active-capture",
+            key_provider=self.keys,
+            store=self.store,
+            subject_uuid="subject",
+            consent_id=None,
+            versions={"protocol": "observed-compact/1"},
+            started_at_ns=1,
+        )
+        stager.append(_frame(0))
+        stager.append(_frame(101))
+        self.assertTrue(stager.staging_directory.exists())
+
+        result = RecoveryScanner(
+            self.root / "spool" / "sessions",
+            self.store,
+            self.keys,
+            self.root / "spool",
+        ).scan(recovered_at_ns=2)
+
+        self.assertEqual(result.interrupted_staging_discarded, 1)
+        self.assertFalse(stager.staging_directory.exists())
+        with self.assertRaises(KeyError):
+            self.store.session_status("interrupted-active-capture")
+
     def test_scan_finishes_promoted_valid_session_registration(self) -> None:
         self.store.put_subject_ref("subject-2", b"opaque")
         stager = ValidSessionStager(

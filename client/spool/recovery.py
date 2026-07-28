@@ -25,6 +25,7 @@ class ScanResult:
     sessions_marked_incomplete: int = 0
     uploads_requeued: int = 0
     promoted_sessions_recovered: int = 0
+    interrupted_staging_discarded: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,12 @@ class RecoveryScanner:
 
     def scan(self, *, recovered_at_ns: int) -> ScanResult:
         self._segment_root.mkdir(parents=True, exist_ok=True)
+        # Active validity-gated captures have no formal session until promotion.
+        # A restart must discard their encrypted temporary data before scanning
+        # recoverable promoted sessions and sealed artifacts.
+        interrupted_staging_discarded = ValidSessionStager.discard_interrupted_staging(
+            self._repository_root
+        )
         # A registration marker is written before a valid staged directory is
         # atomically promoted.  If power is lost between that rename and the
         # SQLite transaction, finish the transaction before considering raw
@@ -151,4 +158,5 @@ class RecoveryScanner:
             sessions_marked_incomplete=interrupted.sessions_marked_incomplete,
             uploads_requeued=interrupted.uploads_requeued,
             promoted_sessions_recovered=promoted_sessions_recovered,
+            interrupted_staging_discarded=interrupted_staging_discarded,
         )

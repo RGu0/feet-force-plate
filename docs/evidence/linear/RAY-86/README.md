@@ -140,6 +140,53 @@ raw-versus-derived separation, local commit and restart scan on the true device.
 This is not permission to mark the issue Done: actual cable removal, disk-full, power interruption,
 OS secure-storage failure, operator retest and explicit export validation remain outstanding.
 
+### 2026-07-28 actual cable-removal acceptance
+
+The current physical device was opened at `/dev/cu.usbserial-1130` (CH340 family) and exercised
+through `scripts/run_dop4864_runtime_acceptance.py`. After a qualifying 5.140026083-second
+unloaded baseline (111 decoded frames; maximum cell median count 3), the USB serial cable was
+removed during the requested 60-second capture. The runtime received
+`SerialException: [Errno 6] Device not configured`, returned `INVALID`, did not commit a session,
+and restart recovery found no temporary recovery, quarantine, orphan segment, or formal session.
+
+The sanitized summary is `cable-removal-runtime-20260728.json` (SHA-256
+`fd77aa8d6965c83a3c9fa4b8854502664160d8f49a6b5f61fd2869c90cc0345b`). It contains no raw
+matrices or key material. The candidate checksum mismatched each observed frame as expected under
+the permanent observe-only policy; it was not a failure condition. The isolated output directory
+contained only the sanitized summary and the test SQLite state database after the run, with no
+staging or formal session artifacts.
+
+### 2026-07-28 initial storage-exhaustion result — inconclusive
+
+The reversible, isolated physical test had no formal SQLite records but left six temporary encrypted
+segments and could not write its sanitized summary. See `storage-exhaustion-runtime-20260728.md`.
+This is not enough to attribute a product cleanup failure; the runner now writes its failure summary
+outside the intentionally full volume. The rerun reached 100% volume use, returned `INVALID`,
+left no staging files or formal SQLite records, and is accepted as the disk-full evidence.
+
+### 2026-07-28 actual controlled-restart recovery acceptance
+
+The current CH340 device at `/dev/cu.usbserial-1120` ran the normal local-only hardware composition
+with a 5-second unloaded baseline and a requested 180-second capture. After 22 seconds, the parent
+test process sent `SIGKILL` to the active-capture child, then opened a fresh `StateStore` and ran
+`RecoveryScanner`. This is a controlled host-process interruption/restart test, not a claim of an
+uncontrolled power-cut test.
+
+The child return code was `-9`; restart recovery discarded exactly one active `.staging` directory.
+It did not recover/quarantine/register any temporary or sealed data, and the isolated SQLite store
+contained zero formal sessions, segments and derived artifacts. This is the required safe outcome:
+an interrupted in-progress capture cannot become a consumer-visible session.
+
+The recovery scanner now calls the existing `ValidSessionStager.discard_interrupted_staging(...)`
+startup operation before reconciling promoted valid sessions. Automated regression plus the real
+device run verify this boundary. Sanitized evidence:
+[`controlled-restart-recovery-20260728.json`](controlled-restart-recovery-20260728.json), SHA-256
+`55b74aa816dcb95a1e6076cc87916e40bf879d7c3dbff2659b9595ed50fc0a11`.
+
+Known-load repeatability/position coverage is intentionally excluded from this software-functional
+pass: it is manufacturer whole-device calibration work. The four-stage replay fixture remains
+replay/regression evidence; a live UI-to-hardware composition is separate scope.
+
 ## Commit
 
 Automated acceptance evidence commit: pending.
