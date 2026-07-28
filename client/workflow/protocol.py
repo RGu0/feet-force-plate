@@ -51,6 +51,21 @@ class OperatorPromptConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ProtocolStage:
+    """One scored V1 static-balance action inside a single screening session."""
+
+    stage_id: str
+    operator_title: str
+    position_text: str
+    acquisition_text: str
+    duration_seconds: int
+
+    def __post_init__(self) -> None:
+        if not self.stage_id or self.duration_seconds <= 0:
+            raise ValueError("stage id and positive duration are required")
+
+
+@dataclass(frozen=True, slots=True)
 class ScreeningProtocol:
     protocol_id: str
     version: str
@@ -61,6 +76,7 @@ class ScreeningProtocol:
     quality_gate: QualityGateProfile
     prompts: OperatorPromptConfig
     validation_status: ProtocolValidationStatus
+    stages: tuple[ProtocolStage, ...]
 
     def snapshot(self) -> ProtocolSnapshot:
         return ProtocolSnapshot(
@@ -69,6 +85,7 @@ class ScreeningProtocol:
             planned_duration_seconds=self.acquisition_duration_seconds,
             quality_gate_id=self.quality_gate.gate_id,
             quality_gate_version=self.quality_gate.version,
+            stage_ids=tuple(stage.stage_id for stage in self.stages),
         )
 
 
@@ -79,6 +96,7 @@ class ProtocolSnapshot:
     planned_duration_seconds: int
     quality_gate_id: str
     quality_gate_version: str
+    stage_ids: tuple[str, ...] = ()
 
 
 def default_standard_protocol() -> ScreeningProtocol:
@@ -86,9 +104,9 @@ def default_standard_protocol() -> ScreeningProtocol:
 
     return ScreeningProtocol(
         protocol_id="standard-static-bilateral",
-        version="1.0.0-pilot",
+        version="v1-replay-debug/1.0.0",
         paradigm=ProtocolParadigm.STANDARD_BILATERAL,
-        acquisition_duration_seconds=30,
+        acquisition_duration_seconds=80,
         start_condition=StartCondition(stable_hold_seconds=3),
         end_condition=EndCondition(),
         quality_gate=QualityGateProfile(
@@ -111,12 +129,43 @@ def default_standard_protocol() -> ScreeningProtocol:
             audio_enabled=False,
         ),
         validation_status=ProtocolValidationStatus.PILOT_REQUIRED,
+        stages=(
+            ProtocolStage(
+                "BILATERAL_EYES_OPEN",
+                "第一段：并足睁眼",
+                "双脚并拢自然站立，睁眼平视前方",
+                "请保持并足睁眼站立，不要说话或大幅移动",
+                20,
+            ),
+            ProtocolStage(
+                "BILATERAL_EYES_CLOSED",
+                "第二段：并足闭眼",
+                "双脚并拢自然站立，确认安全后闭眼",
+                "请保持并足闭眼站立，工作人员请在旁保护",
+                20,
+            ),
+            ProtocolStage(
+                "SEMI_TANDEM_LEFT_FORWARD",
+                "第三段：左脚在前半串联",
+                "左脚在前、右脚在后，保持半串联站位",
+                "请保持左脚在前半串联站位",
+                20,
+            ),
+            ProtocolStage(
+                "SEMI_TANDEM_RIGHT_FORWARD",
+                "第四段：右脚在前半串联",
+                "右脚在前、左脚在后，保持半串联站位",
+                "请保持右脚在前半串联站位",
+                20,
+            ),
+        ),
     )
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureFlags:
     enabled_protocol_ids: tuple[str, ...] = ()
+    allow_pilot_protocols_for_replay_debug: bool = False
 
 
 class ProtocolUnavailable(RuntimeError):
@@ -138,12 +187,17 @@ class ProtocolCatalog:
         )
         if protocol is None:
             raise ProtocolUnavailable(f"protocol is not registered: {paradigm}")
-        if paradigm is ProtocolParadigm.STANDARD_BILATERAL:
-            return protocol
+        if protocol.validation_status is ProtocolValidationStatus.PILOT_REQUIRED:
+            if (
+                flags.allow_pilot_protocols_for_replay_debug
+                and protocol.protocol_id in flags.enabled_protocol_ids
+            ):
+                return protocol
+            raise ProtocolUnavailable("pilot protocol is unavailable for institution screening")
         if protocol.protocol_id not in flags.enabled_protocol_ids:
-            raise ProtocolUnavailable("extended protocol feature is disabled")
+            raise ProtocolUnavailable("protocol feature is disabled")
         if protocol.validation_status is not ProtocolValidationStatus.VALIDATED:
-            raise ProtocolUnavailable("extended protocol has not completed validation")
+            raise ProtocolUnavailable("protocol has not completed validation")
         return protocol
 
 
@@ -193,8 +247,8 @@ class PositionGuidanceState:
 class PositionGuidanceController:
     def __init__(self, protocol: ScreeningProtocol) -> None:
         self._protocol = protocol
+        self._stage: ProtocolStage | None = None
         self._stable_since: float | None = None
-        self._auto_start_fired = False
         self._state = self._waiting_state()
 
     @property
@@ -203,8 +257,11 @@ class PositionGuidanceController:
 
     def reset(self) -> None:
         self._stable_since = None
-        self._auto_start_fired = False
         self._state = self._waiting_state()
+
+    def set_stage(self, stage: ProtocolStage) -> None:
+        self._stage = stage
+        self.reset()
 
     def observe(
         self,
@@ -221,32 +278,33 @@ class PositionGuidanceController:
         elapsed = max(0.0, now_seconds - self._stable_since)
         hold = self._protocol.start_condition.stable_hold_seconds
         if elapsed >= hold:
-            fire_auto_start = not self._auto_start_fired
-            self._auto_start_fired = True
             self._state = PositionGuidanceState(
                 status=PositionStatus.READY,
-                instruction_text=self._protocol.prompts.position_text,
-                countdown_seconds=0,
-                countdown_text="站位稳定，即将自动开始",
+                instruction_text=self._position_text(),
+                countdown_seconds=None,
+                countdown_text="站位已稳定，请点击“开始本段”",
                 manual_start_allowed=True,
-                auto_start=fire_auto_start,
+                auto_start=False,
             )
             return self._state
         remaining = max(1, ceil(hold - elapsed))
         self._state = PositionGuidanceState(
             status=PositionStatus.STABILIZING,
-            instruction_text=self._protocol.prompts.position_text,
+            instruction_text=self._position_text(),
             countdown_seconds=remaining,
-            countdown_text=f"稳定中… {remaining} 秒后自动开始",
-            manual_start_allowed=True,
+            countdown_text=f"正在确认站位稳定… {remaining} 秒",
+            manual_start_allowed=False,
         )
         return self._state
 
     def _waiting_state(self) -> PositionGuidanceState:
         return PositionGuidanceState(
             status=PositionStatus.WAITING,
-            instruction_text=self._protocol.prompts.position_text,
+            instruction_text=self._position_text(),
             countdown_seconds=None,
-            countdown_text="检测到稳定站位后将自动开始",
+            countdown_text="请按指引调整站位，稳定后再开始本段",
             manual_start_allowed=False,
         )
+
+    def _position_text(self) -> str:
+        return self._stage.position_text if self._stage is not None else self._protocol.prompts.position_text

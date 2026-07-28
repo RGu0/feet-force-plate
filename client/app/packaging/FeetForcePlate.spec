@@ -24,6 +24,7 @@ exe = EXE(
     analysis.datas,
     [],
     name="FeetForcePlate",
+    icon="client/app/assets/FeetForcePlate.icns",
     console=False,
     disable_windowed_traceback=True,
 )

@@ -127,3 +127,10 @@ Automated failure injection, local persistence, queue state behavior, and local 
 - signed installer, upgrade/rollback, and database migration on the target OS.
 
 Therefore RAY-115 may move to **In Review**, not Done.
+
+## 2026-07-26 发布阻断复核
+
+- 修复：`StartupValidationCoordinator` 在调用可能失败的 audit/SQLite sink 前先保留本次运行。sink 失败会呈现安全的 `INTERNAL_ERROR`，阻止进入工作台；`retry()` 仍带前一次 run ID，重新连接并创建新运行。
+- 测试：新增 audit 写入失败 → 新连接 → 后续成功的链路断言；定向 **22 passed in 0.49s**，启动/设备/入口组合 **112 passed in 1.00s**，全量 **336 passed in 28.03s**。
+- 限制：未进行真机故障注入、真实 SQLite 损坏恢复、Windows/CH340 或遥测服务端确认；RAY-115 保持 In Review。
+- Commit SHA：尚未创建；本轮未暂存。

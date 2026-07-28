@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QTableWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton, QTableWidget
 
 from client.app.qt_shell import ScreeningWindow
 from client.app.pages import PageId
@@ -106,3 +106,28 @@ def test_record_history_filters_by_actual_performed_date(qtbot) -> None:
 
     assert table.rowCount() == 1
     assert table.item(0, 0).text() == "**2781"
+
+
+def test_record_history_view_action_carries_the_pinned_report_reference(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    window.present_records(
+        (
+            ScreeningRecordRow(
+                "**2781",
+                "07-21 10:20",
+                "四段 V1 回放",
+                "调试报告",
+                report_id="report-42",
+                report_version=3,
+            ),
+        )
+    )
+
+    button = window.page_widget(PageId.RECORDS).findChild(
+        QPushButton, "recordsTableView0"
+    )
+    button.click()
+
+    assert actions == ["OPEN_REPORT:report-42:3"]

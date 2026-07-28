@@ -24,6 +24,7 @@ class SensorRepairMethod(StrEnum):
     VERTICAL_LINE_DIRECTIONAL_INTERPOLATION = (
         "VERTICAL_LINE_DIRECTIONAL_INTERPOLATION"
     )
+    EXCLUDED_KNOWN_BAD_CELL = "EXCLUDED_KNOWN_BAD_CELL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,12 +97,17 @@ def repair_sensor_defects(
     matrices: tuple[NDArray[np.number], ...],
     *,
     known_bad_cells: frozenset[tuple[int, int]] = frozenset(),
+    known_excluded_cells: frozenset[tuple[int, int]] = frozenset(),
     policy: SensorDefectRepairPolicy = SensorDefectRepairPolicy(),
 ) -> SensorDefectRepairResult:
     """Repair only high-confidence defects before baseline/analysis/display.
 
-    ``known_bad_cells`` is supplied by baseline/diagnostic evidence.  Each
-    incoming frame independently detects a repairable line when a large
+    ``known_bad_cells`` is supplied by baseline/diagnostic evidence and is
+    limited to spatially repairable isolated cells.  ``known_excluded_cells``
+    is an explicit, versioned device/fixture calibration mask for a larger
+    known-bad region: it is set to zero in a separate processing matrix rather
+    than interpolated or silently treated as anatomical contact.  Each incoming
+    frame independently detects a repairable line when a large
     fraction of an interior row (or column) is low while immediate opposite
     sides are supported.  A line cell is restored immediately by pairwise
     directional interpolation across the defect, with a median across the
@@ -114,9 +120,19 @@ def repair_sensor_defects(
     isolated_error = _isolated_repairability_error(known_bad_cells, shape, policy)
     if isolated_error is not None:
         return _invalid(source, isolated_error)
+    exclusion_error = _exclusion_layout_error(known_excluded_cells, shape)
+    if exclusion_error is not None:
+        return _invalid(source, exclusion_error)
+    if known_bad_cells & known_excluded_cells:
+        return _invalid(source, "BAD_CELL_REPAIR_AND_EXCLUSION_OVERLAP")
 
     static_frames = tuple(
-        _repair_known_isolated_cells(matrix, known_bad_cells, policy)
+        _exclude_and_repair_known_cells(
+            matrix,
+            known_excluded_cells=known_excluded_cells,
+            known_bad_cells=known_bad_cells,
+            policy=policy,
+        )
         for matrix in source
     )
     rows_per_frame = tuple(
@@ -210,6 +226,15 @@ def _isolated_repairability_error(
     return None
 
 
+def _exclusion_layout_error(
+    excluded: frozenset[tuple[int, int]], shape: tuple[int, int]
+) -> str | None:
+    for row, column in excluded:
+        if not 0 <= row < shape[0] or not 0 <= column < shape[1]:
+            return "EXCLUDED_BAD_CELL_OUTSIDE_DECLARED_LAYOUT"
+    return None
+
+
 def _empty_frame(values: NDArray[np.float64]) -> RepairedSensorFrame:
     methods = np.full(values.shape, None, dtype=object)
     copied_values = values.copy()
@@ -224,9 +249,11 @@ def _empty_frame(values: NDArray[np.float64]) -> RepairedSensorFrame:
     )
 
 
-def _repair_known_isolated_cells(
+def _exclude_and_repair_known_cells(
     values: NDArray[np.float64],
-    bad: frozenset[tuple[int, int]],
+    *,
+    known_excluded_cells: frozenset[tuple[int, int]],
+    known_bad_cells: frozenset[tuple[int, int]],
     policy: SensorDefectRepairPolicy,
 ) -> RepairedSensorFrame:
     result = _empty_frame(values)
@@ -234,7 +261,11 @@ def _repair_known_isolated_cells(
     repair_mask = result.repair_mask.copy()
     methods = result.methods.copy()
     radius = policy.median_window // 2
-    for row, column in bad:
+    for row, column in known_excluded_cells:
+        repaired_values[row, column] = 0.0
+        repair_mask[row, column] = True
+        methods[row, column] = SensorRepairMethod.EXCLUDED_KNOWN_BAD_CELL
+    for row, column in known_bad_cells:
         window = values[row - radius : row + radius + 1, column - radius : column + radius + 1]
         neighbours = np.delete(window.reshape(-1), radius * policy.median_window + radius)
         repaired_values[row, column] = float(np.median(neighbours))

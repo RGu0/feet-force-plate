@@ -52,4 +52,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 python -m pytes
 powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 python main.py
 ```
 
+## 本地 V1 回放演示
+
+默认入口是可持久化的本地回放闭环，不会访问网络、上传数据或尝试连接串口：
+
+```bash
+./scripts/local-env.sh python main.py
+```
+
+按界面顺序录入受试者、确认必要授权，并开始四段引导。程序以 1× 速度回放仓库内固定的脱敏真机 fixture：并足睁眼、并足闭眼、左脚在前半串联、右脚在前半串联，各 20 秒；第四段完成后才运行本地 V1 调试分析并生成可预览、导出和在历史记录重新打开的 PDF。
+
+开发时可用更高速度缩短等待时间（例如 `--replay-speed 20`）；该参数不应在演示中替代默认的 1× 体验。旧的静态设计演示须显式指定 `--demo`：
+
+```bash
+./scripts/local-env.sh python main.py --replay-speed 20
+./scripts/local-env.sh python main.py --demo
+```
+
+所有工作台页面、结果和 PDF 都是“回放调试数据”，不代表本次受试者真实测量，不用于诊断或风险判断。真实 DO-P4864、License 联网验证、服务端密钥集下发和云端算法/数据管理尚未接入这个入口。
+
+回放不是原始帧直通 UI：每帧均先经过 DO-P4864 的版本化标准化路径（显式基线、坏点处理、零点校正与设备适配器）。本 fixture 已知的连续坏区只在派生帧中排除；原始 fixture 和原始审计输入不被改写。实时设备显示也必须提供已批准的“基线＋已知坏区掩码”处理配置，运行时不再允许无标准化直通。
+
 可通过 `FEETFORCEPLATE_VENV` 为当前机器指定另一个私有环境目录；`UV_BIN` 可指定本机 uv 的位置。修改依赖后可以直接运行 `uv lock` 更新跨平台锁文件，再通过包装脚本同步本机环境。

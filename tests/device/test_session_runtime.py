@@ -54,7 +54,11 @@ class SessionRuntimeTests(unittest.TestCase):
         self.directory.cleanup()
 
     def _runtime(
-        self, *, decision: QualityDecision | None = None, quality_gate: object | None = None
+        self,
+        *,
+        decision: QualityDecision | None = None,
+        quality_gate: object | None = None,
+        transport: SyntheticP4864Transport | None = None,
     ) -> HardwareSessionRuntime:
         ticks = iter(range(1_000_000, 2_000_000))
         stager = ValidSessionStager(
@@ -68,7 +72,8 @@ class SessionRuntimeTests(unittest.TestCase):
             started_at_ns=1,
         )
         return HardwareSessionRuntime(
-            transport=SyntheticP4864Transport(
+            transport=transport
+            or SyntheticP4864Transport(
                 _profile(), realtime=False, max_frames=2,
                 frame_source=lambda i: np.full((48, 64), i + 1, dtype=np.uint8),
             ),

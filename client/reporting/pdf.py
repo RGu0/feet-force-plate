@@ -30,9 +30,15 @@ class BasicReportPdfRenderer:
             painter.drawText(
                 QRect(margin, y, content_width, 60),
                 Qt.AlignmentFlag.AlignLeft,
-                "基础筛查报告",
+                "V1 回放调试报告" if report.kind == "V1_REPLAY_DEBUG" else "基础筛查报告",
             )
             y += 75
+            if report.kind == "V1_REPLAY_DEBUG":
+                painter.setPen(QColor("#b45309"))
+                painter.setFont(QFont("Noto Sans CJK SC", 10, QFont.Weight.Bold))
+                painter.drawText(margin, y, "回放调试数据，不代表本次受试者真实测量")
+                y += 32
+                painter.setPen(QColor("#0f172a"))
             painter.setFont(QFont("Noto Sans CJK SC", 10))
             for line in (
                 f"报告编号：{report.report_id}  版本：{report.version}",

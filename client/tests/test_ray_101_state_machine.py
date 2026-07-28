@@ -42,7 +42,7 @@ class SessionStateMachineTests(unittest.TestCase):
 
         self.assertEqual(machine.step, ScreeningStep.INCOMPLETE)
         machine.retry()
-        self.assertEqual(machine.step, ScreeningStep.POSITION_GUIDANCE)
+        self.assertEqual(machine.step, ScreeningStep.PREFLIGHT)
 
 
 if __name__ == "__main__":

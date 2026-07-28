@@ -8,6 +8,10 @@ from client.app.live_display import LiveDisplayProjection
 from client.app.pages import PageId
 from client.device.acquisition import LatestFrameMailbox
 from client.device.protocol import RawFrame
+from client.hardware_standardization.live_processing import (
+    DoP4864LiveFrameStandardizer,
+    replay_debug_profile,
+)
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.workflow.models import WorkflowState
 from client.workflow.state_machine import ScreeningStep
@@ -29,10 +33,16 @@ def _raw_frame(sequence: int, *, left: int, right: int) -> RawFrame:
     )
 
 
+def _standardizer() -> DoP4864LiveFrameStandardizer:
+    return DoP4864LiveFrameStandardizer(replay_debug_profile(fixture_sha256="0" * 64))
+
+
 def test_live_display_projection_copies_new_hardware_frames_without_mutating_source() -> None:
     hardware = LatestFrameMailbox()
     display = LatestDisplayFrameMailbox()
-    bridge = LiveDisplayProjection(source=hardware, destination=display)
+    bridge = LiveDisplayProjection(
+        source=hardware, destination=display, standardizer=_standardizer()
+    )
     source = _raw_frame(7, left=150, right=50)
     source_before = source.values.copy()
     hardware.publish(source)
@@ -85,7 +95,9 @@ def test_qt_timer_projects_hardware_latest_frame_into_p07(qtbot) -> None:
     controller = ApplicationController(
         coordinator,
         display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30.0),
-        live_display=LiveDisplayProjection(source=hardware, destination=display),
+        live_display=LiveDisplayProjection(
+            source=hardware, destination=display, standardizer=_standardizer()
+        ),
     )
     qtbot.addWidget(controller.window)
     controller.window.show()

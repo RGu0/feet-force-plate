@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local replay-demo output. These files are reproducible and must not be
+# mistaken for versioned product assets or subject data.
+/replay-debug-report.pdf
+/tmp/
+/Screenshot 2026-07-21 at 7.57.45 PM.png

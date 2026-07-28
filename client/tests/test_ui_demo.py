@@ -23,6 +23,9 @@ def test_design_demo_routes_the_operator_through_the_standard_flow(qtbot) -> Non
     assert demo.window.current_page_id is PageId.PREFLIGHT
 
     demo.dispatch("RECHECK")
+    assert demo.window.current_page_id is PageId.PREFLIGHT
+
+    demo.dispatch("ENTER_POSITION")
     assert demo.window.current_page_id is PageId.POSITION_GUIDANCE
 
     demo.dispatch("START_ACQUISITION")
@@ -48,7 +51,8 @@ def test_design_demo_opens_a_versioned_report_preview(qtbot) -> None:
     demo.dispatch("VIEW_BASIC_REPORT")
 
     page = demo.window.page_widget(PageId.REPORT_PREVIEW)
-    assert "v1" in page.findChild(QLabel, "reportPreviewTitle").text()
+    assert page.findChild(QLabel, "reportPreviewTitle").text() == "基础筛查报告"
+    assert "v1" in page.findChild(QLabel, "reportVersionPillText").text()
     assert "基础分析" in page.findChild(QLabel, "reportPreviewSummary").text()
 
 

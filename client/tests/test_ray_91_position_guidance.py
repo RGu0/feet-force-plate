@@ -21,7 +21,7 @@ def test_stable_position_counts_down_with_text_and_resets_when_subject_leaves() 
     assert restarted.countdown_seconds == 3
 
 
-def test_auto_start_fires_after_stable_hold_and_manual_start_requires_contact_and_area() -> None:
+def test_stable_hold_enables_manual_start_without_automatic_transition() -> None:
     guidance = PositionGuidanceController(default_standard_protocol())
 
     waiting = guidance.observe(
@@ -41,8 +41,10 @@ def test_auto_start_fires_after_stable_hold_and_manual_start_requires_contact_an
     )
 
     assert not waiting.manual_start_allowed
-    assert stable.manual_start_allowed
+    assert not stable.manual_start_allowed
     assert not stable.auto_start
     assert ready.status is PositionStatus.READY
-    assert ready.auto_start
-    assert "自动开始" in ready.countdown_text
+    assert ready.manual_start_allowed
+    assert not ready.auto_start
+    assert "点击" in ready.countdown_text
+    assert "自动开始" not in ready.countdown_text

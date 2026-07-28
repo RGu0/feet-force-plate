@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -95,6 +96,18 @@ class _Delivery:
         self.prints.append((report, spooler))
 
 
+class _PersistedReports:
+    def __init__(self, report: BasicReportDocument) -> None:
+        self.report = report
+        self.lookups: list[tuple[str, int]] = []
+
+    def load_report(self, report_id: str, version: int) -> str:
+        self.lookups.append((report_id, version))
+        if (report_id, version) != (self.report.report_id, self.report.version):
+            raise KeyError(report_id)
+        return self.report.to_json()
+
+
 class _InconsistentProcessor:
     def process(self, session_id: str) -> ProcessingOutcome:
         _ = session_id
@@ -129,6 +142,24 @@ def test_local_report_adapter_pins_one_document_for_analysis_preview_export_and_
     assert processor.calls == ["session-ui-1"]
     assert delivery.exports == [(report, destination)]
     assert delivery.prints == [(report, spooler)]
+
+
+def test_local_report_adapter_reloads_the_exact_persisted_report_version() -> None:
+    adapter_type = getattr(ui_integration, "LocalReportWorkflowAdapter", None)
+    assert adapter_type is not None
+    report = _report()
+    persisted = _PersistedReports(report)
+    adapter = adapter_type(
+        processor=_Processor(None),
+        delivery=_Delivery(),
+        spooler=object(),
+        persisted_reports=persisted,
+    )
+
+    restored = adapter.report_document(report.report_id, report.version)
+
+    assert restored == report
+    assert persisted.lookups == [(report.report_id, report.version)]
 
 
 def test_basic_ready_without_a_versioned_document_is_rejected() -> None:
@@ -191,11 +222,55 @@ def test_connected_controller_loads_the_exact_report_document_into_p10(qtbot) ->
     page = controller.window.page_widget(PageId.REPORT_PREVIEW)
     assert controller.window.current_page_id is PageId.REPORT_PREVIEW
     assert page.findChild(QLabel, "reportPreviewSummary").text() == report.summary
-    assert "v2" in page.findChild(QLabel, "reportPreviewTitle").text()
-    assert "基础筛查报告" in page.findChild(QLabel, "reportPreviewTitle").text()
+    assert page.findChild(QLabel, "reportPreviewTitle").text() == "基础筛查报告"
+    assert "v2" in page.findChild(QLabel, "reportVersionPillText").text()
     footer = page.findChild(QLabel, "reportPreviewFooter").text()
-    assert "基础 v2" in footer
+    assert "v2" in footer
     assert "完整 v2" not in footer
+
+
+def test_connected_controller_opens_an_explicit_historic_report_reference(qtbot) -> None:
+    controller_type = getattr(ui_integration, "ReportConnectedController", None)
+    adapter_type = getattr(ui_integration, "LocalReportWorkflowAdapter", None)
+    assert controller_type is not None
+    report = _report()
+    reports = adapter_type(
+        processor=_Processor(report),
+        delivery=_Delivery(),
+        spooler=object(),
+    )
+    reports.analyze("session-ui-1")
+    controller = controller_type(_ReportCoordinator(), report_documents=reports)
+    qtbot.addWidget(controller.window)
+
+    controller.dispatch(f"OPEN_REPORT:{report.report_id}:{report.version}")
+
+    assert controller.window.current_page_id is PageId.REPORT_PREVIEW
+    assert "报告编号 report-ui-1" in controller.window.page_widget(
+        PageId.REPORT_PREVIEW
+    ).findChild(QLabel, "reportPreviewFooter").text()
+
+
+def test_historic_selection_pins_export_to_that_report_version(qtbot, tmp_path: Path) -> None:
+    controller_type = getattr(ui_integration, "ReportConnectedController", None)
+    adapter_type = getattr(ui_integration, "LocalReportWorkflowAdapter", None)
+    current = _report()
+    historic = replace(current, report_id="historic-42", version=7)
+    delivery = _Delivery()
+    reports = adapter_type(processor=_Processor(current), delivery=delivery, spooler=object())
+    reports.analyze(current.session_id)
+    reports._documents[(historic.report_id, historic.version)] = historic
+    controller = controller_type(
+        _ReportCoordinator(),
+        report_documents=reports,
+        export_destination=lambda: tmp_path / "historic.pdf",
+    )
+    qtbot.addWidget(controller.window)
+
+    controller.dispatch("OPEN_REPORT:historic-42:7")
+    controller.dispatch("EXPORT_PDF")
+
+    assert delivery.exports == [(historic, tmp_path / "historic.pdf")]
 
 
 class _Preflight:
@@ -274,13 +349,22 @@ def test_connected_composition_runs_ui_to_local_report_heatmap_export_and_print(
     controller.dispatch("SKIP_PROFILE")
     controller.dispatch("CONFIRM_CONSENT")
     qtbot.waitUntil(
-        lambda: controller.window.current_page_id is PageId.POSITION_GUIDANCE
+        lambda: runtime.coordinator.state.preflight_ready
     )
+    assert controller.window.current_page_id is PageId.PREFLIGHT
+    controller.dispatch("ENTER_POSITION")
+    assert controller.window.current_page_id is PageId.POSITION_GUIDANCE
     controller.on_position_observation(
         now_seconds=0.0,
         contact_ready=True,
         in_valid_area=True,
     )
+    controller.on_position_observation(
+        now_seconds=3.0,
+        contact_ready=True,
+        in_valid_area=True,
+    )
+    assert controller.window.current_page_id is PageId.POSITION_GUIDANCE
     controller.dispatch("START_ACQUISITION")
     assert controller.window.current_page_id is PageId.ACQUIRING
 

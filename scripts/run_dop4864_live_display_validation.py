@@ -27,6 +27,11 @@ from client.device.acquisition import LatestFrameMailbox
 from client.device.protocol import DaoOneP4864Parser, ProtocolProfile
 from client.device.serial_transport import SerialByteTransport
 from client.device.transport import TransportDisconnected
+from client.hardware_standardization.live_processing import (
+    DoP4864LiveFrameStandardizer,
+    DoP4864LiveProcessingProfile,
+)
+from client.hardware_standardization.models import BaselineReference
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.workflow.models import WorkflowState
 from client.workflow.state_machine import ScreeningStep
@@ -66,12 +71,47 @@ def _profile() -> ProtocolProfile:
     )
 
 
-def validate(*, device: str, seconds: float, screenshot: Path | None) -> dict[str, Any]:
+def _processing_profile(path: Path) -> DoP4864LiveProcessingProfile:
+    """Load the approved live baseline and known-bad mask; never invent either."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    baseline = payload["baseline_reference"]
+    reference = BaselineReference(
+        schema_version=baseline["schema_version"],
+        baseline_window_id=baseline["baseline_window_id"],
+        layout_digest=baseline["layout_digest"],
+        zero_offset_count=tuple(float(value) for value in baseline["zero_offset_count"]),
+        noise_mad_count=tuple(float(value) for value in baseline["noise_mad_count"]),
+        rules_version=baseline["rules_version"],
+        threshold_version=baseline["threshold_version"],
+        source_digest=baseline["source_digest"],
+    )
+    cells = frozenset(
+        (int(row), int(column)) for row, column in payload.get("known_excluded_cells", ())
+    )
+    return DoP4864LiveProcessingProfile(
+        version=str(payload["version"]),
+        baseline_reference=reference,
+        known_excluded_cells=cells,
+    )
+
+
+def validate(
+    *,
+    device: str,
+    seconds: float,
+    screenshot: Path | None,
+    processing_profile: DoP4864LiveProcessingProfile,
+) -> dict[str, Any]:
     if seconds <= 0:
         raise ValueError("seconds must be positive")
     raw_mailbox = LatestFrameMailbox()
     display_mailbox = LatestDisplayFrameMailbox()
-    bridge = LiveDisplayProjection(source=raw_mailbox, destination=display_mailbox)
+    bridge = LiveDisplayProjection(
+        source=raw_mailbox,
+        destination=display_mailbox,
+        standardizer=DoP4864LiveFrameStandardizer(processing_profile),
+    )
     app = QApplication.instance() or QApplication([])
     coordinator = _ValidationCoordinator()
     controller = ApplicationController(
@@ -142,6 +182,7 @@ def validate(*, device: str, seconds: float, screenshot: Path | None) -> dict[st
         "reader_error": outcome["reader_error"],
         "reader_stopped": not reader.is_alive(),
         "screenshot_saved": bool(outcome.get("screenshot_saved", False)),
+        "live_processing_profile": processing_profile.version,
         "boundary": "Display-only validation; no subject, durable session, analysis result, or report was created.",
     }
 
@@ -151,6 +192,12 @@ def main() -> int:
     arguments.add_argument("--device", required=True)
     arguments.add_argument("--seconds", type=float, default=10.0)
     arguments.add_argument("--screenshot", type=Path)
+    arguments.add_argument(
+        "--processing-profile",
+        type=Path,
+        required=True,
+        help="已批准的基线与已知坏区掩码 JSON；真实显示不允许无标准化直通",
+    )
     options = arguments.parse_args()
     print(
         json.dumps(
@@ -158,6 +205,7 @@ def main() -> int:
                 device=options.device,
                 seconds=options.seconds,
                 screenshot=options.screenshot,
+                processing_profile=_processing_profile(options.processing_profile),
             ),
             ensure_ascii=False,
             indent=2,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import replace
 from enum import StrEnum
 import math
 import time
@@ -293,8 +294,10 @@ class StartupValidationCoordinator:
                 device_ref=connection.device_ref,
             )
         run = self._run_policy(run)
-        self._run_sink(run)
-        self._last_run = run
+        run = self._record_or_make_recoverable(run)
+        if run.reason is ValidationReason.INTERNAL_ERROR:
+            self._emit(StartupValidationState.INTERNAL_ERROR, error_code=run.error_code)
+            return run
         if run.outcome is ValidationOutcome.PASS:
             self._emit(StartupValidationState.PASSED)
             return run
@@ -370,15 +373,42 @@ class StartupValidationCoordinator:
             ),
         )
         resolved_run = self._run_policy(run)
-        self._run_sink(resolved_run)
-        self._last_run = resolved_run
+        resolved_run = self._record_or_make_recoverable(resolved_run)
         resolved_state = (
             StartupValidationState.SERVICE_REQUIRED
             if resolved_run.outcome is ValidationOutcome.SERVICE_REQUIRED
-            else state
+            else (
+                StartupValidationState.INTERNAL_ERROR
+                if resolved_run.reason is ValidationReason.INTERNAL_ERROR
+                else state
+            )
         )
         self._emit(resolved_state, error_code=resolved_run.error_code)
         return resolved_run
+
+    def _record_or_make_recoverable(
+        self,
+        run: DeviceValidationRun,
+    ) -> DeviceValidationRun:
+        """Keep an attempt available for retry even when durable audit storage fails."""
+
+        # The preceding attempt is a linkage/audit value, not proof that it was
+        # durably persisted.  Store it before calling the fallible sink so a
+        # retry always creates a fresh connection and run context.
+        self._last_run = run
+        try:
+            self._run_sink(run)
+        except Exception:
+            recoverable = replace(
+                run,
+                outcome=ValidationOutcome.RETRYABLE_FAIL,
+                reason=ValidationReason.INTERNAL_ERROR,
+                error_code=_FAILURE_CODES[StartupValidationState.INTERNAL_ERROR],
+                diagnostic_id=self._id_factory(),
+            )
+            self._last_run = recoverable
+            return recoverable
+        return run
 
     @staticmethod
     def _failure_state(reason: ValidationReason | None) -> StartupValidationState:

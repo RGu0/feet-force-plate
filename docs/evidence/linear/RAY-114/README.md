@@ -111,3 +111,10 @@ Automated and local visual checks are complete. The following remain explicitly 
 - RAY-115 durable log/telemetry persistence and delayed-upload integration.
 
 Therefore RAY-114 may move to **In Review**, not Done.
+
+## 2026-07-26 发布阻断复核
+
+- `main.py` 现默认进入 `client.app.packaged_entry.main`，因此先经过 `MandatoryStartupGate`；回放和静态演示均须显式参数。
+- 新增主入口自动测试覆盖默认正式入口与显式 replay 路径；启动、设备、协议、入口组合验证 **112 passed in 1.00s**，全量 offscreen 回归 **336 passed in 28.03s**。
+- package 通过后的工作台组合根仍缺正式采集/存储/报告端口装配，不能以当前 `ScreeningWindow()` 视为已完成集成。真机、Windows 和人工验收仍未执行；RAY-114 保持 In Review。
+- Commit SHA：尚未创建；本轮未暂存。

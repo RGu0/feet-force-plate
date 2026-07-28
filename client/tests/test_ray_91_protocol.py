@@ -21,9 +21,9 @@ def test_default_protocol_is_versioned_and_captures_start_end_quality_and_prompt
     protocol = default_standard_protocol()
 
     assert protocol.protocol_id == "standard-static-bilateral"
-    assert protocol.version == "1.0.0-pilot"
+    assert protocol.version == "v1-replay-debug/1.0.0"
     assert protocol.paradigm is ProtocolParadigm.STANDARD_BILATERAL
-    assert protocol.acquisition_duration_seconds == 30
+    assert protocol.acquisition_duration_seconds == 80
     assert protocol.start_condition.stable_hold_seconds == 3
     assert protocol.start_condition.requires_minimum_contact
     assert protocol.start_condition.requires_valid_area
@@ -34,6 +34,7 @@ def test_default_protocol_is_versioned_and_captures_start_end_quality_and_prompt
     assert protocol.prompts.position_text == "双脚自然站立，保持身体放松"
     assert protocol.prompts.audio_enabled is False
     assert protocol.validation_status is ProtocolValidationStatus.PILOT_REQUIRED
+    assert len(protocol.stages) == 4
 
 
 def test_extended_paradigm_requires_both_feature_flag_and_validation() -> None:
@@ -65,6 +66,26 @@ def test_extended_paradigm_requires_both_feature_flag_and_validation() -> None:
         FeatureFlags(enabled_protocol_ids=("single-leg-static",)),
     )
     assert selected.protocol_id == "single-leg-static"
+
+
+def test_pilot_standard_protocol_is_replay_only_and_is_rejected_by_institution_catalog() -> None:
+    protocol = default_standard_protocol()
+    catalog = ProtocolCatalog((protocol,))
+
+    with pytest.raises(ProtocolUnavailable, match="institution screening"):
+        catalog.select(
+            ProtocolParadigm.STANDARD_BILATERAL,
+            FeatureFlags(enabled_protocol_ids=(protocol.protocol_id,)),
+        )
+
+    selected = catalog.select(
+        ProtocolParadigm.STANDARD_BILATERAL,
+        FeatureFlags(
+            enabled_protocol_ids=(protocol.protocol_id,),
+            allow_pilot_protocols_for_replay_debug=True,
+        ),
+    )
+    assert selected is protocol
 
 
 def test_reference_range_is_publishable_only_with_population_source_version_and_approval() -> None:

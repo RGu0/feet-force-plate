@@ -81,10 +81,11 @@ def _coordinator() -> tuple[ScreeningCoordinator, _Sessions, _Acquisition]:
     coordinator.complete_profile()
     coordinator.confirm_consent()
     coordinator.run_preflight()
+    coordinator.enter_position_guidance()
     return coordinator, sessions, acquisition
 
 
-def test_position_countdown_auto_starts_and_passes_protocol_snapshot_to_session_port() -> None:
+def test_stable_position_waits_for_explicit_start_and_passes_protocol_snapshot() -> None:
     coordinator, sessions, acquisition = _coordinator()
 
     first = coordinator.observe_position(
@@ -92,23 +93,35 @@ def test_position_countdown_auto_starts_and_passes_protocol_snapshot_to_session_
         contact_ready=True,
         in_valid_area=True,
     )
-    started = coordinator.observe_position(
+    ready = coordinator.observe_position(
         now_seconds=13.0,
         contact_ready=True,
         in_valid_area=True,
     )
 
     assert first.countdown_seconds == 3
-    assert started.auto_start
+    assert ready.manual_start_allowed
+    assert not ready.auto_start
+    assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
+    assert acquisition.started == []
+    assert sessions.protocols == []
+
+    assert coordinator.start_acquisition()
     assert coordinator.state.step is ScreeningStep.ACQUIRING
     assert acquisition.started == ["session-1"]
     assert sessions.protocols == [
         ProtocolSnapshot(
             protocol_id="standard-static-bilateral",
-            protocol_version="1.0.0-pilot",
-            planned_duration_seconds=30,
-            quality_gate_id="static-basic-quality",
-            quality_gate_version="1.0.0-pilot",
+                protocol_version="v1-replay-debug/1.0.0",
+                planned_duration_seconds=80,
+                quality_gate_id="static-basic-quality",
+                quality_gate_version="1.0.0-pilot",
+                stage_ids=(
+                    "BILATERAL_EYES_OPEN",
+                    "BILATERAL_EYES_CLOSED",
+                    "SEMI_TANDEM_LEFT_FORWARD",
+                    "SEMI_TANDEM_RIGHT_FORWARD",
+                ),
         )
     ]
 
@@ -128,6 +141,12 @@ def test_manual_start_is_blocked_until_minimum_contact_and_valid_area() -> None:
         contact_ready=True,
         in_valid_area=True,
     )
+    assert not coordinator.start_acquisition()
+    coordinator.observe_position(
+        now_seconds=4.0,
+        contact_ready=True,
+        in_valid_area=True,
+    )
 
     assert coordinator.start_acquisition()
     assert len(sessions.protocols) == 1
@@ -140,14 +159,17 @@ def test_protocol_duration_automatically_finishes_local_processing_and_basic_rep
         contact_ready=True,
         in_valid_area=True,
     )
+    coordinator.observe_position(
+        now_seconds=3.0,
+        contact_ready=True,
+        in_valid_area=True,
+    )
     assert coordinator.start_acquisition()
 
     remaining = coordinator.observe_acquisition_elapsed(elapsed_seconds=5)
 
-    assert remaining == 25
-    assert coordinator.state.remaining_seconds == 25
-    finished = coordinator.observe_acquisition_elapsed(elapsed_seconds=30)
+    assert remaining == 15
+    assert coordinator.state.remaining_seconds == 15
+    finished = coordinator.observe_acquisition_elapsed(elapsed_seconds=20)
     assert finished == 0
-    assert coordinator.state.step is ScreeningStep.BASIC_REPORT
-    assert coordinator.state.report_id == "report-1"
-    assert coordinator.state.report_version == 1
+    assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE

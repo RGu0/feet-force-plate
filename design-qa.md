@@ -1,55 +1,97 @@
-# UI Design QA — Steady Health Desktop
+# FeetForcePlate P-01 至 P-11 全页面视觉验收
 
-## Scope and visual truth
+## 设计真值
 
-- Implemented flow: P-01 through P-11 in `docs/ui-desgin/FeetForcePlate UI Set.dc.html`.
-- Reference states: source captures in `/private/tmp/feetforceplate-ui-reference/`.
-- Implementation states: deterministic native Qt captures in `/private/tmp/feetforceplate-ui-captures/`.
-- Review viewport: 1440 × 900.  The same application also has a 1280 × 720 minimum-size regression test.
-- Deterministic capture command:
+- 页面设计源：`docs/ui-desgin/FeetForcePlate UI Set.dc.html`
+- 公共顶栏设计源：`docs/ui-desgin/TopBar.dc.html`
+- 热力图设计源：`docs/ui-desgin/Heatmap.jsx`
+- 品牌资产：`docs/ui-desgin/assets/logo-horizontal-trimmed.png`
+- 用户人工复核基准：2026-07-23 对话中提供的工作台原设计截图。
+- 基线视口：1440 × 900；浅色单主题。
 
-  ```sh
-  QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python scripts/capture_ui_design.py
-  ```
+设计 HTML 依赖远程 React 运行时；当前验证环境无法访问其 CDN，因此没有把 HTML 重新渲染成一套冒充原稿的近似截图。逐页核对以仓库内原始布局、尺寸、间距、状态和文案定义为准；P-01 同时以用户提供的可见设计图为准。
 
-## Compared states
+## 实现证据
 
-| Page | Reference | Implementation | State exercised |
-| --- | --- | --- | --- |
-| P-01 工作台 | `P-01-workbench.png` | `P-01-workbench.png` | recent records and primary screening CTA |
-| P-03 建档 | `P-03-profile.png` | `P-03-profile.png` | institution lookup, profile form and non-blocking validation |
-| P-06 站位 | `P-06-position.png` | `P-06-position.png` | dual-foot position illustration and guarded start |
-| P-07 检测中 | `P-07-acquiring.png` | `P-07-acquiring.png` | latest display frame, COP and 18-second countdown |
-| P-08 结果 | `P-08-result.png` | `P-08-result.png` | basic report ready and retryable processing states |
-| P-10 报告 | `P-10-report.png` | `P-10-report.png` | pinned `report_id + version` document preview |
+- 确定性截图脚本：`scripts/capture_ui_design.py`
+- 最终截图目录：`/private/tmp/feetforceplate-ui-audit-final`
+- 总览图：`/private/tmp/feetforceplate-ui-audit-final-contact.png`
+- 截图尺寸：15 张均为 1440 × 900。
+- 实现路径：`client/app/qt_shell.py`、`client/app/design_system.py`
 
-Combined comparison evidence from the visual review is retained in `/private/tmp/feetforceplate-ui-reference/comparison-P-01.png`, `comparison-p03-final2.png`, `comparison-p06-final2.png`, `comparison-p07-final.png`, `comparison-p08.png`, and `comparison-p10.png`.
+覆盖状态：
 
-## Final findings
+1. P-01 工作台
+2. P-02 受试者识别
+3. P-02 档案冲突
+4. P-03 选填档案
+5. P-04 授权确认
+6. P-05 预检通过
+7. P-05 预检失败
+8. P-06 站位引导
+9. P-07 检测进行中
+10. P-07 停止确认
+11. P-08 报告生成成功
+12. P-08 质量未通过
+13. P-09 检测记录
+14. P-10 报告预览
+15. P-11 设备与支持
 
-| Surface | Result | Evidence / decision |
-| --- | --- | --- |
-| Layout and spacing | Pass | Replaced the prior generic sidebar shell with the design's 64px top bar, horizontal navigation, page max widths, flat surfaces and page-specific vertical rhythm. |
-| Typography and colour | Pass | The shared stylesheet uses the source's calm light medical-blue token family, contrast states and border treatments. Native Qt font rasterisation remains slightly different from browser rendering. |
-| Assets and icons | Pass | The source logo and the result-status SVG assets are used directly. The pressure surface is a real `DisplayFrame` visualisation; its annotation and pressure legend follow the source chart treatment. |
-| Interaction and states | Pass | Page navigation, workflow guards, conflict state, non-blocking validation, consent split, device preflight recovery, stop confirmation, report states, filters and support actions are reachable in the local demo. |
-| Accessibility | Pass | Controls have accessible names, keyboard focus styling and practical minimum button heights; the regression suite covers Tab order and core page affordances. |
-| Viewport resilience | Pass | Automated coverage asserts the 1280 × 720 minimum usable layout; captures verify the 1440 × 900 baseline. |
+## 本轮发现与修复
 
-## Intentional implementation decisions
+### P-01 工作台
 
-- P-07 is data-driven rather than a static pressure illustration: it preserves RAY-84's latest-display-frame boundary while matching the source's grid, chart label, legend, COP and two-column hierarchy.
-- P-10 renders the actual `BasicReportDocument` instead of the design mock's placeholder lines, so report content and its pinned version cannot visually drift from the active document.
-- The design mock shows consent preselected, but the implemented required-consent checkbox starts unchecked to preserve the product rule and prevent unintended authorisation.
+- 移除 Qt 表格默认竖向网格；仅保留设计稿中的表头底线和行间横线。
+- 列宽恢复自然固定宽度，文本左对齐，状态列吸收余量，“查看”固定在右侧。
+- 主按钮固定 220 × 64，字体 18px/600，圆角 8px。
+- 恢复 64px 页面上边距、44px 英雄区内边距、14px 标题说明间距及 40px 主按钮间距。
+- 近期记录固定为 44px 表头和 5 × 56px 数据行，完整显示五条记录。
+- 依照用户提供的最终设计图，P-01 保持无顶栏的聚焦工作台。
 
-## Iteration log
+### P-02 至 P-06 建档与检测准备
 
-1. **P1/P2 — shell and hierarchy drift:** the former generic card/sidebar presentation did not match the supplied UI Design.  Fixed in `client/app/design_system.py` and `client/app/qt_shell.py` with the source-led shell and page layouts.
-2. **P2 — workbench/profile/stance density drift:** corrected content width, record-table density, form alignment and position-guide proportions; recaptured P-01/P-03/P-06.
-3. **P2 — acquiring chart annotation missing:** added the source chart label and low-to-high pressure legend to `HeatmapWidget`; recaptured P-07.
+- P-02 普通查找与冲突状态分离；冲突页隐藏步骤条，使用警告横幅、双档案卡和受控选择。
+- “确认并继续”恢复 140 × 56；向导正文恢复 48px 上下内边距。
+- 步骤条完成态使用来源一致的绿色完成图标、连线和文字层级。
+- P-03/P-04 正文标题、字段标签、选填说明、底部双动作与设计尺寸一致。
+- P-04 继续保留必要授权不默认勾选的产品安全规则。
+- P-05 成功与失败使用同一四行预检卡；失败仅在对应检查项显示红色错误，不重复展示全局错误条，也不暴露内部错误码。
+- P-05 页脚按状态切换为“重新检查 / 进入站位引导”或“返回 / 重新检查”。
+- P-06 保留居中站位图、阶段提示、稳定倒计时和手动开始；回放模式明确显示“回放调试数据”。
 
-No open P0, P1 or P2 visual-fidelity finding remains. Residual P3 differences are limited to platform-native font antialiasing and live pressure interpolation, both intentional consequences of a native, data-driven PySide6 client.
+### P-07 至 P-08 采集与结果
 
-## Final result
+- P-07 保持 60/40 左右结构、56px 页头、实时热力图、倒计时、进度条及右下角停止动作。
+- 停止操作改为全页遮罩和居中确认对话框；唯一填充红色按钮为最终停止动作。
+- P-08 成功与失败均使用 560px 居中结果卡；失败态使用警告图标、质量提示、返回工作台和重新检测，不显示报告说明。
+- 本地 V1 回放流程的结果和报告继续显著标记为调试数据，避免伪装成真实受试者测量。
 
-**passed**
+### P-09 至 P-11 记录、报告与支持
+
+- P-09 内容区固定 1120px；搜索框 360 × 44，筛选和搜索按钮统一 44px；表格固定 440px。
+- P-10 标题与版本标签拆分；顶部元数据、A4 报告标题、版本和当前 `report_id + version` 保持一致。
+- P-10 根据报告种类显示完整、基础或 V1 回放调试标题；调试报告固定显示“不用于诊断”。
+- P-11 内容区固定 720px，状态行统一 64px；待同步数据显示为“0 次”，不重复字段名。
+
+## 五个视觉面核对
+
+- 字体与层级：页面标题、区块标题、字段标签、表头、正文、辅助说明和数字倒计时层级完整，未发现异常截断。
+- 间距与布局：向导、工作台、采集双栏、结果卡、记录表格及报告画布均符合 1440 × 900 基线；关键控件尺寸与源定义一致。
+- 颜色与令牌：统一使用 Pulse Blue、浅灰页面、白色表面和成功/警告/危险语义色，没有引入新的近似配色。
+- 图像与资产：继续使用仓库品牌图片和热力图真实渲染；检查图标使用来源 SVG 路径，没有用字符或临时占位图替代。
+- 文案与状态：所有状态同时使用图标、文字和颜色；不显示串口、队列、堆栈或内部错误码；回放调试边界在工作台、结果和报告中保留。
+
+## 自动化验证
+
+- UI 与报告聚焦回归：34 passed。
+- 工程全量回归：327 passed。
+- 最终截图：15/15 成功生成。
+- Python 编译检查与 `git diff --check`：见本轮最终交付记录。
+
+## 验收边界
+
+- 本次结论覆盖 Qt 1440 × 900 确定性截图、页面状态和自动化交互。
+- 不把截图和测试扩张解释为真实硬件、Windows 字体栅格化、打印机或现场可用性验收。
+- P-00 登录与 P-00b License 属于服务器授权入口，不在当前 P-01 至 P-11 本地回放闭环中；本轮未擅自接入尚未完成的服务器授权流程。
+
+final result: passed

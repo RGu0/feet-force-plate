@@ -11,6 +11,13 @@ from .defect_repair import (
     repair_sensor_defects,
 )
 from .geometry import BoardCoordinateLayout
+from .live_processing import (
+    DoP4864LiveFrameStandardizer,
+    DoP4864LiveProcessingProfile,
+    FrameStandardizationError,
+    FrameStandardizer,
+    replay_debug_profile,
+)
 from .spatial_integration import SpatialForceIntegration, integrate_regular_grid_force
 from .models import (
     BaselineReference,
@@ -33,6 +40,10 @@ __all__ = (
     "BoardCoordinateLayout",
     "CellStatus",
     "DeviceSpecification",
+    "DoP4864LiveFrameStandardizer",
+    "DoP4864LiveProcessingProfile",
+    "FrameStandardizationError",
+    "FrameStandardizer",
     "RepairedSensorFrame",
     "SensorDefectRepairPolicy",
     "SensorDefectRepairResult",
@@ -53,5 +64,6 @@ __all__ = (
     "build_baseline_reference",
     "load_device_specification",
     "repair_sensor_defects",
+    "replay_debug_profile",
     "integrate_regular_grid_force",
 )

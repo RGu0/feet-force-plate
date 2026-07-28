@@ -48,6 +48,8 @@ class _CoordinatorPort(Protocol):
 
     def run_preflight(self) -> bool: ...
 
+    def enter_position_guidance(self) -> bool: ...
+
     def start_acquisition(self) -> bool: ...
 
     def stop_acquisition(self) -> bool: ...
@@ -159,15 +161,20 @@ class ApplicationController:
             self.refresh()
             QTimer.singleShot(0, self._run_preflight)
             return
-        handlers = {
+        if action == "RETRY_SCREENING":
+            self._coordinator.retry_screening()
+            self.refresh()
+            QTimer.singleShot(0, self._run_preflight)
+            return
+        handlers: dict[str, Callable[[], object]] = {
             "START_NEW_SCREENING": self._start_new_screening,
             "CONFIRM_SUBJECT": self._coordinator.confirm_subject,
             "SAVE_PROFILE": self._coordinator.complete_profile,
             "SKIP_PROFILE": self._coordinator.complete_profile,
             "RECHECK": self._coordinator.run_preflight,
+            "ENTER_POSITION": self._coordinator.enter_position_guidance,
             "START_ACQUISITION": self._coordinator.start_acquisition,
             "STOP_SCREENING": self._coordinator.stop_acquisition,
-            "RETRY_SCREENING": self._coordinator.retry_screening,
             "START_NEXT_SCREENING": self._start_next_screening,
         }
         try:

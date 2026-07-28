@@ -43,6 +43,13 @@ class _Coordinator:
         self._state = WorkflowState(ScreeningStep.PREFLIGHT)
 
     def run_preflight(self) -> bool:
+        self._state = WorkflowState(
+            ScreeningStep.PREFLIGHT,
+            preflight_ready=True,
+        )
+        return True
+
+    def enter_position_guidance(self) -> bool:
         self._state = WorkflowState(ScreeningStep.POSITION_GUIDANCE)
         return True
 
@@ -93,10 +100,11 @@ class _Audit:
 class _Consents:
     def __init__(self) -> None:
         self.created = []
+        self.valid: ConsentReceipt | None = None
 
     def find_valid(self, **kwargs):
         _ = kwargs
-        return None
+        return self.valid
 
     def create(self, request):
         self.created.append(request)
@@ -175,8 +183,11 @@ def test_found_subject_profile_and_consent_are_bound_before_preflight(qtbot) -> 
     assert coordinator.bindings == [("subject-1", "consent-1")]
     assert consents.created[0].purpose_codes == ("SCREENING_SERVICE",)
     qtbot.waitUntil(
-        lambda: controller.window.current_page_id == PageId.POSITION_GUIDANCE
+        lambda: coordinator.state.preflight_ready
     )
+    assert controller.window.current_page_id == PageId.PREFLIGHT
+    controller.dispatch("ENTER_POSITION")
+    assert controller.window.current_page_id == PageId.POSITION_GUIDANCE
 
 
 def test_required_consent_decline_stays_on_consent_with_plain_error(qtbot) -> None:
@@ -193,6 +204,34 @@ def test_required_consent_decline_stays_on_consent_with_plain_error(qtbot) -> No
     assert controller.window.current_page_id == PageId.CONSENT
     assert "必要处理" in controller.window.error_text
     assert coordinator.bindings == []
+    assert consents.created == []
+
+
+def test_reused_consent_still_runs_and_stops_on_device_preflight(qtbot) -> None:
+    subject = SubjectSummary("subject-1", "tenant-a", "**1234")
+    controller, coordinator, _, consents = _controller(
+        SubjectResolution(SubjectResolutionStatus.FOUND, (subject,))
+    )
+    consents.valid = ConsentReceipt(
+        consent_record_id="consent-reused",
+        tenant_id="tenant-a",
+        subject_uuid="subject-1",
+        policy_version=POLICY.policy_version,
+        purpose_codes=POLICY.purpose_codes,
+        data_categories=POLICY.data_categories,
+    )
+    qtbot.addWidget(controller.window)
+    controller.dispatch("START_NEW_SCREENING")
+    page = controller.window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+    page.findChild(QLineEdit, "subjectExternalIdInput").setText("MR-1234")
+    controller.dispatch("LOOKUP_SUBJECT")
+    controller.dispatch("CONFIRM_SUBJECT")
+
+    controller.dispatch("SKIP_PROFILE")
+
+    qtbot.waitUntil(lambda: coordinator.state.preflight_ready)
+    assert controller.window.current_page_id is PageId.PREFLIGHT
+    assert coordinator.bindings == [("subject-1", "consent-reused")]
     assert consents.created == []
 
 

@@ -7,6 +7,7 @@ from .models import (
     ClientAction,
     ClientError,
     LifecycleStatus,
+    PreflightCheck,
     QualityOutcome,
     ReportStatus,
     ScreeningParticipantContext,
@@ -42,6 +43,7 @@ class ScreeningCoordinator:
         reports: ReportPort,
         telemetry: TelemetryPort,
         protocol: ScreeningProtocol | None = None,
+        data_source_mode: str = "LIVE",
     ) -> None:
         self._machine = SessionStateMachine()
         self._preflight = preflight
@@ -51,6 +53,7 @@ class ScreeningCoordinator:
         self._reports = reports
         self._telemetry = telemetry
         self._protocol = protocol or default_standard_protocol()
+        self._data_source_mode = data_source_mode
         self._position_guidance = PositionGuidanceController(self._protocol)
         self._session_id: str | None = None
         self._remaining_seconds: int | None = None
@@ -64,6 +67,10 @@ class ScreeningCoordinator:
         self._report_version: int | None = None
         self._error: ClientError | None = None
         self._notice: str | None = None
+        self._preflight_checks: tuple[PreflightCheck, ...] = ()
+        self._preflight_ready = False
+        self._stage_index = 0
+        self._position_guidance.set_stage(self._protocol.stages[self._stage_index])
 
     @property
     def state(self) -> WorkflowState:
@@ -79,18 +86,20 @@ class ScreeningCoordinator:
             report_version=self._report_version,
             error=self._error,
             notice=self._notice,
+            preflight_checks=self._preflight_checks,
+            preflight_ready=self._preflight_ready,
             position_guidance=(
                 self._position_guidance.state
                 if self._machine.step is ScreeningStep.POSITION_GUIDANCE
                 else None
             ),
             acquisition_instruction=(
-                self._protocol.prompts.acquisition_text
+                self._current_stage.acquisition_text
                 if self._machine.step is ScreeningStep.ACQUIRING
                 else None
             ),
             planned_duration_seconds=(
-                self._protocol.acquisition_duration_seconds
+                self._current_stage.duration_seconds
                 if self._machine.step is ScreeningStep.ACQUIRING
                 else None
             ),
@@ -99,6 +108,21 @@ class ScreeningCoordinator:
                 if self._machine.step is ScreeningStep.ACQUIRING
                 else None
             ),
+            stage_index=(
+                self._stage_index + 1
+                if self._machine.step
+                in {ScreeningStep.POSITION_GUIDANCE, ScreeningStep.ACQUIRING}
+                else None
+            ),
+            stage_count=len(self._protocol.stages),
+            stage_title=(
+                self._current_stage.operator_title
+                if self._machine.step
+                in {ScreeningStep.POSITION_GUIDANCE, ScreeningStep.ACQUIRING}
+                else None
+            ),
+            stage_remaining_seconds=(self._remaining_seconds if self._machine.step is ScreeningStep.ACQUIRING else None),
+            data_source_mode=self._data_source_mode,
         )
 
     def start_new_screening(self) -> None:
@@ -121,9 +145,15 @@ class ScreeningCoordinator:
     def confirm_consent(self) -> None:
         self._transition(ScreeningStep.PREFLIGHT)
         self._lifecycle_status = LifecycleStatus.PREFLIGHT
+        self._preflight_checks = ()
+        self._preflight_ready = False
 
     def run_preflight(self) -> bool:
+        if self._machine.step is not ScreeningStep.PREFLIGHT:
+            return False
         summary = self._preflight.run_preflight()
+        self._preflight_checks = summary.checks
+        self._preflight_ready = False
         failure = summary.first_failure
         if failure is not None:
             self._error = ClientError(
@@ -132,7 +162,23 @@ class ScreeningCoordinator:
                 action=ClientAction.RECHECK,
             )
             return False
+        self._error = None
+        self._preflight_ready = True
+        return True
+
+    def enter_position_guidance(self) -> bool:
+        if (
+            self._machine.step is not ScreeningStep.PREFLIGHT
+            or not self._preflight_ready
+        ):
+            self._error = ClientError(
+                code="E-PRE-001",
+                operator_message="请先完成本次设备预检",
+                action=ClientAction.RECHECK,
+            )
+            return False
         self._transition(ScreeningStep.POSITION_GUIDANCE)
+        self._position_guidance.set_stage(self._current_stage)
         self._position_guidance.reset()
         return True
 
@@ -150,8 +196,6 @@ class ScreeningCoordinator:
             contact_ready=contact_ready,
             in_valid_area=in_valid_area,
         )
-        if state.auto_start:
-            self.start_acquisition()
         return state
 
     def start_acquisition(self) -> bool:
@@ -171,30 +215,36 @@ class ScreeningCoordinator:
                 action=ClientAction.RECHECK,
             )
             return False
-        try:
-            session_id = self._sessions.create_session(
-                self._participant_context,
-                self._protocol.snapshot(),
-            )
-        except Exception as exc:
-            technical_detail = f"{type(exc).__name__}: {exc}"
-            self._telemetry.record_error(
-                code="E-DAT-001",
-                session_id=None,
-                technical_detail=technical_detail,
-            )
-            self._error = ClientError(
-                code="E-DAT-001",
-                operator_message="暂时无法保存检测数据，请重新检查后再试",
-                action=ClientAction.RECHECK,
-            )
-            return False
-        self._session_id = session_id
+        if self._session_id is None:
+            try:
+                session_id = self._sessions.create_session(
+                    self._participant_context,
+                    self._protocol.snapshot(),
+                )
+            except Exception as exc:
+                technical_detail = f"{type(exc).__name__}: {exc}"
+                self._telemetry.record_error(
+                    code="E-DAT-001",
+                    session_id=None,
+                    technical_detail=technical_detail,
+                )
+                self._error = ClientError(
+                    code="E-DAT-001",
+                    operator_message="暂时无法保存检测数据，请重新检查后再试",
+                    action=ClientAction.RECHECK,
+                )
+                return False
+            self._session_id = session_id
+        session_id = self._session_id
         self._transition(ScreeningStep.ACQUIRING)
         self._lifecycle_status = LifecycleStatus.ACQUIRING
-        self._remaining_seconds = self._protocol.acquisition_duration_seconds
+        self._remaining_seconds = self._current_stage.duration_seconds
         try:
-            self._acquisition.start(session_id)
+            start_stage = getattr(self._acquisition, "start_stage", None)
+            if callable(start_stage):
+                start_stage(session_id, self._current_stage)
+            else:
+                self._acquisition.start(session_id)
         except Exception as exc:
             technical_detail = f"{type(exc).__name__}: {exc}"
             self._telemetry.record_error(
@@ -221,11 +271,11 @@ class ScreeningCoordinator:
             raise ValueError("elapsed_seconds cannot be negative")
         remaining = max(
             0,
-            self._protocol.acquisition_duration_seconds - elapsed_seconds,
+            self._current_stage.duration_seconds - elapsed_seconds,
         )
         self._remaining_seconds = remaining
         if remaining == 0:
-            self.complete_acquisition()
+            self.complete_stage()
         return remaining
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None:
@@ -276,6 +326,10 @@ class ScreeningCoordinator:
         self._report_version = None
         self._error = None
         self._notice = None
+        self._preflight_checks = ()
+        self._preflight_ready = False
+        self._stage_index = 0
+        self._position_guidance.set_stage(self._current_stage)
 
     def start_next_screening(self) -> None:
         if self._machine.step is not ScreeningStep.BASIC_REPORT:
@@ -293,6 +347,10 @@ class ScreeningCoordinator:
         self._report_version = None
         self._error = None
         self._notice = None
+        self._preflight_checks = ()
+        self._preflight_ready = False
+        self._stage_index = 0
+        self._position_guidance.set_stage(self._current_stage)
         self.start_new_screening()
 
     def complete_acquisition(self) -> None:
@@ -337,6 +395,41 @@ class ScreeningCoordinator:
         self._report_version = version
         self._lifecycle_status = LifecycleStatus.CLOSED
         self._transition(ScreeningStep.BASIC_REPORT)
+
+    def complete_stage(self) -> None:
+        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+            return
+        recorder = getattr(self._sessions, "mark_stage_complete", None)
+        if callable(recorder):
+            try:
+                recorder(self._session_id, self._current_stage.stage_id)
+            except Exception as exc:
+                self._telemetry.record_error(
+                    code="E-DAT-102",
+                    session_id=self._session_id,
+                    technical_detail=f"{type(exc).__name__}: {exc}",
+                )
+                self._sessions.mark_incomplete(self._session_id)
+                self._lifecycle_status = LifecycleStatus.CLOSED
+                self._validity = SessionValidity.INCOMPLETE
+                self._machine.mark_incomplete()
+                self._error = ClientError(
+                    code="E-DAT-102",
+                    operator_message="本段数据未能完整保存，本次检测已停止",
+                    action=ClientAction.RETRY_SCREENING,
+                )
+                return
+        if self._stage_index + 1 < len(self._protocol.stages):
+            self._stage_index += 1
+            self._remaining_seconds = None
+            self._transition(ScreeningStep.POSITION_GUIDANCE)
+            self._position_guidance.set_stage(self._current_stage)
+            return
+        self.complete_acquisition()
+
+    @property
+    def _current_stage(self):
+        return self._protocol.stages[self._stage_index]
 
     def export_current_report(self, destination: Path) -> None:
         report_id, version = self._current_report_reference()

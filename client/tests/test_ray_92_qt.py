@@ -53,6 +53,57 @@ def test_profile_fields_each_have_an_explicit_missing_state_selector(qtbot) -> N
         } == expected_states
 
 
+def test_profile_condition_chips_are_selectable_and_persist_their_state(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    page = window.page_widget(PageId.PROFILE)
+    chips = {
+        button.text(): button
+        for button in page.findChildren(QPushButton)
+        if button.property("profileChip")
+    }
+
+    assert set(chips) == {
+        "高血压",
+        "糖尿病",
+        "既往下肢损伤",
+        "关节炎",
+        "周围神经病变",
+        "足部手术史",
+        "未提供",
+    }
+    assert all(button.height() == 40 for button in chips.values())
+
+    qtbot.mouseClick(chips["糖尿病"], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(chips["足部手术史"], Qt.MouseButton.LeftButton)
+
+    assert chips["糖尿病"].isChecked()
+    assert chips["足部手术史"].isChecked()
+    assert window.profile_form_values()["conditionTags"] == (
+        "PROVIDED",
+        "糖尿病,足部手术史",
+    )
+
+    qtbot.mouseClick(chips["未提供"], Qt.MouseButton.LeftButton)
+
+    assert chips["未提供"].isChecked()
+    assert not chips["糖尿病"].isChecked()
+    assert not chips["足部手术史"].isChecked()
+    assert window.profile_form_values()["conditionTags"] == (
+        "NONE_REPORTED",
+        "",
+    )
+
+    qtbot.mouseClick(chips["高血压"], Qt.MouseButton.LeftButton)
+
+    assert chips["高血压"].isChecked()
+    assert not chips["未提供"].isChecked()
+    assert window.profile_form_values()["conditionTags"] == (
+        "PROVIDED",
+        "高血压",
+    )
+
+
 def test_consent_choices_are_separate_and_not_preselected(qtbot) -> None:
     window = ScreeningWindow()
     qtbot.addWidget(window)

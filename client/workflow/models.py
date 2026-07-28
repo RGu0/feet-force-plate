@@ -112,7 +112,14 @@ class WorkflowState:
     report_version: int | None = None
     error: ClientError | None = None
     notice: str | None = None
+    preflight_checks: tuple[PreflightCheck, ...] = ()
+    preflight_ready: bool = False
     position_guidance: PositionGuidanceState | None = None
     acquisition_instruction: str | None = None
     planned_duration_seconds: int | None = None
     remaining_seconds: int | None = None
+    stage_index: int | None = None
+    stage_count: int | None = None
+    stage_title: str | None = None
+    stage_remaining_seconds: int | None = None
+    data_source_mode: str = "LIVE"

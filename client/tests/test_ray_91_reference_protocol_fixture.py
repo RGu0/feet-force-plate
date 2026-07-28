@@ -10,6 +10,10 @@ import pytest
 from client.app.live_display import LiveDisplayProjection
 from client.device.acquisition import LatestFrameMailbox
 from client.device.protocol import RawFrame
+from client.hardware_standardization.live_processing import (
+    DoP4864LiveFrameStandardizer,
+    replay_debug_profile,
+)
 from client.local_analysis.display import LatestDisplayFrameMailbox
 
 
@@ -82,7 +86,13 @@ def test_reference_protocol_replays_through_the_production_display_projection(po
 
     raw_mailbox = LatestFrameMailbox()
     display_mailbox = LatestDisplayFrameMailbox()
-    projection = LiveDisplayProjection(source=raw_mailbox, destination=display_mailbox)
+    projection = LiveDisplayProjection(
+        source=raw_mailbox,
+        destination=display_mailbox,
+        standardizer=DoP4864LiveFrameStandardizer(
+            replay_debug_profile(fixture_sha256=hashlib.sha256(FIXTURE.read_bytes()).hexdigest())
+        ),
+    )
     for source_index, values in enumerate(source_values):
         immutable_values = values.copy()
         immutable_values.setflags(write=False)

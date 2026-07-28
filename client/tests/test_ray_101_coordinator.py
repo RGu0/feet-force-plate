@@ -141,8 +141,15 @@ def _coordinator(
 
 
 def _start_acquisition(coordinator: ScreeningCoordinator) -> bool:
+    if coordinator.state.step is ScreeningStep.PREFLIGHT:
+        assert coordinator.enter_position_guidance()
     coordinator.observe_position(
         now_seconds=0.0,
+        contact_ready=True,
+        in_valid_area=True,
+    )
+    coordinator.observe_position(
+        now_seconds=3.0,
         contact_ready=True,
         in_valid_area=True,
     )
@@ -181,6 +188,25 @@ class CoordinatorPreflightTests(unittest.TestCase):
             "未检测到压力设备，请检查连接",
         )
         self.assertEqual(coordinator.state.error.action, ClientAction.RECHECK)
+
+    def test_successful_preflight_waits_for_explicit_operator_entry(self) -> None:
+        check = PreflightCheck(key="device", ready=True, operator_message="已连接")
+        coordinator = _coordinator(
+            preflight=_PreflightPort(PreflightSummary(checks=(check,))),
+            sessions=_SessionPort(),
+        )
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+
+        self.assertTrue(coordinator.run_preflight())
+        self.assertEqual(coordinator.state.step, ScreeningStep.PREFLIGHT)
+        self.assertTrue(coordinator.state.preflight_ready)
+        self.assertEqual(coordinator.state.preflight_checks, (check,))
+
+        self.assertTrue(coordinator.enter_position_guidance())
+        self.assertEqual(coordinator.state.step, ScreeningStep.POSITION_GUIDANCE)
 
     def test_start_is_guarded_against_duplicate_session_creation(self) -> None:
         preflight = _PreflightPort(
@@ -536,6 +562,9 @@ class CoordinatorPreflightTests(unittest.TestCase):
         coordinator.stop_acquisition()
 
         coordinator.retry_screening()
+        self.assertEqual(coordinator.state.step, ScreeningStep.PREFLIGHT)
+        self.assertFalse(coordinator.state.preflight_ready)
+        self.assertTrue(coordinator.run_preflight())
         second_start = _start_acquisition(coordinator)
 
         self.assertTrue(second_start)

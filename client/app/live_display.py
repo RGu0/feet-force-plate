@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from client.device.protocol import RawFrame
+from client.hardware_standardization.live_processing import FrameStandardizer
 from client.local_analysis.display import DisplayFrame, LatestDisplayFrameMailbox, build_display_frame
 
 
@@ -29,9 +30,11 @@ class LiveDisplayProjection:
         *,
         source: LatestRawFramePort,
         destination: LatestDisplayFrameMailbox,
+        standardizer: FrameStandardizer,
     ) -> None:
         self._source = source
         self._destination = destination
+        self._standardizer = standardizer
         self._last_source_index = -1
         self._cop_trail: tuple[tuple[float, float], ...] = ()
         self._total_trend: tuple[float, ...] = ()
@@ -51,8 +54,9 @@ class LiveDisplayProjection:
         raw_frame = self._source.read()
         if raw_frame is None or raw_frame.source_index <= self._last_source_index:
             return None
+        standardized_frame = self._standardizer.standardize(raw_frame)
         display_frame = build_display_frame(
-            raw_frame.values,
+            standardized_frame.values,
             sequence=raw_frame.source_index,
             captured_monotonic_seconds=raw_frame.host_monotonic_ns / 1_000_000_000,
             cop_trail=self._cop_trail,

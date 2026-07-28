@@ -54,11 +54,16 @@ flowchart LR
     TEMP --> GATE["Hardware quality gate"]
     GATE -->|"VALID only"| STORE["Local valid-session store"]
     GATE -->|"INVALID"| DISCARD["Discard temporary data + retest"]
-    FRAME --> LATEST["LatestFrameSink: Local Analysis"]
+    FRAME --> STANDARD["标准化：坏区排除、可修复坏点、基线、设备适配器"]
+    STANDARD --> LATEST["LatestFrameSink: Display / Local Analysis"]
     DECODER --> STATS["ProtocolStatistics"]
 ```
 
 线程原则：串口读取与解析在设备工作线程运行；存储通过有界完整性队列消费；显示通过单槽最新帧邮箱消费。显示覆盖旧帧不影响存储。
+
+显示和本地分析不得直接消费 `RawFrame`。它们只消费标准化后的派生帧：先用经批准的
+设备/基线版本和已知坏区掩码排除非解剖响应，再执行可修复坏点处理、零点校正和声明的设备
+适配器。原始矩阵始终保持不可变；无法标准化的帧不得降级为“原始直通显示”。
 
 ## 5. 原始帧模型
 

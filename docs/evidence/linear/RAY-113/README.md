@@ -87,3 +87,11 @@ Therefore RAY-113 may move only to `In Review`, never `Done`, after commit SHA a
 
 - Implementation, tests, plan, and initial evidence: `0fd1b4d`.
 - Evidence SHA follow-up: this README-only follow-up commit.
+
+## 2026-07-26 发布阻断复核
+
+- 映射：机构编号查询索引由普通 SHA-256 改为受控 HMAC-SHA-256，索引输入包含 `tenant_id + issuer + id_type + normalized external_id`；SQLite 仅保存 HMAC，不保存可枚举的摘要。
+- 实现：`client/app/local_store.py`；`client/tests/test_local_replay_store.py`。旧 replay 表会迁移；仅在可解密旧 payload 时使用明确的 `legacy-local / institution_record` 上下文重新索引，不能解密的旧记录保留但不可查找，避免猜测上下文导致误关联。
+- 验证：上下文隔离、HMAC 非普通 SHA-256 断言已覆盖；全量 `336 passed in 28.03s`。
+- 限制：本地 replay 密钥使用 OS credential vault；机构正式的 License 下发查询密钥和服务端 RLS 仍未接入。RAY-113 保持 In Review。
+- Commit SHA：尚未创建；本轮未暂存。

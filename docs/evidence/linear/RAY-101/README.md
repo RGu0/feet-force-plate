@@ -125,3 +125,11 @@ QT_QPA_PLATFORM=offscreen \
 - 实现：`client/app/qt_shell.py` 让匹配详情与核对提示自动换行，主操作固定为至少 200×56 px，并留出 24 px 内容间距；示例档案改为“年龄 64 岁”。`client/app/demo.py` 的查找反馈同步使用具体年龄和性别。
 - 自动验证：`QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest client/tests/test_ray_101_qt_shell.py client/tests/test_ui_demo.py -q --junitxml=docs/evidence/linear/RAY-101/pytest-ui-layout-results.xml`，结果 `9 passed in 0.72s`。新增断言验证 1280 px 窗口下详情与主操作不重叠、主操作宽度不少于 200 px、年龄文案为具体值。
 - 人工/真机边界：修正已由 offscreen 自动布局检查覆盖；尚待在目标 Windows 显示器、高 DPI 和实体打印流程中人工确认。未连接 DO-P4864，不涉及设备初始化或 5 秒空载校验。
+
+## 2026-07-26 发布阻断复核
+
+- 映射：正式默认入口不再自动进入本地 fixture 回放；`main.py` 默认启动 package 的强制设备启动校验，只有显式 `--replay` 才进入回放，`--demo` 仍是显式设计演示。
+- 实现：`main.py`；`tests/test_main_entry.py`。回放路径通过 `ProtocolCatalog` 的明确 replay-debug 开关选择试点协议。
+- 验证：`QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest -q`，**336 passed in 28.03s**；针对入口、启动、协议和本地索引的组合集 **112 passed in 1.00s**。
+- 限制：`client/app/packaged_entry.py` 的默认工作台仍未具备正式采集、会话存储和报告适配器的完整组合根；仓库中现有完整组合仅是明确的 `REPLAY_DEBUG` 路径，不能安全复用于机构入口。不得把这一缺口以 `ScreeningWindow()` 或 fixture 回放掩盖。RAY-101 保持 In Review。
+- Commit SHA：尚未创建；工作树已有用户未提交改动，本轮未暂存。

@@ -89,8 +89,14 @@ class SessionBindingTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
+        coordinator.enter_position_guidance()
         coordinator.observe_position(
             now_seconds=0.0,
+            contact_ready=True,
+            in_valid_area=True,
+        )
+        coordinator.observe_position(
+            now_seconds=3.0,
             contact_ready=True,
             in_valid_area=True,
         )
@@ -122,8 +128,14 @@ class SessionBindingTests(unittest.TestCase):
         coordinator.complete_profile()
         coordinator.confirm_consent()
         coordinator.run_preflight()
+        coordinator.enter_position_guidance()
         coordinator.observe_position(
             now_seconds=0.0,
+            contact_ready=True,
+            in_valid_area=True,
+        )
+        coordinator.observe_position(
+            now_seconds=3.0,
             contact_ready=True,
             in_valid_area=True,
         )

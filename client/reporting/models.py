@@ -75,3 +75,28 @@ class BasicReportDocument:
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    @classmethod
+    def from_json(cls, payload: str) -> "BasicReportDocument":
+        value = json.loads(payload)
+        return cls(
+            report_id=value["report_id"],
+            version=int(value["version"]),
+            status=ReportStatus(value["status"]),
+            kind=value["kind"],
+            session_id=value["session_id"],
+            analysis_result_id=value["analysis_result_id"],
+            subject_display_id=value["subject_display_id"],
+            captured_at=datetime.fromisoformat(value["captured_at"]),
+            generated_at=datetime.fromisoformat(value["generated_at"]),
+            protocol_id=value["protocol_id"],
+            protocol_version=value["protocol_version"],
+            metrics=tuple(ReportMetric(**metric) for metric in value["metrics"]),
+            relative_heatmap=tuple(
+                tuple(float(cell) for cell in row)
+                for row in value["relative_heatmap"]
+            ),
+            summary=value["summary"],
+            disclaimer=value["disclaimer"],
+            provenance=tuple(value["provenance"]),
+        )

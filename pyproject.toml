@@ -31,6 +31,8 @@ dependencies = [
     "matplotlib",
     # 跨平台路径
     "platformdirs",
+    # 系统凭据库（macOS Keychain / Windows Credential Vault）
+    "keyring",
 ]
 
 [project.optional-dependencies]

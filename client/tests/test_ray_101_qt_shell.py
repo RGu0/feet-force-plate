@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QPushButton, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QAbstractItemView, QLabel, QPushButton, QTableWidget, QWidget
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -17,8 +18,12 @@ def test_shell_builds_all_prd_pages_with_accessible_action_targets(qtbot) -> Non
         page = window.page_widget(page_id)
         assert page.objectName() == page_id.value
         for button in page.findChildren(QPushButton):
-            assert button.minimumHeight() >= 48
+            expected_height = 40 if button.property("profileChip") else 48
+            assert button.minimumHeight() >= expected_height
             assert button.accessibleName()
+
+    for table in window.findChildren(QTableWidget):
+        assert table.selectionMode() is QAbstractItemView.SelectionMode.NoSelection
 
 
 def test_acquiring_state_locks_navigation_and_shows_only_safe_error(qtbot) -> None:
@@ -104,12 +109,17 @@ def test_subject_match_card_wraps_detail_without_obscuring_primary_action(qtbot)
     qtbot.waitUntil(lambda: window.isVisible())
 
     page = window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+    subject_id = page.findChild(QLabel, "subjectMatchId")
     detail = page.findChild(QLabel, "subjectMatchSummary")
     confirm = page.findChild(QPushButton, "CONFIRM_SUBJECT")
 
     assert detail.wordWrap()
     assert "年龄 64 岁" in detail.text()
-    assert confirm.width() >= 200
+    assert subject_id.font().pixelSize() == 20
+    assert subject_id.font().weight() == QFont.Weight.DemiBold
+    assert detail.font().pixelSize() == 16
+    assert detail.font().weight() == QFont.Weight.Normal
+    assert confirm.width() == 140
     assert detail.mapToGlobal(detail.rect().topRight()).x() < confirm.mapToGlobal(confirm.rect().topLeft()).x()
 
 

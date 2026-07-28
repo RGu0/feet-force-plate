@@ -35,6 +35,13 @@ class _Coordinator:
         self._state = WorkflowState(step=ScreeningStep.PREFLIGHT)
 
     def run_preflight(self) -> bool:
+        self._state = WorkflowState(
+            step=ScreeningStep.PREFLIGHT,
+            preflight_ready=True,
+        )
+        return True
+
+    def enter_position_guidance(self) -> bool:
         self._state = WorkflowState(step=ScreeningStep.POSITION_GUIDANCE)
         return True
 
@@ -47,7 +54,7 @@ class _Coordinator:
         return True
 
     def retry_screening(self) -> None:
-        self._state = WorkflowState(step=ScreeningStep.POSITION_GUIDANCE)
+        self._state = WorkflowState(step=ScreeningStep.PREFLIGHT)
 
     def export_current_report(self, destination: Path) -> None:
         self.exports.append(destination)
@@ -110,14 +117,19 @@ def test_controller_drives_the_operator_path_and_deferred_preflight(qtbot) -> No
 
     assert controller.window.current_page_id == PageId.PREFLIGHT
     qtbot.waitUntil(
-        lambda: controller.window.current_page_id == PageId.POSITION_GUIDANCE
+        lambda: controller._coordinator.state.preflight_ready
     )
+    assert controller.window.current_page_id == PageId.PREFLIGHT
+    controller.dispatch("ENTER_POSITION")
+    assert controller.window.current_page_id == PageId.POSITION_GUIDANCE
     controller.dispatch("START_ACQUISITION")
     assert controller.window.current_page_id == PageId.ACQUIRING
     controller.dispatch("STOP_SCREENING")
     assert controller.window.current_page_id == PageId.RESULT
     controller.dispatch("RETRY_SCREENING")
-    assert controller.window.current_page_id == PageId.POSITION_GUIDANCE
+    assert controller.window.current_page_id == PageId.PREFLIGHT
+    qtbot.waitUntil(lambda: controller._coordinator.state.preflight_ready)
+    assert controller.window.current_page_id == PageId.PREFLIGHT
 
 
 def test_report_actions_use_the_selected_version_through_coordinator(qtbot) -> None:

@@ -43,6 +43,9 @@ class SessionStateMachine:
         return self._step
 
     def transition_to(self, target: ScreeningStep) -> None:
+        if self._step is ScreeningStep.ACQUIRING and target is ScreeningStep.POSITION_GUIDANCE:
+            self._step = target
+            return
         expected = _STANDARD_NEXT_STEP.get(self._step)
         if target is not expected:
             raise InvalidTransition(f"cannot transition from {self._step} to {target}")
@@ -56,7 +59,7 @@ class SessionStateMachine:
     def retry(self) -> None:
         if self._step not in {ScreeningStep.INCOMPLETE, ScreeningStep.RETRY_REQUIRED}:
             raise InvalidTransition(f"cannot retry from {self._step}")
-        self._step = ScreeningStep.POSITION_GUIDANCE
+        self._step = ScreeningStep.PREFLIGHT
 
     def mark_retry_required(self) -> None:
         if self._step is not ScreeningStep.FINALIZING:

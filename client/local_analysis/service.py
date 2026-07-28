@@ -10,6 +10,7 @@ from numpy import number
 from numpy.typing import NDArray
 
 from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus
+from client.reporting.copy import BASIC_REPORT_DISCLAIMER, BASIC_REPORT_SUMMARY
 
 from .analyzer import analyze_local
 from .models import AnalysisContext, LocalAnalysisResult, LocalQualityStatus
@@ -216,8 +217,8 @@ class LocalAnalysisProcessor:
                 if metric.key in _REPORT_LABELS
             ),
             relative_heatmap=result.relative_heatmap,
-            summary="基础相对压力分布已生成。",
-            disclaimer="本报告用于健康筛查与风险提示，不作疾病诊断。",
+            summary=BASIC_REPORT_SUMMARY,
+            disclaimer=BASIC_REPORT_DISCLAIMER,
             provenance=(result.algorithm_version, "report-schema/1.0.0"),
         )
         report = self._reports.save_if_absent(document)

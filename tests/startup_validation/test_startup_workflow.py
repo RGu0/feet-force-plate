@@ -230,6 +230,33 @@ def test_connection_failures_are_also_written_to_the_audit_sink() -> None:
     assert run.reason is ValidationReason.DEVICE_NOT_FOUND
 
 
+def test_audit_failure_blocks_entry_but_retry_uses_a_new_connection_and_run() -> None:
+    connector = _Connector()
+    attempts = []
+
+    def sink(run) -> None:
+        attempts.append(run)
+        if len(attempts) == 1:
+            raise OSError("sqlite unavailable")
+
+    coordinator, service, observed = _coordinator(
+        connector=connector,
+        run_sink=sink,
+    )
+
+    failed = coordinator.run()
+    assert observed[-1].state is StartupValidationState.INTERNAL_ERROR
+    service.result = _run(run_id="run-2")
+    recovered = coordinator.retry()
+
+    assert failed.reason is ValidationReason.INTERNAL_ERROR
+    assert connector.calls == 2
+    assert recovered.validation_run_id == "run-2"
+    assert recovered.previous_validation_run_id == failed.validation_run_id
+    assert recovered.attempt_number == 2
+    assert coordinator.can_enter_workbench
+
+
 def test_unexpected_errors_use_stable_public_code_and_unique_diagnostic_ids() -> None:
     ids = iter(("run-1", "diagnostic-1", "run-2", "diagnostic-2"))
     observed = []

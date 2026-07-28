@@ -30,6 +30,7 @@ from client.startup_validation.workflow import (
 )
 
 from .design_system import apply_design_system
+from .app_icon import application_icon
 
 
 class StartupCoordinator(Protocol):
@@ -53,6 +54,7 @@ class StartupValidationWindow(QMainWindow):
         super().__init__()
         self.setObjectName("startupValidationWindow")
         self.setWindowTitle("足底压力健康筛查与分析平台")
+        self.setWindowIcon(application_icon())
         self.setMinimumSize(1280, 720)
         self.resize(1440, 900)
         self._on_retry = on_retry or (lambda: None)

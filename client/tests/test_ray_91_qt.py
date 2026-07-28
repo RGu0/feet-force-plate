@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
-from client.workflow.models import ReportStatus, SessionValidity, WorkflowState
+from client.workflow.models import (
+    PreflightCheck,
+    ReportStatus,
+    SessionValidity,
+    WorkflowState,
+)
 from client.workflow.protocol import PositionGuidanceState, PositionStatus
 from client.workflow.state_machine import ScreeningStep
 
@@ -17,8 +22,8 @@ def test_position_page_presents_numeric_and_text_countdown_with_one_main_action(
         status=PositionStatus.STABILIZING,
         instruction_text="双脚自然站立，保持身体放松",
         countdown_seconds=2,
-        countdown_text="稳定中… 2 秒后自动开始",
-        manual_start_allowed=True,
+        countdown_text="正在确认站位稳定… 2 秒",
+        manual_start_allowed=False,
     )
 
     window.present_state(
@@ -30,9 +35,47 @@ def test_position_page_presents_numeric_and_text_countdown_with_one_main_action(
 
     page = window.page_widget(PageId.POSITION_GUIDANCE)
     assert page.findChild(QLabel, "positionStatus").text() == guidance.instruction_text
-    assert page.findChild(QLabel, "countdownLabel").text() == guidance.countdown_text
-    assert page.findChild(QPushButton, "START_ACQUISITION") is not None
+    assert page.findChild(QLabel, "positionState").text() == guidance.countdown_text
+    assert page.findChild(QLabel, "countdownLabel").text() == "2"
+    start = page.findChild(QPushButton, "START_ACQUISITION")
+    assert start.text() == "开始本段"
+    assert not start.isEnabled()
     assert not window.global_navigation_enabled
+
+
+def test_preflight_shows_four_checks_and_waits_for_operator_entry(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    window.present_state(
+        WorkflowState(
+            step=ScreeningStep.PREFLIGHT,
+            preflight_checks=(
+                PreflightCheck("device_connected", True, operator_message="已连接"),
+                PreflightCheck("storage_space", True, operator_message="空间充足"),
+                PreflightCheck(
+                    "calibration_status",
+                    True,
+                    operator_message="最近校准 07-20",
+                ),
+                PreflightCheck("data_sync", True, operator_message="已同步"),
+            ),
+            preflight_ready=True,
+        )
+    )
+
+    page = window.page_widget(PageId.PREFLIGHT)
+    assert page.findChild(QLabel, "deviceCheckHint").text() == "已连接"
+    assert page.findChild(QLabel, "storageCheckHint").text() == "空间充足"
+    assert page.findChild(QLabel, "calibrationCheckHint").text() == "最近校准 07-20"
+    assert page.findChild(QLabel, "syncCheckHint").text() == "已同步"
+    enter = page.findChild(QPushButton, "ENTER_POSITION")
+    assert enter.isEnabled()
+    assert window.current_page_id is PageId.PREFLIGHT
+
+    qtbot.mouseClick(enter, Qt.MouseButton.LeftButton)
+
+    assert actions == ["ENTER_POSITION"]
 
 
 def test_acquisition_page_uses_protocol_prompt_and_only_exposes_stop(qtbot) -> None:
@@ -65,8 +108,13 @@ def test_stop_action_requires_one_brief_confirmation(qtbot) -> None:
     qtbot.mouseClick(stop, Qt.MouseButton.LeftButton)
 
     assert actions == []
-    assert "确认" in stop.text()
-    qtbot.mouseClick(stop, Qt.MouseButton.LeftButton)
+    overlay = window.page_widget(PageId.ACQUIRING).findChild(
+        QWidget,
+        "stopConfirmationOverlay",
+    )
+    assert not overlay.isHidden()
+    confirm = overlay.findChild(QPushButton, "CONFIRM_STOP_SCREENING")
+    qtbot.mouseClick(confirm, Qt.MouseButton.LeftButton)
     assert actions == ["STOP_SCREENING"]
 
 

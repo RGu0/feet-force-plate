@@ -95,8 +95,12 @@ def test_report_preview_presents_the_selected_report_version(qtbot) -> None:
     window.present_report_document(document)
 
     page = window.page_widget(PageId.REPORT_PREVIEW)
-    assert "v2" in page.findChild(QLabel, "reportPreviewTitle").text()
+    assert page.findChild(QLabel, "reportPreviewTitle").text() == "基础筛查报告"
+    assert "v2" in page.findChild(QLabel, "reportVersionPillText").text()
     assert "本次筛查已完成" in page.findChild(QLabel, "reportPreviewSummary").text()
+    assert page.findChild(QLabel, "reportAttentionText").text() == "基础分析完成"
+    assert page.findChild(QLabel, "reportRetestText").text() == "不输出风险结论"
+    assert "未经批准" in page.findChild(QLabel, "reportParameters").text()
 
 
 def test_subject_and_consent_pages_group_operator_decisions_visually(qtbot) -> None:

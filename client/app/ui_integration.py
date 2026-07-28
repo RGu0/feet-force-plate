@@ -54,6 +54,10 @@ class ReportDocumentPort(Protocol):
     ) -> BasicReportDocument: ...
 
 
+class PersistedReportPort(Protocol):
+    def load_report(self, report_id: str, version: int) -> str: ...
+
+
 class LocalReportWorkflowAdapter:
     """Expose local processing through workflow, UI, export, and print ports."""
 
@@ -63,10 +67,12 @@ class LocalReportWorkflowAdapter:
         processor: LocalAnalysisProcessorPort,
         delivery: ReportDeliveryPort,
         spooler: object,
+        persisted_reports: PersistedReportPort | None = None,
     ) -> None:
         self._processor = processor
         self._delivery = delivery
         self._spooler = spooler
+        self._persisted_reports = persisted_reports
         self._outcomes: dict[str, ProcessingOutcome] = {}
         self._documents: dict[tuple[str, int], BasicReportDocument] = {}
 
@@ -92,8 +98,20 @@ class LocalReportWorkflowAdapter:
     ) -> BasicReportDocument:
         try:
             return self._documents[(report_id, version)]
-        except KeyError as exc:
+        except KeyError:
+            pass
+        if self._persisted_reports is None:
+            raise LookupError("selected report version is not available")
+        try:
+            document = BasicReportDocument.from_json(
+                self._persisted_reports.load_report(report_id, version)
+            )
+        except (KeyError, ValueError, TypeError) as exc:
             raise LookupError("selected report version is not available") from exc
+        if (document.report_id, document.version) != (report_id, version):
+            raise LookupError("selected report version is not available")
+        self._documents[(report_id, version)] = document
+        return document
 
     def export_pdf(
         self,
@@ -144,9 +162,26 @@ class ReportConnectedController(ApplicationController):
         **controller_options,
     ) -> None:
         self._report_documents = report_documents
+        self._selected_report_reference: tuple[str, int] | None = None
         super().__init__(coordinator, **controller_options)
 
     def dispatch(self, action: str) -> None:
+        if action.startswith("OPEN_REPORT:"):
+            _, report_id, raw_version = action.split(":", 2)
+            try:
+                self._present_report_reference(report_id, int(raw_version))
+            except (ValueError, LookupError):
+                self.window.show_form_error("所选报告暂不可用，请稍后重试")
+            return
+        if action in {"EXPORT_PDF", "PRINT_REPORT"} and self._selected_report_reference:
+            report_id, version = self._selected_report_reference
+            if action == "EXPORT_PDF":
+                destination = self._export_destination()
+                if destination is not None:
+                    self._report_documents.export_pdf(report_id, version, destination)
+            else:
+                self._report_documents.print_report(report_id, version)
+            return
         if action not in {"VIEW_BASIC_REPORT", "VIEW_SELECTED_REPORT"}:
             super().dispatch(action)
             return
@@ -154,20 +189,21 @@ class ReportConnectedController(ApplicationController):
         if state.report_id is None or state.report_version is None:
             self.window.show_form_error("基础报告暂不可用，请稍后重试")
             return
+        self._present_report_reference(state.report_id, state.report_version)
+
+    def _present_report_reference(self, report_id: str, version: int) -> None:
         try:
             document = self._report_documents.report_document(
-                state.report_id,
-                state.report_version,
+                report_id,
+                version,
             )
         except LookupError:
             self.window.show_form_error("基础报告暂不可用，请稍后重试")
             return
-        if (document.report_id, document.version) != (
-            state.report_id,
-            state.report_version,
-        ):
+        if (document.report_id, document.version) != (report_id, version):
             self.window.show_form_error("报告版本已变化，请返回结果页重新打开")
             return
+        self._selected_report_reference = (report_id, version)
         self._present_document(document)
         self.window.show_page(PageId.REPORT_PREVIEW)
 
@@ -177,9 +213,6 @@ class ReportConnectedController(ApplicationController):
             presenter(document)
             if document.kind.upper() == "BASIC":
                 page = self.window.page_widget(PageId.REPORT_PREVIEW)
-                title = page.findChild(QLabel, "reportPreviewTitle")
-                if title is not None:
-                    title.setText(f"基础筛查报告 v{document.version}")
                 footer = page.findChild(QLabel, "reportPreviewFooter")
                 if footer is not None:
                     footer.setText(
@@ -242,6 +275,8 @@ def build_connected_ui(
     live_display: LiveDisplayProjection | None = None,
     export_destination: Callable[[], Path | None] | None = None,
     protocol: ScreeningProtocol | None = None,
+    persisted_reports: PersistedReportPort | None = None,
+    data_source_mode: str = "LIVE",
     controller_options: dict[str, object] | None = None,
 ) -> ConnectedUiRuntime:
     """Compose the UI with caller-provided device, storage, and support ports."""
@@ -250,6 +285,7 @@ def build_connected_ui(
         processor=processor,
         delivery=delivery,
         spooler=spooler,
+        persisted_reports=persisted_reports,
     )
     coordinator = ScreeningCoordinator(
         preflight=preflight,
@@ -259,6 +295,7 @@ def build_connected_ui(
         reports=reports,
         telemetry=telemetry,
         protocol=protocol,
+        data_source_mode=data_source_mode,
     )
     options = dict(controller_options or {})
     if display_refresh is not None:

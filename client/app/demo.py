@@ -6,6 +6,8 @@ from datetime import date, datetime
 import numpy as np
 from PySide6.QtWidgets import QApplication
 
+from client.app.app_icon import application_icon
+
 from client.local_analysis.display import build_display_frame
 from client.reporting.models import (
     BasicReportDocument,
@@ -30,8 +32,9 @@ class DesignDemoController:
         "SAVE_PROFILE": PageId.CONSENT,
         "SKIP_PROFILE": PageId.CONSENT,
         "CONFIRM_CONSENT": PageId.PREFLIGHT,
-        "RECHECK": PageId.POSITION_GUIDANCE,
-        "RETRY_SCREENING": PageId.POSITION_GUIDANCE,
+        "RECHECK": PageId.PREFLIGHT,
+        "ENTER_POSITION": PageId.POSITION_GUIDANCE,
+        "RETRY_SCREENING": PageId.PREFLIGHT,
         "VIEW_BASIC_REPORT": PageId.REPORT_PREVIEW,
         "VIEW_SELECTED_REPORT": PageId.REPORT_PREVIEW,
         "START_NEXT_SCREENING": PageId.SUBJECT_IDENTIFICATION,
@@ -151,6 +154,7 @@ class DesignDemoController:
 
 def run_design_demo() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setWindowIcon(application_icon())
     controller = DesignDemoController()
     controller.window.resize(1440, 900)
     controller.window.show()

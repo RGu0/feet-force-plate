@@ -22,6 +22,7 @@ from client.startup_validation.workflow import (
 )
 
 from .qt_shell import ScreeningWindow
+from .app_icon import application_icon
 from .startup_validation import MandatoryStartupGate
 
 
@@ -102,6 +103,7 @@ def main() -> int:
     """Start the package through the mandatory local device-validation gate."""
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(application_icon())
     audit_trail, store = _default_validation_audit_trail()
     gate = build_mandatory_startup_gate(
         terminal_id=_local_terminal_id(),
