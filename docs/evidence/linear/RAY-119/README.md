@@ -4,18 +4,28 @@
 - Evidence captured: 2026-07-28
 - State after automated verification: `In Progress`; milestone: `P1：可靠采集`; priority: `High`
 - Project: `足底压力健康筛查与分析平台`
+- Device-ID implementation commit: `f169a36` (`Key dynamic masks by device ID`)
 
 ## Implemented algorithm
 
 `client/hardware_standardization/dynamic_defect_mask.py` adds a versioned,
-per-device-bound mask snapshot. It never stores raw frame values.
+per-physical-`device_id` mask snapshot. It never stores raw frame values.
 
 `DynamicDefectMaskStore` keeps the mutable snapshot under the application data
-root, not under the source tree: `hardware/do-p4864/<sha256(binding)>/
+root, not under the source tree: `hardware/do-p4864/<sha256(device_id)>/
 dynamic-defect-mask.json`. At session start the store returns a frozen snapshot
 for quality/repair. Only after the session does it detect new dynamic evidence,
 check for a stale concurrent snapshot, `fsync` a temporary file and atomically
 replace the next version. Thus a new candidate cannot alter a running session.
+
+The static DO-P4864 device specification remains shared by model; `device_id`
+partitions only mutable, board-specific health history. The runtime constructs a
+store from the selected `device_id`, so two boards may alternate at one site
+without cross-contaminating their masks. QR-code and manual-entry flows are
+intentionally deferred: they will only be ways to obtain the same stable ID.
+Schema `dynamic-defect-mask/2` stores `device_id`; prior `/1` snapshots are
+rejected until an operator assigns their device ID explicitly, preventing an
+unproven old terminal binding from being attached to the wrong board.
 
 1. A candidate is considered only when the observed pressure field changes by
    the configured dynamic range.
@@ -45,17 +55,18 @@ replace the next version. Thus a new candidate cannot alter a running session.
 ./scripts/local-env.sh python -m pytest tests/hardware_standardization -q
 ```
 
-Result after mask-file persistence: `50 passed in 0.93s`. Targeted dynamic-mask
-and quality-gate tests: `11 passed in 0.31s`.
+Targeted dynamic-mask plus quality-gate verification: `13 passed in 0.32s`.
+Full hardware-standardization regression: `52 passed in 0.88s`.
 
 The dynamic-mask fixtures cover a moving pressure field with one stuck interior
 point, a static field, a normal moving field, an adjacent bad-point cluster,
 quality-gate rejection, and derived-only repair through a frozen isolated mask.
 They also cover mask-file creation, reload, promotion across two sessions,
-atomic temporary-file cleanup and stale-snapshot rejection.
-Python compilation and `git diff --check` also passed. The current UV
-environment does not include the optional `ruff` module, so no ruff result is
-claimed.
+atomic temporary-file cleanup, stale-snapshot rejection, same-model two-device
+isolation and rejection of an old terminal-bound snapshot without explicit ID
+assignment. Verification results are recorded after the current test run.
+`python -m compileall` on the changed module and test, plus `git diff --check`,
+also passed through the project's UV wrapper.
 
 ## Boundaries and remaining acceptance
 
