@@ -19,6 +19,11 @@ dependencies = [
     "alembic",
     # 云端通信
     "httpx",
+    # 云端 API 与共享契约
+    "fastapi>=0.116,<1",
+    "pydantic>=2.11,<3",
+    "asyncpg>=0.30,<1",
+    "boto3>=1.39,<2",
     # 许可签名
     "cryptography",
     # 报告生成
