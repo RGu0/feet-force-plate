@@ -93,7 +93,31 @@ flowchart LR
 
 阶段动作、受试者朝向和安全事件由工作流层单独维护，并通过 `session_id` 与物理力场关联；它们不是硬件层公开物理数据的一部分。
 
-## 5. 当前实现状态与收敛事项
+## 5. 硬件层到软件/UI 层的失败结果通道
+
+硬件质量状态不进入算法物理力场，但无效会话的**可操作原因**必须送到软件/UI 层，以便指导操作员处理后重新测试。该通道与 `physical-pressure-session/1.0` 完全分离，不上传给算法层。
+
+硬件运行时通过 `HardwareSessionResult.ui_failure` 返回 `HardwareUiFailure`：
+
+```text
+code + recovery_action + retry_allowed + operator_message_key
+```
+
+UI 必须根据稳定代码显示本地化指引，不得直接显示 `reason` 中的异常类、串口路径、原始字节或存储实现细节。详细原因只保存在硬件审计与支持诊断路径。
+
+| `code` | UI 建议动作 | 可立即重试 |
+| --- | --- | --- |
+| `DEVICE_DISCONNECTED` | 检查供电/连接线，重新连接设备 | 是 |
+| `NO_VALID_SIGNAL` | 检查压力板和连接线，确认设备已就绪后重测 | 是 |
+| `SENSOR_DATA_UNUSABLE` | 检查板面与传感器状态，重新测试 | 是 |
+| `FORCE_CONVERSION_FAILED` | 检查压力板接触/状态后重测 | 是 |
+| `LOCAL_STORAGE_UNAVAILABLE` | 释放本地存储空间或检查写入权限后重测 | 是 |
+| `LOCAL_FINALIZATION_FAILED` | 停止当前流程，联系支持人员处理本地保存问题 | 否 |
+| `HARDWARE_PROCESSING_FAILED` | 停止当前流程，联系支持人员 | 否 |
+
+“传感器数据不可用”表示硬件层无法获得可用数据，不能直接向用户断言设备已经物理损坏；UI 应使用“检查设备/联系支持”的措辞。
+
+## 6. 当前实现状态与收敛事项
 
 DO-P4864 当前已能在硬件内部形成 `physical-sensor-observation/1.0`：其中有原始计数、零校正值、坏点修复信息、`estimated_force_n` 和质量审计。这些是硬件私有数据，不能直接作为算法输入。
 

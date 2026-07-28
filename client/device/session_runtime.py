@@ -19,6 +19,13 @@ from .acquisition import (
     LatestFrameMailbox,
 )
 from .protocol import DaoOneP4864Parser, RawFrame
+from .session_ui import (
+    HardwareUiFailure,
+    finalization_failed,
+    from_acquisition_reason,
+    from_quality_reasons,
+    processing_failed,
+)
 from .transport import ByteTransport
 
 try:  # avoid making generic acquisition depend on standardization implementation
@@ -51,6 +58,7 @@ class HardwareSessionResult:
     validity: SessionValidity
     reason: str | None
     committed: bool
+    ui_failure: HardwareUiFailure | None = None
 
 
 class HardwareSessionRuntime:
@@ -99,7 +107,11 @@ class HardwareSessionRuntime:
         )
         if acquisition.outcome is not AcquisitionOutcome.COMPLETED:
             return HardwareSessionResult(
-                acquisition, SessionValidity.INVALID, acquisition.reason, False
+                acquisition,
+                SessionValidity.INVALID,
+                acquisition.reason,
+                False,
+                from_acquisition_reason(acquisition.reason),
             )
         try:
             captured_frames = self._stager.staged_frames()
@@ -114,15 +126,24 @@ class HardwareSessionRuntime:
             )
         except Exception as exc:
             return self._discard_after_acquisition_failure(
-                acquisition, reason=f"hardware quality evaluation failed: {type(exc).__name__}"
+                acquisition,
+                reason=f"hardware quality evaluation failed: {type(exc).__name__}",
+                ui_failure=processing_failed(),
             )
         decision_value = getattr(decision.validity, "value", decision.validity)
         reason = getattr(decision, "reason", None)
+        reason_codes = tuple(getattr(decision, "reasons", ()))
         if reason is None and hasattr(decision, "reasons"):
-            reason = "; ".join(getattr(decision, "reasons")) or None
+            reason = "; ".join(reason_codes) or None
         if decision_value == SessionValidity.INVALID.value:
             self._stager.discard(reason=reason or "hardware quality gate failed")
-            return HardwareSessionResult(acquisition, SessionValidity.INVALID, reason, False)
+            return HardwareSessionResult(
+                acquisition,
+                SessionValidity.INVALID,
+                reason,
+                False,
+                from_quality_reasons(reason_codes, fallback_reason=reason),
+            )
         try:
             physical_session = getattr(decision, "physical_session", None)
             if physical_session is not None:
@@ -155,18 +176,30 @@ class HardwareSessionRuntime:
             self._stager.commit_valid(ended_at_ns=self._wall_time_ns())
         except Exception as exc:
             return self._discard_after_acquisition_failure(
-                acquisition, reason=f"valid-session finalization failed: {type(exc).__name__}"
+                acquisition,
+                reason=f"valid-session finalization failed: {type(exc).__name__}",
+                ui_failure=finalization_failed(),
             )
         return HardwareSessionResult(acquisition, SessionValidity.VALID, None, True)
 
     def _discard_after_acquisition_failure(
-        self, acquisition: AcquisitionResult, *, reason: str
+        self,
+        acquisition: AcquisitionResult,
+        *,
+        reason: str,
+        ui_failure: HardwareUiFailure,
     ) -> HardwareSessionResult:
         try:
             self._stager.discard(reason=reason)
         except Exception as cleanup_error:
             reason = f"{reason}; temporary cleanup failed: {type(cleanup_error).__name__}"
-        return HardwareSessionResult(acquisition, SessionValidity.INVALID, reason, False)
+        return HardwareSessionResult(
+            acquisition,
+            SessionValidity.INVALID,
+            reason,
+            False,
+            ui_failure,
+        )
 
     def _frozen_runtime_versions(self) -> dict[str, str]:
         versions = {
