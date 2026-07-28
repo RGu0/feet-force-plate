@@ -4,7 +4,8 @@ from dataclasses import replace
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.features import extract_features
-from cloud.analysis.physical_input import CompletionStatus, parse_physical_pressure_session
+from cloud.analysis.physical_input import PhysicalInputValidationStatus, parse_physical_pressure_session
+from cloud.analysis.protocol_context import CompletionStatus, StopReason
 from cloud.analysis.risk_rules import (
     BackgroundRisk,
     MedicationTag,
@@ -14,11 +15,13 @@ from cloud.analysis.risk_rules import (
 )
 
 from test_physical_features import _session_payload
+from test_physical_input import valid_protocol_context
 
 
 def features():
     return extract_features(
         parse_physical_pressure_session(_session_payload()),
+        valid_protocol_context(),
         FeatureParameters(version="physical-features/test", lowpass_cutoff_hz=0.0),
     )
 
@@ -36,7 +39,8 @@ def questionnaire(**overrides: object) -> QuestionnaireSnapshot:
 
 def test_explicit_background_high_risk_wins_over_good_balance() -> None:
     result = evaluate_screening_risk(
-        session=parse_physical_pressure_session(_session_payload()),
+        protocol_context=valid_protocol_context(),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features(),
         questionnaire=questionnaire(recent_fall_12m=True),
     )
@@ -47,18 +51,15 @@ def test_explicit_background_high_risk_wins_over_good_balance() -> None:
 
 
 def test_single_semi_tandem_failure_is_medium_risk_evidence() -> None:
-    payload = _session_payload()
-    stages = list(payload["stages"])
-    stages[2] = {
-        **stages[2],
-        "completion_status": CompletionStatus.BALANCE_FAILURE.value,
-        "actual_completion_s": 4.0,
-        "stop_reason": "LOSS_OF_BALANCE",
-    }
-    payload["stages"] = stages
-    session = parse_physical_pressure_session(payload)
+    context = valid_protocol_context()
+    stages = list(context.stages)
+    stages[2] = replace(
+        stages[2], completion_status=CompletionStatus.BALANCE_FAILURE,
+        actual_completion_s=4.0, stop_reason=StopReason.LOSS_OF_BALANCE,
+    )
     result = evaluate_screening_risk(
-        session=session,
+        protocol_context=replace(context, stages=tuple(stages)),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features(),
         questionnaire=questionnaire(),
     )
@@ -70,7 +71,8 @@ def test_single_semi_tandem_failure_is_medium_risk_evidence() -> None:
 
 def test_unknown_background_is_not_treated_as_no() -> None:
     result = evaluate_screening_risk(
-        session=parse_physical_pressure_session(_session_payload()),
+        protocol_context=valid_protocol_context(),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features(),
         questionnaire=questionnaire(recent_fall_12m=None, recurrent_dizziness=None),
     )
@@ -81,7 +83,8 @@ def test_unknown_background_is_not_treated_as_no() -> None:
 
 def test_unknown_age_does_not_emit_a_composite_score() -> None:
     result = evaluate_screening_risk(
-        session=parse_physical_pressure_session(_session_payload()),
+        protocol_context=valid_protocol_context(),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features(),
         questionnaire=questionnaire(age_years=None),
     )
@@ -92,7 +95,8 @@ def test_unknown_age_does_not_emit_a_composite_score() -> None:
 
 def test_medication_categories_are_optional_labels_only() -> None:
     result = evaluate_screening_risk(
-        session=parse_physical_pressure_session(_session_payload()),
+        protocol_context=valid_protocol_context(),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features(),
         questionnaire=questionnaire(
             medication_tags=frozenset({MedicationTag.SEDATIVE_HYPNOTIC})

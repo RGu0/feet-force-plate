@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cloud.analysis.physical_input import SubjectOrientation
+from cloud.analysis.protocol_context import SubjectOrientation
 
 
 def board_to_subject_coordinates(

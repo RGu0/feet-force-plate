@@ -188,3 +188,30 @@
 
 - 上述结果只使用合成压力会话、内存 loader/仓储和批准状态 fixture；未证明真实适配器能提供 N、面积、方向、时间与不确定度证据。
 - 冻结 60+ 参考工件、临床/前瞻性验证、队列与数据库事务、目标环境性能、PDF/打印人工检查及告警演练仍未完成；RAY-102 必须保持 `In Progress`/后续 `In Review`，不能标记 Done。
+
+## 2026-07-28 硬件物理压力流契约重对接
+
+- 抓取时间：2026-07-28；状态：`In Progress`（本切片自动验证完成后应转 `In Review`）。
+- 本轮依据：仓库已更新的 `docs/algorithm/physical-input-interface-v1.md`、`docs/algorithm/standard-physical-input-contract.md` 及其 schema。Linear 项目/RAY-117 的旧描述仍提及质量、面积及设备私有校准资料；该差异已在 RAY-102 启动评论中记录，未在本任务擅自修改共享文档或接收协议。
+
+### 已实现
+
+- `cloud/analysis/physical_input.py` 严格只接受公开的 `physical-pressure-session/1.0`：`points(point_id, board_x_mm, board_y_mm)` 与 `frames(timestamp_s, normal_force_n)`，单位固定为 mm/N/s；拒绝面积、质量标记、设备型号、原始计数、校准中间值及动作阶段字段。
+- 新增 `cloud/analysis/protocol_context.py`：动作阶段、固定左转、左右前脚、完成和安全记录从工作流上下文按 `session_id` 关联；其确定性 SHA-256 纳入完整会话事件及 `PhysicalAnalysisRunKey`，哈希或版本不一致时不产出公开结果。
+- 新增 `cloud/analysis/migrations/0002_physical_protocol_context.sql`：把完整会话验证状态和工作流上下文摘要纳入数据库不可变重算唯一键；既有记录以默认 `REJECTED`/零摘要保持默认关闭，待合规迁移和回填后才可发布。
+- COP、ML/AP 归一化、路径、速度、RMS、范围、95% 椭圆和阶段差异均仅由公开的物理坐标/法向力/时间在算法层重建。无公开面积输入，接触面积指标明确不可用且不在 V1 指标白名单。
+- 验证、测量一致性、标定和不确定度版本由完整会话事件/能力门控承载，而非压力流；未验证事件默认关闭，返回 `UNSUPPORTED`，不生成公开风险结果。
+- 风险规则和客户报告继续隔离内部状态；报告只消费通过门控的结果，不读取硬件私有质量或诊断信息。
+
+### 自动验证
+
+- 基线（改动前）：`/bin/bash scripts/local-env.sh python -m pytest -q` → `114 passed, 9 subtests passed`。
+- 本轮：`/bin/bash scripts/local-env.sh python -m pytest -q` → `113 passed, 9 subtests passed`。
+- `git diff --check` → 通过，无空白错误。
+- 新增/更新的合成测试覆盖：公开 payload 严格拒绝、工作流阶段上下文、不同点阵列同一物理场等价、时间缺口不桥接、固定左转坐标、未验证输入默认关闭、上下文哈希不匹配不公开结果、版本化重算键与报告回归。
+
+### 验证边界与限制
+
+- 自动测试仅使用合成物理压力流和内存 loader/repository；没有真机输入、真实对象存储/队列/PostgreSQL 事务或并发扩缩容演练。
+- RAY-117 仍需证明硬件仅在有效完整会话下生成该公开契约，且实际 N、mm、时间基准和标定/不确定度版本可由完整会话事件可信绑定。
+- 冻结参考工件、临床/前瞻性验证、PDF/打印人工检查和监控告警演练仍未完成。因此该 issue 完成本轮自动证据后必须保持 `In Review`，不得标记 `Done`。

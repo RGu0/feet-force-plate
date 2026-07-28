@@ -7,13 +7,10 @@ import pytest
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.coordinates import board_to_subject_coordinates
 from cloud.analysis.features import extract_features
-from cloud.analysis.physical_input import (
-    StageId,
-    SubjectOrientation,
-    parse_physical_pressure_session,
-)
+from cloud.analysis.physical_input import parse_physical_pressure_session
+from cloud.analysis.protocol_context import StageId, SubjectOrientation
 
-from test_physical_input import valid_payload
+from test_physical_input import valid_payload, valid_protocol_context
 
 
 def _weights(ml_mm: float, ap_mm: float) -> tuple[float, float, float, float]:
@@ -35,93 +32,45 @@ def _session_payload(
 ) -> dict[str, object]:
     payload = valid_payload()
     if split_cells:
-        payload["cells"] = [
+        payload["points"] = [
             {
-                "cell_id": "a1",
-                "x_mm": -40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "a1", "board_x_mm": -40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "a2",
-                "x_mm": -40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "a2", "board_x_mm": -40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "b1",
-                "x_mm": 40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "b1", "board_x_mm": 40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "b2",
-                "x_mm": 40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "b2", "board_x_mm": 40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "c1",
-                "x_mm": -40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "c1", "board_x_mm": -40.0, "board_y_mm": -40.0,
             },
             {
-                "cell_id": "c2",
-                "x_mm": -40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "c2", "board_x_mm": -40.0, "board_y_mm": -40.0,
             },
             {
-                "cell_id": "d1",
-                "x_mm": 40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "d1", "board_x_mm": 40.0, "board_y_mm": -40.0,
             },
             {
-                "cell_id": "d2",
-                "x_mm": 40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 50.0,
-                "status": "ACTIVE",
+                "point_id": "d2", "board_x_mm": 40.0, "board_y_mm": -40.0,
             },
         ]
     else:
-        payload["cells"] = [
+        payload["points"] = [
             {
-                "cell_id": "a",
-                "x_mm": -40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 100.0,
-                "status": "ACTIVE",
+                "point_id": "a", "board_x_mm": -40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "b",
-                "x_mm": 40.0,
-                "y_mm": 40.0,
-                "active_area_mm2": 100.0,
-                "status": "ACTIVE",
+                "point_id": "b", "board_x_mm": 40.0, "board_y_mm": 40.0,
             },
             {
-                "cell_id": "c",
-                "x_mm": -40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 100.0,
-                "status": "ACTIVE",
+                "point_id": "c", "board_x_mm": -40.0, "board_y_mm": -40.0,
             },
             {
-                "cell_id": "d",
-                "x_mm": 40.0,
-                "y_mm": -40.0,
-                "active_area_mm2": 100.0,
-                "status": "ACTIVE",
+                "point_id": "d", "board_x_mm": 40.0, "board_y_mm": -40.0,
             },
         ]
 
@@ -142,7 +91,6 @@ def _session_payload(
             {
                 "timestamp_s": float(timestamp),
                 "normal_force_n": forces,
-                "quality": "VALID",
             }
         )
     payload["frames"] = frames
@@ -153,6 +101,7 @@ def test_extracts_physical_cop_metrics_and_stage_ratios() -> None:
     session = parse_physical_pressure_session(_session_payload())
     features = extract_features(
         session,
+        valid_protocol_context(),
         FeatureParameters(
             version="physical-features/test",
             despike_window_samples=1,
@@ -180,6 +129,7 @@ def test_extracts_physical_cop_metrics_and_stage_ratios() -> None:
 def test_same_physical_field_has_same_features_with_split_array_layout() -> None:
     first = extract_features(
         parse_physical_pressure_session(_session_payload()),
+        valid_protocol_context(),
         FeatureParameters(
             version="physical-features/test",
             despike_window_samples=1,
@@ -188,6 +138,7 @@ def test_same_physical_field_has_same_features_with_split_array_layout() -> None
     )
     second = extract_features(
         parse_physical_pressure_session(_session_payload(split_cells=True)),
+        valid_protocol_context(),
         FeatureParameters(
             version="physical-features/test",
             despike_window_samples=1,
@@ -213,6 +164,7 @@ def test_does_not_bridge_a_gap_larger_than_two_nominal_intervals() -> None:
     session = parse_physical_pressure_session(payload)
     features = extract_features(
         session,
+        valid_protocol_context(),
         FeatureParameters(
             version="physical-features/test",
             despike_window_samples=1,
@@ -226,16 +178,11 @@ def test_does_not_bridge_a_gap_larger_than_two_nominal_intervals() -> None:
     assert eyes_open.gap_count == 1
 
 
-def test_invalid_frames_are_excluded_from_physical_metrics() -> None:
+def test_hardware_quality_metadata_is_rejected_before_physical_metrics() -> None:
     payload = _session_payload()
     payload["frames"][2]["quality"] = "INVALID"
-    session = parse_physical_pressure_session(payload)
-    features = extract_features(
-        session,
-        FeatureParameters(version="physical-features/test", lowpass_cutoff_hz=0.0),
-    )
-
-    assert features.stage(StageId.BILATERAL_EYES_OPEN).valid_frame_count == 19
+    with pytest.raises(Exception):
+        parse_physical_pressure_session(payload)
 
 
 def test_algorithm_rotates_board_coordinates_for_fixed_left_turn() -> None:
@@ -255,6 +202,7 @@ def test_feature_extraction_applies_left_turn_to_board_cop() -> None:
     session = parse_physical_pressure_session(_session_payload())
     features = extract_features(
         session,
+        valid_protocol_context(),
         FeatureParameters(
             version="physical-features/test",
             despike_window_samples=1,

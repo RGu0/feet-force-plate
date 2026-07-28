@@ -31,7 +31,9 @@ class PhysicalAnalysisRunKey:
     measurement_conformance_version: str
     calibration_profile_version: str
     uncertainty_profile_version: str
+    input_validation_status: str
     test_protocol_version: str
+    protocol_context_sha256: str
     feature_pipeline_version: str
     feature_parameters_sha256: str
     rule_set_version: str

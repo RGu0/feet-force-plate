@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 from cloud.analysis.features import SessionFeatureSet
 from cloud.analysis.models import CapabilityDecision, CapabilityStatus, ValidationStatus
-from cloud.analysis.physical_input import PhysicalPressureSession, ValidationState
+from cloud.analysis.physical_input import PhysicalPressureSession
+from cloud.analysis.physical_input import PhysicalInputValidationStatus
 
 
 V1_STATIC_BALANCE_METRICS = frozenset(
@@ -19,7 +20,6 @@ V1_STATIC_BALANCE_METRICS = frozenset(
         "ap_range_90_mm",
         "ellipse_area_95_mm2",
         "total_force_cv",
-        "contact_area_variation_mm2",
         "eyes_closed_change",
         "semi_tandem_challenge",
         "front_foot_difference",
@@ -55,6 +55,10 @@ class PhysicalCapabilityContext:
     max_gap_nominal_intervals: float
     reference_artifact_sha256: str | None
     adapter_version: str
+    measurement_conformance_version: str
+    calibration_profile_version: str
+    uncertainty_profile_version: str
+    input_validation_status: PhysicalInputValidationStatus
     protocol_version: str
     rule_set_version: str
 
@@ -75,30 +79,19 @@ def evaluate_physical_capability(
         reasons.append("INPUT_SCHEMA_MISMATCH")
     if session.coordinate_frame.value != "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN":
         reasons.append("COORDINATE_FRAME_UNSUPPORTED")
-    if (session.coordinate_unit, session.force_unit, session.area_unit, session.time_unit) != (
+    if (session.coordinate_unit, session.force_unit, session.time_unit) != (
         "mm",
         "N",
-        "mm2",
         "s",
     ):
         reasons.append("PHYSICAL_UNITS_UNSUPPORTED")
-    profile = session.measurement_profile
-    if any(
-        value is not ValidationState.VALIDATED
-        for value in (
-            profile.physical_validation,
-            profile.timing_validation,
-            profile.coordinate_validation,
-            profile.force_validation,
-            profile.geometry_validation,
-        )
-    ):
-        reasons.append("MEASUREMENT_VALIDATION_INSUFFICIENT")
-    if profile.measurement_conformance_version != descriptor.measurement_conformance_version:
+    if context.input_validation_status is not PhysicalInputValidationStatus.VALIDATED:
+        reasons.append("PHYSICAL_INPUT_NOT_VALIDATED")
+    if context.measurement_conformance_version != descriptor.measurement_conformance_version:
         reasons.append("MEASUREMENT_CONFORMANCE_MISMATCH")
-    if profile.calibration_profile_version != descriptor.calibration_profile_version:
+    if context.calibration_profile_version != descriptor.calibration_profile_version:
         reasons.append("CALIBRATION_PROFILE_MISMATCH")
-    if profile.uncertainty_profile_version != descriptor.uncertainty_profile_version:
+    if context.uncertainty_profile_version != descriptor.uncertainty_profile_version:
         reasons.append("UNCERTAINTY_PROFILE_MISMATCH")
     if features.pipeline_version != descriptor.feature_pipeline_version:
         reasons.append("FEATURE_PIPELINE_MISMATCH")

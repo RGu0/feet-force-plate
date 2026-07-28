@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime
 
 from cloud.analysis.features import SessionFeatureSet, StageFeatureSet
-from cloud.analysis.physical_input import StageId
+from cloud.analysis.protocol_context import StageId
 from cloud.analysis.risk_rules import RiskTier, ScreeningRiskResult
 from cloud.reporting.models import (
     PublicFigure,

@@ -5,11 +5,11 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 from cloud.analysis.features import SessionFeatureSet
-from cloud.analysis.physical_input import (
+from cloud.analysis.physical_input import PhysicalInputValidationStatus
+from cloud.analysis.protocol_context import (
     CompletionStatus,
-    PhysicalPressureSession,
     StageId,
-    ValidationState,
+    StaticBalanceProtocolContext,
 )
 
 
@@ -120,7 +120,8 @@ def _score_from_features(features: SessionFeatureSet) -> tuple[int, tuple[str, .
 
 def evaluate_screening_risk(
     *,
-    session: PhysicalPressureSession,
+    protocol_context: StaticBalanceProtocolContext,
+    input_validation_status: PhysicalInputValidationStatus,
     features: SessionFeatureSet,
     questionnaire: QuestionnaireSnapshot,
 ) -> ScreeningRiskResult:
@@ -136,23 +137,13 @@ def evaluate_screening_risk(
             balance_reason_codes=(),
         )
 
-    profile = session.measurement_profile
-    if any(
-        state is not ValidationState.VALIDATED
-        for state in (
-            profile.physical_validation,
-            profile.timing_validation,
-            profile.coordinate_validation,
-            profile.force_validation,
-            profile.geometry_validation,
-        )
-    ):
+    if input_validation_status is not PhysicalInputValidationStatus.VALIDATED:
         return ScreeningRiskResult(
             risk_tier=RiskTier.TECHNICAL_INVALID,
             balance_index=0,
             background_status=BackgroundRisk.UNKNOWN,
             background_reason_codes=(),
-            completion_reason_codes=("TECHNICAL_VALIDATION_FAILED",),
+            completion_reason_codes=("PHYSICAL_INPUT_NOT_VALIDATED",),
             balance_reason_codes=(),
         )
 
@@ -177,7 +168,7 @@ def evaluate_screening_risk(
     completion_reasons: list[str] = []
     balance_failures = 0
     severe_completion = False
-    for stage in session.stages:
+    for stage in protocol_context.stages:
         if stage.completion_status in {CompletionStatus.BALANCE_FAILURE, CompletionStatus.SAFETY_ABORT}:
             completion_reasons.append(stage.completion_status.value)
             balance_failures += 1
@@ -188,7 +179,7 @@ def evaluate_screening_risk(
             completion_reasons.append(f"{stage.stage_id.value}:SAFETY_SUPPORT")
     if any(
         stage.completion_status in {CompletionStatus.TECHNICAL_INVALID, CompletionStatus.PROTOCOL_INVALID}
-        for stage in session.stages
+        for stage in protocol_context.stages
     ):
         return ScreeningRiskResult(
             risk_tier=RiskTier.TECHNICAL_INVALID,

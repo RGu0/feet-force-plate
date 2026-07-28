@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ANALYSIS = ROOT / "cloud/analysis/migrations/0001_analysis.sql"
+ANALYSIS_PHYSICAL_CONTEXT = ROOT / "cloud/analysis/migrations/0002_physical_protocol_context.sql"
 REPORTING = ROOT / "cloud/reporting/migrations/0001_reporting.sql"
 OPS = ROOT / "cloud/observability/migrations/0001_ops.sql"
 
@@ -15,7 +16,7 @@ def normalized(path: Path) -> str:
 
 class MigrationContractTests(unittest.TestCase):
     def test_task_d_migrations_exist_and_do_not_modify_ingestion_tables(self) -> None:
-        for path in (ANALYSIS, REPORTING, OPS):
+        for path in (ANALYSIS, ANALYSIS_PHYSICAL_CONTEXT, REPORTING, OPS):
             self.assertTrue(path.exists(), path)
             sql = normalized(path)
             self.assertNotIn("create table screening.", sql)
@@ -46,6 +47,14 @@ class MigrationContractTests(unittest.TestCase):
         )
         self.assertIn("num_nonnulls(value_numeric, value_text, value_json) = 1", sql)
         self.assertIn("enable row level security", sql)
+
+    def test_physical_context_identity_migration_is_fail_closed_and_versioned(self) -> None:
+        sql = normalized(ANALYSIS_PHYSICAL_CONTEXT)
+        self.assertIn("input_validation_status", sql)
+        self.assertIn("validated", sql)
+        self.assertIn("rejected", sql)
+        self.assertIn("protocol_context_sha256", sql)
+        self.assertIn("analysis_runs_recompute_identity_unique", sql)
 
     def test_reporting_enforces_one_report_per_session_and_immutable_versions(self) -> None:
         sql = normalized(REPORTING)

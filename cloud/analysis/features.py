@@ -11,10 +11,11 @@ import numpy as np
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.coordinates import board_to_subject_coordinates
-from cloud.analysis.physical_input import (
-    FrameQuality,
-    PhysicalPressureSession,
+from cloud.analysis.physical_input import PhysicalPressureSession
+from cloud.analysis.protocol_context import (
     StageId,
+    StaticBalanceProtocolContext,
+    validate_static_balance_protocol_context,
 )
 from cloud.analysis.models import FeatureSet, RawSession
 
@@ -247,10 +248,11 @@ def _filter_track(
 
 def _stage_frame_indices(
     session: PhysicalPressureSession,
+    protocol_context: StaticBalanceProtocolContext,
     stage_index: int,
 ) -> tuple[int, ...]:
-    stage = session.stages[stage_index]
-    last_stage = stage_index == len(session.stages) - 1
+    stage = protocol_context.stages[stage_index]
+    last_stage = stage_index == len(protocol_context.stages) - 1
     return tuple(
         index
         for index, frame in enumerate(session.frames)
@@ -261,42 +263,30 @@ def _stage_frame_indices(
 
 def _extract_stage_features(
     session: PhysicalPressureSession,
+    protocol_context: StaticBalanceProtocolContext,
     stage_index: int,
     parameters: FeatureParameters,
 ) -> StageFeatureSet:
-    stage = session.stages[stage_index]
-    indices = _stage_frame_indices(session, stage_index)
-    active_indices = tuple(
-        index for index, cell in enumerate(session.cells) if cell.status.value == "ACTIVE"
-    )
+    stage = protocol_context.stages[stage_index]
+    indices = _stage_frame_indices(session, protocol_context, stage_index)
     subject_coordinates = tuple(
         board_to_subject_coordinates(
-            x_mm=session.cells[index].x_mm,
-            y_mm=session.cells[index].y_mm,
+            x_mm=point.board_x_mm,
+            y_mm=point.board_y_mm,
             orientation=stage.subject_orientation,
         )
-        for index in active_indices
+        for point in session.points
     )
     ml_coordinates = np.asarray([coordinate[0] for coordinate in subject_coordinates])
     ap_coordinates = np.asarray([coordinate[1] for coordinate in subject_coordinates])
-    cell_areas = tuple(session.cells[index].active_area_mm2 for index in active_indices)
-    has_unknown_active_area = any(area is None for area in cell_areas)
-    area_coordinates = (
-        None
-        if has_unknown_active_area
-        else np.asarray(cell_areas, dtype=float)
-    )
     timestamps: list[float] = []
     cop_ml: list[float] = []
     cop_ap: list[float] = []
     total_forces: list[float] = []
-    contact_areas: list[float] = []
     total_frame_count = len(indices)
     for frame_index in indices:
         frame = session.frames[frame_index]
-        if frame.quality is not FrameQuality.VALID:
-            continue
-        forces = np.asarray([frame.normal_force_n[index] for index in active_indices])
+        forces = np.asarray(frame.normal_force_n, dtype=float)
         total_force = float(forces.sum())
         if total_force < parameters.minimum_total_force_n:
             continue
@@ -304,10 +294,6 @@ def _extract_stage_features(
         cop_ml.append(float(np.dot(forces, ml_coordinates) / total_force))
         cop_ap.append(float(np.dot(forces, ap_coordinates) / total_force))
         total_forces.append(total_force)
-        if area_coordinates is not None:
-            contact_areas.append(
-                float(area_coordinates[forces >= parameters.contact_cell_force_threshold_n].sum())
-            )
 
     if not timestamps:
         raise ValueError(f"stage {stage.stage_id.value} has no valid physical frames")
@@ -355,9 +341,9 @@ def _extract_stage_features(
         ml_range_90_mm=float(np.quantile(ml_array, 0.95) - np.quantile(ml_array, 0.05)),
         ellipse_area_95_mm2=ellipse_area,
         total_force_cv=force_cv,
-        contact_area_variation_mm2=(
-            None if has_unknown_active_area else float(np.asarray(contact_areas).std())
-        ),
+        # Public hardware input has no sensitive hardware geometry/area model;
+        # contact-area metrics are intentionally unavailable in this pipeline.
+        contact_area_variation_mm2=None,
         timestamps_s=tuple(float(value) for value in timestamp_array),
         cop_ml_mm=tuple(float(value) for value in ml_array),
         cop_ap_mm=tuple(float(value) for value in ap_array),
@@ -369,13 +355,15 @@ def _extract_stage_features(
 
 def extract_features(
     session: PhysicalPressureSession,
+    protocol_context: StaticBalanceProtocolContext,
     parameters: FeatureParameters,
 ) -> SessionFeatureSet:
     """Compute V1 physical static-balance features from a standard session."""
 
+    validate_static_balance_protocol_context(protocol_context, session=session)
     stages = tuple(
-        _extract_stage_features(session, stage_index, parameters)
-        for stage_index in range(len(session.stages))
+        _extract_stage_features(session, protocol_context, stage_index, parameters)
+        for stage_index in range(len(protocol_context.stages))
     )
     return SessionFeatureSet(
         session_id=session.session_id,

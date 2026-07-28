@@ -18,8 +18,15 @@ from cloud.analysis.physical_gates import (
     evaluate_risk_release_capability,
 )
 from cloud.analysis.physical_input import (
+    PhysicalInputValidationStatus,
     PhysicalPressureSession,
     validate_physical_pressure_session,
+)
+from cloud.analysis.protocol_context import (
+    ProtocolContextError,
+    StaticBalanceProtocolContext,
+    protocol_context_sha256,
+    validate_static_balance_protocol_context,
 )
 from cloud.analysis.physical_runs import (
     InMemoryPhysicalAnalysisRepository,
@@ -38,6 +45,10 @@ class QuestionnaireIdentityError(ValueError):
     """The loaded questionnaire does not match the immutable event identity."""
 
 
+class ProtocolContextIdentityError(ValueError):
+    """The workflow protocol context does not match immutable event identity."""
+
+
 @dataclass(frozen=True, slots=True)
 class CompleteSessionEvent:
     event_id: str
@@ -50,7 +61,10 @@ class CompleteSessionEvent:
     measurement_conformance_version: str
     calibration_profile_version: str
     uncertainty_profile_version: str
+    input_validation_status: PhysicalInputValidationStatus
     test_protocol_version: str
+    protocol_context: StaticBalanceProtocolContext
+    protocol_context_sha256: str
     feature_pipeline_version: str
     rule_set_version: str
     reference_population_id: str
@@ -168,6 +182,10 @@ class PhysicalAnalysisOrchestrator:
             max_gap_nominal_intervals=max_gap,
             reference_artifact_sha256=event.reference_artifact_sha256,
             adapter_version=event.hardware_adapter_version,
+            measurement_conformance_version=event.measurement_conformance_version,
+            calibration_profile_version=event.calibration_profile_version,
+            uncertainty_profile_version=event.uncertainty_profile_version,
+            input_validation_status=event.input_validation_status,
             protocol_version=event.test_protocol_version,
             rule_set_version=event.rule_set_version,
         )
@@ -184,7 +202,9 @@ class PhysicalAnalysisOrchestrator:
             measurement_conformance_version=event.measurement_conformance_version,
             calibration_profile_version=event.calibration_profile_version,
             uncertainty_profile_version=event.uncertainty_profile_version,
+            input_validation_status=event.input_validation_status.value,
             test_protocol_version=event.test_protocol_version,
+            protocol_context_sha256=event.protocol_context_sha256,
             feature_pipeline_version=event.feature_pipeline_version,
             feature_parameters_sha256=_canonical_sha256(asdict(self.parameters)),
             rule_set_version=event.rule_set_version,
@@ -218,15 +238,15 @@ class PhysicalAnalysisOrchestrator:
                 raise ValueError("physical session identity does not match event")
             if session.schema_version != event.input_schema_version:
                 raise ValueError("physical session schema does not match event")
-            profile = session.measurement_profile
-            if profile.measurement_conformance_version != event.measurement_conformance_version:
-                raise ValueError("measurement conformance does not match event")
-            if profile.calibration_profile_version != event.calibration_profile_version:
-                raise ValueError("calibration profile does not match event")
-            if profile.uncertainty_profile_version != event.uncertainty_profile_version:
-                raise ValueError("uncertainty profile does not match event")
             validate_physical_pressure_session(session)
-            feature_set: SessionFeatureSet = extract_features(session, self.parameters)
+            validate_static_balance_protocol_context(event.protocol_context, session=session)
+            if protocol_context_sha256(event.protocol_context) != event.protocol_context_sha256:
+                raise ProtocolContextIdentityError("protocol context identity does not match event")
+            if event.protocol_context.protocol_version != event.test_protocol_version:
+                raise ProtocolContextIdentityError("protocol context version does not match event")
+            feature_set: SessionFeatureSet = extract_features(
+                session, event.protocol_context, self.parameters
+            )
             if feature_set.pipeline_version != event.feature_pipeline_version:
                 raise ValueError("feature pipeline does not match event")
             capability = evaluate_risk_release_capability(
@@ -255,7 +275,8 @@ class PhysicalAnalysisOrchestrator:
             if questionnaire_snapshot_sha256(questionnaire) != event.questionnaire_snapshot_sha256:
                 raise QuestionnaireIdentityError("questionnaire snapshot identity does not match event")
             risk = evaluate_screening_risk(
-                session=session,
+                protocol_context=event.protocol_context,
+                input_validation_status=event.input_validation_status,
                 features=feature_set,
                 questionnaire=questionnaire,
             )
@@ -275,6 +296,16 @@ class PhysicalAnalysisOrchestrator:
                 status=PhysicalRunStatus.FAILED,
                 private_trace=("QUESTIONNAIRE_IDENTITY_MISMATCH",),
                 error_code="E-ALG-QUESTIONNAIRE",
+                completed_at=datetime.now(UTC),
+            )
+            self.repository.save(failed)
+            return failed
+        except (ProtocolContextError, ProtocolContextIdentityError):
+            failed = replace(
+                candidate,
+                status=PhysicalRunStatus.FAILED,
+                private_trace=("PROTOCOL_CONTEXT_FAILURE",),
+                error_code="E-ALG-PROTOCOL-CONTEXT",
                 completed_at=datetime.now(UTC),
             )
             self.repository.save(failed)

@@ -8,7 +8,7 @@ import pytest
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.models import ValidationStatus
 from cloud.analysis.physical_gates import PhysicalMetricDescriptor
-from cloud.analysis.physical_input import parse_physical_pressure_session
+from cloud.analysis.physical_input import PhysicalInputValidationStatus, parse_physical_pressure_session
 from cloud.analysis.physical_orchestrator import (
     CompleteSessionEvent,
     InMemoryPhysicalSessionLoader,
@@ -25,8 +25,10 @@ from cloud.analysis.risk_rules import (
     RiskTier,
     questionnaire_snapshot_sha256,
 )
+from cloud.analysis.protocol_context import protocol_context_sha256
 
 from test_physical_features import _session_payload
+from test_physical_input import valid_protocol_context
 
 
 def make_event(**overrides: object) -> CompleteSessionEvent:
@@ -41,7 +43,10 @@ def make_event(**overrides: object) -> CompleteSessionEvent:
         "measurement_conformance_version": "measurement-conformance/1",
         "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",
+        "input_validation_status": PhysicalInputValidationStatus.VALIDATED,
         "test_protocol_version": "static-balance/1",
+        "protocol_context": valid_protocol_context(),
+        "protocol_context_sha256": protocol_context_sha256(valid_protocol_context()),
         "feature_pipeline_version": "static-balance-feature-pipeline/1.0",
         "rule_set_version": "fall-screen-rule-set/1.0",
         "reference_population_id": "reference-60-plus-v1",
@@ -101,7 +106,9 @@ def make_orchestrator(
         repository=repository,
         parameters=parameters,
         release_descriptor=release_descriptor(
-            feature_parameters_sha256=extract_features(session, parameters).parameters_sha256
+            feature_parameters_sha256=extract_features(
+                session, valid_protocol_context(), parameters
+            ).parameters_sha256
         ),
         questionnaire_loader=InMemoryQuestionnaireLoader(
             QuestionnaireSnapshot(
@@ -192,4 +199,13 @@ def test_event_feature_pipeline_version_mismatch_never_emits_a_public_result() -
     assert run.status is PhysicalRunStatus.FAILED
     assert run.public_result is None
     assert run.error_code == "E-ALG-PHYSICAL-INPUT"
+    assert repository.count() == 1
+
+
+def test_protocol_context_hash_mismatch_never_emits_a_public_result() -> None:
+    orchestrator, repository = make_orchestrator()
+    run = orchestrator.handle(make_event(protocol_context_sha256="e" * 64))
+    assert run.status is PhysicalRunStatus.FAILED
+    assert run.public_result is None
+    assert run.error_code == "E-ALG-PROTOCOL-CONTEXT"
     assert repository.count() == 1

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.features import extract_features
-from cloud.analysis.physical_input import parse_physical_pressure_session
+from cloud.analysis.physical_input import PhysicalInputValidationStatus, parse_physical_pressure_session
 from cloud.analysis.risk_rules import QuestionnaireSnapshot, evaluate_screening_risk
 from cloud.reporting.models import ReportContext, ReportKind
 from cloud.reporting.pdf import MinimalPdfRenderer
@@ -24,6 +24,7 @@ from cloud.reporting.static_balance import (
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "analysis"))
 from test_physical_features import _session_payload
+from test_physical_input import valid_protocol_context
 
 
 def report_context() -> ReportContext:
@@ -60,10 +61,12 @@ def analysis_input():
     session = parse_physical_pressure_session(_session_payload())
     features = extract_features(
         session,
+        valid_protocol_context(),
         FeatureParameters(version="physical-features/test", lowpass_cutoff_hz=0.0),
     )
     risk = evaluate_screening_risk(
-        session=session,
+        protocol_context=valid_protocol_context(),
+        input_validation_status=PhysicalInputValidationStatus.VALIDATED,
         features=features,
         questionnaire=QuestionnaireSnapshot(
             age_years=72,
