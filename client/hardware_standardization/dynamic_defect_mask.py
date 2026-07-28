@@ -86,15 +86,15 @@ class DynamicDefectEntry:
 class DynamicDefectMask:
     """A frozen, JSON-compatible device-health mask without raw-frame content."""
 
-    device_binding_id: str
+    device_id: str
     mask_version: int
     policy_version: str
     shape: tuple[int, int]
     entries: tuple[DynamicDefectEntry, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.device_binding_id or not self.policy_version:
-            raise ValueError("device binding and policy version are required")
+        if not self.device_id or not self.policy_version:
+            raise ValueError("device ID and policy version are required")
         if self.mask_version < 0 or len(self.shape) != 2 or min(self.shape) < 3:
             raise ValueError("mask version and shape are invalid")
         total = self.shape[0] * self.shape[1]
@@ -130,8 +130,8 @@ class DynamicDefectMask:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "dynamic-defect-mask/1",
-            "device_binding_id": self.device_binding_id,
+            "schema_version": "dynamic-defect-mask/2",
+            "device_id": self.device_id,
             "mask_version": self.mask_version,
             "policy_version": self.policy_version,
             "shape": list(self.shape),
@@ -150,7 +150,13 @@ class DynamicDefectMask:
     def from_dict(cls, payload: object) -> DynamicDefectMask:
         """Parse the persisted, versioned health mask without raw data."""
 
-        if not isinstance(payload, dict) or payload.get("schema_version") != "dynamic-defect-mask/1":
+        if not isinstance(payload, dict):
+            raise ValueError("unsupported dynamic defect mask schema")
+        if payload.get("schema_version") == "dynamic-defect-mask/1":
+            raise ValueError(
+                "dynamic defect mask schema /1 has no stable device ID; assign a device ID before migration"
+            )
+        if payload.get("schema_version") != "dynamic-defect-mask/2":
             raise ValueError("unsupported dynamic defect mask schema")
         shape = payload.get("shape")
         entries = payload.get("entries")
@@ -162,7 +168,7 @@ class DynamicDefectMask:
         ):
             raise ValueError("dynamic defect mask shape or entries are invalid")
         return cls(
-            device_binding_id=_required_string(payload, "device_binding_id"),
+            device_id=_required_string(payload, "device_id"),
             mask_version=_required_int(payload, "mask_version"),
             policy_version=_required_string(payload, "policy_version"),
             shape=(shape[0], shape[1]),
@@ -188,27 +194,29 @@ class DynamicDefectMaskStore:
     """Durable per-device mask store with atomic next-session updates.
 
     ``data_root`` is the application's writable data directory, never a source
-    tree or documentation directory.  The device binding is SHA-256 mapped to a
-    directory name so a hardware identifier cannot escape the hardware folder.
+    tree or documentation directory.  The stable physical ``device_id`` is
+    SHA-256 mapped to a directory name, so it cannot escape the hardware folder.
+    Same-model devices share their static specification but never their dynamic
+    defect masks.
     """
 
     data_root: Path
-    device_binding_id: str
+    device_id: str
     shape: tuple[int, int]
     policy: DynamicDefectPolicy = DynamicDefectPolicy()
 
     def __post_init__(self) -> None:
-        if not self.device_binding_id or len(self.shape) != 2 or min(self.shape) < 3:
-            raise ValueError("device binding and dynamic defect mask shape are required")
+        if not self.device_id or len(self.shape) != 2 or min(self.shape) < 3:
+            raise ValueError("device ID and dynamic defect mask shape are required")
 
     @property
     def path(self) -> Path:
-        binding_digest = hashlib.sha256(self.device_binding_id.encode("utf-8")).hexdigest()
+        device_digest = hashlib.sha256(self.device_id.encode("utf-8")).hexdigest()
         return (
             self.data_root
             / "hardware"
             / "do-p4864"
-            / binding_digest
+            / device_digest
             / "dynamic-defect-mask.json"
         )
 
@@ -217,7 +225,7 @@ class DynamicDefectMaskStore:
 
         if not self.path.exists():
             return DynamicDefectMask(
-                device_binding_id=self.device_binding_id,
+                device_id=self.device_id,
                 mask_version=0,
                 policy_version=self.policy.version,
                 shape=self.shape,
@@ -226,8 +234,8 @@ class DynamicDefectMaskStore:
             mask = DynamicDefectMask.from_dict(json.loads(self.path.read_text("utf-8")))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
             raise ValueError("dynamic defect mask file is unreadable") from error
-        if mask.device_binding_id != self.device_binding_id or mask.shape != self.shape:
-            raise ValueError("dynamic defect mask does not match this hardware binding")
+        if mask.device_id != self.device_id or mask.shape != self.shape:
+            raise ValueError("dynamic defect mask does not match this device ID")
         return mask
 
     def update_after_session(
@@ -252,8 +260,8 @@ class DynamicDefectMaskStore:
         return observation
 
     def _atomic_write(self, mask: DynamicDefectMask) -> None:
-        if mask.device_binding_id != self.device_binding_id or mask.shape != self.shape:
-            raise ValueError("cannot write a dynamic defect mask for another hardware binding")
+        if mask.device_id != self.device_id or mask.shape != self.shape:
+            raise ValueError("cannot write a dynamic defect mask for another device ID")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         encoded = json.dumps(mask.to_dict(), sort_keys=True, separators=(",", ":"))
@@ -323,7 +331,7 @@ def observe_dynamic_defects(
         )
         changed = True
     updated = DynamicDefectMask(
-        device_binding_id=mask.device_binding_id,
+        device_id=mask.device_id,
         mask_version=mask.mask_version + int(changed),
         policy_version=policy.version,
         shape=mask.shape,

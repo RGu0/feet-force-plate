@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from client.device.protocol import RawFrame
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
@@ -22,7 +23,7 @@ SHAPE = (9, 11)
 
 def _mask() -> DynamicDefectMask:
     return DynamicDefectMask(
-        device_binding_id="terminal-bound-device-1",
+        device_id="do-p4864-lab-01",
         mask_version=0,
         policy_version="dynamic-defect-mask/generic-grid/1",
         shape=SHAPE,
@@ -102,7 +103,7 @@ def test_adjacent_promoted_bad_cells_make_device_unavailable_and_gate_rejects_ca
         source_digest="a" * 64,
     )
     unusable_mask = DynamicDefectMask(
-        device_binding_id="terminal-bound-device-1",
+        device_id="do-p4864-lab-01",
         mask_version=second.updated_mask.mask_version,
         policy_version=second.updated_mask.policy_version,
         shape=(48, 64),
@@ -155,7 +156,7 @@ def test_frozen_isolated_repairable_mask_enters_the_derived_repair_path() -> Non
     )
     source_index = 100
     mask = DynamicDefectMask(
-        device_binding_id="terminal-bound-device-1",
+        device_id="do-p4864-lab-01",
         mask_version=2,
         policy_version="dynamic-defect-mask/generic-grid/1",
         shape=(48, 64),
@@ -198,7 +199,7 @@ def test_hardware_mask_file_is_loaded_at_session_start_and_atomically_updated_af
 ) -> None:
     store = DynamicDefectMaskStore(
         data_root=tmp_path,
-        device_binding_id="terminal-bound-device-1",
+        device_id="do-p4864-lab-01",
         shape=SHAPE,
     )
 
@@ -230,7 +231,7 @@ def test_hardware_mask_file_is_loaded_at_session_start_and_atomically_updated_af
 def test_mask_store_rejects_an_outdated_session_snapshot(tmp_path) -> None:
     store = DynamicDefectMaskStore(
         data_root=tmp_path,
-        device_binding_id="terminal-bound-device-1",
+        device_id="do-p4864-lab-01",
         shape=SHAPE,
     )
     stale = store.load_for_session()
@@ -250,3 +251,53 @@ def test_mask_store_rejects_an_outdated_session_snapshot(tmp_path) -> None:
         assert "changed while this session was active" in str(error)
     else:
         raise AssertionError("stale mask snapshot must not overwrite the current mask")
+
+
+def test_selected_device_id_keeps_same_model_masks_isolated(tmp_path) -> None:
+    """A site can alternate boards without inheriting another board's mask."""
+
+    first_board = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_id="do-p4864-site-a",
+        shape=SHAPE,
+    )
+    second_board = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_id="do-p4864-site-b",
+        shape=SHAPE,
+    )
+    first_snapshot = first_board.load_for_session()
+    first_observation = first_board.update_after_session(
+        first_snapshot,
+        session_id="board-a-1",
+        matrices=_dynamic_frames(failed_cells=((4, 5),)),
+    )
+    first_board.update_after_session(
+        first_observation.updated_mask,
+        session_id="board-a-2",
+        matrices=_dynamic_frames(failed_cells=((4, 5),)),
+    )
+
+    selected_first = first_board.load_for_session()
+    selected_second = second_board.load_for_session()
+
+    assert first_board.path != second_board.path
+    assert selected_first.device_id == "do-p4864-site-a"
+    assert selected_first.repairable_source_indices
+    assert selected_second.device_id == "do-p4864-site-b"
+    assert selected_second.mask_version == 0
+    assert not selected_second.entries
+
+
+def test_old_terminal_binding_mask_requires_explicit_device_id_assignment() -> None:
+    with pytest.raises(ValueError, match="assign a device ID"):
+        DynamicDefectMask.from_dict(
+            {
+                "schema_version": "dynamic-defect-mask/1",
+                "device_binding_id": "old-terminal-binding",
+                "mask_version": 1,
+                "policy_version": "dynamic-defect-mask/generic-grid/1",
+                "shape": list(SHAPE),
+                "entries": [],
+            }
+        )
