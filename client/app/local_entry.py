@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 
@@ -29,6 +30,7 @@ from client.local_analysis.display import DisplayRefreshController, LatestDispla
 from client.local_analysis.v1_debug import V1ReplayDebugProcessor
 from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
+from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.protocol import (
     FeatureFlags,
     ProtocolCatalog,
@@ -50,6 +52,16 @@ class _Print:
     def print_pdf(self, pdf_path, *, job_name): _ = pdf_path, job_name
 
 
+@dataclass(frozen=True, slots=True)
+class LocalReplayRuntime:
+    """The shared, strictly local composition root for replay and verification."""
+
+    source: object
+    acquisition: FixtureReplayAcquisition
+    store: LocalReplayStore
+    controller: ApplicationController
+
+
 def parse_replay_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="FeetForcePlate 本地 V1 回放调试")
     parser.add_argument(
@@ -58,9 +70,23 @@ def parse_replay_arguments(argv: list[str]) -> argparse.Namespace:
         default=1.0,
         help="开发回放倍速；默认 1× 实时",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="自动完成本机 MVP 回放验证并导出工件",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="--verify 的工件输出目录",
+    )
     arguments = parser.parse_args(argv)
     if arguments.replay_speed <= 0:
         parser.error("--replay-speed 必须大于 0")
+    if arguments.verify and arguments.output_dir is None:
+        parser.error("--verify 必须提供 --output-dir")
+    if arguments.output_dir is not None and not arguments.verify:
+        parser.error("--output-dir 仅可与 --verify 一起使用")
     return arguments
 
 
@@ -87,32 +113,56 @@ def arm_fixture_position_guidance(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    arguments = parse_replay_arguments(sys.argv[1:] if argv is None else argv)
-    app = QApplication.instance() or QApplication(sys.argv)
-    app.setWindowIcon(application_icon())
+def build_local_replay_runtime(
+    *,
+    replay_speed: float,
+    storage_root: Path | None = None,
+    export_destination: Path | None = None,
+) -> LocalReplayRuntime:
+    """Build the local-only replay UI once for manual and automated use."""
+
     fixture_bootstrap = FixtureReplayBootstrap(FixtureReplaySource.from_repository)
     source = fixture_bootstrap.source or UnavailableFixtureReplaySource()
     standardizer = (
-        DoP4864LiveFrameStandardizer(replay_debug_profile(fixture_sha256=source.fixture_sha256))
+        DoP4864LiveFrameStandardizer(
+            replay_debug_profile(fixture_sha256=source.fixture_sha256)
+        )
         if fixture_bootstrap.source is not None
         else None
     )
     raw, display = LatestFrameMailbox(), LatestDisplayFrameMailbox()
-    acquisition = FixtureReplayAcquisition(source, raw, speed=arguments.replay_speed)
-    store = LocalReplayStore()
+    acquisition = FixtureReplayAcquisition(source, raw, speed=replay_speed)
+    store = LocalReplayStore(storage_root)
     from client.workflow.participant import ParticipantWorkflow
-    from client.workflow.consent import ConsentPolicy, ConsentWorkflow
-    participant = ParticipantWorkflow(tenant_id="local-replay", issuer="local", subjects=store, audit=_Audit())
-    consent = ConsentWorkflow(tenant_id="local-replay", terminal_id="local-replay", consents=type("Consents", (), {"find_valid": store.find_valid, "create": store.create_consent})())
+
+    participant = ParticipantWorkflow(
+        tenant_id="local-replay", issuer="local", subjects=store, audit=_Audit()
+    )
+    consent = ConsentWorkflow(
+        tenant_id="local-replay",
+        terminal_id="local-replay",
+        consents=type(
+            "Consents",
+            (),
+            {"find_valid": store.find_valid, "create": store.create_consent},
+        )(),
+    )
     replay_protocol = default_standard_protocol()
-    runtime = build_connected_ui(preflight=fixture_bootstrap, sessions=store, acquisition=acquisition,
+    runtime = build_connected_ui(
+        preflight=fixture_bootstrap,
+        sessions=store,
+        acquisition=acquisition,
         processor=V1ReplayDebugProcessor(
             StandardizedReplaySource(source, standardizer) if standardizer else source,
             report_sink=store,
-        ), delivery=ReportDeliveryService(BasicReportPdfRenderer()), persisted_reports=store,
-        spooler=_Print(), telemetry=_Telemetry(), display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30),
-        export_destination=lambda: Path.cwd() / "replay-debug-report.pdf",
+        ),
+        delivery=ReportDeliveryService(BasicReportPdfRenderer()),
+        persisted_reports=store,
+        spooler=_Print(),
+        telemetry=_Telemetry(),
+        display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30),
+        export_destination=lambda: export_destination
+        or Path.cwd() / "replay-debug-report.pdf",
         protocol=ProtocolCatalog((replay_protocol,)).select(
             ProtocolParadigm.STANDARD_BILATERAL,
             FeatureFlags(
@@ -121,14 +171,43 @@ def main(argv: list[str] | None = None) -> int:
             ),
         ),
         data_source_mode="REPLAY_DEBUG",
-        controller_options={"participant": participant, "consent": consent,
-            "consent_policy": ConsentPolicy("local-replay/1", ("SCREENING",), ("REPLAY_DEBUG",)),
+        controller_options={
+            "participant": participant,
+            "consent": consent,
+            "consent_policy": ConsentPolicy(
+                "local-replay/1", ("SCREENING",), ("REPLAY_DEBUG",)
+            ),
             "live_display": LiveDisplayProjection(
                 source=raw, destination=display, standardizer=standardizer
-            ) if standardizer else None,
+            )
+            if standardizer
+            else None,
             "read_models": store,
-        })
-    controller: ApplicationController = runtime.controller
+        },
+    )
+    return LocalReplayRuntime(source, acquisition, store, runtime.controller)
+
+
+def run_local_mvp_validation(*, output_dir: Path, replay_speed: float):
+    """Run the reusable local replay composition in automated verification mode."""
+
+    from client.app.local_mvp_validation import run_local_mvp_validation as run_validation
+
+    return run_validation(output_dir=output_dir, replay_speed=replay_speed)
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_replay_arguments(sys.argv[1:] if argv is None else argv)
+    if arguments.verify:
+        return run_local_mvp_validation(
+            output_dir=arguments.output_dir,
+            replay_speed=arguments.replay_speed,
+        ).exit_code
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setWindowIcon(application_icon())
+    runtime = build_local_replay_runtime(replay_speed=arguments.replay_speed)
+    controller = runtime.controller
+    acquisition = runtime.acquisition
     enter_position = controller.window.findChild(QPushButton, "ENTER_POSITION")
     enter_position.clicked.connect(
         lambda: QTimer.singleShot(
