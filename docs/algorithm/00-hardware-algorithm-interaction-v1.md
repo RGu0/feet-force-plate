@@ -117,16 +117,19 @@ UI 必须根据稳定代码显示本地化指引，不得直接显示 `reason` �
 
 “传感器数据不可用”表示硬件层无法获得可用数据，不能直接向用户断言设备已经物理损坏；UI 应使用“检查设备/联系支持”的措辞。
 
-## 6. 当前实现状态与收敛事项
+## 6. 当前实现状态
 
 DO-P4864 当前已能在硬件内部形成 `physical-sensor-observation/1.0`：其中有原始计数、零校正值、坏点修复信息、`estimated_force_n` 和质量审计。这些是硬件私有数据，不能直接作为算法输入。
 
-要达到本文的公开边界，仍需增加一个专用的公开导出器：
+专用公开导出器现已位于
+`client/hardware_standardization/public_export.py`：
 
-1. 仅接收硬件层已判定有效并已本地提交的会话；
+1. `export_committed_valid_hardware_session()` 仅接收硬件层已判定有效并完成本地提交的会话；
 2. 输出 `points[]`、`timestamp_s` 和最终 `normal_force_n`；
 3. 从导出物中删除一切原始、协议、质量和修复字段；
-4. 在导出器前硬性阻断无效会话；
-5. 为字段最小化、数组对齐、时间单调性和“无效会话零输出”建立自动化测试。
+4. 在导出器前硬性阻断无效或未提交会话；
+5. 自动测试覆盖字段最小化、数组对齐、时间单调性和无效/未提交会话零输出。
 
-在该导出器落地前，任何上层组件都不得直接读取 `physical-sensor-observation/1.0` 或 `RawFrame`。
+因此上层组件应只读取 `physical-pressure-session/1.0`，不得直接读取
+`physical-sensor-observation/1.0` 或 `RawFrame`。MVP 筛查输出不构成高精度绝对
+测力或临床结论。

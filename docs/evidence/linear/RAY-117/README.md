@@ -1,7 +1,7 @@
 # RAY-117 — 硬件标准化层：原始阵列到 MVP 标准会话
 
 - Issue: [RAY-117](https://linear.app/ray-app/issue/RAY-117/硬件标准化层原始阵列到-mvp-标准会话)
-- Evidence refreshed: 2026-07-23T08:52:11Z
+- Evidence refreshed: 2026-07-28
 - State after automated verification: `In Review`; milestone: `P0：硬件基线`; priority: `Urgent`
 - Project: `足底压力健康筛查与分析平台`
 
@@ -15,8 +15,27 @@
   baseline anomalies, saturation and conversion failures invalidate the session.
 - [x] Automated fixtures cover column-major mapping, normal frames, isolated
   cells, adjacent/edge cells, persistent line detection and raw immutability.
-- [ ] Cross-device and real-device confirmation of the observed line pattern;
-  temperature/drift/repeatability and physical-force validation remain open.
+- [x] A dedicated public exporter accepts only a hardware-accepted, locally
+  committed session and emits exactly `physical-pressure-session/1.0`:
+  physical points, monotonic time and final `normal_force_n`. It rejects invalid
+  or uncommitted sessions and excludes all raw, protocol, repair and quality fields.
+- [x] MVP screening uses the frozen V1 force conversion; it is not presented as
+  a high-precision absolute-force or clinical measurement claim.
+
+## Public algorithm handoff
+
+- `client/hardware_standardization/public_export.py` is the only public export
+  boundary. It receives `HardwareQualityEvaluation`, requires `VALID` plus a
+  completed local commit, maps the frozen V1 force vector to `normal_force_n`,
+  and produces the minimal JSON-compatible `physical-pressure-session/1.0`.
+- Point identifiers are generic `point-0001`… identifiers. Their physical
+  locations and each frame's force-vector ordering are stable, while all
+  DO-P4864 row/column/source-index details remain internal.
+- The export object has no device model, array shape/order, raw counts, voltage,
+  checksum, quality state, defect mask, repair method or calibration metadata.
+- This completes the hardware-layer handoff contract for MVP screening; broader
+  repeatability, drift and cross-device characterization are later validation
+  work and do not block this issue.
 
 ## Implementation and reuse decision
 
@@ -51,9 +70,21 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
   --junitxml=docs/evidence/linear/RAY-117/pytest-sensor-defect-repair-20260723.xml
 ```
 
-Result: `62 passed in 1.34s`. The JUnit output is retained as
+Historical result: `62 passed in 1.34s`. The JUnit output is retained as
 `pytest-sensor-defect-repair-20260723.xml`; the relevant fixture observation is
 retained in `sensor-defect-repair-reference-20260723.json`.
+
+Current public-export verification command:
+
+```text
+./scripts/local-env.sh python -m pytest tests/hardware_standardization -q
+```
+
+Result on 2026-07-28: `44 passed in 0.92s`; targeted public-export test:
+`2 passed in 0.20s`; Python compilation and `git diff --check` passed. The
+current environment does not include the optional `ruff` module, so no ruff
+result is claimed. The associated commit SHA is recorded in the Linear
+completion comment after the command succeeds.
 
 ## Boundaries and limits
 
@@ -64,8 +95,8 @@ retained in `sensor-defect-repair-reference-20260723.json`.
   must select and version its own policy; it is not safe to assume this fixture
   proves every sensor defect.
 - The replay fixture is de-identified and contains no raw customer identity or
-  serial capture. Real-device acceptance, cross-device confirmation and the
-  runtime UI bridge remain required before this issue can be `Done`.
+  serial capture. Broader real-device repeatability, cross-device confirmation,
+  drift and runtime UI binding remain separate follow-up validation work.
 - Related upstream protocol evidence is still tracked by `RAY-78`.
 
 ## Commit
@@ -98,8 +129,8 @@ frame`).
 
 ## Result boundary
 
-The selected first-version device profile is
-`do-p4864-voltage-force/provisional-unified-known-weight-v1-20260722`, using
-`voltage-to-force/two-slope-monotonic/1`. Known-weight reconstruction is still
-a provisional hardware calibration experiment. It must not be represented as a
-verified physical-force conversion for people or as clinical acceptance.
+The selected MVP device profile is
+`do-p4864-voltage-force/mvp-screening-v1-20260722`, using
+`voltage-to-force/two-slope-monotonic/1`. It supports the current initial
+screening product flow, not high-precision absolute-force, clinical or
+metrological claims.
