@@ -1,0 +1,277 @@
+"""Dynamic sensor-defect evidence and frozen device health masks.
+
+A low raw value alone is not evidence of a bad sensor: a foot can simply be
+elsewhere.  This module only accumulates evidence when neighbouring cells are
+loaded and changing while the candidate cell remains abnormally unresponsive.
+The resulting mask is a per-device configuration snapshot; callers freeze it
+at session start and persist it outside the raw-frame archive.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from math import isfinite
+
+import numpy as np
+from numpy.typing import NDArray
+
+
+class DynamicDefectStatus(StrEnum):
+    SUSPECT = "SUSPECT"
+    REPAIRABLE = "REPAIRABLE"
+
+
+class DeviceHealthStatus(StrEnum):
+    READY = "READY"
+    HEALTH_UNAVAILABLE = "HEALTH_UNAVAILABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDefectPolicy:
+    """Versioned thresholds for evidence, promotion and device availability."""
+
+    version: str = "dynamic-defect-mask/generic-grid/1"
+    support_relative_threshold: float = 0.08
+    response_fraction_limit: float = 0.20
+    temporal_variation_fraction_limit: float = 0.25
+    minimum_dynamic_range: float = 8.0
+    minimum_opportunities: int = 5
+    minimum_evidence_ratio: float = 0.80
+    promotion_observations: int = 2
+    maximum_repairable_cells: int = 2
+    maximum_mask_fraction: float = 0.03
+
+    def __post_init__(self) -> None:
+        if not self.version:
+            raise ValueError("dynamic defect policy version is required")
+        for value in (
+            self.support_relative_threshold,
+            self.response_fraction_limit,
+            self.temporal_variation_fraction_limit,
+            self.minimum_evidence_ratio,
+            self.maximum_mask_fraction,
+        ):
+            if not isfinite(value) or not 0 < value <= 1:
+                raise ValueError("dynamic defect ratio thresholds must be within (0, 1]")
+        if not isfinite(self.minimum_dynamic_range) or self.minimum_dynamic_range <= 0:
+            raise ValueError("minimum_dynamic_range must be positive and finite")
+        if self.minimum_opportunities < 1 or self.promotion_observations < 1:
+            raise ValueError("dynamic defect evidence counts must be positive")
+        if self.maximum_repairable_cells < 0:
+            raise ValueError("maximum_repairable_cells must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDefectEntry:
+    source_index: int
+    status: DynamicDefectStatus
+    confirmed_observations: int
+    last_observed_session_id: str
+
+    def __post_init__(self) -> None:
+        if self.source_index < 0:
+            raise ValueError("source_index must be non-negative")
+        if self.confirmed_observations < 1:
+            raise ValueError("confirmed_observations must be positive")
+        if not self.last_observed_session_id:
+            raise ValueError("last_observed_session_id is required")
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDefectMask:
+    """A frozen, JSON-compatible device-health mask without raw-frame content."""
+
+    device_binding_id: str
+    mask_version: int
+    policy_version: str
+    shape: tuple[int, int]
+    entries: tuple[DynamicDefectEntry, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.device_binding_id or not self.policy_version:
+            raise ValueError("device binding and policy version are required")
+        if self.mask_version < 0 or len(self.shape) != 2 or min(self.shape) < 3:
+            raise ValueError("mask version and shape are invalid")
+        total = self.shape[0] * self.shape[1]
+        if any(entry.source_index >= total for entry in self.entries):
+            raise ValueError("mask source index is outside the declared shape")
+        if len({entry.source_index for entry in self.entries}) != len(self.entries):
+            raise ValueError("mask source indexes must be unique")
+
+    @property
+    def repairable_source_indices(self) -> frozenset[int]:
+        return frozenset(
+            entry.source_index
+            for entry in self.entries
+            if entry.status is DynamicDefectStatus.REPAIRABLE
+        )
+
+    def health_status(self, policy: DynamicDefectPolicy) -> DeviceHealthStatus:
+        repairable = self.repairable_source_indices
+        if len(repairable) > policy.maximum_repairable_cells:
+            return DeviceHealthStatus.HEALTH_UNAVAILABLE
+        if len(repairable) / (self.shape[0] * self.shape[1]) > policy.maximum_mask_fraction:
+            return DeviceHealthStatus.HEALTH_UNAVAILABLE
+        coordinates = {divmod(index, self.shape[0]) for index in repairable}
+        if any(
+            abs(row - other_row) <= 1
+            and abs(column - other_column) <= 1
+            and (row, column) != (other_row, other_column)
+            for row, column in coordinates
+            for other_row, other_column in coordinates
+        ):
+            return DeviceHealthStatus.HEALTH_UNAVAILABLE
+        return DeviceHealthStatus.READY
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": "dynamic-defect-mask/1",
+            "device_binding_id": self.device_binding_id,
+            "mask_version": self.mask_version,
+            "policy_version": self.policy_version,
+            "shape": list(self.shape),
+            "entries": [
+                {
+                    "source_index": entry.source_index,
+                    "status": entry.status.value,
+                    "confirmed_observations": entry.confirmed_observations,
+                    "last_observed_session_id": entry.last_observed_session_id,
+                }
+                for entry in self.entries
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDefectObservation:
+    """One session's evidence and the next session's frozen mask snapshot."""
+
+    candidate_source_indices: tuple[int, ...]
+    opportunities_by_source_index: tuple[tuple[int, int], ...]
+    updated_mask: DynamicDefectMask
+
+
+def observe_dynamic_defects(
+    mask: DynamicDefectMask,
+    *,
+    session_id: str,
+    matrices: tuple[NDArray[np.number], ...],
+    policy: DynamicDefectPolicy = DynamicDefectPolicy(),
+) -> DynamicDefectObservation:
+    """Evaluate a dynamic window and return a new frozen mask snapshot.
+
+    The caller persists ``updated_mask`` only after its whole-session policy has
+    completed.  This function does not alter raw arrays or modify the mask used
+    by the session that supplied the matrices.
+    """
+
+    source = _validated_stack(matrices, mask.shape)
+    candidates, opportunities = _dynamic_neighbour_candidates(source, policy)
+    entries = {entry.source_index: entry for entry in mask.entries}
+    changed = False
+    for source_index in candidates:
+        previous = entries.get(source_index)
+        if previous is None:
+            entries[source_index] = DynamicDefectEntry(
+                source_index=source_index,
+                status=DynamicDefectStatus.SUSPECT,
+                confirmed_observations=1,
+                last_observed_session_id=session_id,
+            )
+            changed = True
+            continue
+        if previous.last_observed_session_id == session_id:
+            continue
+        count = previous.confirmed_observations + 1
+        status = (
+            DynamicDefectStatus.REPAIRABLE
+            if count >= policy.promotion_observations
+            else DynamicDefectStatus.SUSPECT
+        )
+        entries[source_index] = DynamicDefectEntry(
+            source_index=source_index,
+            status=status,
+            confirmed_observations=count,
+            last_observed_session_id=session_id,
+        )
+        changed = True
+    updated = DynamicDefectMask(
+        device_binding_id=mask.device_binding_id,
+        mask_version=mask.mask_version + int(changed),
+        policy_version=policy.version,
+        shape=mask.shape,
+        entries=tuple(sorted(entries.values(), key=lambda entry: entry.source_index)),
+    )
+    return DynamicDefectObservation(
+        candidate_source_indices=tuple(sorted(candidates)),
+        opportunities_by_source_index=tuple(sorted(opportunities.items())),
+        updated_mask=updated,
+    )
+
+
+def _validated_stack(
+    matrices: tuple[NDArray[np.number], ...], shape: tuple[int, int]
+) -> NDArray[np.float64]:
+    if len(matrices) < 2:
+        raise ValueError("dynamic defect detection requires at least two frames")
+    stack = np.asarray(matrices, dtype=np.float64)
+    if stack.shape[1:] != shape:
+        raise ValueError("dynamic defect matrices must match the frozen mask shape")
+    if not np.all(np.isfinite(stack)) or np.any(stack < 0):
+        raise ValueError("dynamic defect matrices must be finite and non-negative")
+    return stack
+
+
+def _dynamic_neighbour_candidates(
+    stack: NDArray[np.float64], policy: DynamicDefectPolicy
+) -> tuple[set[int], dict[int, int]]:
+    frame_p99 = np.percentile(stack, 99, axis=(1, 2))
+    if float(frame_p99.max() - frame_p99.min()) < policy.minimum_dynamic_range:
+        return set(), {}
+    dynamic_range = np.percentile(stack, 95, axis=0) - np.percentile(stack, 5, axis=0)
+    candidates: set[int] = set()
+    opportunities: dict[int, int] = {}
+    rows, columns = stack.shape[1:]
+    for row in range(1, rows - 1):
+        for column in range(1, columns - 1):
+            support = _two_sided_support(stack, row, column, frame_p99, policy)
+            count = int(np.count_nonzero(support))
+            if count < policy.minimum_opportunities:
+                continue
+            opportunities[column * rows + row] = count
+            neighbours = np.maximum(
+                np.minimum(stack[:, row - 1, column], stack[:, row + 1, column]),
+                np.minimum(stack[:, row, column - 1], stack[:, row, column + 1]),
+            )
+            low_response = stack[:, row, column] <= neighbours * policy.response_fraction_limit
+            evidence_ratio = float(np.count_nonzero(support & low_response)) / count
+            neighbour_range = max(
+                dynamic_range[row - 1, column],
+                dynamic_range[row + 1, column],
+                dynamic_range[row, column - 1],
+                dynamic_range[row, column + 1],
+            )
+            temporal_mismatch = dynamic_range[row, column] <= (
+                neighbour_range * policy.temporal_variation_fraction_limit
+            )
+            if evidence_ratio >= policy.minimum_evidence_ratio and temporal_mismatch:
+                candidates.add(column * rows + row)
+    return candidates, opportunities
+
+
+def _two_sided_support(
+    stack: NDArray[np.float64],
+    row: int,
+    column: int,
+    frame_p99: NDArray[np.float64],
+    policy: DynamicDefectPolicy,
+) -> NDArray[np.bool_]:
+    threshold = frame_p99 * policy.support_relative_threshold
+    vertical = (stack[:, row - 1, column] >= threshold) & (
+        stack[:, row + 1, column] >= threshold
+    )
+    horizontal = (stack[:, row, column - 1] >= threshold) & (
+        stack[:, row, column + 1] >= threshold
+    )
+    return vertical | horizontal

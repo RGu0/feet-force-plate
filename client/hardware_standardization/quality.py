@@ -10,6 +10,11 @@ import numpy as np
 from client.device.protocol import RawFrame
 
 from .defect_repair import SensorDefectRepairPolicy, repair_sensor_defects
+from .dynamic_defect_mask import (
+    DeviceHealthStatus,
+    DynamicDefectMask,
+    DynamicDefectPolicy,
+)
 from .do_p4864 import DoP4864StandardizationAdapter
 from .models import BaselineReference, PhysicalArraySession, StandardizationStatus
 
@@ -87,6 +92,8 @@ class DoP4864HardwareQualityGate:
         baseline_reference: BaselineReference,
         policy: BadPointPolicy = BadPointPolicy(),
         adapter: DoP4864StandardizationAdapter | None = None,
+        dynamic_defect_mask: DynamicDefectMask | None = None,
+        dynamic_defect_policy: DynamicDefectPolicy = DynamicDefectPolicy(),
     ) -> None:
         self._adapter = adapter or DoP4864StandardizationAdapter.observed_compact_8bit()
         if baseline_reference.layout_digest != self._adapter.layout.digest:
@@ -95,16 +102,28 @@ class DoP4864HardwareQualityGate:
             raise ValueError("baseline reference must contain 48x64 values")
         self._baseline_reference = baseline_reference
         self._policy = policy
+        self._dynamic_defect_mask = dynamic_defect_mask
+        self._dynamic_defect_policy = dynamic_defect_policy
+        if dynamic_defect_mask is not None and dynamic_defect_mask.shape != (48, 64):
+            raise ValueError("dynamic defect mask must use the DO-P4864 48x64 shape")
 
     def evaluate(
         self, *, session_id: str, frames: tuple[RawFrame, ...]
     ) -> HardwareQualityEvaluation:
         if not frames:
             return self._invalid("NO_CAPTURED_FRAMES")
+        if (
+            self._dynamic_defect_mask is not None
+            and self._dynamic_defect_mask.health_status(self._dynamic_defect_policy)
+            is DeviceHealthStatus.HEALTH_UNAVAILABLE
+        ):
+            return self._invalid("DEVICE_DYNAMIC_DEFECT_MASK_UNUSABLE")
         if any(frame.values.shape != (48, 64) or frame.values.dtype != np.uint8 for frame in frames):
             return self._invalid("UNSUPPORTED_RAW_FRAME_FORMAT")
 
         bad = set(self._policy.known_bad_source_indices)
+        if self._dynamic_defect_mask is not None:
+            bad.update(self._dynamic_defect_mask.repairable_source_indices)
         bad.update(
             index
             for index, mad in enumerate(self._baseline_reference.noise_mad_count)
