@@ -62,12 +62,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 python main.py
 
 按界面顺序录入受试者、确认必要授权，并开始四段引导。程序以 1× 速度回放仓库内固定的脱敏真机 fixture：并足睁眼、并足闭眼、左脚在前半串联、右脚在前半串联，各 20 秒；第四段完成后才运行本地 V1 调试分析并生成可预览、导出和在历史记录重新打开的 PDF。
 
-开发时可用更高速度缩短等待时间（例如 `--replay-speed 20`）；该参数不应在演示中替代默认的 1× 体验。旧的静态设计演示须显式指定 `--demo`：
+开发时可用更高速度缩短等待时间（例如 `--replay --replay-speed 20`）；该参数不应在演示中替代默认的 1× 体验。旧的静态设计演示须显式指定 `--demo`：
 
 ```bash
-./scripts/local-env.sh python main.py --replay-speed 20
+./scripts/local-env.sh python main.py --replay --replay-speed 20
 ./scripts/local-env.sh python main.py --demo
 ```
+
+### 本机离线 MVP 验证
+
+以下命令从已验证的四阶段 fixture（1,658 帧）开始，模拟解码后的硬件帧；不会打开 HTTP 客户端、不会上传数据、不会连接真实设备。它会自动完成建档、必要授权、预检、四个站位阶段、本地 V1 调试分析、PDF 导出和本地历史记录重开：
+
+```bash
+QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python main.py \
+  --replay --verify --replay-speed 500 \
+  --output-dir /absolute/path/to/local-mvp-validation
+```
+
+`--verify` 必须与 `--replay` 和一个空的 `--output-dir` 一起使用。成功时输出目录包含六张 UI PNG（预检、四个阶段和报告预览）、`report.pdf` 与 `summary.json`；摘要只记录 fixture SHA-256、阶段帧数、算法状态和报告标识，不复制原始矩阵、身份信息或凭据。所有输出均标注为“回放调试数据”，并非真实测量，不能用于诊断、风险判断、临床结论或客户交付。
 
 所有工作台页面、结果和 PDF 都是“回放调试数据”，不代表本次受试者真实测量，不用于诊断或风险判断。真实 DO-P4864、License 联网验证、服务端密钥集下发和云端算法/数据管理尚未接入这个入口。
 
