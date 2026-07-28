@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import json
+from datetime import datetime
+from enum import Enum, StrEnum
+from typing import Annotated, Any, Mapping, Sequence
+from uuid import UUID
+
+from pydantic import BaseModel, Field, StringConstraints, model_validator
+
+from .cloud import (
+    ContractModel,
+    ReceivedSegment,
+    SegmentAcknowledgement,
+    SegmentMetadata,
+    SegmentReceiptStatus,
+    Sha256Hex,
+)
+
+
+class LocalSegmentState(StrEnum):
+    WRITING = "WRITING"
+    SEALED = "SEALED"
+    PENDING_UPLOAD = "PENDING_UPLOAD"
+    UPLOADING = "UPLOADING"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RETRY_WAIT = "RETRY_WAIT"
+    QUARANTINED = "QUARANTINED"
+    CONFLICT = "CONFLICT"
+    CORRUPT = "CORRUPT"
+
+
+class UploadResourceType(StrEnum):
+    SESSION = "SESSION"
+    SEGMENT = "SEGMENT"
+    MANIFEST = "MANIFEST"
+    REPORT = "REPORT"
+    TELEMETRY = "TELEMETRY"
+
+
+class UploadTaskStatus(StrEnum):
+    PENDING = "PENDING"
+    LEASED = "LEASED"
+    RETRY_WAIT = "RETRY_WAIT"
+    SUCCEEDED = "SUCCEEDED"
+    DEAD_LETTER = "DEAD_LETTER"
+
+
+class DigestConflict(ContractModel):
+    index: Annotated[int, Field(ge=0)]
+    local_sha256: Sha256Hex
+    remote_sha256: Sha256Hex
+    remote_status: SegmentReceiptStatus
+
+
+class SyncPlan(ContractModel):
+    acknowledged: tuple[int, ...]
+    upload: tuple[int, ...]
+    conflicts: tuple[DigestConflict, ...]
+    remote_only: tuple[int, ...]
+
+
+class DurableUploadTask(ContractModel):
+    """Transport-neutral row contract for a client-owned durable upload queue."""
+
+    upload_task_id: UUID
+    tenant_id: UUID
+    terminal_id: UUID
+    session_id: UUID | None = None
+    resource_type: UploadResourceType
+    resource_id: UUID
+    operation: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    status: UploadTaskStatus = UploadTaskStatus.PENDING
+    priority: int = 100
+    idempotency_key: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+    request_sha256: Sha256Hex
+    attempt_count: Annotated[int, Field(ge=0)] = 0
+    next_attempt_at: datetime | None = None
+    lease_owner: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
+    lease_expires_at: datetime | None = None
+    last_http_status: Annotated[int, Field(ge=100, le=599)] | None = None
+    last_error_code: Annotated[
+        str,
+        StringConstraints(pattern=r"^E-[A-Z]{3}-[0-9]{3}$"),
+    ] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @model_validator(mode="after")
+    def validate_scheduler_state(self) -> DurableUploadTask:
+        if self.status is UploadTaskStatus.RETRY_WAIT and self.next_attempt_at is None:
+            raise ValueError("RETRY_WAIT requires next_attempt_at")
+        lease_is_complete = self.lease_owner is not None and self.lease_expires_at is not None
+        if self.status is UploadTaskStatus.LEASED and not lease_is_complete:
+            raise ValueError("LEASED requires lease_owner and lease_expires_at")
+        if self.status is not UploadTaskStatus.LEASED and (
+            self.lease_owner is not None or self.lease_expires_at is not None
+        ):
+            raise ValueError("lease fields are only valid for LEASED tasks")
+        return self
+
+
+class RetryPolicy(ContractModel):
+    base_seconds: Annotated[float, Field(gt=0)] = 1.0
+    cap_seconds: Annotated[float, Field(gt=0)] = 900.0
+    max_jitter_fraction: Annotated[float, Field(ge=0, le=1)] = 0.30
+
+    def delay_seconds(
+        self,
+        *,
+        attempt_count: int,
+        jitter_fraction: float,
+        retry_after_seconds: float | None = None,
+    ) -> float:
+        if attempt_count < 1:
+            raise ValueError("attempt_count must be at least 1")
+        if not 0 <= jitter_fraction <= self.max_jitter_fraction:
+            raise ValueError(
+                f"jitter_fraction must be between 0 and {self.max_jitter_fraction}"
+            )
+        if retry_after_seconds is not None:
+            if retry_after_seconds < 0:
+                raise ValueError("retry_after_seconds cannot be negative")
+            return float(retry_after_seconds)
+        exponential = self.base_seconds
+        remaining_doublings = attempt_count - 1
+        while remaining_doublings and exponential < self.cap_seconds:
+            exponential = min(self.cap_seconds, exponential * 2)
+            remaining_doublings -= 1
+        return min(self.cap_seconds, exponential * (1 + jitter_fraction))
+
+
+def may_enqueue_segment(state: LocalSegmentState) -> bool:
+    return state in {
+        LocalSegmentState.SEALED,
+        LocalSegmentState.PENDING_UPLOAD,
+        LocalSegmentState.RETRY_WAIT,
+    }
+
+
+def can_delete_local_segment(
+    local_sha256: str,
+    acknowledgement: SegmentAcknowledgement | None,
+) -> bool:
+    return bool(
+        acknowledgement is not None
+        and acknowledgement.status is SegmentReceiptStatus.ACKNOWLEDGED
+        and acknowledgement.sha256 == local_sha256
+    )
+
+
+def build_sync_plan(
+    local_segments: Mapping[int, str],
+    remote_segments: Sequence[ReceivedSegment],
+) -> SyncPlan:
+    """Compare durable local facts with server receipts without overwriting conflicts."""
+
+    remote_by_index: dict[int, ReceivedSegment] = {}
+    for segment in remote_segments:
+        if segment.index in remote_by_index:
+            raise ValueError(f"duplicate remote segment index: {segment.index}")
+        remote_by_index[segment.index] = segment
+
+    acknowledged: list[int] = []
+    upload: list[int] = []
+    conflicts: list[DigestConflict] = []
+    for index, local_sha256 in sorted(local_segments.items()):
+        if index < 0:
+            raise ValueError("local segment index cannot be negative")
+        remote = remote_by_index.get(index)
+        if remote is None:
+            upload.append(index)
+        elif (
+            remote.status is SegmentReceiptStatus.ACKNOWLEDGED
+            and remote.sha256 == local_sha256
+        ):
+            acknowledged.append(index)
+        else:
+            conflicts.append(
+                DigestConflict(
+                    index=index,
+                    local_sha256=local_sha256,
+                    remote_sha256=remote.sha256,
+                    remote_status=remote.status,
+                )
+            )
+
+    return SyncPlan(
+        acknowledged=tuple(acknowledged),
+        upload=tuple(upload),
+        conflicts=tuple(conflicts),
+        remote_only=tuple(sorted(set(remote_by_index) - set(local_segments))),
+    )
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_none=False)
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    if isinstance(value, datetime):
+        rendered = value.isoformat()
+        return rendered.replace("+00:00", "Z")
+    if isinstance(value, (UUID, Enum)):
+        return str(value.value if isinstance(value, Enum) else value)
+    return value
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        _json_value(value),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def encode_segment_metadata(metadata: SegmentMetadata) -> str:
+    return base64.urlsafe_b64encode(canonical_json_bytes(metadata)).rstrip(b"=").decode("ascii")
+
+
+def decode_segment_metadata(value: str) -> SegmentMetadata:
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.b64decode(value + padding, altchars=b"-_", validate=True)
+        decoded = json.loads(raw)
+    except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError) as exc:
+        raise ValueError("invalid X-Segment-Metadata header") from exc
+    return SegmentMetadata.model_validate(decoded)
