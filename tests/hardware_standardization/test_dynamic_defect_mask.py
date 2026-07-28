@@ -8,6 +8,7 @@ from client.hardware_standardization.dynamic_defect_mask import (
     DynamicDefectEntry,
     DeviceHealthStatus,
     DynamicDefectMask,
+    DynamicDefectMaskStore,
     DynamicDefectPolicy,
     DynamicDefectStatus,
     observe_dynamic_defects,
@@ -190,3 +191,62 @@ def test_frozen_isolated_repairable_mask_enters_the_derived_repair_path() -> Non
     assert result.physical_session is not None
     assert result.physical_session.frames[0].repaired_count is not None
     assert result.physical_session.frames[0].repaired_count[source_index] == 10.0
+
+
+def test_hardware_mask_file_is_loaded_at_session_start_and_atomically_updated_afterwards(
+    tmp_path,
+) -> None:
+    store = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_binding_id="terminal-bound-device-1",
+        shape=SHAPE,
+    )
+
+    first_frozen = store.load_for_session()
+    first = store.update_after_session(
+        first_frozen,
+        session_id="persist-1",
+        matrices=_dynamic_frames(failed_cells=((4, 5),)),
+    )
+    second_frozen = store.load_for_session()
+
+    assert "hardware/do-p4864" in str(store.path)
+    assert first_frozen.mask_version == 0
+    assert first.updated_mask.mask_version == 1
+    assert second_frozen == first.updated_mask
+    assert second_frozen.entries[0].status is DynamicDefectStatus.SUSPECT
+    assert not store.path.with_suffix(".tmp").exists()
+
+    second = store.update_after_session(
+        second_frozen,
+        session_id="persist-2",
+        matrices=_dynamic_frames(failed_cells=((4, 5),)),
+    )
+
+    assert second.updated_mask.mask_version == 2
+    assert store.load_for_session().entries[0].status is DynamicDefectStatus.REPAIRABLE
+
+
+def test_mask_store_rejects_an_outdated_session_snapshot(tmp_path) -> None:
+    store = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_binding_id="terminal-bound-device-1",
+        shape=SHAPE,
+    )
+    stale = store.load_for_session()
+    store.update_after_session(
+        stale,
+        session_id="current",
+        matrices=_dynamic_frames(failed_cells=((4, 5),)),
+    )
+
+    try:
+        store.update_after_session(
+            stale,
+            session_id="stale",
+            matrices=_dynamic_frames(failed_cells=((4, 5),)),
+        )
+    except ValueError as error:
+        assert "changed while this session was active" in str(error)
+    else:
+        raise AssertionError("stale mask snapshot must not overwrite the current mask")

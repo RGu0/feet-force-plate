@@ -10,6 +10,13 @@
 `client/hardware_standardization/dynamic_defect_mask.py` adds a versioned,
 per-device-bound mask snapshot. It never stores raw frame values.
 
+`DynamicDefectMaskStore` keeps the mutable snapshot under the application data
+root, not under the source tree: `hardware/do-p4864/<sha256(binding)>/
+dynamic-defect-mask.json`. At session start the store returns a frozen snapshot
+for quality/repair. Only after the session does it detect new dynamic evidence,
+check for a stale concurrent snapshot, `fsync` a temporary file and atomically
+replace the next version. Thus a new candidate cannot alter a running session.
+
 1. A candidate is considered only when the observed pressure field changes by
    the configured dynamic range.
 2. The candidate must have enough frames where either its vertical or horizontal
@@ -38,11 +45,14 @@ per-device-bound mask snapshot. It never stores raw frame values.
 ./scripts/local-env.sh python -m pytest tests/hardware_standardization -q
 ```
 
-Result: `48 passed in 0.97s`.
+Result after mask-file persistence: `50 passed in 0.93s`. Targeted dynamic-mask
+and quality-gate tests: `11 passed in 0.31s`.
 
 The dynamic-mask fixtures cover a moving pressure field with one stuck interior
 point, a static field, a normal moving field, an adjacent bad-point cluster,
 quality-gate rejection, and derived-only repair through a frozen isolated mask.
+They also cover mask-file creation, reload, promotion across two sessions,
+atomic temporary-file cleanup and stale-snapshot rejection.
 Python compilation and `git diff --check` also passed. The current UV
 environment does not include the optional `ruff` module, so no ruff result is
 claimed.
@@ -53,9 +63,8 @@ claimed.
   real board's point is defective.
 - The model is intentionally conservative: static or insufficiently stimulated
   locations are not candidates.
-- Persistent storage of the versioned mask in the local state database,
-  recovery/history semantics, telemetry event emission, UI binding and a true
-  dynamic-load device verification remain to be completed before RAY-119 is
-  marked Done.
+- SQLite indexing/recovery history, telemetry event emission, UI binding and a
+  true dynamic-load device verification remain to be completed before RAY-119
+  is marked Done.
 - Raw matrices remain immutable. The mask, repair methods and health reasons
   remain hardware-private and do not cross the algorithm input boundary.

@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import hashlib
+import json
 from math import isfinite
+import os
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -141,6 +145,128 @@ class DynamicDefectMask:
                 for entry in self.entries
             ],
         }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> DynamicDefectMask:
+        """Parse the persisted, versioned health mask without raw data."""
+
+        if not isinstance(payload, dict) or payload.get("schema_version") != "dynamic-defect-mask/1":
+            raise ValueError("unsupported dynamic defect mask schema")
+        shape = payload.get("shape")
+        entries = payload.get("entries")
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in shape)
+            or not isinstance(entries, list)
+        ):
+            raise ValueError("dynamic defect mask shape or entries are invalid")
+        return cls(
+            device_binding_id=_required_string(payload, "device_binding_id"),
+            mask_version=_required_int(payload, "mask_version"),
+            policy_version=_required_string(payload, "policy_version"),
+            shape=(shape[0], shape[1]),
+            entries=tuple(
+                DynamicDefectEntry(
+                    source_index=_required_int(entry, "source_index"),
+                    status=DynamicDefectStatus(_required_string(entry, "status")),
+                    confirmed_observations=_required_int(
+                        entry, "confirmed_observations"
+                    ),
+                    last_observed_session_id=_required_string(
+                        entry, "last_observed_session_id"
+                    ),
+                )
+                for entry in entries
+                if isinstance(entry, dict)
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicDefectMaskStore:
+    """Durable per-device mask store with atomic next-session updates.
+
+    ``data_root`` is the application's writable data directory, never a source
+    tree or documentation directory.  The device binding is SHA-256 mapped to a
+    directory name so a hardware identifier cannot escape the hardware folder.
+    """
+
+    data_root: Path
+    device_binding_id: str
+    shape: tuple[int, int]
+    policy: DynamicDefectPolicy = DynamicDefectPolicy()
+
+    def __post_init__(self) -> None:
+        if not self.device_binding_id or len(self.shape) != 2 or min(self.shape) < 3:
+            raise ValueError("device binding and dynamic defect mask shape are required")
+
+    @property
+    def path(self) -> Path:
+        binding_digest = hashlib.sha256(self.device_binding_id.encode("utf-8")).hexdigest()
+        return (
+            self.data_root
+            / "hardware"
+            / "do-p4864"
+            / binding_digest
+            / "dynamic-defect-mask.json"
+        )
+
+    def load_for_session(self) -> DynamicDefectMask:
+        """Load the immutable mask snapshot that a newly started session uses."""
+
+        if not self.path.exists():
+            return DynamicDefectMask(
+                device_binding_id=self.device_binding_id,
+                mask_version=0,
+                policy_version=self.policy.version,
+                shape=self.shape,
+            )
+        try:
+            mask = DynamicDefectMask.from_dict(json.loads(self.path.read_text("utf-8")))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            raise ValueError("dynamic defect mask file is unreadable") from error
+        if mask.device_binding_id != self.device_binding_id or mask.shape != self.shape:
+            raise ValueError("dynamic defect mask does not match this hardware binding")
+        return mask
+
+    def update_after_session(
+        self,
+        frozen_mask: DynamicDefectMask,
+        *,
+        session_id: str,
+        matrices: tuple[NDArray[np.number], ...],
+    ) -> DynamicDefectObservation:
+        """Create and atomically persist the next snapshot after a session ends."""
+
+        current = self.load_for_session()
+        if current.mask_version != frozen_mask.mask_version:
+            raise ValueError("dynamic defect mask changed while this session was active")
+        observation = observe_dynamic_defects(
+            frozen_mask,
+            session_id=session_id,
+            matrices=matrices,
+            policy=self.policy,
+        )
+        self._atomic_write(observation.updated_mask)
+        return observation
+
+    def _atomic_write(self, mask: DynamicDefectMask) -> None:
+        if mask.device_binding_id != self.device_binding_id or mask.shape != self.shape:
+            raise ValueError("cannot write a dynamic defect mask for another hardware binding")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        encoded = json.dumps(mask.to_dict(), sort_keys=True, separators=(",", ":"))
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self.path)
+        directory_fd = os.open(self.path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,3 +401,21 @@ def _two_sided_support(
         stack[:, row, column + 1] >= threshold
     )
     return vertical | horizontal
+
+
+def _required_string(payload: object, name: str) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError("dynamic defect mask entry must be an object")
+    value = payload.get(name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"dynamic defect mask {name} must be a non-empty string")
+    return value
+
+
+def _required_int(payload: object, name: str) -> int:
+    if not isinstance(payload, dict):
+        raise ValueError("dynamic defect mask entry must be an object")
+    value = payload.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"dynamic defect mask {name} must be an integer")
+    return value
