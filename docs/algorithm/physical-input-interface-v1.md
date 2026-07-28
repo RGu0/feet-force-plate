@@ -1,65 +1,31 @@
-# 硬件层到算法层的标准压力信息流 V1
+# 硬件层到算法层的标准物理力场接口 V1
 
 | 项目 | 内容 |
-|---|---|
+| --- | --- |
 | 接口版本 | `physical-pressure-session/1.0` |
-| 生产方 | RAY-117 硬件标准化层 |
-| 消费方 | 本地/云端算法层、能力门控、规则和报告 |
-| 加解密 | 不在本文定义，由通信层和存储层负责 |
-| 状态 | 设计基线；等待 RAY-117 真机载荷、几何、时间和质量证据 |
+| 生产方 | 硬件层的公开导出器 |
+| 消费方 | 本地/云端算法层 |
+| 数据形态 | 按物理坐标排列的逐点法向力场 |
+| 排除内容 | 原始计数、设备协议、质量状态、坏点/掉帧审计、设备型号 |
 
 ## 1. 统一边界
 
-本接口是 `VALIDATED_RELEASE` 的正式压力信息流，不替代首版候选力研究输入。候选力路径与其明确限制见 [首版候选力算法实现说明](02-provisional-force-implementation.md)。
+算法层只接收已经被硬件层判定为有效的会话。硬件层负责解析、基线、修复、坏点隔离、掉帧处理和整体有效性判定；只要这些过程无法产出可信的物理力场，硬件层就丢弃该会话，不生成本接口文件，也不交给通信层上传。
 
-硬件层在正式发布路径中只输出标准压力信息流：
+因此，本接口不传递 `quality`、`quality_flags`、原始计数、列主序、行列数、校验和或设备名称。算法层无需也不得重新判断硬件质量；它只基于物理点位置、实际时间和逐点法向力计算后续特征。
 
 ```text
-设备原始协议 / 原始计数
-  → physical-pressure-session/1.0
-      每点板面坐标（mm；左上首点为原点，向右/向下为正）
-      每点法向载荷（N）
-      每帧实际时间
-      几何/面积、质量、标定和版本
-  → 算法层内部计算
-      姿态归一化、COP、速度、RMS、范围、椭圆、阶段差异
-      风险规则、综合评分和报告
+设备私有数据
+  → 硬件层解析、修复、有效性门控
+  → 仅有效会话：physical-pressure-session/1.0
+      物理点坐标 + 实际时间 + 逐点法向力
+  → 算法层：姿态归一化、COP、特征、风险和报告
 ```
-
-硬件层不计算或传输 COP、位移、速度、RMS、步态、跌倒风险、报告字段或客户端特征。所有压力分析和特征提取由算法层完成。COP、速度、RMS、范围、椭圆、阶段差异、风险、评分和报告均为算法层二级结果，不是本接口字段，也不得由硬件层传递或预先计算。
-
-如果硬件只有原始计数、零点修正计数或相对载荷，没有经批准的法向载荷 N 语义，则输出必须为 `DEGRADED/UNSUPPORTED`，不得把相对计数改名为 N 或 Pa 进入正式分析。
 
 ## 2. 文件格式
 
-规范交换格式为 UTF-8 JSON；通信层可使用二进制/列式格式，但必须保持同一字段语义。建议文件名：
-
-```text
-<session_id>.physical-pressure-session.v1.json
-```
-
-加解密、签名、密钥、重试和对象存储不属于本文件。文件由 session manifest/event 以外部字段引用：
-
-```json
-{
-  "input_schema_version": "physical-pressure-session/1.0",
-  "hardware_adapter_version": "adapter/do-p4864/1.0",
-  "geometry_profile_version": "geometry/do-p4864/1.0",
-  "measurement_conformance_version": "measurement/1.0",
-  "calibration_profile_version": "calibration/do-p4864/1.0",
-  "uncertainty_profile_version": "uncertainty/do-p4864/1.0",
-  "session_id": "019c0000-0000-7000-8000-000000000001",
-  "sha256": "<64 lowercase hex characters>",
-  "frame_count": 100,
-  "cell_count": 3072
-}
-```
-
-这些版本必须进入 `AnalysisRun` 身份；任一版本或摘要变化都产生新的分析运行，不能覆盖历史结果。
-
-## 3. 标准压力信息流字段
-
-### 3.1 顶层字段
+规范交换格式为 UTF-8 JSON，完整模式见
+[`physical-pressure-session-1.0.schema.json`](schemas/physical-pressure-session-1.0.schema.json)。通信层可以使用其他传输编码，但字段语义不得改变。
 
 ```json
 {
@@ -68,139 +34,78 @@
   "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
   "coordinate_unit": "mm",
   "force_unit": "N",
-  "area_unit": "mm2",
   "time_unit": "s",
-  "measurement_profile": {},
-  "cells": [],
-  "stages": [],
+  "points": [],
   "frames": []
 }
 ```
 
-生产环境必须拒绝未知顶层字段。`schema_version`、`session_id`、单位、`measurement_profile`、`cells`、`stages` 和 `frames` 均为必填。
+生产端与消费端必须拒绝未知顶层字段。`schema_version`、`session_id`、坐标/力/时间单位、`points` 和 `frames` 均为必填。
 
-`coordinate_frame` 固定为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`：`cells[]` 中左上角第一个感应点的中心为 `(0, 0)`；X 向右为正，Y 向下为正。坐标表示感应点中心的实际板面位置，算法不得根据行列数、标称间距或设备型号自行重建它。
+## 3. `points[]`：物理位置安排
 
-### 3.2 `measurement_profile`
-
-```json
-{
-  "profile_version": "measurement-profile/1.0",
-  "measurement_conformance_version": "measurement/1.0",
-  "calibration_profile_version": "calibration/do-p4864/1.0",
-  "uncertainty_profile_version": "uncertainty/do-p4864/1.0",
-  "physical_validation": "VALIDATED",
-  "timing_validation": "VALIDATED",
-  "coordinate_validation": "VALIDATED",
-  "force_validation": "VALIDATED",
-  "geometry_validation": "VALIDATED"
-}
-```
-
-正式算法输入要求物理、时间、坐标、载荷和几何状态均为 `VALIDATED`。未达到时保留质量结果，但不发布正式压力指标。
-
-### 3.3 `cells[]`：板面坐标与感应点声明
-
-每个感应点必须提供：
-
-| 字段 | 类型 | 规则 |
-|---|---|---|
-| `cell_id` | string | 会话内唯一，顺序稳定 |
-| `board_x_mm` | number | 感应点有效区域中心的板面 X 坐标 |
-| `board_y_mm` | number | 感应点有效区域中心的板面 Y 坐标 |
-| `active_area_mm2` | number/null | 经验证有效面积；未知时为 `null`，不得伪造 |
-| `status` | enum | `ACTIVE` / `EXCLUDED` |
-
-点宽、点高、点间距和阵列数量属于硬件几何/适配器版本信息；算法不根据阵列行列或内存顺序自行重建坐标，只使用 `cells[]` 中的实际坐标。
-
-### 3.4 `frames[]`：载荷、时间与质量
+每个点只描述实际板面位置：
 
 ```json
 {
-  "timestamp_s": 0.0,
-  "normal_force_n": [100.0, 0.0],
-  "quality": "VALID"
+  "point_id": "point-0001",
+  "board_x_mm": 0.0,
+  "board_y_mm": 0.0
 }
 ```
 
-规则：
+| 字段 | 规则 |
+| --- | --- |
+| `point_id` | 会话内唯一、顺序稳定的通用点标识；不是设备寄存器、行列号或通信序号 |
+| `board_x_mm` | 感应点中心的板面 X 坐标 |
+| `board_y_mm` | 感应点中心的板面 Y 坐标 |
 
-- `normal_force_n` 的数量必须等于 `cells[]` 长度；
-- 法向载荷必须是有限、非负的 N 数值；
-- `timestamp_s` 使用实际单调时间，必须严格递增，不按额定采样率补帧；
-- `quality` 至少支持 `VALID` / `INVALID`；缺帧、饱和、坏点、长间隔和时间异常必须在外部质量/manifest 中保留枚举；
-- 算法不得把 `quality=INVALID` 的帧当作有效压力数据，也不得把缺失帧当成零载荷。
+坐标系固定为 `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN`：左上角点为 `(0,0)`，X 向右为正，Y 向下为正。板面坐标不是人体 ML/AP；人体方向和阶段语义由算法层/工作流层在后续处理时提供。
 
-## 4. 四阶段动作元数据
+接口不包含阵列尺寸、点间距、有效面积、原始 payload 顺序或设备型号。因而同一算法可消费不同硬件输出的任意物理点布局。
 
-动作状态由客户端测试工作流产生并透传，硬件层不得推断或改写。`stages[]` 必须按以下顺序、连续窗口提供四个阶段：
-
-1. `BILATERAL_EYES_OPEN`：双足并拢、睁眼、朝前；
-2. `BILATERAL_EYES_CLOSED`：双足并拢、闭眼、朝前；
-3. `SEMI_TANDEM_LEFT_FORWARD`：固定左转 90°、左脚在前、睁眼；
-4. `SEMI_TANDEM_RIGHT_FORWARD`：固定左转 90°、右脚在前、睁眼。
-
-每个阶段至少包含：
+## 4. `frames[]`：时间与力学信息
 
 ```json
 {
-  "stage_id": "BILATERAL_EYES_OPEN",
-  "start_s": 0.0,
-  "end_s": 20.0,
-  "completion_status": "COMPLETED",
-  "actual_completion_s": 20.0,
-  "subject_orientation": "FORWARD",
-  "forward_foot": "NONE",
-  "step_count": 0,
-  "moved_feet": false,
-  "touched_rail": false,
-  "staff_supported": false,
-  "near_fall": false,
-  "eyes_opened_early": false,
-  "stop_reason": "NONE"
+  "timestamp_s": 0.04838,
+  "normal_force_n": [0.0, 0.12, 0.08, 0.0]
 }
 ```
 
-`TECHNICAL_INVALID`、`PROTOCOL_INVALID` 和 `NON_BALANCE_STOP` 只表示数据/流程状态，不自动等同于受试者平衡风险；`BALANCE_FAILURE`、`SAFETY_ABORT`、工作人员扶持和近乎跌倒由算法规则层单独处理。
+| 字段 | 规则 |
+| --- | --- |
+| `timestamp_s` | 相对会话起点的实际单调时间；必须严格递增，不按额定帧率伪造补帧 |
+| `normal_force_n` | 有限、非负、单位 N；长度必须与 `points[]` 一致，第 *i* 项对应第 *i* 个物理点 |
 
-## 5. 算法层责任
+本接口传输的是法向力场（N），不是 Pa 压强场。压力 Pa 需要经验证的接触面积模型；若后续需要该物理量，应另行发布新版本接口，不能由算法层根据硬件点距或假定面积自行换算。
 
-算法层从板面坐标、法向载荷、实际时间和阶段姿态元数据计算：
+## 5. 硬件层与算法层责任
 
-```text
-板面坐标 + 阶段姿态
-  → 受试者 ML/AP 归一化
-  → COP
-  → 路径、速度、RMS、P5-P95 范围、95% 椭圆、力/接触面积变化
-  → 睁闭眼、半串联、左右前脚差异
-  → 能力门控、参考分级、风险规则和报告
-```
+| 信息/能力 | 硬件层 | 算法层 |
+| --- | ---:| ---:|
+| 设备接入、字节解析、原始留存 | 负责 | 不读取 |
+| 基线、坏点修复、短暂异常校正 | 负责 | 不重新执行 |
+| 会话有效性、掉帧/断连/硬件故障判定 | 负责；失败即丢弃 | 不接收失败会话 |
+| 物理点位置、实际时间、法向力 N | 输出 | 消费 |
+| 人体 ML/AP、COP、运动/平衡特征 | 不负责 | 负责 |
+| 阶段动作元数据 | 不推断、不改写 | 从工作流会话关联获取 |
+| 风险、评分和报告 | 不负责 | 负责 |
 
-算法层不读取设备型号、原始计数、阵列内存顺序或设备专用标定分支；适配器、几何、载荷、测量一致性或不确定度版本变化会触发新的 `AnalysisRun`。
+## 6. 接收规则
 
-## 6. 拒绝和降级规则
+算法层只校验本接口自身的物理一致性：模式和单位匹配、点标识唯一、坐标和力值有限、每帧数组长度匹配、时间严格递增。算法层不接收或解释硬件质量字段，因为所有质量门控均应已经在硬件层结束。
 
-接收方必须拒绝或隔离：
+若硬件层无法完成修复、隔离或可信力学转换，应终止会话并提示重新测试；不得输出部分失败会话、无效点占位、质量标记或以零力填补未知数据。
 
-- schema、字段、单位、坐标系或版本不支持；
-- `cells[]` 重复 ID、非有限坐标、负载荷、长度不匹配或非递增时间；
-- 缺失四阶段、阶段顺序错误、窗口不连续或方向/前脚语义错误；
-- 未验证载荷、面积、坐标或时间却标为 `VALIDATED`；
-- 把 COP、速度、风险或报告字段塞入硬件层文件；
-- 把原始/相对计数伪装成 N/Pa。
+## 7. 实现收敛要求
 
-技术输入失败只进入内部安全错误码和质量状态，不生成 0 分；动作完成失败则作为独立风险证据交给 RAY-118。
+当前 DO-P4864 适配器内部仍保留 `physical-sensor-observation/1.0`、原始计数、`estimated_force_n` 与审计字段，作为硬件留存和追溯数据。要实现本公开接口，还需新增公开导出器：
 
-## 7. 责任矩阵
+1. 仅接受硬件层整体判定有效的已提交会话；
+2. 对已经修复或隔离后的有效物理点输出 `points[]`；
+3. 将最终力学转换结果输出到 `normal_force_n`；
+4. 删除全部底层协议、原始值、质量和修复字段；
+5. 在硬件层阻止无效会话进入该导出器、通信层和算法层。
 
-| 信息/能力 | 硬件层 | 算法层 | 通信层 |
-|---|---:|---:|---:|
-| 设备解析、原始计数和板面几何 | 负责 | 不读取 | 传输 |
-| 板面坐标、法向载荷 N、实际时间 | 负责并声明版本 | 消费 | 传输 |
-| 姿态归一化、COP、速度和全部压力特征 | 不负责 | 负责 | 不负责 |
-| 阶段完成、左右前脚和安全事件 | 工作流透传 | 解释规则 | 传输 |
-| 加解密、签名、重试、对象存储 | 不负责 | 不负责 | 负责 |
-
-## 8. 验收边界
-
-本接口定义字段和职责，不代表 DO-P4864 已完成法向载荷、有效面积、坐标方向、时间不确定性或跨设备验证。RAY-117 在这些证据完成前保持 `In Progress/In Review`，云端算法不得发布正式压力指标或完整报告。
+接口详细设计与当前实现差异见[硬件层—算法层交互接口 V1](00-hardware-algorithm-interaction-v1.md)。

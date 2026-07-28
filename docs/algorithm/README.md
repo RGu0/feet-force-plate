@@ -39,20 +39,20 @@
 
 5. [标准物理输入契约](standard-physical-input-contract.md)
    - 硬件层与核心算法的责任边界
-   - 任意阵列到统一板面坐标、法向载荷、时间和质量信息流
-   - 算法层姿态归一化、特征提取和质量门控边界
+   - 任意阵列到统一板面坐标、法向载荷与时间信息流
+   - 算法层姿态归一化和特征提取边界
    - 跨硬件一致性测试与版本要求
 
 6. [硬件层—算法层交互接口 V1](00-hardware-algorithm-interaction-v1.md)
    - 设备私有观测与设备无关物理压力会话的边界
-   - 公开物理点场、时间、质量与版本字段
-   - 当前 `estimated_force_n` 实现与正式 `normal_force_n` 契约的差异
+   - 公开物理点场、时间和最终法向力字段
+   - 无效会话在硬件层丢弃，质量与修复信息不进入算法层
 
 7. [硬件层到云端算法的物理输入接口 V1](physical-input-interface-v1.md)
    - `physical-pressure-session/1.0` 硬件层唯一标准压力信息流
    - 算法层负责姿态归一化、COP 和全部压力特征
-   - 阵列尺寸、点间距、有效面积、标定、时间和质量字段
-   - 加解密边界、版本清单和拒绝规则
+   - 物理点位置、时间与法向力字段
+   - 硬件质量拦截与接收规则
 
 8. [临床证据与设计依据](clinical-evidence-and-rationale.md)
    - 指南、队列研究、系统综述和药物共识
@@ -64,6 +64,6 @@
 
 客户报告中的 0–100 分是版本化的“综合筛查评分”，不是临床量表原始分，也不是跌倒概率。算法先根据明确高风险背景、动作完成程度和压力指标确定低/中/高风险，再把分数限制在相应区间内；任何正常的单次压力板表现都不能抵消已经成立的高风险事实。
 
-正式筛查的核心算法输入以 [`physical-input-interface-v1.md`](physical-input-interface-v1.md) 为准：硬件层只提供板面坐标、经验证的法向载荷、实际时间、质量和版本；算法层负责姿态归一化、COP 和全部压力特征。接口不依赖设备型号、阵列行列数、点尺寸、点间距、原始值类型或通信协议。首款 DO-P4864 的解析和物理换算属于上游硬件适配层，以 [`docs/通信接口设计文档.md`](../通信接口设计文档.md) 为准；在适配器未能输出通过验证的标准压力信息流前，不得进入正式物理指标和综合评分。
+正式筛查的核心算法输入以 [`physical-input-interface-v1.md`](physical-input-interface-v1.md) 为准：硬件层只提供板面坐标、最终法向载荷和实际时间；无效会话在硬件层丢弃，质量与设备实现不进入算法层。算法层负责姿态归一化、COP 和全部压力特征。接口不依赖设备型号、阵列行列数、点尺寸、点间距、原始值类型或通信协议。首款 DO-P4864 的解析和物理换算属于上游硬件适配层，以 [`docs/通信接口设计文档.md`](../通信接口设计文档.md) 为准。
 
 模式文件：[正式算法输入 `physical-pressure-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)；[硬件观测 `physical-sensor-observation/1.0`](schemas/physical-sensor-observation-1.0.schema.json)。后者含原始/零校正/候选力，不能进入正式筛查；但可按 [`02-provisional-force-implementation.md`](02-provisional-force-implementation.md) 进入受门控的首版算法开发与回放路径。

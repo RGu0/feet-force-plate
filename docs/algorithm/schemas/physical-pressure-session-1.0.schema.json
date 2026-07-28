@@ -2,12 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "physical-pressure-session/1.0",
   "title": "Physical pressure session",
-  "description": "Device-independent, algorithm-facing physical observations only.",
+  "description": "Hardware-independent physical force field. Only hardware-accepted sessions are emitted.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "session_id", "coordinate_frame", "coordinate_unit",
-    "force_unit", "area_unit", "time_unit", "measurement_profile", "cells", "stages", "frames"
+    "schema_version",
+    "session_id",
+    "coordinate_frame",
+    "coordinate_unit",
+    "force_unit",
+    "time_unit",
+    "points",
+    "frames"
   ],
   "properties": {
     "schema_version": {"const": "physical-pressure-session/1.0"},
@@ -15,49 +21,34 @@
     "coordinate_frame": {"const": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"},
     "coordinate_unit": {"const": "mm"},
     "force_unit": {"const": "N"},
-    "area_unit": {"const": "mm2"},
     "time_unit": {"const": "s"},
-    "measurement_profile": {
-      "type": "object",
-      "required": ["profile_version", "force_validation", "geometry_validation", "timing_validation"],
-      "properties": {
-        "profile_version": {"type": "string", "minLength": 1},
-        "force_validation": {"const": "VALIDATED"},
-        "geometry_validation": {"const": "VALIDATED"},
-        "timing_validation": {"const": "VALIDATED"}
-      },
-      "additionalProperties": true
-    },
-    "cells": {
+    "points": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["cell_id", "board_x_mm", "board_y_mm", "active_area_mm2", "status"],
+        "required": ["point_id", "board_x_mm", "board_y_mm"],
         "properties": {
-          "cell_id": {"type": "string", "minLength": 1},
+          "point_id": {"type": "string", "minLength": 1},
           "board_x_mm": {"type": "number"},
-          "board_y_mm": {"type": "number"},
-          "active_area_mm2": {"type": ["number", "null"], "exclusiveMinimum": 0},
-          "status": {"enum": ["ACTIVE", "EXCLUDED"]}
+          "board_y_mm": {"type": "number"}
         },
         "additionalProperties": false
       }
     },
-    "stages": {"type": "array"},
     "frames": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["timestamp_s", "normal_force_n", "quality", "quality_flags"],
+        "required": ["timestamp_s", "normal_force_n"],
         "properties": {
           "timestamp_s": {"type": "number", "minimum": 0},
           "normal_force_n": {
             "type": "array",
+            "minItems": 1,
             "items": {"type": "number", "minimum": 0}
-          },
-          "quality": {"enum": ["VALID", "INVALID"]},
-          "quality_flags": {"type": "array", "items": {"type": "string"}}
+          }
         },
         "additionalProperties": false
       }

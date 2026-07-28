@@ -1,165 +1,108 @@
 # 硬件层—算法层交互接口 V1
 
-> 状态：设计与实现对照基线（2026-07-28）
+> 状态：接口边界基线（2026-07-28）
 >
-> 本文定义硬件层交给上层的唯一公开数据边界；不定义串口、设备协议、存储加密、上传或 UI。
+> 本文规定算法层只接收硬件层认可的、设备无关的物理力场；硬件质量和设备实现不跨越该边界。
 
-## 1. 结论
+## 1. 交互原则
 
-上层不应接收 DO-P4864 的 `48×64 uint8` 原始阵列、列主序、串口时间、校验和、坏点修复算法或设备型号。硬件层对上层提供的是一个**设备无关的板面法向力场**：每个物理感应点的位置、每一时刻的法向力、时间、质量状态和测量版本。
+硬件层必须在本地完成设备接入、协议解析、基线校正、坏点修复/隔离、掉帧处理和会话有效性审核。只有整体通过审核的会话，才生成 `physical-pressure-session/1.0` 并交给通信层上传、算法层分析。
 
-“物理压力矩阵”在接口中不采用固定二维 `48×64` 数组作为语义。固定行列数、内存顺序和点间距仍是设备知识；标准接口采用 `cells[]` 加同序 `normal_force_n[]` 的点场表示。任意上层如需热力图，可根据物理坐标栅格化；算法层不得根据 DO-P4864 的行列数或列主序推断坐标。
+算法层只需要以下物理事实：
 
-当前硬件实现可产生 `estimated_force_n`，但正式 `physical-pressure-session/1.0` 仍要求 `normal_force_n` 且 `force_validation=VALIDATED`。因此当前实际归档是 `physical-sensor-observation/1.0`，还没有正式发出本文件定义的公开压力会话。这个差异必须在实现交付前收敛，不能仅通过重命名字段掩盖。
+- 每一个可用感应点的板面位置；
+- 每一帧的实际时间；
+- 每一点的最终法向力（N）；
+- 坐标、时间和力的单位。
 
-## 2. 三层数据边界
+算法层不接收，也不需要判断：设备型号、原始阵列大小、字节序、串口时间、原始计数、电压、校验和、坏点掩码、修复过程、掉帧、断连、质量状态或质量标记。
 
 ```mermaid
 flowchart LR
-    A[设备私有数据<br/>字节流、uint8、48×64、列主序] --> B[硬件私有观测<br/>physical-sensor-observation/1.0]
-    B --> C[公开物理压力会话<br/>physical-pressure-session/1.0]
-    C --> D[算法层<br/>姿态归一化、COP、特征、风险]
-
-    B -.不向算法层暴露.-> D
+    A[设备字节流] --> B[硬件层
+解析、校正、修复、审核]
+    B -->|无效| C[本地丢弃并提示重测]
+    B -->|有效| D[公开物理力场
+位置、时间、法向力]
+    D --> E[通信层上传]
+    E --> F[算法层
+特征、评分、报告]
 ```
 
-| 层级 | 可包含 | 不可包含 |
-| --- | --- | --- |
-| 设备私有数据 | 串口帧、功能码、原始计数、payload 顺序、checksum、主机接收事件 | 上层业务/算法结论 |
-| 硬件私有观测 | 空载基线、原始/零校正/修复计数、候选/估计力、坏点与协议审计 | COP、速度、平衡结论、风险和报告 |
-| 公开物理压力会话 | 物理坐标、法向力 N、时间、点状态、帧质量、阶段元数据、测量版本 | 设备型号、原始计数、字节序、帧头、校验和、硬件修复实现细节 |
-| 算法层结果 | ML/AP 归一化、COP、动态特征、评分、风险和报告 | 对设备通信/原始计数的重新解释 |
+## 2. 公开对象
 
-## 3. 公开接口：`physical-pressure-session/1.0`
-
-接口模式文件为 [`physical-pressure-session-1.0.schema.json`](schemas/physical-pressure-session-1.0.schema.json)。交换格式为 UTF-8 JSON；通信层可改用其他传输编码，但字段语义、单位和版本不得改变。
-
-### 3.1 顶层字段
-
-| 字段 | 类型/固定值 | 上层语义 |
-| --- | --- | --- |
-| `schema_version` | `physical-pressure-session/1.0` | 公开物理接口版本 |
-| `session_id` | string | 会话不可变标识 |
-| `coordinate_frame` | `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN` | 板面左上为原点，右为 +X、下为 +Y；不是人体 ML/AP |
-| `coordinate_unit` | `mm` | 物理坐标单位 |
-| `force_unit` | `N` | 法向力单位 |
-| `area_unit` | `mm2` | 有效面积单位；未知面积不得伪造 |
-| `time_unit` | `s` | 会话相对单调时间单位 |
-| `measurement_profile` | object | 本次测量的标定、几何、时间和不确定性版本/状态 |
-| `cells` | array | 固定物理点定义 |
-| `stages` | array | 客户端工作流提供的动作阶段，不由硬件推断 |
-| `frames` | array | 按时间排列的物理法向力场 |
-
-### 3.2 `cells[]`：用物理点消除设备依赖
-
-每个元素定义一个固定物理位置：
+公开 schema 为 [`physical-pressure-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)，规范说明见[标准物理力场接口 V1](physical-input-interface-v1.md)。
 
 ```json
 {
-  "cell_id": "cell-0001",
-  "board_x_mm": 0.0,
-  "board_y_mm": 0.0,
-  "active_area_mm2": null,
-  "status": "ACTIVE"
+  "schema_version": "physical-pressure-session/1.0",
+  "session_id": "uuid",
+  "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
+  "coordinate_unit": "mm",
+  "force_unit": "N",
+  "time_unit": "s",
+  "points": [
+    {"point_id": "point-0001", "board_x_mm": 0.0, "board_y_mm": 0.0}
+  ],
+  "frames": [
+    {"timestamp_s": 0.04838, "normal_force_n": [0.12]}
+  ]
 }
 ```
 
-约束：
+### 2.1 `points[]`：物理位置
 
-- `cell_id` 在会话内唯一且顺序稳定。
-- `board_x_mm`、`board_y_mm` 是感应点中心的实际板面坐标。
-- `active_area_mm2` 只有在已验证时才可填写；目前未知时为 `null`。
-- `status=EXCLUDED` 表示该点不参与算法计算，算法不得以零代替。
+`points[]` 描述输出力场的空间排列。`point_id` 只是会话内稳定、通用的数组对齐标识；它不表示设备行列、寄存器或串口序号。`board_x_mm`、`board_y_mm` 是实际板面坐标。
 
-公开接口不包含 `source_index`、行号、列号、阵列尺寸或 payload 顺序。这些只存在于硬件适配器内部。
+接口故意不输出固定二维 `48×64` 矩阵。固定矩阵形状、存储顺序和点间距属于硬件实现；以物理点清单和同序力数组表达后，任意硬件布局都能进入同一算法。算法需要显示热力图时，可按这些坐标生成自身的显示网格。
 
-### 3.3 `frames[]`：物理法向力场
+### 2.2 `frames[]`：时间和力学信息
 
-每帧的最小公开表达如下：
+每帧只包含：
 
-```json
-{
-  "timestamp_s": 0.04838,
-  "normal_force_n": [0.0, 0.12, 0.08, 0.0],
-  "quality": "VALID",
-  "quality_flags": ["ZERO_OFFSET_APPLIED"]
-}
-```
-
-| 字段 | 规则 |
+| 字段 | 含义与约束 |
 | --- | --- |
-| `timestamp_s` | 实际主机单调时间相对会话起点；严格递增；不得按额定帧率虚构补帧 |
-| `normal_force_n` | 与 `cells[]` 等长、有限、非负、单位 N；第 *i* 个值对应第 *i* 个 `cells[]` |
-| `quality` | `VALID` 或 `INVALID`；算法不得把 `INVALID` 当作零力 |
-| `quality_flags` | 可说明基线、插补、坏点、饱和、时间异常等；不得夹带设备字节协议细节 |
+| `timestamp_s` | 相对会话起点的实际单调时间，严格递增 |
+| `normal_force_n` | 与 `points[]` 等长、有限、非负、单位 N 的最终逐点法向力 |
 
-这是“法向力场”，不是 Pa 压强场。若业务确实需要 `pressure_pa`，必须先提供已验证的 `active_area_mm2` 或独立的可验证面积模型；目前不能以假定面积生成对外物理压力 Pa。
+`normal_force_n[i]` 对应 `points[i]`。未知、不可修复或不可信的值不能以 `null`、零值或质量状态传给算法层；硬件层必须先修复/隔离，若无法可靠处理则使整个会话不进入公开接口。
 
-### 3.4 `measurement_profile`
+这里传输的是**法向力场**，而不是 Pa 压强场。Pa 需要已验证的有效接触面积；没有该证据时，硬件层和算法层均不得自行换算或标注为压力 Pa。
 
-上层必须根据该对象判断可使用范围，而不是通过设备名称猜测：
+## 3. 隐藏在硬件层内的内容
 
-```json
-{
-  "profile_version": "measurement-profile/1.0",
-  "measurement_conformance_version": "measurement/1.0",
-  "calibration_profile_version": "calibration-profile/1.0",
-  "uncertainty_profile_version": "uncertainty-profile/1.0",
-  "physical_validation": "VALIDATED",
-  "timing_validation": "VALIDATED",
-  "coordinate_validation": "VALIDATED",
-  "force_validation": "VALIDATED",
-  "geometry_validation": "VALIDATED"
-}
-```
-
-当前 schema 对正式公开接口要求以上验证字段为 `VALIDATED`。如果产品决定让 MVP 初筛使用当前 `MVP_SCREENING_ESTIMATED_V1` 力模型，则必须发布新的、明确版本化的公开 schema/门控规则；不能把 `estimated_force_n` 偷换为 `normal_force_n` 后仍声明 `VALIDATED`。
-
-## 4. 当前实现与目标接口的映射
-
-| 当前硬件字段/事实 | 公开接口处理 |
+| 内部信息 | 处理原则 |
 | --- | --- |
-| `raw_count` / `uint8_count` | 不输出 |
-| `zero_corrected_count` / `relative_load_count` | 不输出 |
-| `raw_voltage_v` / `zero_corrected_voltage_v` | 不输出 |
-| `repaired_count` | 不输出具体数值；影响最终力值，并通过质量标记说明 |
-| `repaired_cell_mask` | 不输出设备修复策略；必要时用 `quality_flags` 或 `cells[].status` 表达可用性 |
-| `estimated_force_n` | 当前硬件 MVP 力学转换结果；尚未满足正式 `normal_force_n` 发布门槛 |
-| `normal_force_n` | 正式公开字段；当前实现为全 `null` |
-| `RawFrame.source_index` / 列主序 | 不输出；仅用于硬件可追溯性 |
-| 主机单调时间 | 转换为相对 `timestamp_s` 后输出 |
-| `BOARD_TOP_LEFT_X_RIGHT_Y_DOWN` 与实际点坐标 | 输出；这是物理空间信息，不是设备协议细节 |
-| 会话连续性、坏点、饱和结果 | 通过 `quality`、`quality_flags` 和会话/manifest 质量信息输出 |
+| 原始 `uint8` 计数、列主序、协议帧、校验和 | 只存于硬件层原始归档/审计，不公开 |
+| 空载基线、零点校正、电压和模型中间值 | 用于生成最终力，不公开 |
+| 坏点位置、修复掩码、修复方法 | 硬件层修复或隔离，不公开 |
+| 单帧异常、重同步、短暂插补、掉帧 | 硬件层审核；不足以保证可信时使会话无效 |
+| 断连、持续无有效信号、加密/存储失败 | 会话无效，不生成/上传公开对象 |
+| 质量状态与质量标记 | 仅用于硬件审计和操作员诊断，不传给算法层 |
 
-当前实现的私有观测数据结构为 `PhysicalArraySession` 和 `PhysicalArrayFrame`，定义见 `client/hardware_standardization/models.py`；其序列化会包含原始计数和估计力，故不能直接作为公开算法输入文件。
-
-## 5. 上下游责任
+## 4. 上下游责任
 
 | 责任 | 硬件层 | 算法层 |
 | --- | ---:| ---:|
-| 解码、基线、坏点修复、有效会话审核 | 负责 | 不读取原始细节 |
-| 物理点坐标、法向力、真实时间与质量 | 生产并声明版本 | 校验并消费 |
-| 阶段动作元数据 | 不推断、不改写，仅透传 | 使用阶段姿态解释数据 |
-| 人体 ML/AP、COP、速度、范围、特征 | 不负责 | 负责 |
-| 评分、风险提示、报告 | 不负责 | 负责 |
-| 设备、原始数据与协议审计 | 本地留存、按需追溯 | 不依赖 |
+| 设备数据可靠获取 | 负责 | 不参与 |
+| 数据校正、坏点修复和会话有效性 | 负责 | 不参与 |
+| 无效会话拦截 | 负责 | 不接收 |
+| 位置、时间、最终法向力 | 输出 | 消费 |
+| 人体方向、阶段姿态 | 不推断 | 从工作流会话关联并解释 |
+| COP、动态特征、评分和风险提示 | 不负责 | 负责 |
 
-## 6. 接收方拒绝规则
+阶段动作、受试者朝向和安全事件由工作流层单独维护，并通过 `session_id` 与物理力场关联；它们不是硬件层公开物理数据的一部分。
 
-算法层必须拒绝或隔离以下输入：
+## 5. 当前实现状态与收敛事项
 
-- schema/单位/坐标系不支持，或存在未知公开字段；
-- `cells[]` 中 ID 重复、坐标无效，或某帧力数组长度与点数不一致；
-- 时间不严格递增，负值/非有限力值，或把 `INVALID` 帧作为有效值使用；
-- 验证状态和实际载荷字段不一致；
-- 原始计数、设备协议、COP、评分或风险字段被塞入公开物理输入；
-- 活动面积未知却将法向力擅自换算为 Pa。
+DO-P4864 当前已能在硬件内部形成 `physical-sensor-observation/1.0`：其中有原始计数、零校正值、坏点修复信息、`estimated_force_n` 和质量审计。这些是硬件私有数据，不能直接作为算法输入。
 
-## 7. 需要完成的收敛工作
+要达到本文的公开边界，仍需增加一个专用的公开导出器：
 
-1. 确认 MVP 的对外力语义：保持当前“估计力研究输入”，或新建允许 `MVP_SCREENING_ESTIMATED_V1` 的正式初筛公开 schema。
-2. 在硬件层新增专用公开导出器：从已提交且有效的会话生成公开压力会话，删除原始计数和所有设备协议字段。
-3. 为公开导出器增加 schema、单位、坐标、时间、数组对齐和不可泄露字段的自动化测试。
-4. 算法层只从该公开导出文件读取数据；实时 UI 另走只读显示适配器，不得反向影响会话、存储或算法输入。
+1. 仅接收硬件层已判定有效并已本地提交的会话；
+2. 输出 `points[]`、`timestamp_s` 和最终 `normal_force_n`；
+3. 从导出物中删除一切原始、协议、质量和修复字段；
+4. 在导出器前硬性阻断无效会话；
+5. 为字段最小化、数组对齐、时间单调性和“无效会话零输出”建立自动化测试。
 
-在第 1 项决策与第 2 项导出器完成之前，当前 `physical-sensor-observation/1.0` 只能视作硬件内部的受控观测归档，不能被误称为设备无关的算法公共接口。
+在该导出器落地前，任何上层组件都不得直接读取 `physical-sensor-observation/1.0` 或 `RawFrame`。
