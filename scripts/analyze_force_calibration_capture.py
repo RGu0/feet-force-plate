@@ -27,7 +27,6 @@ def decode_capture(path: Path) -> np.ndarray:
         ProtocolProfile.observed_compact_8bit(
             version="do-p4864/observed-compact-column-major-48x64-20260721"
         ),
-        allow_unverified=True,
     )
     frames = parser.feed(path.read_bytes())
     if not frames:

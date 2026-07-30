@@ -50,7 +50,7 @@ class SerialValidationConnector:
         profile = ProtocolProfile.observed_compact_8bit(
             version="do-p4864-observed-compact-8bit/1"
         )
-        parser = DaoOneP4864Parser(profile, allow_unverified=True)
+        parser = DaoOneP4864Parser(profile)
         return ValidationConnection(
             device_ref=_opaque_device_ref(candidate.device),
             transport=transport,

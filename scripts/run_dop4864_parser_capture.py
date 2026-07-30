@@ -51,7 +51,7 @@ def _capture(*, device: str, seconds: float, output_dir: Path, read_size: int) -
     profile = ProtocolProfile.observed_compact_8bit(
         version="do-p4864/observed-compact-column-major-48x64-20260721"
     )
-    parser = DaoOneP4864Parser(profile, allow_unverified=True)
+    parser = DaoOneP4864Parser(profile)
     intervals_ns: list[int] = []
     quality_counts: dict[str, int] = {}
     previous_frame_ns: int | None = None

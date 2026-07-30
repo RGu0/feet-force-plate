@@ -37,7 +37,7 @@ def _profile() -> ProtocolProfile:
 
 
 def _relative_fixture(capture: Path) -> np.ndarray:
-    parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
+    parser = DaoOneP4864Parser(_profile())
     frames = parser.feed(capture.read_bytes())
     if len(frames) < 20:
         raise ValueError(f"{capture} does not contain enough valid frames")

@@ -18,7 +18,7 @@ def _raw_frame(values: np.ndarray, timestamp_ns: int) -> RawFrame:
         source_index=0,
         device_frame_seq=None,
         device_timestamp_ns=None,
-        quality_flags=frozenset({"CHECKSUM_NOT_ENFORCED", "COMPACT_8BIT_PAYLOAD_UNVERIFIED"}),
+        quality_flags=frozenset({"CHECKSUM_NOT_ENFORCED"}),
     )
 
 

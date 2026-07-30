@@ -78,7 +78,7 @@ def _profile() -> ProtocolProfile:
 def _collect_baseline(
     *, device: str, duration_ns: int
 ) -> tuple[tuple[RawFrame, ...], dict[str, int]]:
-    parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
+    parser = DaoOneP4864Parser(_profile())
     transport = SerialByteTransport.open(device, timeout_seconds=0.5)
     frames: list[RawFrame] = []
     first_ns: int | None = None
@@ -190,7 +190,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         connection = ConnectionStateMachine()
         connection.start_connecting()
         connection.mark_ready()
-        parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
+        parser = DaoOneP4864Parser(_profile())
         transport = SerialByteTransport.open(
             args.device, timeout_seconds=args.serial_timeout_seconds
         )

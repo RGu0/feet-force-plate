@@ -30,8 +30,6 @@ def _frame(values: np.ndarray, timestamp_ns: int, source_index: int) -> RawFrame
         quality_flags=frozenset(
             {
                 "CHECKSUM_NOT_ENFORCED",
-                "COMPACT_8BIT_PAYLOAD_UNVERIFIED",
-                "PROTOCOL_PROFILE_UNVERIFIED",
             }
         ),
     )

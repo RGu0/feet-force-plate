@@ -44,7 +44,7 @@ def test_connector_opens_available_ch340_and_returns_production_boundaries() -> 
     assert opened == ["/dev/cu.private-path"]
     assert connection.device_ref.startswith("ch340-")
     assert "/dev/" not in connection.device_ref
-    assert connection.parser.profile.evidence is ProfileEvidence.OBSERVED_STRUCTURAL
+    assert connection.parser.profile.evidence is ProfileEvidence.CAPTURE_VERIFIED
     assert connection.parser.profile.version == "do-p4864-observed-compact-8bit/1"
 
 

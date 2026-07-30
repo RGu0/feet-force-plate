@@ -52,7 +52,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
             )
         )
 
-        parser = protocol.DaoOneP4864Parser(profile, allow_unverified=True)
+        parser = protocol.DaoOneP4864Parser(profile)
         decoded = []
         for chunk in (wire_frame[:7], wire_frame[7:2050], wire_frame[2050:]):
             decoded.extend(parser.feed(chunk))
@@ -63,7 +63,7 @@ class ProtocolSurfaceTests(unittest.TestCase):
         self.assertEqual(wire_frame[5:53], values[:, 0].tobytes())
         self.assertEqual(decoded[0].values.dtype, np.dtype("uint8"))
         self.assertFalse(decoded[0].values.flags.writeable)
-        self.assertIn("PROTOCOL_PROFILE_UNVERIFIED", decoded[0].quality_flags)
+        self.assertNotIn("PROTOCOL_PROFILE_UNVERIFIED", decoded[0].quality_flags)
         self.assertIn("CHECKSUM_NOT_ENFORCED", decoded[0].quality_flags)
         self.assertIn("CHECKSUM_MISMATCH_OBSERVED", decoded[0].quality_flags)
         self.assertEqual(parser.statistics.checksum_failures, 0)
@@ -72,13 +72,13 @@ class ProtocolSurfaceTests(unittest.TestCase):
         self.assertEqual(parser.statistics.length_observations, 1)
         self.assertEqual(parser.statistics.length_mismatches, 0)
 
-    def test_observed_compact_profile_audits_but_does_not_reject_length_candidate_mismatch(self) -> None:
+    def test_observed_compact_profile_rejects_length_candidate_mismatch_and_recovers(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = protocol.ProtocolProfile.observed_compact_8bit(
             version="do-p4864/observed-length-audit-test-1"
         )
         values = np.full((48, 64), 0x2A, dtype=np.uint8)
-        wire_frame = b"".join(
+        invalid = b"".join(
             (
                 b"\xff\xaa\x00\x00\x01",
                 values.tobytes(order="F"),
@@ -87,16 +87,16 @@ class ProtocolSurfaceTests(unittest.TestCase):
             )
         )
 
-        parser = protocol.DaoOneP4864Parser(profile, allow_unverified=True)
-        decoded = parser.feed(wire_frame)
+        valid = _frame_bytes(protocol, profile, values)
+        parser = protocol.DaoOneP4864Parser(profile)
+        decoded = parser.feed(invalid + valid)
 
         self.assertEqual(len(decoded), 1)
         np.testing.assert_array_equal(decoded[0].values, values)
-        self.assertEqual(parser.statistics.length_observations, 1)
+        self.assertEqual(parser.statistics.length_observations, 2)
         self.assertEqual(parser.statistics.length_mismatches, 1)
-        self.assertEqual(parser.statistics.length_failures, 0)
-        self.assertIn("LENGTH_NOT_ENFORCED", decoded[0].quality_flags)
-        self.assertIn("LENGTH_MISMATCH_OBSERVED", decoded[0].quality_flags)
+        self.assertEqual(parser.statistics.length_failures, 1)
+        self.assertEqual(parser.statistics.invalid_frames, 1)
 
     def test_protocol_module_exposes_incremental_parser(self) -> None:
         try:

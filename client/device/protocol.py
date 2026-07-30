@@ -25,13 +25,15 @@ CHECKSUM_OFFSET = 3_077
 TAIL_OFFSET = 3_078
 FUNCTION_CODE = 0x01
 TAIL = 0xFA
+OBSERVED_COMPACT_CAPTURE_SHA256 = (
+    "1d91bdd071f667481d76b4eb54a75f675a3a8b177505e0f114657402c90d9cc9"
+)
 
 
 class ProfileEvidence(StrEnum):
     """Strength of evidence behind a protocol profile."""
 
     SYNTHETIC = "SYNTHETIC"
-    OBSERVED_STRUCTURAL = "OBSERVED_STRUCTURAL"
     CAPTURE_VERIFIED = "CAPTURE_VERIFIED"
 
 
@@ -137,11 +139,13 @@ class ProtocolProfile:
 
     @classmethod
     def observed_compact_8bit(cls, *, version: str) -> ProtocolProfile:
-        """Represent the observed 3079-byte stream without treating it as verified.
+        """Return the capture-backed 3,079-byte compact runtime profile.
 
-        The length bytes and CheckSum candidate are retained for diagnostics, but
-        neither causes a frame to be rejected until the compact protocol is
-        independently specified and verified.
+        Repeated physical captures establish the frame boundary, big-endian
+        length field, function byte, tail, and column-major byte mapping. The
+        historical documented layout is not a runtime input. The candidate CheckSum
+        remains audit-only because the observed stream does not satisfy the
+        historical formula.
         """
 
         return cls(
@@ -149,12 +153,13 @@ class ProtocolProfile:
             length_byte_order="big",
             checksum_start=PAYLOAD_OFFSET,
             checksum_end=CHECKSUM_OFFSET,
-            evidence=ProfileEvidence.OBSERVED_STRUCTURAL,
+            evidence=ProfileEvidence.CAPTURE_VERIFIED,
+            fixture_sha256=OBSERVED_COMPACT_CAPTURE_SHA256,
             frame_length=FRAME_LENGTH,
             payload_offset=PAYLOAD_OFFSET,
             checksum_offset=CHECKSUM_OFFSET,
             tail_offset=TAIL_OFFSET,
-            enforce_wire_length=False,
+            enforce_wire_length=True,
             checksum_policy=ChecksumPolicy.OBSERVE,
             payload_encoding=PayloadEncoding.UINT8_RAW,
         )
@@ -408,22 +413,13 @@ class DaoOneP4864Parser:
         values = values.reshape((48, 64), order="F")
         values.setflags(write=False)
         quality_flags: set[str] = set()
-        if self.profile.evidence is not ProfileEvidence.CAPTURE_VERIFIED:
+        if self.profile.evidence is ProfileEvidence.SYNTHETIC:
             quality_flags.add("PROTOCOL_PROFILE_UNVERIFIED")
         if self.profile.checksum_policy is ChecksumPolicy.OBSERVE:
             quality_flags.add("CHECKSUM_NOT_ENFORCED")
             expected = (-sum(frame[self.profile.checksum_start : self.profile.checksum_end])) & 0xFF
             if frame[self.profile.checksum_offset] != expected:
                 quality_flags.add("CHECKSUM_MISMATCH_OBSERVED")
-        if not self.profile.enforce_wire_length:
-            quality_flags.add("LENGTH_NOT_ENFORCED")
-            wire_length = int.from_bytes(
-                frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
-            )
-            if wire_length != self.profile.frame_length:
-                quality_flags.add("LENGTH_MISMATCH_OBSERVED")
-        if self.profile.payload_encoding is PayloadEncoding.UINT8_RAW:
-            quality_flags.add("COMPACT_8BIT_PAYLOAD_UNVERIFIED")
         host_monotonic_ns = self._monotonic_ns()
         decoded = RawFrame(
             values=values,

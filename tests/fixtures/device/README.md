@@ -1,6 +1,8 @@
 # DO-P4864 protocol fixtures
 
-No physical serial golden fixture is present yet.
+The capture-backed `observed_compact_8bit` runtime profile is the physical
+serial baseline for frame-boundary integrity. Its raw capture remains local-only
+and is referenced by SHA-256 in the protocol profile.
 
 `dop4864_reference_protocol_v1/` is intentionally different: it contains a
 de-identified, derived 48×64 matrix replay from a physical four-pose run. It
@@ -14,14 +16,14 @@ the length-field byte order or CheckSum coverage range.
 
 Tests may construct bytes with a profile whose evidence class is `SYNTHETIC`.
 Such a profile is accepted only when the caller explicitly opts into unverified
-data, and emitted frames carry `PROTOCOL_PROFILE_UNVERIFIED`.
+test data, and emitted frames carry `PROTOCOL_PROFILE_UNVERIFIED`.
 
-A future physical fixture must be accompanied by metadata containing at least:
+Additional captures should be accompanied by metadata containing at least:
 
 - capture time and tool/version;
 - device/receiver identity without personal data;
 - serial settings;
 - raw, unmodified bytes and SHA-256;
 - observed transmitted length bytes;
-- experimentally verified CheckSum start/end offsets;
+- observed CheckSum candidates and mismatch count;
 - protocol profile version and reviewer.

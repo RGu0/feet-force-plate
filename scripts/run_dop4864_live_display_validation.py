@@ -127,7 +127,7 @@ def validate(
     transport_box: dict[str, Any] = {"transport": None}
 
     def read_device() -> None:
-        parser = DaoOneP4864Parser(_profile(), allow_unverified=True)
+        parser = DaoOneP4864Parser(_profile())
         try:
             transport = SerialByteTransport.open(device, timeout_seconds=0.25)
             transport_box["transport"] = transport

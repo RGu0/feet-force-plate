@@ -47,7 +47,6 @@ def mean_capture(directory: Path) -> tuple[np.ndarray, int, Path]:
         ProtocolProfile.observed_compact_8bit(
             version="do-p4864/observed-compact-column-major-48x64-20260721"
         ),
-        allow_unverified=True,
     )
     frames = parser.feed(files[0].read_bytes())
     if not frames:
