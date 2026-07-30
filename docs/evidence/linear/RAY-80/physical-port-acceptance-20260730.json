@@ -1,0 +1,34 @@
+{
+  "schema_version": "ray-80-physical-port-acceptance/1",
+  "captured_at_utc": "2026-07-30T03:44:02Z",
+  "privacy_boundary": "No raw serial bytes, pressure matrices, session identifiers, subject data, encryption key material, or absolute local paths are recorded.",
+  "device": {
+    "usb_vid_pid": "1A86:7523",
+    "transport": "CH340 USB Serial"
+  },
+  "serial_configuration": {
+    "baud_rate": 1000000,
+    "data_bits": 8,
+    "parity": "N",
+    "stop_bits": 1,
+    "read_timeout_seconds": 0.25,
+    "posix_exclusive_open": true
+  },
+  "observations": [
+    {
+      "scenario": "normal_probe_after_release",
+      "availability": "AVAILABLE"
+    },
+    {
+      "scenario": "probe_while_separate_exclusive_owner_holds_port",
+      "availability": "BUSY_OR_UNAVAILABLE",
+      "probe_error_type": "SerialException"
+    },
+    {
+      "scenario": "probe_after_owner_release",
+      "availability": "AVAILABLE"
+    }
+  ],
+  "result": "PASS",
+  "interpretation": "The physical CH340 was discovered; an occupied POSIX port was conservatively rejected; and release restored availability. This result does not claim protocol payload semantics, checksum coverage, calibration, or clinical validity."
+}

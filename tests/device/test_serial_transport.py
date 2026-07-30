@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from client.device.serial_transport import (
@@ -69,6 +70,8 @@ class SerialDiscoveryTests(unittest.TestCase):
         self.assertTrue(
             all(options["baudrate"] == 1_000_000 for _, options in opened)
         )
+        if os.name == "posix":
+            self.assertTrue(all(options["exclusive"] is True for _, options in opened))
 
     def test_enumeration_without_probe_does_not_claim_occupancy(self) -> None:
         candidates = enumerate_ch340_ports(
@@ -99,6 +102,8 @@ class SerialTransportTests(unittest.TestCase):
         self.assertEqual(calls[0]["parity"], "N")
         self.assertEqual(calls[0]["stopbits"], 1)
         self.assertEqual(calls[0]["timeout"], 0.25)
+        if os.name == "posix":
+            self.assertTrue(calls[0]["exclusive"])
         transport.close()
         self.assertTrue(serial.closed)
 

@@ -2,14 +2,16 @@
 
 - Issue: RAY-80 — 设备接入与可靠采集
 - URL: https://linear.app/ray-app/issue/RAY-80/设备接入与可靠采集
-- Captured at: 2026-07-20T10:12:10Z
-- Snapshot: In Review; milestone P1：可靠采集; priority High
+- Original Linear snapshot: 2026-07-20T10:12:10Z — In Review; milestone P1：可靠采集; priority High
+- Local acceptance updated: 2026-07-30T03:44:02Z — PASS; Linear status was not changed from this workspace.
 - Relations: blocked by RAY-78
 
 ## Acceptance snapshot
 
 - [x] CH340 enumeration and conservative availability probing are covered with injected port/serial fakes.
-- [ ] Physical CH340 enumeration, true occupied-port behavior, and unplug behavior need hardware verification.
+- [x] Physical CH340 enumeration: current CH340 `1A86:7523` was found at `/dev/cu.usbserial-1140` and was available after the probe.
+- [x] Physical occupied-port behavior: while a separate exclusive owner held that port, discovery returned `BUSY_OR_UNAVAILABLE` with a `SerialException`; after owner release, it returned `AVAILABLE`.
+- [x] Physical unplug and reconnect behavior: the real cable-removal run invalidated and discarded the active session; a later real reconnect started a fresh window at `source_index=0` (linked evidence below).
 - [x] Serial adapter configures 1,000,000 baud, 8N1, blocking reads with timeout, and runs through an independent worker thread.
 - [x] Connection state machine implements `DISCONNECTED / CONNECTING / READY / ACQUIRING / ERROR` with guarded transitions.
 - [x] Parser-provided host monotonic time, wall time, and `source_index` survive the acquisition handoff.
@@ -26,7 +28,7 @@
   - Makes runners single-use. Reconnect changes only connection state; a caller must create a new parser/runner and session boundary.
 - `client/device/serial_transport.py`
   - Discovers CH340/CH341 by WCH VID `0x1A86` or explicit CH340/CH341 identity text.
-  - Uses 1,000,000 baud, 8 data bits, no parity, one stop bit, and a finite read timeout.
+  - Uses 1,000,000 baud, 8 data bits, no parity, one stop bit, a finite read timeout, and POSIX-exclusive opens. This prevents a concurrently owned POSIX TTY from being incorrectly reported as available; Windows retains its OS-level COM-port exclusivity.
   - Reports a failed probe as `BUSY_OR_UNAVAILABLE`; without OS/hardware evidence it does not claim that every open failure specifically means occupancy.
   - Imports pyserial lazily so simulator and automated tests remain usable without a physical-device dependency installed.
 - `tests/device/test_acquisition.py`, `tests/device/test_serial_transport.py`
@@ -40,16 +42,16 @@ Detailed output: [verification.txt](verification.txt)
 
 | Command | Result |
 |---|---|
-| bundled Python `-m unittest tests.device.test_acquisition tests.device.test_serial_transport` | PASS — 11 tests |
-| bundled Python `-m unittest discover -s tests -p 'test_*.py'` | PASS — 30 owned tests (0.029s) |
-| bundled Python `-m compileall -q client/device tests/device` | PASS — exit 0 |
+| `./scripts/local-env.sh python -m pytest tests/device/test_serial_transport.py tests/device/test_acquisition.py tests/device/test_session_runtime.py -q` | PASS — 22 tests |
+| `./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q` | PASS — 148 tests (1.31s) |
+| `git diff --check` | PASS |
 
 ## Automatic / physical / manual boundary
 
-- Automated: all results above used the byte-level simulator or injected fake serial/port providers. They prove host lifecycle and ordering semantics, not physical USB behavior.
-- Physical not run: no DO-P4864/CH340 hardware was available in this task. Port enumeration, busy-port diagnosis, sustained 1 Mbps reads, cable removal, driver differences, and reconnect must be verified on the target machine.
-- Manual not run: operator-facing prompts and workflow behavior are outside this directory ownership and were not changed.
-- External blocker: RAY-78 must provide a redacted raw serial fixture before the physical protocol profile can be accepted.
+- Automated: the listed tests use byte-level simulators or injected fakes and verify lifecycle, ordering, POSIX exclusivity and cleanup semantics.
+- Physical: `physical-port-acceptance-20260730.json` records today's CH340 enumeration, occupied-port rejection and post-release availability. The 10-minute 1 Mbps production-composition run is documented in [`../RAY-86/real-device-runtime-continuity-10m-20260723.json`](../RAY-86/real-device-runtime-continuity-10m-20260723.json). Actual cable removal is documented in [`../RAY-86/cable-removal-runtime-20260728.json`](../RAY-86/cable-removal-runtime-20260728.json); the real reconnect and fresh-session boundary are documented in [`../RAY-113/2026-07-28-live-acceptance.md`](../RAY-113/2026-07-28-live-acceptance.md).
+- Manual: no operator-facing UI acceptance was claimed; it is outside RAY-80 ownership.
+- RAY-78's protocol-profile/vendor confirmation remains independently open. It does not weaken this item’s transport connection, ownership, session-boundary, storage-ordering or physical-disconnect acceptance.
 
 ## Failures and limits
 
@@ -59,10 +61,10 @@ Detailed output: [verification.txt](verification.txt)
 
 ## Commit
 
-Implementation/tests/verification commit:
-`c470478455349fc6afb2d1e13a96f106ade3080e`.
+Prior implementation/tests commit: `c470478455349fc6afb2d1e13a96f106ade3080e`.
 
-Evidence metadata commits: `66a88af` and the current follow-up commit.
+The current local acceptance adds the POSIX-exclusive port ownership fix, its
+regression coverage and the physical-port evidence.
 
 ## 2026-07-23 redesign implementation update
 

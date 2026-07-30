@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import os
 from typing import Any, Callable, Iterable
 
 from .transport import TransportDisconnected
@@ -47,7 +48,7 @@ def _default_serial_factory(**kwargs: Any) -> Any:
 
 
 def _serial_options(device: str, timeout_seconds: float) -> dict[str, Any]:
-    return {
+    options: dict[str, Any] = {
         "port": device,
         "baudrate": BAUD_RATE,
         "bytesize": 8,
@@ -55,6 +56,14 @@ def _serial_options(device: str, timeout_seconds: float) -> dict[str, Any]:
         "stopbits": 1,
         "timeout": timeout_seconds,
     }
+    # POSIX serial devices may otherwise permit concurrent opens.  Both the
+    # availability probe and normal acquisition request exclusive ownership so
+    # another process cannot make a busy physical device look available.
+    # pyserial supports this option on POSIX only; Windows COM ports are
+    # already exclusively opened by the OS.
+    if os.name == "posix":
+        options["exclusive"] = True
+    return options
 
 
 def _is_ch340(port: Any) -> bool:
