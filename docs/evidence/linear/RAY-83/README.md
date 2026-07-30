@@ -104,7 +104,7 @@ The RAY-83 acceptance was reread against the current observed compact profile
 12 Hz wording in this issue title). The software boundary is covered by the
 current tests: raw frames are immutable; repair produces a separate derived
 matrix; valid sessions alone create encrypted raw/derived artifacts and the
-minimal public `physical-pressure-session/1.0` export; invalid quality results
+minimal public `estimated-force-session/1.0` export; invalid quality results
 produce neither a formal session nor a public export. The public export test
 asserts that it contains no raw counts, source index, protocol, CheckSum,
 quality flags, repair mask/method or estimated-force field.
@@ -146,7 +146,8 @@ This is a cross-issue evidence reference, not a physical-force claim. No
 manufacturer calibration artifact, controlled physical load, saturation
 injection or hardware bad-point injection was supplied. Accordingly
 `estimated_force_n` remains a versioned internal estimate only, and an exported
-`normal_force_n` contract is not validated as a calibrated physical force.
+`estimated_force_n` is the frozen screening estimate; it is not a clinical or
+metrological absolute-force claim.
 RAY-83 remains `In Review` for those two force-output acceptance boundaries.
 RAY-86 evidence commits: `9f94fbb`, `b5396b0`, `210809b`.
 
@@ -173,7 +174,7 @@ scope.
   `estimated_force_n` and the `ESTIMATED_FORCE_V1` provenance flag.
   `export_public_physical_session()` accepts only a hardware-valid,
   locally committed session and maps that frozen estimate to the deliberately
-  minimal public `normal_force_n` contract; it exports neither raw arrays,
+  minimal public `estimated_force_n` contract; it exports neither raw arrays,
   voltage, repair mask, protocol nor quality detail.
 
 Current focused regression:
@@ -196,3 +197,27 @@ clinical result, or metrological certification.  The two contact areas,
 unmeasured contact profile/temperature, limited load range and missing
 repeatability/long-term-drift study remain explicit follow-up limits rather
 than P1 blockers.
+
+## 2026-07-30 product terminology and input-contract migration
+
+Product direction now fixes **all screening calculations** on the frozen
+`estimated_force_n` curve.  The public hardware-to-algorithm object is
+`estimated-force-session/1.0`, whose frames expose `estimated_force_n`; no
+product path reads, derives, or describes a separate “real”, “final”, or
+medical-grade force value.  The existing known-weight evidence establishes the
+screening curve and its version, not a medical or metrological claim.
+
+Verification after migration:
+
+```text
+bash scripts/local-env.sh python -m pytest \
+  tests/hardware_standardization tests/cloud/analysis \
+  tests/cloud/reporting/test_static_balance_reporting.py -q --tb=short
+# 135 passed in 1.04s
+
+bash scripts/local-env.sh python -m ruff check <changed Python files>
+# All checks passed
+```
+
+Implementation and contract-migration commit:
+`c833b684de1a4b4f13ef0aa2e1c5f7a3c1625b98`.
