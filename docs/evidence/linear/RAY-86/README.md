@@ -228,3 +228,16 @@ staging action. Sanitized details are in
 [`2026-07-29-runtime-acceptance.md`](2026-07-29-runtime-acceptance.md). This
 adds real-device evidence; RAY-86 still requires an operator-visible UI
 consumption check of `HardwareUiFailure` before it can be marked Done.
+
+## 2026-07-29 HardwareUiFailure application/UI consumption
+
+The previously missing software/UI consumption path is implemented and covered by focused
+controller, coordinator and Qt tests. Only the typed `HardwareUiFailure` crosses from hardware
+into the app; the result page renders a localized recovery instruction without raw transport,
+protocol or sensor detail. Retry is visible only for retryable failures, while support-only
+failures instruct the operator to contact support and do not offer a misleading retry.
+
+Automated/UI visual evidence is in
+[`2026-07-29-hardware-ui-consumption.md`](2026-07-29-hardware-ui-consumption.md), implementation
+commit `63aad63`. A deployed-composition operator acknowledgement is still required, so RAY-86
+remains `In Review` rather than `Done`.
