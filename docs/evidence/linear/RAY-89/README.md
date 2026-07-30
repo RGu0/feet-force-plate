@@ -160,3 +160,21 @@ bash scripts/local-env.sh python -m ruff check client/app/session_deletion.py cl
 The non-claimed production-hardening limits are OS secure storage and a
 physical process/power failure at arbitrary filesystem/SQLite writes. The
 manual-delete acceptance and the current Linear P1 checklist are complete.
+
+## 2026-07-30 physical external state-store volume disconnect
+
+RAY-89 additionally repeated the external-volume test in its own fresh
+**Mac Flash** root. After the 5-second true-device baseline, capture began and
+the operator physically removed the external volume. The external sanitized
+summary reported `INVALID` / `committed=false` with a host-observed
+`PermissionError`; it contains no raw frame, key or exception detail:
+[`external-drive-disconnect-runtime-20260730.json`](external-drive-disconnect-runtime-20260730.json)
+(SHA-256 `19cb6f63b7fba1fd63d3f4fd04ee56f91845ec278725124b78db79259a765402`).
+
+After reattachment, the isolated root held exactly one encrypted staging
+segment. Its formal SQLite count was zero for `sessions`, `segments`,
+`session_artifacts`, and `sync_handoffs`. Running the existing `RecoveryScanner`
+reported `interrupted_staging_discarded=1`; all four formal counts remained zero
+and staging had zero children. This is direct physical data-volume-disconnect
+evidence for RAY-89's valid-only index and no-automatic-handoff boundary. It is
+not a host power-loss claim.
