@@ -27,7 +27,7 @@ def test_serialization_emits_board_coordinates_and_null_force_without_body_field
     assert payload["schema_version"] == "physical-sensor-observation/1.0"
     assert payload["coordinate_frame"] == "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"
     assert payload["cells"][1]["board_x_mm"] == 7.99
-    assert payload["frames"][0]["normal_force_n"] == [None, None]
+    assert payload["frames"][0]["estimated_force_n"] is None
     assert "ml_mm" not in json.dumps(payload)
     assert "ap_mm" not in json.dumps(payload)
     assert json.dumps(payload, sort_keys=True, allow_nan=False)

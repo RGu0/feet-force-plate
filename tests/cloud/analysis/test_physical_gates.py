@@ -21,7 +21,7 @@ def descriptor(**overrides: object) -> PhysicalMetricDescriptor:
         "metric_id": "cop_path_mm",
         "unit": "mm",
         "definition": "COP path",
-        "input_schema_version": "physical-pressure-session/1.0",
+        "input_schema_version": "estimated-force-session/1.0",
         "measurement_conformance_version": "measurement-conformance/1",
         "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",

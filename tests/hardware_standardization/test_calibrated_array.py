@@ -37,7 +37,7 @@ def test_adapter_uses_actual_host_time_and_degrades_without_baseline_or_force_ca
     assert tuple(cell.source_index for cell in outcome.session.cells) == (2, 7, 10)
     assert outcome.session.frames[1].timestamp_s == pytest.approx(0.04838)
     assert outcome.session.frames[0].zero_corrected_count is None
-    assert outcome.session.frames[0].normal_force_n == (None, None, None)
+    assert outcome.session.frames[0].estimated_force_n is None
     assert {"BASELINE_MISSING", "FORCE_UNCALIBRATED", "ACTIVE_AREA_UNVALIDATED"} <= outcome.session.frames[0].quality_flags
 
 

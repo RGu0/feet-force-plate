@@ -58,7 +58,6 @@ def physical_array_session_to_dict(session: PhysicalArraySession) -> dict[str, o
                     if frame.relative_load_count is None
                     else list(frame.relative_load_count)
                 ),
-                "normal_force_n": list(frame.normal_force_n),
                 "quality": frame.quality.value,
                 "quality_flags": sorted(frame.quality_flags),
                 "raw_voltage_v": (
@@ -68,11 +67,6 @@ def physical_array_session_to_dict(session: PhysicalArraySession) -> dict[str, o
                     None
                     if frame.zero_corrected_voltage_v is None
                     else list(frame.zero_corrected_voltage_v)
-                ),
-                "provisional_force_n": (
-                    None
-                    if frame.provisional_force_n is None
-                    else list(frame.provisional_force_n)
                 ),
                 "repaired_count": (
                     None if frame.repaired_count is None else list(frame.repaired_count)

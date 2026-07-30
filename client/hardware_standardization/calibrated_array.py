@@ -82,12 +82,11 @@ class CalibratedArrayAdapter:
                 self.force_validation != "VALIDATED"
                 and not self.force_validation.startswith("MVP_SCREENING_ESTIMATED")
             ):
-                flags.add("FORCE_PROVISIONAL")
+                flags.add("FORCE_ESTIMATE_UNVERIFIED")
             zero_corrected: tuple[float, ...] | None = None
             relative_load: tuple[float, ...] | None = None
             raw_voltage: tuple[float, ...] | None = None
             zero_corrected_voltage: tuple[float, ...] | None = None
-            provisional_force: tuple[float | None, ...] | None = None
             estimated_force: tuple[float | None, ...] | None = None
             processing_values = raw_frame.processing_values or raw_frame.values
             if self.force_model is not None:
@@ -106,18 +105,18 @@ class CalibratedArrayAdapter:
                         self.force_model.signed_count_to_voltage(value)
                         for value in zero_corrected
                     )
-                    provisional_force = tuple(
+                    candidate_estimated_force = tuple(
                         self.force_model.force_from_voltage(max(value, 0.0))
                         for value in zero_corrected_voltage
                     )
-                    if any(value is None for value in provisional_force):
+                    if any(value is None for value in candidate_estimated_force):
                         flags.add("ADC_OR_FORCE_MODEL_SATURATED")
-                    elif self.force_validation.startswith("MVP_SCREENING_ESTIMATED"):
-                        estimated_force = provisional_force
-                        provisional_force = None
-                        flags.add("ESTIMATED_FORCE_V1")
                     else:
-                        flags.add("FORCE_PROVISIONAL")
+                        estimated_force = candidate_estimated_force
+                        if self.force_validation.startswith("MVP_SCREENING_ESTIMATED"):
+                            flags.add("ESTIMATED_FORCE_V1")
+                        else:
+                            flags.add("ESTIMATED_FORCE_UNVERIFIED")
             repaired = (
                 None
                 if raw_frame.processing_values is None
@@ -140,12 +139,10 @@ class CalibratedArrayAdapter:
                     raw_count=raw_frame.values,
                     zero_corrected_count=zero_corrected,
                     relative_load_count=relative_load,
-                    normal_force_n=(None,) * len(raw_frame.values),
                     quality=FrameQuality.DEGRADED,
                     quality_flags=frozenset(flags),
                     raw_voltage_v=raw_voltage,
                     zero_corrected_voltage_v=zero_corrected_voltage,
-                    provisional_force_n=provisional_force,
                     repaired_count=repaired,
                     repaired_cell_mask=repaired_mask,
                     estimated_force_n=estimated_force,
@@ -194,7 +191,7 @@ class CalibratedArrayAdapter:
                     else (
                         "ESTIMATED_FORCE_V1"
                         if self.force_validation.startswith("MVP_SCREENING_ESTIMATED")
-                        else "FORCE_PROVISIONAL"
+                        else "FORCE_ESTIMATE_UNVERIFIED"
                     )
                 ),
                 "ACTIVE_AREA_UNVALIDATED",

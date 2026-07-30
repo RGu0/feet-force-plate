@@ -38,7 +38,7 @@ def test_do_adapter_uses_confirmed_board_grid_and_preserves_raw_matrix() -> None
     assert outcome.session.cells[99].board_x_mm == pytest.approx(15.98)
     assert outcome.session.cells[99].board_y_mm == pytest.approx(23.97)
     assert outcome.session.frames[0].raw_count == tuple(values.reshape(-1, order="F"))
-    assert outcome.session.frames[0].normal_force_n[0] is None
+    assert outcome.session.frames[0].estimated_force_n is None
     assert "CHECKSUM_NOT_ENFORCED" in outcome.session.frames[0].quality_flags
     assert np.array_equal(frame.values, original)
     assert not frame.values.flags.writeable

@@ -1,11 +1,11 @@
-# 首版候选力算法实现说明
+# 首版筛查估计力算法实现说明
 
 | 项目 | 内容 |
 |---|---|
 | 输入模式 | `physical-sensor-observation/1.0` |
-| 使用路径 | `PROVISIONAL_RESEARCH` |
+| 使用路径 | `SCREENING_ESTIMATED` |
 | 当前设备 | DO-P4864 观察型紧凑 8-bit 帧 |
-| 结果语义 | `provisional_force_n`；不是已验证 `normal_force_n` |
+| 结果语义 | `estimated_force_n`；用于非医疗筛查计算 |
 
 ## 1. 当前可执行的数据转换
 
@@ -26,7 +26,7 @@ y_mm = row * 7.99
 
 首点为左上角 `(0, 0)`，向右为 +X、向下为 +Y。该坐标仅为压力板物理坐标；它不是人体左/右（ML）或前/后（AP）坐标。
 
-## 2. 空载基线与候选力
+## 2. 空载基线与筛查估计力
 
 每次采集应先取得不少于 5 秒的空载帧。每点以中位数建立 `zero_median`，以 MAD 建立噪声，活动阈值为 `max(1 count, 3 * MAD)`。原始帧始终原样保留；基线只生成派生字段。
 
@@ -37,7 +37,7 @@ raw_voltage = r / 255 * 4.096
 ΔV = max(r - zero_median, 0) / 255 * 4.096
 ```
 
-当 `ΔV <= 0` 时，`provisional_force_n = 0`。当 `0 < ΔV < 4.096` 时：
+当 `ΔV <= 0` 时，`estimated_force_n = 0`。当 `0 < ΔV < 4.096` 时：
 
 ```text
 u = ln(ΔV / (4.096 - ΔV))
@@ -57,7 +57,7 @@ F = exp(
 ```text
 观测载荷
   → 模式/版本/质量校验
-  → 选择 provisional_force_n
+  → 选择 estimated_force_n
   → 关联阶段清单
   → 按真实主机单调时间计算
   → 板面 COP / 接触面积 / 分布特征
@@ -94,14 +94,14 @@ COP_y = Σ(F_i * y_i) / F_total
 
 ```json
 {
-  "analysis_run_kind": "PROVISIONAL_RESEARCH",
-  "input_conformance": "PROVISIONAL",
-  "force_field": "provisional_force_n",
-  "publication_allowed": false,
-  "screening_conclusion_allowed": false
+  "analysis_run_kind": "SCREENING_ESTIMATED",
+  "input_conformance": "MVP_SCREENING_ESTIMATED_V1",
+  "force_field": "estimated_force_n",
+  "medical_claim_allowed": false,
+  "screening_conclusion_allowed": true
 }
 ```
 
 以下情况一律拒绝或降级：模式不是观测模式、原始/派生摘要不一致、未知设备/模型版本、缺少空载基线、阶段区间重叠或超出采集时间、未声明部署姿态、饱和点超过分析策略允许的范围，或质量标记表示数据不可用。
 
-若调用方请求正式评分、风险等级或对外报告，`PROVISIONAL_RESEARCH` 必须直接拒绝，并提示使用经过验证的 `physical-pressure-session/1.0`。这是一项产品和科学边界，不是对当前首版算法能力的否定。
+调用方可基于 `SCREENING_ESTIMATED` 生成非医疗筛查结果和报告；不得将输出升级为医疗诊断、临床阈值判断或计量级绝对力结论。

@@ -88,4 +88,4 @@ F_point_N = exp(log_gain
 3. 在多个区域建立逐点零偏和增益图；每点留出载荷用于验证，再评估是否需要
    单独的插值或空间正则化。
 
-在这些条件完成前，所有 `normal_force_n` 均为 `PROVISIONAL`。
+在这些条件完成前，所有输出均为版本化 `estimated_force_n`，仅用于筛查。

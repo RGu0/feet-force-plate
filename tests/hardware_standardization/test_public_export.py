@@ -74,7 +74,7 @@ def test_public_export_contains_only_device_independent_force_fields() -> None:
         "points",
         "frames",
     }
-    assert payload["schema_version"] == "physical-pressure-session/1.0"
+    assert payload["schema_version"] == "estimated-force-session/1.0"
     assert payload["points"][0] == {
         "point_id": "point-0001",
         "board_x_mm": 0.0,
@@ -84,14 +84,13 @@ def test_public_export_contains_only_device_independent_force_fields() -> None:
     assert payload["points"][1]["board_x_mm"] == 0.0
     assert payload["points"][1]["board_y_mm"] == 7.99
     assert payload["frames"][1]["timestamp_s"] == pytest.approx(0.04838)
-    assert len(payload["points"]) == len(payload["frames"][0]["normal_force_n"]) == 3072
-    assert all(value >= 0 for value in payload["frames"][0]["normal_force_n"])
+    assert len(payload["points"]) == len(payload["frames"][0]["estimated_force_n"]) == 3072
+    assert all(value >= 0 for value in payload["frames"][0]["estimated_force_n"])
     serialized = json.dumps(payload, sort_keys=True, allow_nan=False)
     for private_field in (
         "raw_count",
         "source_index",
         "quality_flags",
-        "estimated_force_n",
         "repaired_count",
         "checksum",
         "protocol",

@@ -104,6 +104,5 @@ def test_specification_marks_reference_voltage_as_saturated() -> None:
 
     assert outcome.session is not None
     frame = outcome.session.frames[0]
-    assert frame.provisional_force_n is not None
-    assert frame.provisional_force_n[0] is None
+    assert frame.estimated_force_n is None
     assert "ADC_OR_FORCE_MODEL_SATURATED" in frame.quality_flags

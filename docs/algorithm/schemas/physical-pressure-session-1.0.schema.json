@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "physical-pressure-session/1.0",
-  "title": "Physical pressure session",
-  "description": "Hardware-independent physical force field. Only hardware-accepted sessions are emitted.",
+  "$id": "estimated-force-session/1.0",
+  "title": "Screening estimated-force session",
+  "description": "Hardware-independent screening estimated-force field. Only hardware-accepted sessions are emitted.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
     "frames"
   ],
   "properties": {
-    "schema_version": {"const": "physical-pressure-session/1.0"},
+    "schema_version": {"const": "estimated-force-session/1.0"},
     "session_id": {"type": "string", "minLength": 1},
     "coordinate_frame": {"const": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"},
     "coordinate_unit": {"const": "mm"},
@@ -41,10 +41,10 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["timestamp_s", "normal_force_n"],
+        "required": ["timestamp_s", "estimated_force_n"],
         "properties": {
           "timestamp_s": {"type": "number", "minimum": 0},
-          "normal_force_n": {
+          "estimated_force_n": {
             "type": "array",
             "minItems": 1,
             "items": {"type": "number", "minimum": 0}

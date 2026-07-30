@@ -142,12 +142,12 @@ class AnalysisOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(repository.count(), 0)
 
-    def test_legacy_raw_array_pipeline_rejects_standard_physical_sessions(self) -> None:
+    def test_legacy_raw_array_pipeline_rejects_standard_estimated_force_sessions(self) -> None:
         repository = InMemoryAnalysisRepository()
         service = orchestrator(repository=repository)
 
         with self.assertRaisesRegex(ValueError, "PhysicalAnalysisOrchestrator"):
-            service.handle(event(payload_schema_version="physical-pressure-session/1.1"))
+            service.handle(event(payload_schema_version="estimated-force-session/1.1"))
 
         self.assertEqual(repository.count(), 0)
 

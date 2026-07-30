@@ -15,7 +15,7 @@
 - Preserve source arrays byte-for-byte and read-only. The standardizer creates new output arrays only.
 - Every output frame uses actual strictly increasing host-monotonic timestamps; never synthesize time from an assumed rate or fill gaps.
 - The contract is board-plane only: no `ml_mm`, `ap_mm`, body orientation, COP, displacement, velocity, stage, risk, or report fields.
-- A 5-second unloaded window establishes a *zero reference and noise characterization*. It does not establish Newtons, Pascals, an electrically effective area, gain/nonlinearity, temperature compensation, or a body coordinate transform. Until a known-load calibration profile is separately verified, `normal_force_n` is `null` and the output is explicitly degraded.
+- A 5-second unloaded window establishes a *zero reference and noise characterization*. It does not establish an absolute clinical/metrological force, Pascals, an electrically effective area, gain/nonlinearity, temperature compensation, or a body coordinate transform. The product uses versioned `estimated_force_n` only after its frozen known-weight screening profile is selected.
 
 ## DO-P4864 board geometry (user-confirmed)
 
@@ -62,7 +62,7 @@ zero_corrected_count = current_raw_count - zero_offset_count
 relative_load_count  = max(zero_corrected_count, 0)
 ```
 
-`raw_count`, `zero_corrected_count`, and `relative_load_count` are separate fields. No value is overwritten or silently clamped. `relative_load_count` is the spatially positioned, baseline-corrected *relative signal*, not a pressure unit. A validated known-load transfer function may later additionally produce `normal_force_n`; that path must be versioned, have uncertainty, and pass explicit force-validation gates.
+`raw_count`, `zero_corrected_count`, and `relative_load_count` are separate fields. No value is overwritten or silently clamped. `relative_load_count` is the spatially positioned, baseline-corrected *relative signal*, not a pressure unit. The selected known-weight transfer function produces versioned `estimated_force_n` for product screening.
 
 ### Stable quality flags
 
@@ -111,7 +111,7 @@ Threshold ownership remains with the RAY-113 validation profile for initial rele
 
 1. Add failing tests for valid/invalid sessions: duplicated point/source index, non-finite coordinates, non-positive declared nominal area, vector-length mismatch, non-increasing time, invalid raw value, and non-finite N.
 2. Add immutable types: `PhysicalArraySession`, `PhysicalArrayCell`, `PhysicalArrayFrame`, `UnloadedBaselineWindow`, `BaselineReference`, `MeasurementProfile`, `MeasurementUncertainty`, `AdapterProvenance`, and `StandardizationOutcome`.
-3. `PhysicalArrayFrame` carries per-cell `raw_count`, `zero_corrected_count`, `relative_load_count`, optional `normal_force_n`, optional uncertainty, frame quality, and flags. Raw-only or relative-only frames always have `normal_force_n = null`.
+3. `PhysicalArrayFrame` carries per-cell `raw_count`, `zero_corrected_count`, `relative_load_count`, optional `estimated_force_n`, optional uncertainty, frame quality, and flags. Raw-only or relative-only frames have `estimated_force_n = null`.
 4. Require schema/profile/geometry/baseline/source versions and provenance hashes. Confirm immutability and focused tests through `./scripts/local-env.sh python -m pytest`.
 
 ### Task 3 — implement generic geometry and ports

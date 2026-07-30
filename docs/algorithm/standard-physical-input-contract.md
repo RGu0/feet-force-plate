@@ -4,4 +4,4 @@
 
 硬件内部的原始计数、零校正值、候选力和校准证据使用独立的
 [`physical-sensor-observation/1.0`](schemas/physical-sensor-observation-1.0.schema.json)，绝不作为算法输入。算法只消费经过验证的
-[`physical-pressure-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)。
+[`estimated-force-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)。

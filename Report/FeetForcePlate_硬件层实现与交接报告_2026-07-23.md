@@ -124,7 +124,7 @@ flowchart LR
 - 协议、连续性、插补和会话质量审计；
 - 处理配置和版本号，用于可复现分析。
 
-正式 `physical-pressure-session/1.0` 契约要求已验证的 `normal_force_n`。当前 MVP 不输出该临床/计量级声明，而是输出可用于初筛算法的估计力观测。算法层必须保留质量门控，并禁止把 `estimated_force_n` 自动包装成已验证法向力或医疗诊断结果。
+当前产品契约为 `estimated-force-session/1.0`，输出可用于非医疗筛查算法的 `estimated_force_n`。算法层必须保留质量门控，并禁止把它包装成医疗诊断或计量级绝对力结果。
 
 ## 7. 预处理与力学转换方法
 

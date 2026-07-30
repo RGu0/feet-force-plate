@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime
-
 import pytest
 
 from cloud.analysis.feature_parameters import FeatureParameters
@@ -39,7 +36,7 @@ def make_event(**overrides: object) -> CompleteSessionEvent:
         "session_id": "session-physical-1",
         "manifest_sha256": "a" * 64,
         "hardware_adapter_version": "adapter/1",
-        "input_schema_version": "physical-pressure-session/1.0",
+        "input_schema_version": "estimated-force-session/1.0",
         "measurement_conformance_version": "measurement-conformance/1",
         "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",
@@ -71,7 +68,7 @@ def release_descriptor(**overrides: object) -> PhysicalMetricDescriptor:
         "metric_id": "ellipse_area_95_mm2",
         "unit": "mm2",
         "definition": "COP 95 percent ellipse area",
-        "input_schema_version": "physical-pressure-session/1.0",
+        "input_schema_version": "estimated-force-session/1.0",
         "measurement_conformance_version": "measurement-conformance/1",
         "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",

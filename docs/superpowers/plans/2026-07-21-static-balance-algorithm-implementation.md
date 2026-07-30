@@ -4,7 +4,7 @@
 
 **Goal:** Implement the approved hardware-independent, rule-first V1 static-balance screening algorithm, versioned recomputation, and customer-safe complete report for adults aged 60 and above.
 
-**Architecture:** A hardware adapter owned by RAY-117 produces `physical-pressure-session/1.0`. The cloud analysis core validates that contract, computes body-coordinate ML/AP features from physical force and real timestamps, grades them against an immutable approved reference artifact, and combines background, completion, and pressure evidence by highest-risk-wins rules. Immutable `AnalysisRun` records all input and algorithm versions; reporting publishes a new `CLOUD_COMPLETE` version under the existing `report_id`. Internal quality, uncertainty, gate, and diagnostic data remain behind explicit private/public model boundaries.
+**Architecture:** A hardware adapter owned by RAY-117 produces `estimated-force-session/1.0`. The analysis core validates that contract, computes body-coordinate ML/AP features from screening `estimated_force_n` and real timestamps, and combines background, completion, and force-distribution evidence by highest-risk-wins rules. Immutable `AnalysisRun` records all input and algorithm versions; reporting publishes a new `CLOUD_COMPLETE` version under the existing `report_id`. Internal quality, uncertainty, gate, and diagnostic data remain behind explicit private/public model boundaries.
 
 **Tech Stack:** Python 3.11, dataclasses and enums, NumPy, SciPy, SQL migrations, existing cloud port/repository abstractions, Jinja2/Matplotlib PDF generation, pytest, and the repository `./scripts/local-env.sh` uv wrapper.
 
@@ -131,10 +131,10 @@ Representative assertion:
 ```python
 def test_contract_accepts_irregular_layout_without_device_metadata():
     session = parse_physical_pressure_session(irregular_physical_session_payload())
-    assert session.schema_version == "physical-pressure-session/1.0"
+    assert session.schema_version == "estimated-force-session/1.0"
     assert session.coordinate_frame is CoordinateFrame.SUBJECT_ML_AP
     assert not hasattr(session, "device_model")
-    assert len(session.frames[0].normal_force_n) == len(session.cells)
+    assert len(session.frames[0].estimated_force_n) == len(session.cells)
 ```
 
 - [ ] **Step 2: Run the tests and verify RED**
@@ -172,7 +172,7 @@ class SensorCell:
 @dataclass(frozen=True, slots=True)
 class PhysicalFrame:
     timestamp_s: float
-    normal_force_n: tuple[float, ...]
+    estimated_force_n: tuple[float, ...]
     quality: FrameQuality
 
 @dataclass(frozen=True, slots=True)
@@ -280,7 +280,7 @@ Expected: failures show that the old descriptor still requires a device model/ca
 class AlgorithmDescriptor:
     algorithm_id: str = "static-balance-fall-screen"
     algorithm_version: str = "fall-screen-rule-set/1.0"
-    input_schema_version: str = "physical-pressure-session/1.0"
+    input_schema_version: str = "estimated-force-session/1.0"
     protocol_version: str = "static-balance-fall-screen/1.0"
     feature_pipeline_version: str = "static-balance-feature-pipeline/1.0"
     minimum_median_sample_rate_hz: float = 18.0

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
-
 import pytest
 
 from cloud.analysis.feature_parameters import FeatureParameters
@@ -90,7 +88,7 @@ def _session_payload(
         frames.append(
             {
                 "timestamp_s": float(timestamp),
-                "normal_force_n": forces,
+                "estimated_force_n": forces,
             }
         )
     payload["frames"] = frames
