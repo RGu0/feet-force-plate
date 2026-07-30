@@ -125,3 +125,23 @@ Automated fault-injection verification:
 
 This is process-level simulation, not a physical power-cut or full-disk result; those RAY-87
 external checks remain required.
+
+## 2026-07-30 P1 re-verification
+
+```text
+bash scripts/local-env.sh python -m pytest tests/spool tests/device/test_session_runtime.py -q
+```
+
+Result: **32 passed in 0.42s**; `ruff check client/spool tests/spool` and
+`git diff --check` passed. The suite covers encrypted temporary staging,
+AES-256-GCM artifact integrity, valid-only atomic promotion and SQLite/hand-off
+registration, invalid discard, post-promotion registration recovery, interrupted
+staging cleanup, and retained data after cloud confirmation until an explicit
+manual delete.
+
+The connected-device capture remains local parser evidence only. Without the
+approved baseline and force-conversion prerequisites, it was not promoted to a
+formal session and was not used to create encrypted P1 session artifacts.
+Physical power removal across filesystem/SQLite instructions, a real full-disk
+run and the production OS secure-storage adapter are still not validated. RAY-87
+therefore remains `In Review`; this evidence refresh has no implementation claim.
