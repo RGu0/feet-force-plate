@@ -145,7 +145,8 @@ the post-action result **已删除该本地会话；未影响其他会话。** S
 [`manual-session-deletion-20260730.png`](manual-session-deletion-20260730.png)
 (SHA-256 `22ee4c838fdb93d7d010781d7578e59bf7af90fd42b9279d533fd42ec9a928f4`).
 No production session, device stream, personal data, raw matrix or key was
-opened by this acceptance launcher.
+opened by this acceptance launcher. Implementation, test, launcher and evidence
+commit: `c5a5be8` — `Add confirmed local session deletion acceptance`.
 
 Verification:
 
