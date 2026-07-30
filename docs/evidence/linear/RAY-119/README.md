@@ -106,3 +106,21 @@ device binding. These conditions are external to the completed hardware code.
 ## Commit
 
 Hardware SQLite audit implementation: `167c962` — `Persist hardware dynamic mask health audit`.
+
+## 2026-07-30 true-device dynamic-load runtime attempt
+
+With `/dev/cu.usbserial-1140` unoccupied, four local-only pressure windows were
+captured and evaluated with an explicit validation-only, unbound `device_id` in
+an isolated `/private/tmp` data root. The first three windows did not meet the
+dynamic policy threshold. The fourth did, and exercised frozen-mask v0 loading,
+atomic v1 persistence and a raw-data-free `MASK_UPDATED` SQLite health event.
+It produced 1,949 `SUSPECT` candidates but zero `REPAIRABLE` cells, so no
+repair/health-block conclusion was made.
+
+The observed compact profile's raw load semantics remain unverified; this broad
+candidate set must not be interpreted as physical bad points or as a board
+health result. The run proves the runtime route on true bytes, not physical
+defect-detection accuracy or device-ID binding. Full evidence and boundaries:
+[`2026-07-30-live-dynamic-load-attempt.md`](2026-07-30-live-dynamic-load-attempt.md),
+commit `395fd3e`. RAY-119 remains `In Review` pending confirmed raw semantics/
+controlled load validation and the separately required UI device binding flow.
