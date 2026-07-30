@@ -209,6 +209,8 @@ and automated mappings are present, but that UI acceptance is not claimed here.
 
 Automated acceptance evidence commit: pending.
 
+Renewed physical-runtime evidence: `3f74320` — `Record RAY-86 hardware acceptance`.
+
 ## 2026-07-29 renewed local hardware acceptance
 
 With `/dev/cu.usbserial-1140` available, the existing production-composition
