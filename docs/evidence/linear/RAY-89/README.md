@@ -129,3 +129,33 @@ boundaries. It does not verify a production Keychain/OS adapter, a process kill
 at every SQLite/fsync write, or an operator-confirmed completed-session delete
 screen. RAY-89 therefore remains `In Review`. Source evidence commits:
 `9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 person-assisted single-session deletion
+
+The deployment-owned deletion service now exposes only candidates that are
+`CLOSED` / `VALID` and have no retained report. It accepts one selected session
+and requires the exact per-session confirmation text `删除 <会话编号>` before
+using the existing directory-move / transactional-index-delete operation. There
+is no batch, scheduled, ACK-triggered, or network-triggered deletion entry
+point.
+
+The operator used a disposable temporary state root containing exactly one
+valid test session, entered `删除 ray89-ui-acceptance`, and visually confirmed
+the post-action result **已删除该本地会话；未影响其他会话。** Screenshot:
+[`manual-session-deletion-20260730.png`](manual-session-deletion-20260730.png)
+(SHA-256 `22ee4c838fdb93d7d010781d7578e59bf7af90fd42b9279d533fd42ec9a928f4`).
+No production session, device stream, personal data, raw matrix or key was
+opened by this acceptance launcher.
+
+Verification:
+
+```text
+bash scripts/local-env.sh python -m pytest client/tests/test_ray_89_session_deletion_ui.py tests/spool/test_state_store.py tests/spool/test_valid_session_commit.py -q
+# 14 passed in 1.05s
+bash scripts/local-env.sh python -m ruff check client/app/session_deletion.py client/app/controller.py client/app/qt_shell.py client/spool/state_store.py client/tests/test_ray_89_session_deletion_ui.py tests/spool/test_valid_session_commit.py
+# All checks passed
+```
+
+The only remaining RAY-89 boundaries are production OS secure storage and a
+physical process/power failure at arbitrary filesystem/SQLite writes. The
+manual-delete acceptance itself is complete.

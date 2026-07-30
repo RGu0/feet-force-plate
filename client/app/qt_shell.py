@@ -44,6 +44,10 @@ from .engineering_maintenance import (
     EngineeringMaintenanceService,
     EngineeringMaintenanceSnapshot,
 )
+from .session_deletion import (
+    CompletedSessionDeletionService,
+    SessionDeletionConfirmationRequired,
+)
 from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
 from .position_guide import FootPlacementWidget
@@ -69,6 +73,7 @@ _ACTION_LABELS = {
     "RECHECK_SYSTEM": "重新检查",
     "EXPORT_DIAGNOSTIC": "导出问题诊断包",
     "OPEN_ENGINEERING_MAINTENANCE": "工程检修",
+    "OPEN_SESSION_DELETION": "本地会话清理",
 }
 
 _WIZARD_STEPS = ("受试者", "选填信息", "授权确认", "设备预检", "站位引导")
@@ -201,6 +206,72 @@ class _EngineeringMaintenanceDialog(QDialog):
         )
 
 
+class _SessionDeletionDialog(QDialog):
+    """A deliberately narrow operator-confirmed single-session deletion UI."""
+
+    def __init__(self, service: CompletedSessionDeletionService, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("sessionDeletionDialog")
+        self.setWindowTitle("本地会话清理")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self._service = service
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        layout.addWidget(QLabel("本地会话清理（单次操作）"))
+        note = QLabel("仅可删除没有保留报告的已完成有效会话。此操作不会批量、定时或因网络确认自动执行。")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        selector = QComboBox()
+        selector.setObjectName("sessionDeletionSelector")
+        for session_id in service.candidates():
+            selector.addItem(session_id, session_id)
+        layout.addWidget(selector)
+        confirmation = QLineEdit()
+        confirmation.setObjectName("sessionDeletionConfirmation")
+        confirmation.setPlaceholderText("输入：删除 <会话编号>")
+        layout.addWidget(confirmation)
+        confirm = QPushButton("确认删除此会话")
+        confirm.setObjectName("CONFIRM_SESSION_DELETION")
+        confirm.clicked.connect(self._delete_selected)
+        layout.addWidget(confirm, alignment=Qt.AlignmentFlag.AlignLeft)
+        status = QLabel("请选择会话并完成确认；不会删除其他会话。")
+        status.setObjectName("sessionDeletionStatus")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        self._refresh_empty_state()
+
+    def _refresh_empty_state(self) -> None:
+        selector = self.findChild(QComboBox, "sessionDeletionSelector")
+        confirm = self.findChild(QPushButton, "CONFIRM_SESSION_DELETION")
+        status = self.findChild(QLabel, "sessionDeletionStatus")
+        assert selector is not None and confirm is not None and status is not None
+        if selector.count() == 0:
+            selector.setEnabled(False)
+            confirm.setEnabled(False)
+            status.setText("没有可人工删除的已完成有效会话。")
+
+    def _delete_selected(self) -> None:
+        selector = self.findChild(QComboBox, "sessionDeletionSelector")
+        confirmation = self.findChild(QLineEdit, "sessionDeletionConfirmation")
+        status = self.findChild(QLabel, "sessionDeletionStatus")
+        assert selector is not None and confirmation is not None and status is not None
+        session_id = str(selector.currentData())
+        try:
+            self._service.delete(session_id=session_id, confirmation=confirmation.text())
+        except SessionDeletionConfirmationRequired:
+            status.setText(f"未删除。请输入“删除 {session_id}”后再确认。")
+            return
+        except (ValueError, FileNotFoundError, RuntimeError):
+            status.setText("此会话当前不可删除，请刷新后重试或联系技术支持。")
+            return
+        confirmation.clear()
+        selector.removeItem(selector.currentIndex())
+        self._refresh_empty_state()
+        status.setText("已删除该本地会话；未影响其他会话。")
+
+
 class ScreeningWindow(QMainWindow):
     """Operator desktop shell faithfully composed from the Steady Health kit."""
 
@@ -216,6 +287,7 @@ class ScreeningWindow(QMainWindow):
         self._preflight_ready = False
         self._record_rows: tuple[ScreeningRecordRow, ...] = ()
         self._engineering_maintenance_dialog: _EngineeringMaintenanceDialog | None = None
+        self._session_deletion_dialog: _SessionDeletionDialog | None = None
         self._pages: dict[PageId, QWidget] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
@@ -508,11 +580,25 @@ class ScreeningWindow(QMainWindow):
         assert entry is not None
         entry.setVisible(available)
 
+    def set_session_deletion_available(self, available: bool) -> None:
+        entry = self._pages[PageId.SUPPORT].findChild(
+            QPushButton, "OPEN_SESSION_DELETION"
+        )
+        assert entry is not None
+        entry.setVisible(available)
+
     def show_engineering_maintenance(self, service: EngineeringMaintenanceService) -> None:
         """Open a separately confirmed, read-only engineering projection."""
 
         dialog = _EngineeringMaintenanceDialog(service, self)
         self._engineering_maintenance_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def show_session_deletion(self, service: CompletedSessionDeletionService) -> None:
+        dialog = _SessionDeletionDialog(service, self)
+        self._session_deletion_dialog = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -1540,6 +1626,10 @@ class ScreeningWindow(QMainWindow):
         maintenance.setVisible(False)
         maintenance.setToolTip("仅在已配置工程授权与设备绑定的终端可用")
         action_layout.addWidget(maintenance)
+        deletion = self._action_button("OPEN_SESSION_DELETION", primary=False, ghost=True)
+        deletion.setVisible(False)
+        deletion.setToolTip("仅在部署明确接入单会话人工清理服务时可用")
+        action_layout.addWidget(deletion)
         action_layout.addStretch(1)
         inner_layout.addWidget(actions)
         note = self._label("诊断包默认不含原始会话与身份明文；附加会话数据需要独立确认。支持热线 400-820-1120。", "supportNote")

@@ -177,6 +177,7 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertEqual(snapshot.pending_handoff_count, 0)
         self.assertEqual(snapshot.last_cloud_confirmed_at_ns, 1_200_000_000)
         self.assertTrue((self.root / "data" / "sessions" / "manual-delete").exists())
+        self.assertEqual(self.store.completed_valid_session_ids(), ("manual-delete",))
 
         delete_completed_valid_session(
             self.root / "data", session_id="manual-delete", store=self.store
@@ -186,6 +187,7 @@ class ValidSessionStagerTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.session_status("manual-delete")
         self.assertEqual(self.store.valid_local_storage_snapshot().valid_session_count, 0)
+        self.assertEqual(self.store.completed_valid_session_ids(), ())
 
 
 if __name__ == "__main__":

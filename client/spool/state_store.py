@@ -716,6 +716,21 @@ class StateStore:
             self._connection.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
             self._connection.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
 
+    def completed_valid_session_ids(self) -> tuple[str, ...]:
+        """Return only operator-deletable sessions; never an ACK cleanup list."""
+
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT sessions.session_id FROM sessions
+                WHERE lifecycle_status='CLOSED' AND validity_status='VALID'
+                AND NOT EXISTS (
+                    SELECT 1 FROM report_versions
+                    WHERE report_versions.session_id=sessions.session_id
+                )
+                ORDER BY sessions.session_id"""
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def add_segment(
         self,
         segment_id: str,
