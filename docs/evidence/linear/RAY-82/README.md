@@ -2,7 +2,7 @@
 
 - URL: https://linear.app/ray-app/issue/RAY-82/do-p4864-字节级模拟器与故障注入
 - Captured at: 2026-07-30T07:43:00Z
-- Snapshot: In Progress → In Review; P1：可靠采集; High
+- Snapshot: In Progress → Done; P1：可靠采集; High
 
 ## Acceptance snapshot
 
