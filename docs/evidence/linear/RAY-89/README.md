@@ -87,3 +87,20 @@ Automated verification on 2026-07-23:
 
 Physical crash-at-fsync, actual disk-full behavior, OS secure-storage adapter and operator UI
 confirmation of a delete action remain unverified; the issue must remain In Review.
+
+## 2026-07-30 P1 re-verification
+
+```text
+bash scripts/local-env.sh python -m pytest tests/spool/test_state_store.py tests/spool/test_valid_session_commit.py tests/device/test_session_ui.py tests/device/test_session_runtime.py -q
+```
+
+Result: **23 passed in 0.34s**; `ruff check client/spool tests/spool
+tests/device/test_session_ui.py` and `git diff --check` passed. The checks cover
+valid-only indexing and `READY_FOR_NETWORK`, invalid-session discard, offline
+count/byte/pending-handoff/last-confirmation snapshot, safe storage and
+finalization failure mapping, confirmation retention, and single completed-valid
+session deletion. No test invokes a cloud API or an automatic cleanup action.
+
+The remaining acceptance boundary is unchanged: production OS secure storage,
+physical crash/disk-full behavior, and a human UI confirmation of the delete
+flow. RAY-89 remains `In Review`; this is a verification-evidence refresh only.
