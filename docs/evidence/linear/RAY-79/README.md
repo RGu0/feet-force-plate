@@ -62,4 +62,4 @@ secret management remain outside this automatic engineering-gate evidence.
 
 ## Commit
 
-Pending commit for this quality-gate follow-up.
+`c29b1b0` — `Add P1 quality gates`.
