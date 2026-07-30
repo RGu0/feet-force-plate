@@ -1,0 +1,40 @@
+name: Quality gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  foundation:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          python-version: ${{ matrix.python }}
+      - name: Verify locked environment
+        run: uv sync --extra dev --locked
+      - name: Static quality gates
+        run: |
+          uv run --extra dev ruff check .
+          uv run --extra dev mypy shared/contracts cloud/observability
+      - name: Contract and reliability regression
+        run: >-
+          uv run --extra dev python -m pytest
+          client/tests/test_ray_91_protocol.py
+          client/tests/test_ray_91_reference_protocol_fixture.py
+          tests/spool/test_recovery.py
+          tests/spool/test_valid_session_commit.py
+          cloud/tests/test_client_sync_contract.py
+          cloud/tests/test_segment_ingestion.py
+          tests/cloud/analysis/test_orchestrator.py
+          tests/cloud/observability/test_events.py

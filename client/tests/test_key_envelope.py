@@ -8,7 +8,6 @@ from client.security.key_envelope import (
     DualEnvelopeBlobCodec,
     KeyringTerminalKeyHandle,
     ServerKeyset,
-    SignedServerKeyset,
     decrypt_for_terminal_handle,
     decrypt_for_server,
     decrypt_for_terminal,

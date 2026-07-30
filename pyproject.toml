@@ -42,10 +42,40 @@ build = [
 ]
 # 开发/测试工具
 dev = [
-    "pytest",
-    "pytest-qt",
+    "pytest>=8,<10",
+    "pytest-qt>=4,<5",
+    "ruff>=0.12,<1",
+    "mypy>=1.17,<2",
+    "pre-commit>=4,<5",
 ]
 
 [tool.uv]
 # 仅安装当前项目依赖，不把项目本身作为可安装包构建
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["client/tests", "cloud/tests", "tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["docs/evidence", "tmp"]
+
+[tool.ruff.lint]
+# The established codebase predates automatic formatting.  Start with fatal
+# correctness findings; style rules can be enabled only after a dedicated
+# repository-wide formatting change is reviewed separately.
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.11"
+# This initial gate protects the versioned cross-process contract and the
+# privacy boundary. Qt presentation and numerical pipelines need a dedicated
+# typing remediation before they can become a reliable blocking gate.
+files = ["shared/contracts", "cloud/observability"]
+ignore_missing_imports = true
+follow_imports = "silent"
+explicit_package_bases = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true

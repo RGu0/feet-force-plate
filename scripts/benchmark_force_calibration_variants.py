@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
-from math import exp, log
+from math import log
 from pathlib import Path
 
 import numpy as np

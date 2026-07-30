@@ -45,7 +45,6 @@ def build_figure(output: Path) -> None:
             volts = load.delta_count[load.active] * ADC_REFERENCE_V / ADC_MAX_CODE
             total_force_n = predicted_force(load, fit)
             point_force = _curve_force(fit.model, fit.parameters, volts)
-            left = volts <= ADC_REFERENCE_V * np.exp(fit.parameters[3]) / (1.0 + np.exp(fit.parameters[3]))
             response_samples.extend(
                 {
                     "group": dataset,

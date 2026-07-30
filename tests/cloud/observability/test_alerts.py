@@ -1,5 +1,5 @@
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from cloud.observability.alerts import (
     AlertEvaluator,

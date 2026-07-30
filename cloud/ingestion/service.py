@@ -12,7 +12,6 @@ from cloud.api.errors import (
 )
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.cloud import (
-    IngestStatus,
     ManifestCompletionResponse,
     ReceivedSegment,
     SegmentAcknowledgement,

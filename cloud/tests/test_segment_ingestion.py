@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import unittest
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from cloud.api.auth import TerminalContext
 from cloud.api.errors import DigestMismatch, SchemaUnsupported, SegmentDigestConflict, TenantAccessDenied

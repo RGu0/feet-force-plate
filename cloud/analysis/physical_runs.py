@@ -6,7 +6,6 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 
 from cloud.analysis.models import CapabilityStatus
 

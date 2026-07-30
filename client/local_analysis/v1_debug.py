@@ -43,7 +43,6 @@ def analyze_v1_replay(stages: dict[str, tuple[RawFrame, ...]]) -> V1DebugResult:
             raise ValueError(f"{stage_id} 含有无效压力矩阵")
         totals = stack.sum(axis=(1, 2))
         left = stack[:, :, :32].sum(axis=(1, 2))
-        right = stack[:, :, 32:].sum(axis=(1, 2))
         x = np.arange(64, dtype=np.float64)[None, None, :]
         y = np.arange(48, dtype=np.float64)[None, :, None]
         cop_x = (stack * x).sum(axis=(1, 2)) / totals

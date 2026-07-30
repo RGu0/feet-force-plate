@@ -1,6 +1,5 @@
 import hashlib
 import io
-import json
 import unittest
 import zipfile
 from datetime import UTC, datetime
