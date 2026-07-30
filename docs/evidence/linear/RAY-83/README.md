@@ -96,3 +96,30 @@ Automated verification on 2026-07-23:
 Not yet verified on physical hardware: a real ≥5-second unloaded baseline, bad-point injection
 against a board, saturation behavior, true sustained device timing and operator confirmation of
 the re-test flow. These are required before Done.
+
+## 2026-07-30 P1 re-verification
+
+The RAY-83 acceptance was reread against the current observed compact profile
+(3,079-byte `uint8`, 48×64 column-major, observed 20.7 Hz—not the historical
+12 Hz wording in this issue title). The software boundary is covered by the
+current tests: raw frames are immutable; repair produces a separate derived
+matrix; valid sessions alone create encrypted raw/derived artifacts and the
+minimal public `physical-pressure-session/1.0` export; invalid quality results
+produce neither a formal session nor a public export. The public export test
+asserts that it contains no raw counts, source index, protocol, CheckSum,
+quality flags, repair mask/method or estimated-force field.
+
+```text
+bash scripts/local-env.sh python -m pytest tests/hardware_standardization tests/device/test_session_runtime.py tests/spool -q
+```
+
+Result: **88 passed in 1.24s**. Configured pre-commit, mypy, `uv lock --check`
+and `git diff --check` also passed. The configured mypy target remains the
+serial/parser contract rather than the whole standardization package.
+
+The connected-device capture is usable as raw parser/replay evidence only. It
+has no approved ≥5-second unloaded baseline, force-calibration artifact or
+physical saturation/bad-point injection; therefore it cannot be promoted to a
+valid physical-pressure session or used to validate `estimated_force_n`.
+RAY-83 remains `In Review`. This evidence update is committed separately from
+the implementation to preserve that boundary.
