@@ -145,3 +145,30 @@ formal session and was not used to create encrypted P1 session artifacts.
 Physical power removal across filesystem/SQLite instructions, a real full-disk
 run and the production OS secure-storage adapter are still not validated. RAY-87
 therefore remains `In Review`; this evidence refresh has no implementation claim.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 supplies the real-device acceptance missing from the earlier
+software-only records. A 600-second production-composition run completed a
+`VALID` session, atomically committed its encrypted local artifacts and SQLite
+records, created one derived artifact, and produced a fresh restart scan with no
+temporary, quarantine, orphan, requeue or interrupted-staging action. Candidate
+checksum remained observe-only; no raw matrix or key was copied into evidence.
+
+Two failure records corroborate the valid-only persistence boundary:
+
+- Person-assisted cable removal produced `INVALID` / `committed=false` after
+  970 valid decoded frames. Re-enumeration and SQLite/filesystem checks found
+  zero formal sessions, segments and artifacts.
+- A real DO-P4864 capture on an isolated 8 MB HFS+ volume filled to 100% ended
+  `INVALID` / `committed=false`; after the run the volume had no staging files
+  and SQLite had zero sessions, segments and derived artifacts. See
+  [`../RAY-86/storage-exhaustion-runtime-20260728.md`](../RAY-86/storage-exhaustion-runtime-20260728.md).
+
+The shared final regression was 218 passed; its exact wrapper command is
+recorded in `docs/evidence/linear/RAY-86/README.md`. This validates the listed
+valid-session and invalid-cleanup contracts, including `READY_FOR_NETWORK` and
+retention after confirmation through automated coverage. It does **not** prove
+a physical power cut at every fsync/SQLite instruction or a production OS
+secure-storage adapter, so RAY-87 remains `In Review`. Source evidence commits:
+`9f94fbb`, `b5396b0`, `210809b`.
