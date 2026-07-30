@@ -149,3 +149,50 @@ injection or hardware bad-point injection was supplied. Accordingly
 `normal_force_n` contract is not validated as a calibrated physical force.
 RAY-83 remains `In Review` for those two force-output acceptance boundaries.
 RAY-86 evidence commits: `9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 known-weight calibration reconciliation — RAY-83 accepted for P1
+
+The preceding conclusion was too broad: it correctly records that no
+manufacturer-issued or clinical/metrological calibration artifact was supplied,
+but the repository does contain—and the current device specification actually
+loads—a project-owned, two-group known-weight calibration for the P1 screening
+scope.
+
+- The archived DO/DP-P4864 records contain two independent known-weight groups:
+  A (original contact area) and B (smaller contact area), each using the
+  4.5–8.0 kg working range.  Held-out MAE was 1.643% for A and 2.855% for B.
+  The record is
+  `../RAY-117/known-weight-calibration-test-record-2026-07-22.md`
+  (SHA-256 `ab620597f9b81adfa7f4231a35aa05393fb7e1d1cc565b8a5b0de4e10636f96a`).
+- `docs/hardware/device-specifications/do-p4864/1.0.json` selects
+  `do-p4864-voltage-force/mvp-screening-v1-20260722`,
+  `MVP_SCREENING_ESTIMATED_V1`, a frozen two-slope monotonic
+  voltage-to-force model, in the validated 4.5–8.0 kg load range.
+- `CalibratedArrayAdapter` preserves every raw count and derives
+  zero-corrected/repaired values separately.  Under that profile it emits only
+  `estimated_force_n` and the `ESTIMATED_FORCE_V1` provenance flag.
+  `export_public_physical_session()` accepts only a hardware-valid,
+  locally committed session and maps that frozen estimate to the deliberately
+  minimal public `normal_force_n` contract; it exports neither raw arrays,
+  voltage, repair mask, protocol nor quality detail.
+
+Current focused regression:
+
+```text
+bash scripts/local-env.sh python -m pytest \
+  tests/hardware_standardization/test_device_specification.py \
+  tests/hardware_standardization/test_quality_gate.py \
+  tests/hardware_standardization/test_public_export.py \
+  tests/hardware_standardization/test_calibrated_array.py \
+  tests/hardware_standardization/test_force_calibration_variants.py -q
+# 15 passed in 0.73s
+```
+
+**Acceptance boundary:** this closes the two RAY-83 MVP checkboxes: the private
+derived force pipeline and the privacy-filtered physical-point public contract
+are implemented and verified for **MVP screening**.  It does **not** claim a
+high-precision absolute force measurement, a human-weight reconstruction, a
+clinical result, or metrological certification.  The two contact areas,
+unmeasured contact profile/temperature, limited load range and missing
+repeatability/long-term-drift study remain explicit follow-up limits rather
+than P1 blockers.
