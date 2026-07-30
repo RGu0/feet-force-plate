@@ -268,3 +268,33 @@ bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardwa
 until an engineering/operator person verifies the deployed UI's localized
 `HardwareUiFailure` recovery guidance and re-test choice. That acknowledgement
 cannot be inferred from fixtures, screenshots or a serial capture.
+
+## 2026-07-30 assisted physical cable-removal rerun
+
+This was a new, person-assisted true-device run on `/dev/cu.usbserial-1140`.
+Before starting, the device was enumerated and had no `lsof` owner. The operator
+kept the board empty for the 5-second baseline, then physically removed the USB
+cable when prompted, held it disconnected for about five seconds and reinserted
+it. The host subsequently re-enumerated the same `/dev/cu.usbserial-1140` node
+with no process holding it.
+
+The local-only production acceptance runner requested a 5-second baseline and
+120-second capture. The baseline passed with 111 decoded frames over
+5.139628208 seconds and a maximum cell-median count of 3. The physical removal
+produced `INVALID` / `committed=false` after 970 valid decoded frames, with the
+sanitized reason class `transport disconnected`. There were no invalid parser
+candidates or derived reconstructions before the removal; candidate checksum
+remained observe-only and mismatched all observed frames.
+
+Fresh SQLite and filesystem checks after the runner ended found zero formal
+sessions, segments and derived artifacts; the staging directory had no child.
+The raw/encrypted staging data remained only under the isolated `/private/tmp`
+test root and was not copied into the repository. The repository contains only
+the sanitized summary:
+[`cable-removal-runtime-20260730.json`](cable-removal-runtime-20260730.json)
+(SHA-256 `9e698d2086bed1ffefa99d7b411d4afdb3144a4c2caa9be68411230c969d8086`).
+
+This is physical cable-removal and reconnect evidence for the reliable-capture
+invalid-session boundary. It is not a calibrated-force, normal-foot-load,
+dynamic-defect, full-disk, power-loss or customer-UI result. RAY-86 remains
+`In Review` pending the separate deployed UI/operator acknowledgement.
