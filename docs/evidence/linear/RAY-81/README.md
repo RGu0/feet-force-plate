@@ -70,3 +70,27 @@ golden-fixture acceptance item, so this issue must remain short of Done.
 ## Commit
 
 Implementation and initial evidence: `7468e749ecfc4d61075fcef6573b855046973b91`.
+
+## 2026-07-29 observed-compact real serial capture
+
+The historical `uint16` wording above is superseded for the current runtime by
+the observed compact 8-bit profile. A fresh 60-second, read-only capture from
+`/dev/cu.usbserial-1140` used 1,000,000 baud / 8N1 and the actual incremental
+parser:
+
+| Observation | Result |
+| --- | --- |
+| Elapsed duration | 60.246709542 s |
+| Captured raw bytes | 3,835,531; local-only SHA-256 `1d91bdd071f667481d76b4eb54a75f675a3a8b177505e0f114657402c90d9cc9` |
+| Parser profile | `do-p4864/observed-compact-column-major-48x64-20260721` |
+| Frame contract | 3,079 bytes; `uint8(frame[5:3077]).reshape((48, 64), order='F')` |
+| Parsed frames | 1,245 decoded; 0 invalid; 0 resynchronizations; 0 discarded bytes |
+| Buffer | 6,158 peak bytes; 2,176 bytes retained at capture end |
+| Candidate CheckSum | 1,245 observations/mismatches, recorded as `OBSERVE` only |
+
+The raw capture remains under `/private/tmp` and is intentionally not committed.
+Each decoded frame retained `COMPACT_8BIT_PAYLOAD_UNVERIFIED`,
+`CHECKSUM_NOT_ENFORCED`, and `PROTOCOL_PROFILE_UNVERIFIED` quality flags.
+This confirms host-observed structural parsing for this run; it does **not**
+confirm the CheckSum formula, raw-value semantics, device-side timing, or
+device-side missing-frame counts. RAY-81 therefore remains In Review.
