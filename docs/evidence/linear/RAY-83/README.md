@@ -123,3 +123,29 @@ physical saturation/bad-point injection; therefore it cannot be promoted to a
 valid physical-pressure session or used to validate `estimated_force_n`.
 RAY-83 remains `In Review`. This evidence update is committed separately from
 the implementation to preserve that boundary.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 supplies true-device evidence for the parts of this pipeline that share
+the reliable-session boundary: a 5.139-second empty-board baseline (111 decoded
+frames), a previously recorded 600-second valid-session commit/recovery, and a
+person-assisted cable removal that made the current session `INVALID` after 970
+valid decoded frames. The latter created no formal SQLite session, segment,
+derived artifact, network handoff, or public algorithm export after recovery.
+
+Those runs corroborate the existing automated coverage for immutable raw versus
+derived data, short-fault audit/reconstruction, invalid-session discard and the
+privacy-filtered public-export contract. The common final focused command was:
+
+```text
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization tests/startup_validation client/tests/test_ray_86_hardware_ui.py client/tests/test_ray_101_controller.py client/tests/test_ray_101_coordinator.py client/tests/test_ray_101_qt_shell.py tests/device/test_hardware_ui_manual_acceptance_script.py -q
+# 218 passed in 2.88s
+```
+
+This is a cross-issue evidence reference, not a physical-force claim. No
+manufacturer calibration artifact, controlled physical load, saturation
+injection or hardware bad-point injection was supplied. Accordingly
+`estimated_force_n` remains a versioned internal estimate only, and an exported
+`normal_force_n` contract is not validated as a calibrated physical force.
+RAY-83 remains `In Review` for those two force-output acceptance boundaries.
+RAY-86 evidence commits: `9f94fbb`, `b5396b0`, `210809b`.
