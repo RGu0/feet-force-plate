@@ -241,3 +241,30 @@ Automated/UI visual evidence is in
 [`2026-07-29-hardware-ui-consumption.md`](2026-07-29-hardware-ui-consumption.md), implementation
 commit `63aad63`. A deployed-composition operator acknowledgement is still required, so RAY-86
 remains `In Review` rather than `Done`.
+
+## 2026-07-30 current P1 audit and interrupted-run cleanup
+
+The 2026-07-29 real-device 10-minute `VALID` / local-commit / fresh-recovery
+acceptance remains the authoritative long-run evidence. A planned duplicate
+600-second run on the available CH340 device was deliberately stopped after it
+was recognized as redundant; it is **not** a new acceptance result and no raw
+output from that attempt was retained in this repository.
+
+The isolated `/private/tmp` staging directory created before the deliberate
+interrupt was reopened through the existing `RecoveryScanner`. It discarded one
+interrupted staging directory and found zero formal sessions, segments and
+derived artifacts. This only confirms the already-required interrupted-capture
+cleanup boundary; it does not add another valid session or replace the existing
+ten-minute evidence.
+
+Current automatic P1 regression:
+
+```text
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+# 151 passed in 1.45s
+```
+
+`git diff --check` passed and the worktree was clean. RAY-86 remains `In Review`
+until an engineering/operator person verifies the deployed UI's localized
+`HardwareUiFailure` recovery guidance and re-test choice. That acknowledgement
+cannot be inferred from fixtures, screenshots or a serial capture.
