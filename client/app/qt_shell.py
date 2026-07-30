@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from client.local_analysis.display import DisplayFrame
 from client.reporting.copy import report_badges, report_parameter_note
 from client.reporting.models import BasicReportDocument
-from client.workflow.models import ReportStatus, SessionValidity, WorkflowState
+from client.workflow.models import ClientAction, ReportStatus, SessionValidity, WorkflowState
 
 from .design_system import apply_design_system
 from .app_icon import application_icon
@@ -1876,10 +1876,17 @@ class ScreeningWindow(QMainWindow):
         page = self._pages[PageId.RESULT]
         report_ready = state.report_status is ReportStatus.BASIC_READY
         retry_required = state.validity in {SessionValidity.INVALID, SessionValidity.INCOMPLETE, SessionValidity.FAILED}
+        retry_allowed = (
+            retry_required
+            and (
+                state.error is None
+                or state.error.action is ClientAction.RETRY_SCREENING
+            )
+        )
         page.findChild(QPushButton, "VIEW_BASIC_REPORT").setVisible(report_ready)
         page.findChild(QPushButton, "START_NEXT_SCREENING").setVisible(report_ready)
         page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(retry_required)
-        page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_required)
+        page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_allowed)
         title = page.findChild(QLabel, "resultTitle")
         summary = page.findChild(QLabel, "resultSummary")
         basic = page.findChild(QLabel, "basicReportStatusText")
@@ -1907,8 +1914,12 @@ class ScreeningWindow(QMainWindow):
                 str(self._icon_asset("status-warning.svg"))
             )
             title.setText("本次检测未完成")
-            summary.setText("本次采集未通过质量校核，未生成报告。请协助受试者重新站稳后再次检测。")
-            basic.setText("质量校核未通过")
+            summary.setText(
+                state.error.operator_message
+                if state.error is not None
+                else "本次采集未通过质量校核，未生成报告。请协助受试者重新站稳后再次检测。"
+            )
+            basic.setText("本次检测未完成")
             self._set_pill_tone(basic_pill, "warning")
             basic_pill.show()
             full.hide()

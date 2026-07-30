@@ -7,6 +7,7 @@ from typing import Protocol
 
 from PySide6.QtCore import QTimer
 
+from client.device.session_ui import HardwareUiFailure
 from client.workflow.consent import (
     ConsentPolicy,
     ConsentReceipt,
@@ -14,7 +15,7 @@ from client.workflow.consent import (
     ConsentWorkflow,
     RequiredConsentDeclined,
 )
-from client.workflow.models import WorkflowState
+from client.workflow.models import ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 from client.local_analysis.display import DisplayRefreshController
 from client.workflow.participant import (
@@ -27,6 +28,7 @@ from client.workflow.participant import (
 )
 
 from .pages import PageId
+from .hardware_failure import resolve_hardware_ui_failure
 from .live_display import LiveDisplayProjection
 from .qt_shell import ScreeningWindow
 from .ui_models import UiReadModelPort
@@ -63,6 +65,8 @@ class _CoordinatorPort(Protocol):
     def complete_acquisition(self) -> None: ...
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None: ...
+
+    def handle_hardware_failure(self, *, error: ClientError) -> None: ...
 
     def observe_position(
         self,
@@ -199,6 +203,12 @@ class ApplicationController:
 
     def on_device_disconnected(self, technical_detail: str) -> None:
         self._coordinator.handle_device_disconnect(technical_detail=technical_detail)
+        self.refresh()
+
+    def on_hardware_failure(self, failure: HardwareUiFailure) -> None:
+        self._coordinator.handle_hardware_failure(
+            error=resolve_hardware_ui_failure(failure)
+        )
         self.refresh()
 
     def on_position_observation(
