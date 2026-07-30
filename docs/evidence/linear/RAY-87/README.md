@@ -173,3 +173,28 @@ a physical power cut at every fsync/SQLite instruction or a production OS
 secure-storage adapter. These are follow-up production-hardening limits, not
 unmet items in the current Linear P1 checklist. Source evidence commits:
 `9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 physical external-drive disconnect
+
+This additional true-device failure test used the real DO-P4864 stream and a
+fresh, isolated directory on the operator-selected external volume **Mac
+Flash**. The 5-second baseline completed, capture began, and the operator then
+physically removed the external drive. After the volume was reattached, the
+isolated root contained one encrypted `.ffps` file below `spool/.staging` and
+SQLite reported zero formal `sessions`, `segments` and `session_artifacts`.
+
+The runner's external, sanitized summary reported `INVALID` / `committed=false`
+with a host-observed `PermissionError` after the volume disappeared; it contains
+no raw matrix, key or exception detail:
+[`external-drive-disconnect-runtime-20260730.json`](external-drive-disconnect-runtime-20260730.json)
+(SHA-256 `5592dc1e5c1149f6c1606ae5aa3fe9b0c83b3199e028214707c1845138aef215`).
+The generic runner summary alone is not treated as the decisive proof because
+it does not retain a frame count; the filesystem/SQLite observations establish
+that capture had reached encrypted staging and had not published a partial
+formal session.
+
+After reconnection, the existing `RecoveryScanner` was run only on that
+isolated test root. It reported `interrupted_staging_discarded=1`, with zero
+formal sessions, segments and artifacts and zero remaining staging children.
+This verifies physical **data-volume disconnection**, invalidation and cleanup;
+it is not a test of Mac power loss or every individual fsync/SQLite instruction.

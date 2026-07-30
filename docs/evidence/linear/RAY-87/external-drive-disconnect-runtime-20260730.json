@@ -1,0 +1,15 @@
+{
+  "schema_version": "do-p4864-runtime-acceptance-result/1",
+  "captured_at_utc": "2026-07-30T09:01:34Z",
+  "device": "/dev/cu.usbserial-1140",
+  "requested_baseline_seconds": 5.0,
+  "requested_capture_seconds": 180.0,
+  "runtime": {
+    "outcome": "INVALID",
+    "frames_stored": null,
+    "reason": "acceptance runner failed: PermissionError",
+    "validity": "INVALID",
+    "committed": false
+  },
+  "local_only_boundary": "Failure summary contains no raw matrices, key material, or exception text."
+}
