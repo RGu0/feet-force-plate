@@ -142,3 +142,51 @@ Full evidence, commands and remaining boundary:
 [`2026-07-30-human-plantar-frame-evidence.md`](2026-07-30-human-plantar-frame-evidence.md).
 RAY-119 remains `In Review` for real UI device binding and repeated independent
 session/person evidence of one isolated hardware pattern.
+
+## 2026-07-30 engineering maintenance read-only distribution
+
+Commit `81c33ac` adds a controlled local engineering projection at
+**设备与支持 → 工程检修**. It is not a customer/operator control and it does not
+change the acquisition, quality, repair, or algorithm inputs.
+
+The entry is hidden unless the deployment composition supplies both of these
+trusted dependencies:
+
+1. an already-bound stable physical `device_id`; and
+2. a deployment-owned confirmation verifier.
+
+The application does not contain, persist, or compare an engineering shared
+password. After a successful confirmation it calls `load_for_session()` for
+that exact bound ID and renders the entire declared board grid with only the
+saved `SUSPECT` (yellow) and `REPAIRABLE` (red) markers. It shows mask version
+and derived health state. A missing or mismatched binding rejects the request;
+it never guesses identity from a serial-port name or a free-text ID.
+
+The snapshot and dialog deliberately exclude raw pressure values, arrays,
+frame/support counters, session identifiers, participant data, protocol,
+checksum and mask-edit/clear operations. The confirmation field is cleared
+after every attempt. The engineering dialog was visually inspected using a
+synthetic 48×64 saved mask; this is a UI rendering check, not real-device or
+physical-defect evidence.
+
+Automated commands/results:
+
+```text
+bash scripts/local-env.sh python -m pytest client/tests/test_engineering_maintenance.py client/tests/test_ray_86_hardware_ui.py client/tests/test_ui_read_models.py -q
+# 13 passed
+
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+# 151 passed
+```
+
+`ruff` passed for the changed files, focused `mypy` passed for
+`client/app/engineering_maintenance.py`, and `git diff --check` passed. The
+full `client/tests` run reached 191 passed but has an existing macOS Qt focus
+failure in `test_ray_114_startup_ui.py::test_failure_has_plain_copy_one_primary_recovery_and_safe_exit`
+(the test passes in isolation and immediately after this feature's six tests).
+No startup-validation files were modified here.
+
+RAY-119 remains `In Review`: this extension does not implement the outstanding
+selected-ID-to-actual-device binding flow, deployment identity provider, or
+real-device operator acceptance. It also does not turn the prior 1,240-frame
+human-plantar replay into a hardware-defect conclusion.
