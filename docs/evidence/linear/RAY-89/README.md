@@ -104,3 +104,28 @@ session deletion. No test invokes a cloud API or an automatic cleanup action.
 The remaining acceptance boundary is unchanged: production OS secure storage,
 physical crash/disk-full behavior, and a human UI confirmation of the delete
 flow. RAY-89 remains `In Review`; this is a verification-evidence refresh only.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 confirms the state-store behavior at the hardware boundary rather than
+only through fixtures. Its 600-second real-device run ended `CLOSED` / `VALID`,
+with one derived artifact and a fresh recovery scan that needed no recovery
+action. Its person-assisted cable removal ended `INVALID` / `committed=false`;
+post-run SQLite queries and filesystem inspection found zero formal sessions,
+segments and artifacts.
+
+The separate real storage-exhaustion rerun filled an isolated 8 MB volume to
+100%. It reported `INVALID` with no formal session and no staging child after
+cleanup. This validates the no-automatic-cleanup / fail-current-session
+boundary without filling a user data volume. The two person-checked Qt failure
+screens also verified the localized `E-DEV-002` retry route and `E-DAT-102`
+support-only route; neither disclosed storage exceptions, paths, protocol data,
+raw matrices or quality details.
+
+The common focused regression was 218 passed (command in the RAY-86 README).
+This closes the listed valid-only index, invalid discard, quota/failure mapping
+and retained-session behavior at the software and available true-device
+boundaries. It does not verify a production Keychain/OS adapter, a process kill
+at every SQLite/fsync write, or an operator-confirmed completed-session delete
+screen. RAY-89 therefore remains `In Review`. Source evidence commits:
+`9f94fbb`, `b5396b0`, `210809b`.
