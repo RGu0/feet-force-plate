@@ -1,27 +1,21 @@
-Captured: 2026-07-20T09:00Z
+Captured: 2026-07-30T04:00:00Z
 
-FOCUSED
-Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -W error -m unittest tests/device/test_protocol.py
+PARSER / SIMULATOR / ACQUISITION REGRESSION
+Command: QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest --junitxml=docs/evidence/linear/RAY-81/pytest-parser-audit-regression.xml tests/device/test_protocol.py tests/device/test_simulator.py tests/device/test_acquisition.py
 Exit: 0
-Result: Ran 11 tests in 0.029s - OK (fresh final focused run)
+Result: 36 passed in 0.11s
 
-OWNED DISCOVERY
-Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -W error -m unittest discover -s tests -t . -p 'test_*.py'
+STATIC QUALITY
+Command: QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh ruff check client/device/protocol.py tests/device/test_protocol.py
 Exit: 0
-Result: Ran 11 tests in 0.029s - OK (fresh final owned discovery)
+Result: All checks passed
 
-COMPILE
-Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m compileall -q client/device tests/device
+TYPED CONTRACT / OBSERVABILITY GATE
+Command: QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh mypy
 Exit: 0
+Result: Success: no issues found in 10 source files
 
-BROADER CLIENT TEST BOUNDARY
-Command: /Users/ruiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -W error -m unittest discover -s client/tests -p 'test_*.py'
-Exit: 1
-Result: 22 tests discovered; 3 import errors outside RAY-81 ownership.
-- RAY-101 tests: PySide6 is not installed in the bundled verification runtime.
-- RAY-92 test: client.workflow.participant does not export TenantBoundaryError.
-
-PHYSICAL/MANUAL
-- Physical serial golden fixture: NOT RUN / unavailable.
-- Physical 30-minute capture: NOT RUN / unavailable.
-- CheckSum coverage and length-field wire byte order: NOT VERIFIED.
+PHYSICAL / SUPPLIER BOUNDARY
+- A 60-second observed-compact structural capture is recorded in local commit bb1b1fe.
+- Raw capture stays local-only; it is not a vendor-confirmed golden fixture.
+- CheckSum coverage, length semantics, raw-value semantics, device timing, and device-side missing frames remain unverified.

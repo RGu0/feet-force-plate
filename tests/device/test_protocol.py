@@ -69,6 +69,34 @@ class ProtocolSurfaceTests(unittest.TestCase):
         self.assertEqual(parser.statistics.checksum_failures, 0)
         self.assertEqual(parser.statistics.checksum_observations, 1)
         self.assertEqual(parser.statistics.checksum_mismatches, 1)
+        self.assertEqual(parser.statistics.length_observations, 1)
+        self.assertEqual(parser.statistics.length_mismatches, 0)
+
+    def test_observed_compact_profile_audits_but_does_not_reject_length_candidate_mismatch(self) -> None:
+        protocol = importlib.import_module("client.device.protocol")
+        profile = protocol.ProtocolProfile.observed_compact_8bit(
+            version="do-p4864/observed-length-audit-test-1"
+        )
+        values = np.full((48, 64), 0x2A, dtype=np.uint8)
+        wire_frame = b"".join(
+            (
+                b"\xff\xaa\x00\x00\x01",
+                values.tobytes(order="F"),
+                b"\x01",
+                b"\xfa",
+            )
+        )
+
+        parser = protocol.DaoOneP4864Parser(profile, allow_unverified=True)
+        decoded = parser.feed(wire_frame)
+
+        self.assertEqual(len(decoded), 1)
+        np.testing.assert_array_equal(decoded[0].values, values)
+        self.assertEqual(parser.statistics.length_observations, 1)
+        self.assertEqual(parser.statistics.length_mismatches, 1)
+        self.assertEqual(parser.statistics.length_failures, 0)
+        self.assertIn("LENGTH_NOT_ENFORCED", decoded[0].quality_flags)
+        self.assertIn("LENGTH_MISMATCH_OBSERVED", decoded[0].quality_flags)
 
     def test_protocol_module_exposes_incremental_parser(self) -> None:
         try:

@@ -197,6 +197,8 @@ class ProtocolStatistics:
     valid_frames: int = 0
     invalid_frames: int = 0
     checksum_failures: int = 0
+    length_observations: int = 0
+    length_mismatches: int = 0
     checksum_observations: int = 0
     checksum_mismatches: int = 0
     length_failures: int = 0
@@ -324,11 +326,13 @@ class DaoOneP4864Parser:
         return decoded
 
     def _validation_failure(self, frame: bytes) -> str | None:
-        if self.profile.enforce_wire_length:
-            wire_length = int.from_bytes(
-                frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
-            )
-            if wire_length != self.profile.frame_length:
+        wire_length = int.from_bytes(
+            frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
+        )
+        self.statistics.length_observations += 1
+        if wire_length != self.profile.frame_length:
+            self.statistics.length_mismatches += 1
+            if self.profile.enforce_wire_length:
                 return "length"
         if frame[FUNCTION_OFFSET] != FUNCTION_CODE:
             return "function"
@@ -411,6 +415,13 @@ class DaoOneP4864Parser:
             expected = (-sum(frame[self.profile.checksum_start : self.profile.checksum_end])) & 0xFF
             if frame[self.profile.checksum_offset] != expected:
                 quality_flags.add("CHECKSUM_MISMATCH_OBSERVED")
+        if not self.profile.enforce_wire_length:
+            quality_flags.add("LENGTH_NOT_ENFORCED")
+            wire_length = int.from_bytes(
+                frame[LENGTH_OFFSET:FUNCTION_OFFSET], self.profile.length_byte_order
+            )
+            if wire_length != self.profile.frame_length:
+                quality_flags.add("LENGTH_MISMATCH_OBSERVED")
         if self.profile.payload_encoding is PayloadEncoding.UINT8_RAW:
             quality_flags.add("COMPACT_8BIT_PAYLOAD_UNVERIFIED")
         host_monotonic_ns = self._monotonic_ns()
