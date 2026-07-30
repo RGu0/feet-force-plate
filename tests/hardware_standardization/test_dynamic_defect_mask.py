@@ -6,7 +6,9 @@ import pytest
 from client.device.protocol import RawFrame
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.dynamic_defect_mask import (
+    DeviceHealthAuditStore,
     DynamicDefectEntry,
+    DeviceHealthEventType,
     DeviceHealthStatus,
     DynamicDefectMask,
     DynamicDefectMaskStore,
@@ -301,3 +303,41 @@ def test_old_terminal_binding_mask_requires_explicit_device_id_assignment() -> N
                 "entries": [],
             }
         )
+
+
+def test_mask_history_is_sqlite_durable_desensitized_and_records_recovery_candidate(tmp_path) -> None:
+    store = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_id="do-p4864-lab-audit",
+        shape=SHAPE,
+    )
+    first = store.load_for_session()
+    second = store.update_after_session(
+        first,
+        session_id="audit-1",
+        matrices=_dynamic_frames(failed_cells=((4, 5), (4, 6))),
+    )
+    third = store.update_after_session(
+        second.updated_mask,
+        session_id="audit-2",
+        matrices=_dynamic_frames(failed_cells=((4, 5), (4, 6))),
+    )
+    assert third.updated_mask.health_status(DynamicDefectPolicy()) is DeviceHealthStatus.HEALTH_UNAVAILABLE
+
+    # A clean dynamic window cannot automatically clear the persistent mask;
+    # it becomes an auditable candidate for later service review instead.
+    store.update_after_session(
+        third.updated_mask,
+        session_id="audit-3",
+        matrices=_dynamic_frames(),
+    )
+    with DeviceHealthAuditStore(tmp_path) as audit:
+        history = audit.history("do-p4864-lab-audit")
+
+    event_types = {event.event_type for event in history}
+    assert DeviceHealthEventType.MASK_UPDATED in event_types
+    assert DeviceHealthEventType.HEALTH_UNAVAILABLE in event_types
+    assert DeviceHealthEventType.RECOVERY_CANDIDATE in event_types
+    assert all(event.candidate_count >= 0 and event.repairable_count >= 0 for event in history)
+    assert (tmp_path / "hardware" / "device-health.sqlite3").exists()
+    assert b"raw_count" not in (tmp_path / "hardware" / "device-health.sqlite3").read_bytes()

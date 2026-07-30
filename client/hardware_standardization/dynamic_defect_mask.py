@@ -16,6 +16,9 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import sqlite3
+import time
+import uuid
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,6 +32,14 @@ class DynamicDefectStatus(StrEnum):
 class DeviceHealthStatus(StrEnum):
     READY = "READY"
     HEALTH_UNAVAILABLE = "HEALTH_UNAVAILABLE"
+
+
+class DeviceHealthEventType(StrEnum):
+    """Desensitized hardware-health events retained for internal support only."""
+
+    MASK_UPDATED = "MASK_UPDATED"
+    HEALTH_UNAVAILABLE = "HEALTH_UNAVAILABLE"
+    RECOVERY_CANDIDATE = "RECOVERY_CANDIDATE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +91,120 @@ class DynamicDefectEntry:
             raise ValueError("confirmed_observations must be positive")
         if not self.last_observed_session_id:
             raise ValueError("last_observed_session_id is required")
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceHealthEvent:
+    """A raw-data-free, durable history entry for one physical device."""
+
+    event_id: str
+    device_id: str
+    event_type: DeviceHealthEventType
+    mask_version: int
+    health_status: DeviceHealthStatus
+    policy_version: str
+    candidate_count: int
+    repairable_count: int
+    created_at_ns: int
+
+
+class DeviceHealthAuditStore:
+    """SQLite history for dynamic-mask changes and health-state transitions.
+
+    This database is intentionally separate from valid clinical/session storage:
+    it contains neither source matrices nor participant data.  It makes a
+    device's mask evolution recoverable even when no session is ultimately
+    promoted as a valid local session.
+    """
+
+    def __init__(self, data_root: str | Path) -> None:
+        self.path = Path(data_root) / "hardware" / "device-health.sqlite3"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(self.path)
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA synchronous=FULL")
+            self._connection.execute("PRAGMA busy_timeout=5000")
+            with self._connection:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS device_health_events (
+                        event_id TEXT PRIMARY KEY,
+                        device_id TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        mask_version INTEGER NOT NULL,
+                        health_status TEXT NOT NULL,
+                        policy_version TEXT NOT NULL,
+                        candidate_count INTEGER NOT NULL,
+                        repairable_count INTEGER NOT NULL,
+                        created_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE INDEX IF NOT EXISTS idx_device_health_events_device_time
+                    ON device_health_events(device_id, created_at_ns DESC, event_id DESC)"""
+                )
+        except Exception:
+            self._connection.close()
+            raise
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> DeviceHealthAuditStore:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def record(self, events: tuple[DeviceHealthEvent, ...]) -> None:
+        if not events:
+            return
+        with self._connection:
+            self._connection.executemany(
+                """INSERT INTO device_health_events(
+                    event_id, device_id, event_type, mask_version, health_status,
+                    policy_version, candidate_count, repairable_count, created_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        event.event_id,
+                        event.device_id,
+                        event.event_type.value,
+                        event.mask_version,
+                        event.health_status.value,
+                        event.policy_version,
+                        event.candidate_count,
+                        event.repairable_count,
+                        event.created_at_ns,
+                    )
+                    for event in events
+                ],
+            )
+
+    def history(self, device_id: str, *, limit: int = 100) -> tuple[DeviceHealthEvent, ...]:
+        if not device_id or limit <= 0:
+            raise ValueError("device ID and positive history limit are required")
+        rows = self._connection.execute(
+            """SELECT event_id, device_id, event_type, mask_version, health_status,
+                policy_version, candidate_count, repairable_count, created_at_ns
+            FROM device_health_events WHERE device_id=?
+            ORDER BY created_at_ns DESC, event_id DESC LIMIT ?""",
+            (device_id, limit),
+        ).fetchall()
+        return tuple(
+            DeviceHealthEvent(
+                event_id=str(row[0]),
+                device_id=str(row[1]),
+                event_type=DeviceHealthEventType(str(row[2])),
+                mask_version=int(row[3]),
+                health_status=DeviceHealthStatus(str(row[4])),
+                policy_version=str(row[5]),
+                candidate_count=int(row[6]),
+                repairable_count=int(row[7]),
+                created_at_ns=int(row[8]),
+            )
+            for row in rows
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,7 +382,47 @@ class DynamicDefectMaskStore:
             policy=self.policy,
         )
         self._atomic_write(observation.updated_mask)
+        self._record_health_events(current, observation)
         return observation
+
+    def _record_health_events(
+        self, previous: DynamicDefectMask, observation: DynamicDefectObservation
+    ) -> None:
+        """Persist a non-sensitive audit after the next mask is durably written."""
+
+        updated = observation.updated_mask
+        previous_health = previous.health_status(self.policy)
+        updated_health = updated.health_status(self.policy)
+        event_types: list[DeviceHealthEventType] = []
+        if updated.mask_version != previous.mask_version:
+            event_types.append(DeviceHealthEventType.MASK_UPDATED)
+        if updated_health is DeviceHealthStatus.HEALTH_UNAVAILABLE:
+            event_types.append(DeviceHealthEventType.HEALTH_UNAVAILABLE)
+            if (
+                previous_health is DeviceHealthStatus.HEALTH_UNAVAILABLE
+                and not observation.candidate_source_indices
+            ):
+                event_types.append(DeviceHealthEventType.RECOVERY_CANDIDATE)
+        if not event_types:
+            return
+        created_at_ns = time.time_ns()
+        repairable_count = len(updated.repairable_source_indices)
+        events = tuple(
+            DeviceHealthEvent(
+                event_id=str(uuid.uuid4()),
+                device_id=self.device_id,
+                event_type=event_type,
+                mask_version=updated.mask_version,
+                health_status=updated_health,
+                policy_version=updated.policy_version,
+                candidate_count=len(observation.candidate_source_indices),
+                repairable_count=repairable_count,
+                created_at_ns=created_at_ns,
+            )
+            for event_type in event_types
+        )
+        with DeviceHealthAuditStore(self.data_root) as audit:
+            audit.record(events)
 
     def _atomic_write(self, mask: DynamicDefectMask) -> None:
         if mask.device_id != self.device_id or mask.shape != self.shape:

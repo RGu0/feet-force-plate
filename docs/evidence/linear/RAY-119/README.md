@@ -74,8 +74,31 @@ also passed through the project's UV wrapper.
   real board's point is defective.
 - The model is intentionally conservative: static or insufficiently stimulated
   locations are not candidates.
-- SQLite indexing/recovery history, telemetry event emission, UI binding and a
-  true dynamic-load device verification remain to be completed before RAY-119
-  is marked Done.
+- 2026-07-29 adds `DeviceHealthAuditStore`: an independent hardware SQLite
+  history under `hardware/device-health.sqlite3`, configured with WAL/FULL.
+  It records only device ID, policy/mask version, health state and candidate/
+  repairable counts. It contains no raw matrices, participant data or keys.
+  Mask changes, unavailable health and clean-window recovery candidates are
+  durable, queryable events; a recovery candidate never automatically clears a
+  persistent defect mask.
+- Current automated command:
+
+  ```text
+  ./scripts/local-env.sh python -m pytest tests/hardware_standardization/test_dynamic_defect_mask.py tests/device tests/spool tests/hardware_standardization -q
+  ```
+
+  Result: **148 passed in 1.41s**. It covers SQLite history persistence and
+  redaction in addition to the existing mask/quality coverage.
+- The current macOS host did not enumerate any `/dev/cu.usbserial*` device on
+  2026-07-29, so true dynamic-load validation was not run and is not claimed.
+- UI device selection/binding remains UI-layer acceptance. The hardware core
+  offers the device-ID keyed mask and `SENSOR_DATA_UNUSABLE` failure path, but
+  no customer UI is implemented in this issue.
 - Raw matrices remain immutable. The mask, repair methods and health reasons
   remain hardware-private and do not cross the algorithm input boundary.
+
+## Pending evidence boundary
+
+RAY-119 must remain `In Review` until a connected board is exercised with a
+dynamic load protocol and the UI layer verifies selected device-ID-to-physical-
+device binding. These conditions are external to the completed hardware code.
