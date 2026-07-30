@@ -298,3 +298,50 @@ This is physical cable-removal and reconnect evidence for the reliable-capture
 invalid-session boundary. It is not a calibrated-force, normal-foot-load,
 dynamic-defect, full-disk, power-loss or customer-UI result. RAY-86 remains
 `In Review` pending the separate deployed UI/operator acknowledgement.
+
+## 2026-07-30 person-assisted application UI acceptance
+
+The remaining RAY-86 operator-facing acceptance was performed by a person in
+the local Qt application shell. The deliberately narrow launcher added in
+`b5396b0` (`Add RAY-86 manual UI acceptance runner`) constructs one typed
+`HardwareUiFailure` at a time; it never opens a serial device, reads a session,
+or writes patient, raw-frame, or session data.
+
+The operator visually confirmed both presentations:
+
+1. `DEVICE_DISCONNECTED` / `RECONNECT_DEVICE` showed the localized reconnect
+   instruction, stable `E-DEV-002`, **本次检测未完成**, and a single retry action
+   **重新检测**. Screenshot:
+   [`manual-ui-device-disconnected-20260730.png`](manual-ui-device-disconnected-20260730.png)
+   (SHA-256 `ca41f44b55e30dc14ee33aef3fda1b26432219a3e034e4256ee61de32fbf9a12`).
+2. `LOCAL_FINALIZATION_FAILED` / `CONTACT_SUPPORT` showed stable `E-DAT-102`,
+   **本次检测未完成**, and the localized contact-support/local-save instruction.
+   It offered only **返回工作台**, not an unsafe retry. Screenshot:
+   [`manual-ui-local-finalization-failed-20260730.png`](manual-ui-local-finalization-failed-20260730.png)
+   (SHA-256 `5ef0918191a558ed7ea8b2578f5b8d8c7e78aca590c6039bc8a17b9790d36f27`).
+
+In both views, the person confirmed that no serial path, raw exception,
+protocol/checksum term, raw matrix, bad-point/quality detail, or stack trace
+was shown. This completes the issue's software/UI-layer human recovery-guidance
+acceptance; the prior physical 10-minute and cable-removal records remain the
+separate true-device evidence.
+
+Reproducible commands:
+
+```text
+bash scripts/local-env.sh python scripts/run_hardware_ui_manual_acceptance.py --scenario device-disconnected
+bash scripts/local-env.sh python scripts/run_hardware_ui_manual_acceptance.py --scenario local-finalization-failed
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization tests/startup_validation client/tests/test_ray_86_hardware_ui.py client/tests/test_ray_101_controller.py client/tests/test_ray_101_coordinator.py client/tests/test_ray_101_qt_shell.py tests/device/test_hardware_ui_manual_acceptance_script.py -q
+# 218 passed in 2.88s
+```
+
+Acceptance boundary: the UI launcher injects typed faults into the real
+application controller/shell. The physical cable removal was separately
+verified by the production acquisition runner. This evidence does not claim a
+physical calibrated-force load, a true power-loss at an arbitrary filesystem
+write, or OS secure-storage validation; those are outside RAY-86's checklist
+and/or tracked in the corresponding P1 issues.
+
+## Commit
+
+Manual UI launcher: `b5396b0` — `Add RAY-86 manual UI acceptance runner`.
