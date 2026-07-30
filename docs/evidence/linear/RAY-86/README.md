@@ -208,3 +208,21 @@ and automated mappings are present, but that UI acceptance is not claimed here.
 ## Commit
 
 Automated acceptance evidence commit: pending.
+
+## 2026-07-29 renewed local hardware acceptance
+
+With `/dev/cu.usbserial-1140` available, the existing production-composition
+acceptance script completed a local 5-second empty-board baseline followed by a
+600-second capture, valid-session commit and fresh recovery scan. The result
+was `COMPLETED` / `VALID` / committed with 12,404 real decoded frames. Five
+tail-failure candidates were retained as audit events and reconstructed only in
+the derived stream; the largest neighboring-valid gap was 112.671125 ms, below
+the 5-second invalidation threshold. Candidate CheckSum mismatched all observed
+frames and remained observe-only.
+
+The post-restart store reported `CLOSED` / `VALID`, one derived artifact, and
+no temporary recovery, quarantine, orphan registration, requeue or interrupted
+staging action. Sanitized details are in
+[`2026-07-29-runtime-acceptance.md`](2026-07-29-runtime-acceptance.md). This
+adds real-device evidence; RAY-86 still requires an operator-visible UI
+consumption check of `HardwareUiFailure` before it can be marked Done.
