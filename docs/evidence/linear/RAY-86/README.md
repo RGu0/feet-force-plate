@@ -187,6 +187,24 @@ Known-load repeatability/position coverage is intentionally excluded from this s
 pass: it is manufacturer whole-device calibration work. The four-stage replay fixture remains
 replay/regression evidence; a live UI-to-hardware composition is separate scope.
 
+## 2026-07-29 current-code regression
+
+The currently checked-out hardware composition was rerun without modifying any source files:
+
+```text
+./scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+```
+
+Result: **141 passed in 1.87s**. This covers the parser/transport, five-second valid-signal
+continuity and derived-only reconstruction, invalid-session cleanup, encrypted valid-session
+commit and recovery, defect repair/masks, and public physical-session export. It is automated
+evidence only; the already recorded real-device 10-minute, cable-removal, disk-full and controlled
+restart records above remain the physical-device evidence.
+
+The hardware-owned acceptance is implemented. RAY-86 remains `In Review` because the last checklist
+item is a software/UI-layer manual consumption test of `HardwareUiFailure`; the hardware contract
+and automated mappings are present, but that UI acceptance is not claimed here.
+
 ## Commit
 
 Automated acceptance evidence commit: pending.
