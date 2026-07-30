@@ -28,6 +28,7 @@ from client.workflow.participant import (
 )
 
 from .pages import PageId
+from .engineering_maintenance import EngineeringMaintenanceService
 from .hardware_failure import resolve_hardware_ui_failure
 from .live_display import LiveDisplayProjection
 from .qt_shell import ScreeningWindow
@@ -102,6 +103,7 @@ class ApplicationController:
         live_display: LiveDisplayProjection | None = None,
         read_models: UiReadModelPort | None = None,
         device_support: _DeviceSupportPort | None = None,
+        engineering_maintenance: EngineeringMaintenanceService | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
@@ -112,6 +114,7 @@ class ApplicationController:
         self._live_display = live_display
         self._read_models = read_models
         self._device_support = device_support
+        self._engineering_maintenance = engineering_maintenance
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -120,6 +123,9 @@ class ApplicationController:
                 "participant, consent, and consent_policy must be configured together"
             )
         self.window = ScreeningWindow(on_action=self.dispatch)
+        self.window.set_engineering_maintenance_available(
+            engineering_maintenance is not None
+        )
         self._live_display_timer = QTimer(self.window)
         self._live_display_timer.setInterval(16)
         self._live_display_timer.timeout.connect(self._on_live_display_timer)
@@ -159,6 +165,12 @@ class ApplicationController:
             return
         if action in {"RECHECK_SYSTEM", "EXPORT_DIAGNOSTIC"}:
             self._dispatch_device_support(action)
+            return
+        if action == "OPEN_ENGINEERING_MAINTENANCE":
+            if self._engineering_maintenance is None:
+                self.window.show_form_error("工程检修功能尚未接入当前运行环境")
+            else:
+                self.window.show_engineering_maintenance(self._engineering_maintenance)
             return
         if action == "CONFIRM_CONSENT":
             self._coordinator.confirm_consent()

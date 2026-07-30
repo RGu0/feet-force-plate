@@ -5,12 +5,13 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -32,10 +33,17 @@ from PySide6.QtWidgets import (
 from client.local_analysis.display import DisplayFrame
 from client.reporting.copy import report_badges, report_parameter_note
 from client.reporting.models import BasicReportDocument
+from client.hardware_standardization.dynamic_defect_mask import DynamicDefectStatus
 from client.workflow.models import ClientAction, ReportStatus, SessionValidity, WorkflowState
 
 from .design_system import apply_design_system
 from .app_icon import application_icon
+from .engineering_maintenance import (
+    EngineeringMaintenanceAccessDenied,
+    EngineeringMaintenanceDeviceUnbound,
+    EngineeringMaintenanceService,
+    EngineeringMaintenanceSnapshot,
+)
 from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
 from .position_guide import FootPlacementWidget
@@ -60,10 +68,137 @@ _ACTION_LABELS = {
     "PRINT_REPORT": "打印",
     "RECHECK_SYSTEM": "重新检查",
     "EXPORT_DIAGNOSTIC": "导出问题诊断包",
+    "OPEN_ENGINEERING_MAINTENANCE": "工程检修",
 }
 
 _WIZARD_STEPS = ("受试者", "选填信息", "授权确认", "设备预检", "站位引导")
 _TOPBAR_PAGES = {PageId.RESULT, PageId.RECORDS, PageId.SUPPORT}
+
+
+class _DefectDistributionWidget(QWidget):
+    """Render only saved defect-mask markers; never a live pressure frame."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("engineeringDefectDistribution")
+        self.setAccessibleName("工程检修坏点分布图")
+        self.setMinimumSize(420, 280)
+        self._snapshot: EngineeringMaintenanceSnapshot | None = None
+
+    def set_snapshot(self, snapshot: EngineeringMaintenanceSnapshot) -> None:
+        self._snapshot = snapshot
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self.rect().adjusted(12, 12, -12, -12)
+        painter.fillRect(rect, QColor("#F5F7FA"))
+        painter.setPen(QPen(QColor("#A8B2C1"), 1))
+        painter.drawRect(rect)
+        snapshot = self._snapshot
+        if snapshot is None:
+            painter.setPen(QColor("#697386"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "完成工程确认后显示已保存的坏点掩码")
+            return
+        rows, columns = snapshot.shape
+        cell_width = rect.width() / columns
+        cell_height = rect.height() / rows
+        colors = {
+            "SUSPECT": QColor("#E7A93A"),
+            "REPAIRABLE": QColor("#D95652"),
+        }
+        for cell in snapshot.marked_cells:
+            painter.fillRect(
+                int(rect.left() + cell.column * cell_width),
+                int(rect.top() + cell.row * cell_height),
+                max(1, int(cell_width)),
+                max(1, int(cell_height)),
+                colors[cell.status.value],
+            )
+
+
+class _EngineeringMaintenanceDialog(QDialog):
+    """One-time confirmation dialog for a deployed engineering service."""
+
+    def __init__(self, service: EngineeringMaintenanceService, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("engineeringMaintenanceDialog")
+        self.setWindowTitle("工程检修")
+        self.setModal(True)
+        self.setMinimumSize(620, 560)
+        self._service = service
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("工程检修 · 坏点分布")
+        title.setObjectName("engineeringMaintenanceTitle")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+        instruction = QLabel(
+            "仅限已授权工程人员。输入由部署层校验的确认信息后，读取当前已绑定设备的保存掩码。"
+        )
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+        confirmation = QLineEdit()
+        confirmation.setObjectName("engineeringMaintenanceConfirmation")
+        confirmation.setEchoMode(QLineEdit.EchoMode.Password)
+        confirmation.setPlaceholderText("输入工程确认信息")
+        confirmation.setAccessibleName("工程确认信息")
+        layout.addWidget(confirmation)
+        confirm = QPushButton("确认并查看")
+        confirm.setObjectName("CONFIRM_ENGINEERING_MAINTENANCE")
+        confirm.clicked.connect(self._load_distribution)
+        layout.addWidget(confirm, alignment=Qt.AlignmentFlag.AlignLeft)
+        status = QLabel("尚未读取设备掩码")
+        status.setObjectName("engineeringMaintenanceStatus")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        distribution = _DefectDistributionWidget()
+        layout.addWidget(distribution, 1)
+        summary = QLabel("黄色 SUSPECT 0 · 红色 REPAIRABLE 0")
+        summary.setObjectName("engineeringMaintenanceSummary")
+        layout.addWidget(summary)
+        boundary = QLabel(
+            "只读：不展示原始压力、帧证据、会话或协议数据；此处不能修改或清除坏点掩码。"
+        )
+        boundary.setObjectName("engineeringMaintenanceBoundary")
+        boundary.setWordWrap(True)
+        boundary.setProperty("mutedText", True)
+        layout.addWidget(boundary)
+
+    def _load_distribution(self) -> None:
+        confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
+        status = self.findChild(QLabel, "engineeringMaintenanceStatus")
+        distribution = self.findChild(
+            _DefectDistributionWidget, "engineeringDefectDistribution"
+        )
+        summary = self.findChild(QLabel, "engineeringMaintenanceSummary")
+        assert confirmation is not None
+        assert status is not None
+        assert distribution is not None
+        assert summary is not None
+        try:
+            snapshot = self._service.read_distribution(confirmation.text())
+        except EngineeringMaintenanceAccessDenied:
+            status.setText("工程确认未通过，未读取设备掩码。")
+            return
+        except EngineeringMaintenanceDeviceUnbound:
+            status.setText("当前终端没有已验证的物理设备绑定，无法查看分布。")
+            return
+        except ValueError:
+            status.setText("已绑定设备的掩码不可读取，请按工程流程处理。")
+            return
+        finally:
+            confirmation.clear()
+        distribution.set_snapshot(snapshot)
+        summary.setText(
+            f"黄色 SUSPECT {snapshot.status_counts[DynamicDefectStatus.SUSPECT]}"
+            f" · 红色 REPAIRABLE {snapshot.status_counts[DynamicDefectStatus.REPAIRABLE]}"
+        )
+        status.setText(
+            f"已读取绑定设备 {snapshot.device_id} 的掩码版本 {snapshot.mask_version} · {snapshot.health_status.value}"
+        )
 
 
 class ScreeningWindow(QMainWindow):
@@ -80,6 +215,7 @@ class ScreeningWindow(QMainWindow):
         self._preflight_failed = False
         self._preflight_ready = False
         self._record_rows: tuple[ScreeningRecordRow, ...] = ()
+        self._engineering_maintenance_dialog: _EngineeringMaintenanceDialog | None = None
         self._pages: dict[PageId, QWidget] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
@@ -362,6 +498,24 @@ class ScreeningWindow(QMainWindow):
             snapshot.pending_summary.removeprefix("待同步数据：").strip()
         )
         page.findChild(QLabel, "appVersion").setText(snapshot.app_version)
+
+    def set_engineering_maintenance_available(self, available: bool) -> None:
+        """Expose maintenance only when deployment supplies trusted wiring."""
+
+        entry = self._pages[PageId.SUPPORT].findChild(
+            QPushButton, "OPEN_ENGINEERING_MAINTENANCE"
+        )
+        assert entry is not None
+        entry.setVisible(available)
+
+    def show_engineering_maintenance(self, service: EngineeringMaintenanceService) -> None:
+        """Open a separately confirmed, read-only engineering projection."""
+
+        dialog = _EngineeringMaintenanceDialog(service, self)
+        self._engineering_maintenance_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def present_report_document(self, document: BasicReportDocument) -> None:
         page = self._pages[PageId.REPORT_PREVIEW]
@@ -1380,6 +1534,12 @@ class ScreeningWindow(QMainWindow):
         action_layout.setSpacing(12)
         action_layout.addWidget(self._action_button("RECHECK_SYSTEM", primary=False))
         action_layout.addWidget(self._action_button("EXPORT_DIAGNOSTIC", primary=False, ghost=True))
+        maintenance = self._action_button(
+            "OPEN_ENGINEERING_MAINTENANCE", primary=False, ghost=True
+        )
+        maintenance.setVisible(False)
+        maintenance.setToolTip("仅在已配置工程授权与设备绑定的终端可用")
+        action_layout.addWidget(maintenance)
         action_layout.addStretch(1)
         inner_layout.addWidget(actions)
         note = self._label("诊断包默认不含原始会话与身份明文；附加会话数据需要独立确认。支持热线 400-820-1120。", "supportNote")
