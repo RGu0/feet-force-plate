@@ -1,0 +1,12 @@
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check client/device client/spool client/hardware_standardization shared/contracts tests/device tests/spool tests/hardware_standardization
+        language: system
+        pass_filenames: false
+        types: [python]

@@ -104,7 +104,6 @@ def test_public_export_requires_valid_and_committed_hardware_result() -> None:
     with pytest.raises(PublicPressureExportError, match="committed"):
         export_committed_valid_hardware_session(valid, local_session_committed=False)
 
-    values = np.full((48, 64), 10, dtype=np.uint8)
     invalid = DoP4864HardwareQualityGate(
         baseline_reference=_baseline(),
         policy=BadPointPolicy(known_bad_source_indices=frozenset({100, 101})),

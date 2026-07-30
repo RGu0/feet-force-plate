@@ -44,8 +44,38 @@ build = [
 dev = [
     "pytest",
     "pytest-qt",
+    "ruff>=0.12,<1",
+    "mypy>=1.18,<2",
+    "pre-commit>=4.2,<5",
+    "types-pyserial>=3.5,<4",
 ]
 
 [tool.uv]
 # 仅安装当前项目依赖，不把项目本身作为可安装包构建
 package = false
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = [".git", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Keep the first enforced baseline narrow: undefined and unused symbols.
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.11"
+# Start with the transport/parser contract. Spool and standardization code is
+# type-annotated incrementally as separate hardware issues change it.
+files = [
+    "client/device/transport.py",
+    "client/device/serial_transport.py",
+    "client/device/protocol.py",
+]
+exclude = '(^|/)(build|dist|\.venv)(/|$)'
+check_untyped_defs = true
+disallow_any_generics = true
+no_implicit_optional = true
+explicit_package_bases = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true

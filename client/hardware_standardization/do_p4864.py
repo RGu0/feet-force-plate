@@ -7,7 +7,7 @@ from pathlib import Path
 
 from client.device.protocol import RawFrame
 
-from .calibrated_array import CalibratedArrayAdapter, RawArrayFrame
+from .calibrated_array import RawArrayFrame
 from .device_specification import DeviceSpecification, load_device_specification
 from .geometry import BoardCoordinateLayout
 from .models import BaselineReference, StandardizationOutcome

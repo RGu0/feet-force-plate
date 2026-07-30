@@ -1,0 +1,29 @@
+name: Python quality
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.13"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Verify locked dependencies
+        run: uv sync --extra dev --locked
+      - name: Lint
+        run: uv run --extra dev ruff check client/device client/spool client/hardware_standardization shared/contracts tests/device tests/spool tests/hardware_standardization
+      - name: Type check P1 transport and parser contracts
+        run: uv run --extra dev mypy
+      - name: Protocol, recovery, contract, and algorithm regression
+        run: uv run --extra dev python -m pytest tests/device tests/spool tests/hardware_standardization cloud/tests -q

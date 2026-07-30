@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
-from .models import CellStatus, PhysicalArrayFrame, PhysicalArraySession
+from .models import CellStatus, PhysicalArrayFrame
 from .quality import HardwareDataValidity, HardwareQualityEvaluation
 
 
