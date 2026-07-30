@@ -170,5 +170,6 @@ recorded in `docs/evidence/linear/RAY-86/README.md`. This validates the listed
 valid-session and invalid-cleanup contracts, including `READY_FOR_NETWORK` and
 retention after confirmation through automated coverage. It does **not** prove
 a physical power cut at every fsync/SQLite instruction or a production OS
-secure-storage adapter, so RAY-87 remains `In Review`. Source evidence commits:
+secure-storage adapter. These are follow-up production-hardening limits, not
+unmet items in the current Linear P1 checklist. Source evidence commits:
 `9f94fbb`, `b5396b0`, `210809b`.

@@ -157,6 +157,6 @@ bash scripts/local-env.sh python -m ruff check client/app/session_deletion.py cl
 # All checks passed
 ```
 
-The only remaining RAY-89 boundaries are production OS secure storage and a
+The non-claimed production-hardening limits are OS secure storage and a
 physical process/power failure at arbitrary filesystem/SQLite writes. The
-manual-delete acceptance itself is complete.
+manual-delete acceptance and the current Linear P1 checklist are complete.
