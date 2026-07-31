@@ -1,8 +1,8 @@
 # RAY-119 — 动态坏点掩码、修复与设备健康门控
 
 - Issue: [RAY-119](https://linear.app/ray-app/issue/RAY-119/动态坏点掩码修复与设备健康门控)
-- Evidence captured: 2026-07-28
-- State after automated verification: `In Progress`; milestone: `P1：可靠采集`; priority: `High`
+- Evidence captured: 2026-07-30
+- State after automated verification: `In Review`; milestone: `P1：可靠采集`; priority: `High`
 - Project: `足底压力健康筛查与分析平台`
 - Device-ID implementation commit: `f169a36` (`Key dynamic masks by device ID`)
 
@@ -19,13 +19,13 @@ check for a stale concurrent snapshot, `fsync` a temporary file and atomically
 replace the next version. Thus a new candidate cannot alter a running session.
 
 The static DO-P4864 device specification remains shared by model; `device_id`
-partitions only mutable, board-specific health history. The runtime constructs a
-store from the selected `device_id`, so two boards may alternate at one site
-without cross-contaminating their masks. QR-code and manual-entry flows are
-intentionally deferred: they will only be ways to obtain the same stable ID.
-Schema `dynamic-defect-mask/2` stores `device_id`; prior `/1` snapshots are
-rejected until an operator assigns their device ID explicitly, preventing an
-unproven old terminal binding from being attached to the wrong board.
+partitions only mutable, board-specific health history. The hardware core
+accepts a store created from the selected `device_id`, so two boards can have
+non-contaminating masks. Product UI selection/binding remains an outstanding
+acceptance item. Schema `dynamic-defect-mask/2` stores `device_id`; prior `/1`
+snapshots are rejected until an operator assigns their device ID explicitly,
+preventing an unproven old terminal binding from being attached to the wrong
+board.
 
 1. A candidate is considered only when the observed pressure field changes by
    the configured dynamic range.
@@ -87,10 +87,12 @@ also passed through the project's UV wrapper.
   ./scripts/local-env.sh python -m pytest tests/hardware_standardization/test_dynamic_defect_mask.py tests/device tests/spool tests/hardware_standardization -q
   ```
 
-  Result: **148 passed in 1.41s**. It covers SQLite history persistence and
-  redaction in addition to the existing mask/quality coverage.
-- The current macOS host did not enumerate any `/dev/cu.usbserial*` device on
-  2026-07-29, so true dynamic-load validation was not run and is not claimed.
+  Historical result: **148 passed in 1.41s**. The current regression is
+  **151 passed in 1.36s** and adds frame-evidence counters, edge health gating
+  and broad-candidate suppression.
+- The host had no `/dev/cu.usbserial*` device on 2026-07-29. That observation
+  is superseded by the 2026-07-30 connected-device capture/replay recorded
+  below; it does not imply physical-force calibration or a manual load test.
 - UI device selection/binding remains UI-layer acceptance. The hardware core
   offers the device-ID keyed mask and `SENSOR_DATA_UNUSABLE` failure path, but
   no customer UI is implemented in this issue.
@@ -99,10 +101,92 @@ also passed through the project's UV wrapper.
 
 ## Pending evidence boundary
 
-RAY-119 must remain `In Review` until a connected board is exercised with a
-dynamic load protocol and the UI layer verifies selected device-ID-to-physical-
-device binding. These conditions are external to the completed hardware code.
+RAY-119 must remain `In Review` until the UI layer verifies selected
+device-ID-to-physical-device binding and repeated independent human sessions
+show the same isolated hardware pattern. Physical-force calibration files and a
+manual calibrated load are not prerequisites for this dynamic evidence path.
 
 ## Commit
 
 Hardware SQLite audit implementation: `167c962` — `Persist hardware dynamic mask health audit`.
+
+## 2026-07-30 true-device dynamic-load replay (superseded policy result)
+
+With `/dev/cu.usbserial-1140` unoccupied, four local-only pressure windows were
+captured and replayed with an explicit validation-only, unbound `device_id` in
+an isolated `/private/tmp` data root. The first three windows did not meet the
+then-current dynamic policy threshold. The fourth did, and under the earlier
+policy produced v1 plus 1,949 `SUSPECT` candidates. It did not produce a
+`REPAIRABLE` point, so no repair/health-block conclusion was made.
+
+This historical broad candidate set must not be interpreted as physical bad
+points or as a board-health result. It is superseded by the per-frame evidence
+and flood-suppression replay below. The capture/replay validates parser and
+mask mechanics on true bytes, not device-ID binding. Full evidence and
+boundaries:
+[`2026-07-30-live-dynamic-load-attempt.md`](2026-07-30-live-dynamic-load-attempt.md),
+commit `395fd3e`.
+
+## 2026-07-30 human-plantar per-frame evidence replay
+
+Commit `c650311` adds raw-data-free positive-frame/support-opportunity counters
+to each retained candidate, strict edge handling, schema `/3`, and suppression
+of a broad candidate flood before it can pollute the next-session mask. The
+same 1,240-frame real human-plantar window produced 2,138 broad candidates,
+all suppressed: v0 remained v0, with zero `SUSPECT` and `REPAIRABLE` entries
+and a single `SUSPECT_FLOOD_SUPPRESSED` audit event. This is not a physical
+defect or defect-free-board conclusion; it proves the intended protection
+against normal human-contact geometry being stored as a bad point.
+
+Full evidence, commands and remaining boundary:
+[`2026-07-30-human-plantar-frame-evidence.md`](2026-07-30-human-plantar-frame-evidence.md).
+RAY-119 remains `In Review` for real UI device binding and repeated independent
+session/person evidence of one isolated hardware pattern.
+
+## 2026-07-30 engineering maintenance read-only distribution
+
+Commit `81c33ac` adds a controlled local engineering projection at
+**设备与支持 → 工程检修**. It is not a customer/operator control and it does not
+change the acquisition, quality, repair, or algorithm inputs.
+
+The entry is hidden unless the deployment composition supplies both of these
+trusted dependencies:
+
+1. an already-bound stable physical `device_id`; and
+2. a deployment-owned confirmation verifier.
+
+The application does not contain, persist, or compare an engineering shared
+password. After a successful confirmation it calls `load_for_session()` for
+that exact bound ID and renders the entire declared board grid with only the
+saved `SUSPECT` (yellow) and `REPAIRABLE` (red) markers. It shows mask version
+and derived health state. A missing or mismatched binding rejects the request;
+it never guesses identity from a serial-port name or a free-text ID.
+
+The snapshot and dialog deliberately exclude raw pressure values, arrays,
+frame/support counters, session identifiers, participant data, protocol,
+checksum and mask-edit/clear operations. The confirmation field is cleared
+after every attempt. The engineering dialog was visually inspected using a
+synthetic 48×64 saved mask; this is a UI rendering check, not real-device or
+physical-defect evidence.
+
+Automated commands/results:
+
+```text
+bash scripts/local-env.sh python -m pytest client/tests/test_engineering_maintenance.py client/tests/test_ray_86_hardware_ui.py client/tests/test_ui_read_models.py -q
+# 13 passed
+
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+# 151 passed
+```
+
+`ruff` passed for the changed files, focused `mypy` passed for
+`client/app/engineering_maintenance.py`, and `git diff --check` passed. The
+full `client/tests` run reached 191 passed but has an existing macOS Qt focus
+failure in `test_ray_114_startup_ui.py::test_failure_has_plain_copy_one_primary_recovery_and_safe_exit`
+(the test passes in isolation and immediately after this feature's six tests).
+No startup-validation files were modified here.
+
+RAY-119 remains `In Review`: this extension does not implement the outstanding
+selected-ID-to-actual-device binding flow, deployment identity provider, or
+real-device operator acceptance. It also does not turn the prior 1,240-frame
+human-plantar replay into a hardware-defect conclusion.

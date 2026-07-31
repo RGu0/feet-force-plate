@@ -87,3 +87,94 @@ Automated verification on 2026-07-23:
 
 Physical crash-at-fsync, actual disk-full behavior, OS secure-storage adapter and operator UI
 confirmation of a delete action remain unverified; the issue must remain In Review.
+
+## 2026-07-30 P1 re-verification
+
+```text
+bash scripts/local-env.sh python -m pytest tests/spool/test_state_store.py tests/spool/test_valid_session_commit.py tests/device/test_session_ui.py tests/device/test_session_runtime.py -q
+```
+
+Result: **23 passed in 0.34s**; `ruff check client/spool tests/spool
+tests/device/test_session_ui.py` and `git diff --check` passed. The checks cover
+valid-only indexing and `READY_FOR_NETWORK`, invalid-session discard, offline
+count/byte/pending-handoff/last-confirmation snapshot, safe storage and
+finalization failure mapping, confirmation retention, and single completed-valid
+session deletion. No test invokes a cloud API or an automatic cleanup action.
+
+The remaining acceptance boundary is unchanged: production OS secure storage,
+physical crash/disk-full behavior, and a human UI confirmation of the delete
+flow. RAY-89 remains `In Review`; this is a verification-evidence refresh only.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 confirms the state-store behavior at the hardware boundary rather than
+only through fixtures. Its 600-second real-device run ended `CLOSED` / `VALID`,
+with one derived artifact and a fresh recovery scan that needed no recovery
+action. Its person-assisted cable removal ended `INVALID` / `committed=false`;
+post-run SQLite queries and filesystem inspection found zero formal sessions,
+segments and artifacts.
+
+The separate real storage-exhaustion rerun filled an isolated 8 MB volume to
+100%. It reported `INVALID` with no formal session and no staging child after
+cleanup. This validates the no-automatic-cleanup / fail-current-session
+boundary without filling a user data volume. The two person-checked Qt failure
+screens also verified the localized `E-DEV-002` retry route and `E-DAT-102`
+support-only route; neither disclosed storage exceptions, paths, protocol data,
+raw matrices or quality details.
+
+The common focused regression was 218 passed (command in the RAY-86 README).
+This closes the listed valid-only index, invalid discard, quota/failure mapping
+and retained-session behavior at the software and available true-device
+boundaries. It does not verify a production Keychain/OS adapter, a process kill
+at every SQLite/fsync write, or an operator-confirmed completed-session delete
+screen. RAY-89 therefore remains `In Review`. Source evidence commits:
+`9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 person-assisted single-session deletion
+
+The deployment-owned deletion service now exposes only candidates that are
+`CLOSED` / `VALID` and have no retained report. It accepts one selected session
+and requires the exact per-session confirmation text `删除 <会话编号>` before
+using the existing directory-move / transactional-index-delete operation. There
+is no batch, scheduled, ACK-triggered, or network-triggered deletion entry
+point.
+
+The operator used a disposable temporary state root containing exactly one
+valid test session, entered `删除 ray89-ui-acceptance`, and visually confirmed
+the post-action result **已删除该本地会话；未影响其他会话。** Screenshot:
+[`manual-session-deletion-20260730.png`](manual-session-deletion-20260730.png)
+(SHA-256 `22ee4c838fdb93d7d010781d7578e59bf7af90fd42b9279d533fd42ec9a928f4`).
+No production session, device stream, personal data, raw matrix or key was
+opened by this acceptance launcher. Implementation, test, launcher and evidence
+commit: `c5a5be8` — `Add confirmed local session deletion acceptance`.
+
+Verification:
+
+```text
+bash scripts/local-env.sh python -m pytest client/tests/test_ray_89_session_deletion_ui.py tests/spool/test_state_store.py tests/spool/test_valid_session_commit.py -q
+# 14 passed in 1.05s
+bash scripts/local-env.sh python -m ruff check client/app/session_deletion.py client/app/controller.py client/app/qt_shell.py client/spool/state_store.py client/tests/test_ray_89_session_deletion_ui.py tests/spool/test_valid_session_commit.py
+# All checks passed
+```
+
+The non-claimed production-hardening limits are OS secure storage and a
+physical process/power failure at arbitrary filesystem/SQLite writes. The
+manual-delete acceptance and the current Linear P1 checklist are complete.
+
+## 2026-07-30 physical external state-store volume disconnect
+
+RAY-89 additionally repeated the external-volume test in its own fresh
+**Mac Flash** root. After the 5-second true-device baseline, capture began and
+the operator physically removed the external volume. The external sanitized
+summary reported `INVALID` / `committed=false` with a host-observed
+`PermissionError`; it contains no raw frame, key or exception detail:
+[`external-drive-disconnect-runtime-20260730.json`](external-drive-disconnect-runtime-20260730.json)
+(SHA-256 `19cb6f63b7fba1fd63d3f4fd04ee56f91845ec278725124b78db79259a765402`).
+
+After reattachment, the isolated root held exactly one encrypted staging
+segment. Its formal SQLite count was zero for `sessions`, `segments`,
+`session_artifacts`, and `sync_handoffs`. Running the existing `RecoveryScanner`
+reported `interrupted_staging_discarded=1`; all four formal counts remained zero
+and staging had zero children. This is direct physical data-volume-disconnect
+evidence for RAY-89's valid-only index and no-automatic-handoff boundary. It is
+not a host power-loss claim.

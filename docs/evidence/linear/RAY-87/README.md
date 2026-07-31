@@ -125,3 +125,76 @@ Automated fault-injection verification:
 
 This is process-level simulation, not a physical power-cut or full-disk result; those RAY-87
 external checks remain required.
+
+## 2026-07-30 P1 re-verification
+
+```text
+bash scripts/local-env.sh python -m pytest tests/spool tests/device/test_session_runtime.py -q
+```
+
+Result: **32 passed in 0.42s**; `ruff check client/spool tests/spool` and
+`git diff --check` passed. The suite covers encrypted temporary staging,
+AES-256-GCM artifact integrity, valid-only atomic promotion and SQLite/hand-off
+registration, invalid discard, post-promotion registration recovery, interrupted
+staging cleanup, and retained data after cloud confirmation until an explicit
+manual delete.
+
+The connected-device capture remains local parser evidence only. Without the
+approved baseline and force-conversion prerequisites, it was not promoted to a
+formal session and was not used to create encrypted P1 session artifacts.
+Physical power removal across filesystem/SQLite instructions, a real full-disk
+run and the production OS secure-storage adapter are still not validated. RAY-87
+therefore remains `In Review`; this evidence refresh has no implementation claim.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 supplies the real-device acceptance missing from the earlier
+software-only records. A 600-second production-composition run completed a
+`VALID` session, atomically committed its encrypted local artifacts and SQLite
+records, created one derived artifact, and produced a fresh restart scan with no
+temporary, quarantine, orphan, requeue or interrupted-staging action. Candidate
+checksum remained observe-only; no raw matrix or key was copied into evidence.
+
+Two failure records corroborate the valid-only persistence boundary:
+
+- Person-assisted cable removal produced `INVALID` / `committed=false` after
+  970 valid decoded frames. Re-enumeration and SQLite/filesystem checks found
+  zero formal sessions, segments and artifacts.
+- A real DO-P4864 capture on an isolated 8 MB HFS+ volume filled to 100% ended
+  `INVALID` / `committed=false`; after the run the volume had no staging files
+  and SQLite had zero sessions, segments and derived artifacts. See
+  [`../RAY-86/storage-exhaustion-runtime-20260728.md`](../RAY-86/storage-exhaustion-runtime-20260728.md).
+
+The shared final regression was 218 passed; its exact wrapper command is
+recorded in `docs/evidence/linear/RAY-86/README.md`. This validates the listed
+valid-session and invalid-cleanup contracts, including `READY_FOR_NETWORK` and
+retention after confirmation through automated coverage. It does **not** prove
+a physical power cut at every fsync/SQLite instruction or a production OS
+secure-storage adapter. These are follow-up production-hardening limits, not
+unmet items in the current Linear P1 checklist. Source evidence commits:
+`9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 physical external-drive disconnect
+
+This additional true-device failure test used the real DO-P4864 stream and a
+fresh, isolated directory on the operator-selected external volume **Mac
+Flash**. The 5-second baseline completed, capture began, and the operator then
+physically removed the external drive. After the volume was reattached, the
+isolated root contained one encrypted `.ffps` file below `spool/.staging` and
+SQLite reported zero formal `sessions`, `segments` and `session_artifacts`.
+
+The runner's external, sanitized summary reported `INVALID` / `committed=false`
+with a host-observed `PermissionError` after the volume disappeared; it contains
+no raw matrix, key or exception detail:
+[`external-drive-disconnect-runtime-20260730.json`](external-drive-disconnect-runtime-20260730.json)
+(SHA-256 `5592dc1e5c1149f6c1606ae5aa3fe9b0c83b3199e028214707c1845138aef215`).
+The generic runner summary alone is not treated as the decisive proof because
+it does not retain a frame count; the filesystem/SQLite observations establish
+that capture had reached encrypted staging and had not published a partial
+formal session.
+
+After reconnection, the existing `RecoveryScanner` was run only on that
+isolated test root. It reported `interrupted_staging_discarded=1`, with zero
+formal sessions, segments and artifacts and zero remaining staging children.
+This verifies physical **data-volume disconnection**, invalidation and cleanup;
+it is not a test of Mac power loss or every individual fsync/SQLite instruction.

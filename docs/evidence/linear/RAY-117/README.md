@@ -16,8 +16,8 @@
 - [x] Automated fixtures cover column-major mapping, normal frames, isolated
   cells, adjacent/edge cells, persistent line detection and raw immutability.
 - [x] A dedicated public exporter accepts only a hardware-accepted, locally
-  committed session and emits exactly `physical-pressure-session/1.0`:
-  physical points, monotonic time and final `normal_force_n`. It rejects invalid
+  committed session and emits exactly `estimated-force-session/1.0`:
+  board points, monotonic time and `estimated_force_n`. It rejects invalid
   or uncommitted sessions and excludes all raw, protocol, repair and quality fields.
 - [x] MVP screening uses the frozen V1 force conversion; it is not presented as
   a high-precision absolute-force or clinical measurement claim.
@@ -26,8 +26,8 @@
 
 - `client/hardware_standardization/public_export.py` is the only public export
   boundary. It receives `HardwareQualityEvaluation`, requires `VALID` plus a
-  completed local commit, maps the frozen V1 force vector to `normal_force_n`,
-  and produces the minimal JSON-compatible `physical-pressure-session/1.0`.
+  completed local commit, exposes the frozen V1 force vector as `estimated_force_n`,
+  and produces the minimal JSON-compatible `estimated-force-session/1.0`.
 - Point identifiers are generic `point-0001`… identifiers. Their physical
   locations and each frame's force-vector ordering are stable, while all
   DO-P4864 row/column/source-index details remain internal.

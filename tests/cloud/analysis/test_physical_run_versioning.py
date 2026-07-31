@@ -19,7 +19,7 @@ def make_key(**overrides: object) -> PhysicalAnalysisRunKey:
         "session_id": "session-a",
         "input_manifest_sha256": "a" * 64,
         "hardware_adapter_version": "adapter/1",
-        "input_schema_version": "physical-pressure-session/1.0",
+        "input_schema_version": "estimated-force-session/1.0",
         "measurement_conformance_version": "measurement/1",
         "calibration_profile_version": "calibration/1",
         "uncertainty_profile_version": "uncertainty/1",

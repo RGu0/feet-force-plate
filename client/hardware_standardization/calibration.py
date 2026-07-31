@@ -1,4 +1,4 @@
-"""Device-configured ADC voltage restoration and provisional force conversion."""
+"""Device-configured ADC voltage restoration and screening force estimation."""
 
 from __future__ import annotations
 

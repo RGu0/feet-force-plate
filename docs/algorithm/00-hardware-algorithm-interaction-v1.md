@@ -2,17 +2,17 @@
 
 > 状态：接口边界基线（2026-07-28）
 >
-> 本文规定算法层只接收硬件层认可的、设备无关的物理力场；硬件质量和设备实现不跨越该边界。
+> 本文规定算法层只接收硬件层认可的、设备无关的筛查估计力场；硬件质量和设备实现不跨越该边界。
 
 ## 1. 交互原则
 
-硬件层必须在本地完成设备接入、协议解析、基线校正、坏点修复/隔离、掉帧处理和会话有效性审核。只有整体通过审核的会话，才生成 `physical-pressure-session/1.0` 并交给通信层上传、算法层分析。
+硬件层必须在本地完成设备接入、协议解析、基线校正、坏点修复/隔离、掉帧处理和会话有效性审核。只有整体通过审核的会话，才生成 `estimated-force-session/1.0` 并交给通信层上传、算法层分析。
 
 算法层只需要以下物理事实：
 
 - 每一个可用感应点的板面位置；
 - 每一帧的实际时间；
-- 每一点的最终法向力（N）；
+- 每一点的筛查估计力（N）；
 - 坐标、时间和力的单位。
 
 算法层不接收，也不需要判断：设备型号、原始阵列大小、字节序、串口时间、原始计数、电压、校验和、坏点掩码、修复过程、掉帧、断连、质量状态或质量标记。
@@ -22,8 +22,8 @@ flowchart LR
     A[设备字节流] --> B[硬件层
 解析、校正、修复、审核]
     B -->|无效| C[本地丢弃并提示重测]
-    B -->|有效| D[公开物理力场
-位置、时间、法向力]
+    B -->|有效| D[公开筛查估计力场
+位置、时间、estimated force]
     D --> E[通信层上传]
     E --> F[算法层
 特征、评分、报告]
@@ -31,11 +31,11 @@ flowchart LR
 
 ## 2. 公开对象
 
-公开 schema 为 [`physical-pressure-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)，规范说明见[标准物理力场接口 V1](physical-input-interface-v1.md)。
+公开 schema 为 [`estimated-force-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)，规范说明见[筛查估计力接口 V1](physical-input-interface-v1.md)。
 
 ```json
 {
-  "schema_version": "physical-pressure-session/1.0",
+  "schema_version": "estimated-force-session/1.0",
   "session_id": "uuid",
   "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
   "coordinate_unit": "mm",
@@ -45,7 +45,7 @@ flowchart LR
     {"point_id": "point-0001", "board_x_mm": 0.0, "board_y_mm": 0.0}
   ],
   "frames": [
-    {"timestamp_s": 0.04838, "normal_force_n": [0.12]}
+    {"timestamp_s": 0.04838, "estimated_force_n": [0.12]}
   ]
 }
 ```
@@ -63,18 +63,18 @@ flowchart LR
 | 字段 | 含义与约束 |
 | --- | --- |
 | `timestamp_s` | 相对会话起点的实际单调时间，严格递增 |
-| `normal_force_n` | 与 `points[]` 等长、有限、非负、单位 N 的最终逐点法向力 |
+| `estimated_force_n` | 与 `points[]` 等长、有限、非负、单位 N 的逐点筛查估计力 |
 
-`normal_force_n[i]` 对应 `points[i]`。未知、不可修复或不可信的值不能以 `null`、零值或质量状态传给算法层；硬件层必须先修复/隔离，若无法可靠处理则使整个会话不进入公开接口。
+`estimated_force_n[i]` 对应 `points[i]`。未知、不可修复或不可信的值不能以 `null`、零值或质量状态传给算法层；硬件层必须先修复/隔离，若无法可靠处理则使整个会话不进入公开接口。
 
-这里传输的是**法向力场**，而不是 Pa 压强场。Pa 需要已验证的有效接触面积；没有该证据时，硬件层和算法层均不得自行换算或标注为压力 Pa。
+这里传输的是**筛查估计力场**，而不是 Pa 压强场或经认证绝对力。Pa 需要已验证的有效接触面积；没有该证据时，硬件层和算法层均不得自行换算或标注为压力 Pa。
 
 ## 3. 隐藏在硬件层内的内容
 
 | 内部信息 | 处理原则 |
 | --- | --- |
 | 原始 `uint8` 计数、列主序、协议帧、校验和 | 只存于硬件层原始归档/审计，不公开 |
-| 空载基线、零点校正、电压和模型中间值 | 用于生成最终力，不公开 |
+| 空载基线、零点校正、电压和模型中间值 | 用于生成筛查估计力，不公开 |
 | 坏点位置、修复掩码、修复方法 | 硬件层修复或隔离，不公开 |
 | 单帧异常、重同步、短暂插补、掉帧 | 硬件层审核；不足以保证可信时使会话无效 |
 | 断连、持续无有效信号、加密/存储失败 | 会话无效，不生成/上传公开对象 |
@@ -87,15 +87,15 @@ flowchart LR
 | 设备数据可靠获取 | 负责 | 不参与 |
 | 数据校正、坏点修复和会话有效性 | 负责 | 不参与 |
 | 无效会话拦截 | 负责 | 不接收 |
-| 位置、时间、最终法向力 | 输出 | 消费 |
+| 位置、时间、筛查估计力 | 输出 | 消费 |
 | 人体方向、阶段姿态 | 不推断 | 从工作流会话关联并解释 |
 | COP、动态特征、评分和风险提示 | 不负责 | 负责 |
 
-阶段动作、受试者朝向和安全事件由工作流层单独维护，并通过 `session_id` 与物理力场关联；它们不是硬件层公开物理数据的一部分。
+阶段动作、受试者朝向和安全事件由工作流层单独维护，并通过 `session_id` 与筛查估计力场关联；它们不是硬件层公开数据的一部分。
 
 ## 5. 硬件层到软件/UI 层的失败结果通道
 
-硬件质量状态不进入算法物理力场，但无效会话的**可操作原因**必须送到软件/UI 层，以便指导操作员处理后重新测试。该通道与 `physical-pressure-session/1.0` 完全分离，不上传给算法层。
+硬件质量状态不进入算法筛查估计力场，但无效会话的**可操作原因**必须送到软件/UI 层，以便指导操作员处理后重新测试。该通道与 `estimated-force-session/1.0` 完全分离，不上传给算法层。
 
 硬件运行时通过 `HardwareSessionResult.ui_failure` 返回 `HardwareUiFailure`：
 
@@ -125,11 +125,11 @@ DO-P4864 当前已能在硬件内部形成 `physical-sensor-observation/1.0`：�
 `client/hardware_standardization/public_export.py`：
 
 1. `export_committed_valid_hardware_session()` 仅接收硬件层已判定有效并完成本地提交的会话；
-2. 输出 `points[]`、`timestamp_s` 和最终 `normal_force_n`；
+2. 输出 `points[]`、`timestamp_s` 和 `estimated_force_n`；
 3. 从导出物中删除一切原始、协议、质量和修复字段；
 4. 在导出器前硬性阻断无效或未提交会话；
 5. 自动测试覆盖字段最小化、数组对齐、时间单调性和无效/未提交会话零输出。
 
-因此上层组件应只读取 `physical-pressure-session/1.0`，不得直接读取
+因此上层组件应只读取 `estimated-force-session/1.0`，不得直接读取
 `physical-sensor-observation/1.0` 或 `RawFrame`。MVP 筛查输出不构成高精度绝对
 测力或临床结论。

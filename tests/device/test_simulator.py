@@ -97,7 +97,7 @@ class SimulatorFrameTests(unittest.TestCase):
             decoded.extend(parser.feed(transport.read(700)))
 
         self.assertEqual(transport.baud_rate, 1_000_000)
-        self.assertEqual(transport.rate_hz, 12.0)
+        self.assertEqual(transport.rate_hz, 20.7)
         self.assertEqual([int(frame.values[0, 0]) for frame in decoded], [10, 11])
         self.assertEqual(transport.read(700), b"")
 

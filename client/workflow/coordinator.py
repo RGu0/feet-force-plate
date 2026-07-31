@@ -296,6 +296,22 @@ class ScreeningCoordinator:
             action=ClientAction.RETRY_SCREENING,
         )
 
+    def handle_hardware_failure(self, *, error: ClientError) -> None:
+        """Close only an active capture from the typed hardware/UI boundary."""
+
+        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+            return
+        self._telemetry.record_error(
+            code=error.code,
+            session_id=self._session_id,
+            technical_detail=f"hardware_ui_failure:{error.code}",
+        )
+        self._sessions.mark_incomplete(self._session_id)
+        self._lifecycle_status = LifecycleStatus.CLOSED
+        self._validity = SessionValidity.INCOMPLETE
+        self._machine.mark_incomplete()
+        self._error = error
+
     def stop_acquisition(self) -> bool:
         if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
             return False

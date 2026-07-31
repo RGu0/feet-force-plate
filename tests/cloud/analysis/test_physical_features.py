@@ -89,7 +89,7 @@ def _session_payload(
         frames.append(
             {
                 "timestamp_s": float(timestamp),
-                "normal_force_n": forces,
+                "estimated_force_n": forces,
             }
         )
     payload["frames"] = frames

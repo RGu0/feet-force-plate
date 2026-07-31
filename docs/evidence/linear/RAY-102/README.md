@@ -66,7 +66,7 @@
 
 ### 已同步的验收基线
 
-- 云端通过 RAY-117 的 `physical-pressure-session/1.0` 重建标准物理会话；核心算法不得读取设备型号、阵列形状、行列顺序、原始计数或设备专用标定。
+- 云端通过 RAY-117 的 `estimated-force-session/1.0` 重建筛查估计力会话；核心算法不得读取设备型号、阵列形状、行列顺序、原始计数或设备专用曲线细节。
 - 特征采用真实 N、mm、mm²、s 和受试者身体 ML/AP 坐标，覆盖 COP 路径、速度、RMS、稳健范围、95% 椭圆面积、睁闭眼变化、半串联挑战和左右前脚差异。
 - `AnalysisRun` 必须纳入输入清单、硬件适配器、测量一致性、不确定度、协议、特征参数、规则、参考工件和问卷快照等不可变版本身份。
 - 客户安全结果与内部质量、私有规则追踪、日志和诊断信息隔离；真实适配器、参考工件、目标环境性能与临床验证仍是 `In Review` 条件。
@@ -99,7 +99,7 @@
 - 实现文件：`cloud/analysis/physical_input.py`
 - 测试文件：`tests/cloud/analysis/test_physical_input.py`
 - 关键决策：
-  - 只接受 `physical-pressure-session/1.0`、`SUBJECT_ML_AP`、mm/N/mm2/s；未知设备字段在边界拒绝。
+  - 只接受 `estimated-force-session/1.0`、`SUBJECT_ML_AP`、mm/N/s；未知设备字段在边界拒绝。
   - 固定四阶段顺序、方向和左右前脚语义；每点几何和每帧力向量长度严格匹配。
   - 拒绝重复 cell、非正面积、负/非有限力、非递增时间、越界/不连续阶段和非法协议元数据。
   - 保留 `TECHNICAL_INVALID` 等业务状态供后续规则层区分，不在输入层将其解释为受试者风险。
@@ -117,7 +117,7 @@
 - 实现文件：`cloud/analysis/feature_parameters.py`、`cloud/analysis/features.py`
 - 测试文件：`tests/cloud/analysis/test_physical_features.py`
 - 关键决策：
-  - 通过真实 N、mm、mm²、s 和身体 ML/AP 坐标计算每阶段 COP、路径、总/ML/AP 速度、RMS、P5-P95 范围、95% 椭圆、总力 CV、接触面积变化。
+  - 通过 `estimated_force_n`、mm、s 和身体 ML/AP 坐标计算每阶段 COP、路径、总/ML/AP 速度、RMS、P5-P95 范围、95% 椭圆和估计总力 CV。
   - 阶段派生结果支持闭眼/睁眼、半串联/基线和左右前脚对称差异；所有比值与参数版本化。
   - 只在连续时间段内计算路径，不跨越超过两个名义间隔的时间缺口；无效帧排除但不解释为受试者风险。
   - 使用同一物理场景的四点阵列和拆分八点阵列验证结果等价；旧的设备耦合 `FeaturePipeline` 暂保留供历史回归，未作为新 V1 输入。
@@ -165,7 +165,7 @@
 
 - 当前状态：`In Progress`
 - 关联实现 commit：`84b0277` — `Enforce physical balance analysis pipeline`
-- 适用接口：`physical-pressure-session/1.0`，硬件只传递板面 `x_mm/y_mm`、法向载荷 N、实际时间、几何/面积、质量及版本。
+- 适用接口：`estimated-force-session/1.0`，硬件只传递板面 `x_mm/y_mm`、`estimated_force_n` 和实际时间。
 
 ### 本轮实现
 
@@ -197,7 +197,7 @@
 
 ### 已实现
 
-- `cloud/analysis/physical_input.py` 严格只接受公开的 `physical-pressure-session/1.0`：`points(point_id, board_x_mm, board_y_mm)` 与 `frames(timestamp_s, normal_force_n)`，单位固定为 mm/N/s；拒绝面积、质量标记、设备型号、原始计数、校准中间值及动作阶段字段。
+- `cloud/analysis/physical_input.py` 严格只接受公开的 `estimated-force-session/1.0`：`points(point_id, board_x_mm, board_y_mm)` 与 `frames(timestamp_s, estimated_force_n)`，单位固定为 mm/N/s；拒绝面积、质量标记、设备型号、原始计数、曲线中间值及动作阶段字段。
 - 新增 `cloud/analysis/protocol_context.py`：动作阶段、固定左转、左右前脚、完成和安全记录从工作流上下文按 `session_id` 关联；其确定性 SHA-256 纳入完整会话事件及 `PhysicalAnalysisRunKey`，哈希或版本不一致时不产出公开结果。
 - 新增 `cloud/analysis/migrations/0002_physical_protocol_context.sql`：把完整会话验证状态和工作流上下文摘要纳入数据库不可变重算唯一键；既有记录以默认 `REJECTED`/零摘要保持默认关闭，待合规迁移和回填后才可发布。
 - COP、ML/AP 归一化、路径、速度、RMS、范围、95% 椭圆和阶段差异均仅由公开的物理坐标/法向力/时间在算法层重建。无公开面积输入，接触面积指标明确不可用且不在 V1 指标白名单。

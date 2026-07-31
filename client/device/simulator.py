@@ -156,7 +156,7 @@ class SyntheticP4864Transport:
         *,
         frame_source: Callable[[int], np.ndarray] | None = None,
         pattern: PressurePattern = PressurePattern.STATIC,
-        rate_hz: float = 12.0,
+        rate_hz: float = 20.7,
         baud_rate: int = 1_000_000,
         jitter_fraction: float = 0.0,
         realtime: bool = True,

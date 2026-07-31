@@ -5,12 +5,13 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -32,10 +33,21 @@ from PySide6.QtWidgets import (
 from client.local_analysis.display import DisplayFrame
 from client.reporting.copy import report_badges, report_parameter_note
 from client.reporting.models import BasicReportDocument
-from client.workflow.models import ReportStatus, SessionValidity, WorkflowState
+from client.hardware_standardization.dynamic_defect_mask import DynamicDefectStatus
+from client.workflow.models import ClientAction, ReportStatus, SessionValidity, WorkflowState
 
 from .design_system import apply_design_system
 from .app_icon import application_icon
+from .engineering_maintenance import (
+    EngineeringMaintenanceAccessDenied,
+    EngineeringMaintenanceDeviceUnbound,
+    EngineeringMaintenanceService,
+    EngineeringMaintenanceSnapshot,
+)
+from .session_deletion import (
+    CompletedSessionDeletionService,
+    SessionDeletionConfirmationRequired,
+)
 from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
 from .position_guide import FootPlacementWidget
@@ -60,10 +72,204 @@ _ACTION_LABELS = {
     "PRINT_REPORT": "打印",
     "RECHECK_SYSTEM": "重新检查",
     "EXPORT_DIAGNOSTIC": "导出问题诊断包",
+    "OPEN_ENGINEERING_MAINTENANCE": "工程检修",
+    "OPEN_SESSION_DELETION": "本地会话清理",
 }
 
 _WIZARD_STEPS = ("受试者", "选填信息", "授权确认", "设备预检", "站位引导")
 _TOPBAR_PAGES = {PageId.WORKBENCH, PageId.RESULT, PageId.RECORDS, PageId.SUPPORT}
+
+
+class _DefectDistributionWidget(QWidget):
+    """Render only saved defect-mask markers; never a live pressure frame."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("engineeringDefectDistribution")
+        self.setAccessibleName("工程检修坏点分布图")
+        self.setMinimumSize(420, 280)
+        self._snapshot: EngineeringMaintenanceSnapshot | None = None
+
+    def set_snapshot(self, snapshot: EngineeringMaintenanceSnapshot) -> None:
+        self._snapshot = snapshot
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self.rect().adjusted(12, 12, -12, -12)
+        painter.fillRect(rect, QColor("#F5F7FA"))
+        painter.setPen(QPen(QColor("#A8B2C1"), 1))
+        painter.drawRect(rect)
+        snapshot = self._snapshot
+        if snapshot is None:
+            painter.setPen(QColor("#697386"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "完成工程确认后显示已保存的坏点掩码")
+            return
+        rows, columns = snapshot.shape
+        cell_width = rect.width() / columns
+        cell_height = rect.height() / rows
+        colors = {
+            "SUSPECT": QColor("#E7A93A"),
+            "REPAIRABLE": QColor("#D95652"),
+        }
+        for cell in snapshot.marked_cells:
+            painter.fillRect(
+                int(rect.left() + cell.column * cell_width),
+                int(rect.top() + cell.row * cell_height),
+                max(1, int(cell_width)),
+                max(1, int(cell_height)),
+                colors[cell.status.value],
+            )
+
+
+class _EngineeringMaintenanceDialog(QDialog):
+    """One-time confirmation dialog for a deployed engineering service."""
+
+    def __init__(self, service: EngineeringMaintenanceService, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("engineeringMaintenanceDialog")
+        self.setWindowTitle("工程检修")
+        self.setModal(True)
+        self.setMinimumSize(620, 560)
+        self._service = service
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("工程检修 · 坏点分布")
+        title.setObjectName("engineeringMaintenanceTitle")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+        instruction = QLabel(
+            "仅限已授权工程人员。输入由部署层校验的确认信息后，读取当前已绑定设备的保存掩码。"
+        )
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+        confirmation = QLineEdit()
+        confirmation.setObjectName("engineeringMaintenanceConfirmation")
+        confirmation.setEchoMode(QLineEdit.EchoMode.Password)
+        confirmation.setPlaceholderText("输入工程确认信息")
+        confirmation.setAccessibleName("工程确认信息")
+        layout.addWidget(confirmation)
+        confirm = QPushButton("确认并查看")
+        confirm.setObjectName("CONFIRM_ENGINEERING_MAINTENANCE")
+        confirm.clicked.connect(self._load_distribution)
+        layout.addWidget(confirm, alignment=Qt.AlignmentFlag.AlignLeft)
+        status = QLabel("尚未读取设备掩码")
+        status.setObjectName("engineeringMaintenanceStatus")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        distribution = _DefectDistributionWidget()
+        layout.addWidget(distribution, 1)
+        summary = QLabel("黄色 SUSPECT 0 · 红色 REPAIRABLE 0")
+        summary.setObjectName("engineeringMaintenanceSummary")
+        layout.addWidget(summary)
+        boundary = QLabel(
+            "只读：不展示原始压力、帧证据、会话或协议数据；此处不能修改或清除坏点掩码。"
+        )
+        boundary.setObjectName("engineeringMaintenanceBoundary")
+        boundary.setWordWrap(True)
+        boundary.setProperty("mutedText", True)
+        layout.addWidget(boundary)
+
+    def _load_distribution(self) -> None:
+        confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
+        status = self.findChild(QLabel, "engineeringMaintenanceStatus")
+        distribution = self.findChild(
+            _DefectDistributionWidget, "engineeringDefectDistribution"
+        )
+        summary = self.findChild(QLabel, "engineeringMaintenanceSummary")
+        assert confirmation is not None
+        assert status is not None
+        assert distribution is not None
+        assert summary is not None
+        try:
+            snapshot = self._service.read_distribution(confirmation.text())
+        except EngineeringMaintenanceAccessDenied:
+            status.setText("工程确认未通过，未读取设备掩码。")
+            return
+        except EngineeringMaintenanceDeviceUnbound:
+            status.setText("当前终端没有已验证的物理设备绑定，无法查看分布。")
+            return
+        except ValueError:
+            status.setText("已绑定设备的掩码不可读取，请按工程流程处理。")
+            return
+        finally:
+            confirmation.clear()
+        distribution.set_snapshot(snapshot)
+        summary.setText(
+            f"黄色 SUSPECT {snapshot.status_counts[DynamicDefectStatus.SUSPECT]}"
+            f" · 红色 REPAIRABLE {snapshot.status_counts[DynamicDefectStatus.REPAIRABLE]}"
+        )
+        status.setText(
+            f"已读取绑定设备 {snapshot.device_id} 的掩码版本 {snapshot.mask_version} · {snapshot.health_status.value}"
+        )
+
+
+class _SessionDeletionDialog(QDialog):
+    """A deliberately narrow operator-confirmed single-session deletion UI."""
+
+    def __init__(self, service: CompletedSessionDeletionService, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("sessionDeletionDialog")
+        self.setWindowTitle("本地会话清理")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self._service = service
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        layout.addWidget(QLabel("本地会话清理（单次操作）"))
+        note = QLabel("仅可删除没有保留报告的已完成有效会话。此操作不会批量、定时或因网络确认自动执行。")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        selector = QComboBox()
+        selector.setObjectName("sessionDeletionSelector")
+        for session_id in service.candidates():
+            selector.addItem(session_id, session_id)
+        layout.addWidget(selector)
+        confirmation = QLineEdit()
+        confirmation.setObjectName("sessionDeletionConfirmation")
+        confirmation.setPlaceholderText("输入：删除 <会话编号>")
+        layout.addWidget(confirmation)
+        confirm = QPushButton("确认删除此会话")
+        confirm.setObjectName("CONFIRM_SESSION_DELETION")
+        confirm.clicked.connect(self._delete_selected)
+        layout.addWidget(confirm, alignment=Qt.AlignmentFlag.AlignLeft)
+        status = QLabel("请选择会话并完成确认；不会删除其他会话。")
+        status.setObjectName("sessionDeletionStatus")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        self._refresh_empty_state()
+
+    def _refresh_empty_state(self) -> None:
+        selector = self.findChild(QComboBox, "sessionDeletionSelector")
+        confirm = self.findChild(QPushButton, "CONFIRM_SESSION_DELETION")
+        status = self.findChild(QLabel, "sessionDeletionStatus")
+        assert selector is not None and confirm is not None and status is not None
+        if selector.count() == 0:
+            selector.setEnabled(False)
+            confirm.setEnabled(False)
+            status.setText("没有可人工删除的已完成有效会话。")
+
+    def _delete_selected(self) -> None:
+        selector = self.findChild(QComboBox, "sessionDeletionSelector")
+        confirmation = self.findChild(QLineEdit, "sessionDeletionConfirmation")
+        status = self.findChild(QLabel, "sessionDeletionStatus")
+        assert selector is not None and confirmation is not None and status is not None
+        session_id = str(selector.currentData())
+        try:
+            self._service.delete(session_id=session_id, confirmation=confirmation.text())
+        except SessionDeletionConfirmationRequired:
+            status.setText(f"未删除。请输入“删除 {session_id}”后再确认。")
+            return
+        except (ValueError, FileNotFoundError, RuntimeError):
+            status.setText("此会话当前不可删除，请刷新后重试或联系技术支持。")
+            return
+        confirmation.clear()
+        selector.removeItem(selector.currentIndex())
+        self._refresh_empty_state()
+        status.setText("已删除该本地会话；未影响其他会话。")
 
 
 class ScreeningWindow(QMainWindow):
@@ -80,6 +286,8 @@ class ScreeningWindow(QMainWindow):
         self._preflight_failed = False
         self._preflight_ready = False
         self._record_rows: tuple[ScreeningRecordRow, ...] = ()
+        self._engineering_maintenance_dialog: _EngineeringMaintenanceDialog | None = None
+        self._session_deletion_dialog: _SessionDeletionDialog | None = None
         self._pages: dict[PageId, QWidget] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
@@ -362,6 +570,38 @@ class ScreeningWindow(QMainWindow):
             snapshot.pending_summary.removeprefix("待同步数据：").strip()
         )
         page.findChild(QLabel, "appVersion").setText(snapshot.app_version)
+
+    def set_engineering_maintenance_available(self, available: bool) -> None:
+        """Expose maintenance only when deployment supplies trusted wiring."""
+
+        entry = self._pages[PageId.SUPPORT].findChild(
+            QPushButton, "OPEN_ENGINEERING_MAINTENANCE"
+        )
+        assert entry is not None
+        entry.setVisible(available)
+
+    def set_session_deletion_available(self, available: bool) -> None:
+        entry = self._pages[PageId.SUPPORT].findChild(
+            QPushButton, "OPEN_SESSION_DELETION"
+        )
+        assert entry is not None
+        entry.setVisible(available)
+
+    def show_engineering_maintenance(self, service: EngineeringMaintenanceService) -> None:
+        """Open a separately confirmed, read-only engineering projection."""
+
+        dialog = _EngineeringMaintenanceDialog(service, self)
+        self._engineering_maintenance_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def show_session_deletion(self, service: CompletedSessionDeletionService) -> None:
+        dialog = _SessionDeletionDialog(service, self)
+        self._session_deletion_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def present_report_document(self, document: BasicReportDocument) -> None:
         page = self._pages[PageId.REPORT_PREVIEW]
@@ -1380,6 +1620,16 @@ class ScreeningWindow(QMainWindow):
         action_layout.setSpacing(12)
         action_layout.addWidget(self._action_button("RECHECK_SYSTEM", primary=False))
         action_layout.addWidget(self._action_button("EXPORT_DIAGNOSTIC", primary=False, ghost=True))
+        maintenance = self._action_button(
+            "OPEN_ENGINEERING_MAINTENANCE", primary=False, ghost=True
+        )
+        maintenance.setVisible(False)
+        maintenance.setToolTip("仅在已配置工程授权与设备绑定的终端可用")
+        action_layout.addWidget(maintenance)
+        deletion = self._action_button("OPEN_SESSION_DELETION", primary=False, ghost=True)
+        deletion.setVisible(False)
+        deletion.setToolTip("仅在部署明确接入单会话人工清理服务时可用")
+        action_layout.addWidget(deletion)
         action_layout.addStretch(1)
         inner_layout.addWidget(actions)
         note = self._label("诊断包默认不含原始会话与身份明文；附加会话数据需要独立确认。支持热线 400-820-1120。", "supportNote")
@@ -1876,10 +2126,17 @@ class ScreeningWindow(QMainWindow):
         page = self._pages[PageId.RESULT]
         report_ready = state.report_status is ReportStatus.BASIC_READY
         retry_required = state.validity in {SessionValidity.INVALID, SessionValidity.INCOMPLETE, SessionValidity.FAILED}
+        retry_allowed = (
+            retry_required
+            and (
+                state.error is None
+                or state.error.action is ClientAction.RETRY_SCREENING
+            )
+        )
         page.findChild(QPushButton, "VIEW_BASIC_REPORT").setVisible(report_ready)
         page.findChild(QPushButton, "START_NEXT_SCREENING").setVisible(report_ready)
         page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(retry_required)
-        page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_required)
+        page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_allowed)
         title = page.findChild(QLabel, "resultTitle")
         summary = page.findChild(QLabel, "resultSummary")
         basic = page.findChild(QLabel, "basicReportStatusText")
@@ -1907,8 +2164,12 @@ class ScreeningWindow(QMainWindow):
                 str(self._icon_asset("status-warning.svg"))
             )
             title.setText("本次检测未完成")
-            summary.setText("本次采集未通过质量校核，未生成报告。请协助受试者重新站稳后再次检测。")
-            basic.setText("质量校核未通过")
+            summary.setText(
+                state.error.operator_message
+                if state.error is not None
+                else "本次采集未通过质量校核，未生成报告。请协助受试者重新站稳后再次检测。"
+            )
+            basic.setText("本次检测未完成")
             self._set_pill_tone(basic_pill, "warning")
             basic_pill.show()
             full.hide()

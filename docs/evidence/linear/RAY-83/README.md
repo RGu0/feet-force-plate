@@ -96,3 +96,128 @@ Automated verification on 2026-07-23:
 Not yet verified on physical hardware: a real ≥5-second unloaded baseline, bad-point injection
 against a board, saturation behavior, true sustained device timing and operator confirmation of
 the re-test flow. These are required before Done.
+
+## 2026-07-30 P1 re-verification
+
+The RAY-83 acceptance was reread against the current observed compact profile
+(3,079-byte `uint8`, 48×64 column-major, observed 20.7 Hz—not the historical
+12 Hz wording in this issue title). The software boundary is covered by the
+current tests: raw frames are immutable; repair produces a separate derived
+matrix; valid sessions alone create encrypted raw/derived artifacts and the
+minimal public `estimated-force-session/1.0` export; invalid quality results
+produce neither a formal session nor a public export. The public export test
+asserts that it contains no raw counts, source index, protocol, CheckSum,
+quality flags, repair mask/method or estimated-force field.
+
+```text
+bash scripts/local-env.sh python -m pytest tests/hardware_standardization tests/device/test_session_runtime.py tests/spool -q
+```
+
+Result: **88 passed in 1.24s**. Configured pre-commit, mypy, `uv lock --check`
+and `git diff --check` also passed. The configured mypy target remains the
+serial/parser contract rather than the whole standardization package.
+
+The connected-device capture is usable as raw parser/replay evidence only. It
+has no approved ≥5-second unloaded baseline, force-calibration artifact or
+physical saturation/bad-point injection; therefore it cannot be promoted to a
+valid physical-pressure session or used to validate `estimated_force_n`.
+RAY-83 remains `In Review`. This evidence update is committed separately from
+the implementation to preserve that boundary.
+
+## 2026-07-30 RAY-86 overlap reconciliation
+
+RAY-86 supplies true-device evidence for the parts of this pipeline that share
+the reliable-session boundary: a 5.139-second empty-board baseline (111 decoded
+frames), a previously recorded 600-second valid-session commit/recovery, and a
+person-assisted cable removal that made the current session `INVALID` after 970
+valid decoded frames. The latter created no formal SQLite session, segment,
+derived artifact, network handoff, or public algorithm export after recovery.
+
+Those runs corroborate the existing automated coverage for immutable raw versus
+derived data, short-fault audit/reconstruction, invalid-session discard and the
+privacy-filtered public-export contract. The common final focused command was:
+
+```text
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization tests/startup_validation client/tests/test_ray_86_hardware_ui.py client/tests/test_ray_101_controller.py client/tests/test_ray_101_coordinator.py client/tests/test_ray_101_qt_shell.py tests/device/test_hardware_ui_manual_acceptance_script.py -q
+# 218 passed in 2.88s
+```
+
+This is a cross-issue evidence reference, not a physical-force claim. No
+manufacturer calibration artifact, controlled physical load, saturation
+injection or hardware bad-point injection was supplied. Accordingly
+`estimated_force_n` remains a versioned internal estimate only, and an exported
+`estimated_force_n` is the frozen screening estimate; it is not a clinical or
+metrological absolute-force claim.
+RAY-83 remains `In Review` for those two force-output acceptance boundaries.
+RAY-86 evidence commits: `9f94fbb`, `b5396b0`, `210809b`.
+
+## 2026-07-30 known-weight calibration reconciliation — RAY-83 accepted for P1
+
+The preceding conclusion was too broad: it correctly records that no
+manufacturer-issued or clinical/metrological calibration artifact was supplied,
+but the repository does contain—and the current device specification actually
+loads—a project-owned, two-group known-weight calibration for the P1 screening
+scope.
+
+- The archived DO/DP-P4864 records contain two independent known-weight groups:
+  A (original contact area) and B (smaller contact area), each using the
+  4.5–8.0 kg working range.  Held-out MAE was 1.643% for A and 2.855% for B.
+  The record is
+  `../RAY-117/known-weight-calibration-test-record-2026-07-22.md`
+  (SHA-256 `ab620597f9b81adfa7f4231a35aa05393fb7e1d1cc565b8a5b0de4e10636f96a`).
+- `docs/hardware/device-specifications/do-p4864/1.0.json` selects
+  `do-p4864-voltage-force/mvp-screening-v1-20260722`,
+  `MVP_SCREENING_ESTIMATED_V1`, a frozen two-slope monotonic
+  voltage-to-force model, in the validated 4.5–8.0 kg load range.
+- `CalibratedArrayAdapter` preserves every raw count and derives
+  zero-corrected/repaired values separately.  Under that profile it emits only
+  `estimated_force_n` and the `ESTIMATED_FORCE_V1` provenance flag.
+  `export_public_physical_session()` accepts only a hardware-valid,
+  locally committed session and maps that frozen estimate to the deliberately
+  minimal public `estimated_force_n` contract; it exports neither raw arrays,
+  voltage, repair mask, protocol nor quality detail.
+
+Current focused regression:
+
+```text
+bash scripts/local-env.sh python -m pytest \
+  tests/hardware_standardization/test_device_specification.py \
+  tests/hardware_standardization/test_quality_gate.py \
+  tests/hardware_standardization/test_public_export.py \
+  tests/hardware_standardization/test_calibrated_array.py \
+  tests/hardware_standardization/test_force_calibration_variants.py -q
+# 15 passed in 0.73s
+```
+
+**Acceptance boundary:** this closes the two RAY-83 MVP checkboxes: the private
+derived force pipeline and the privacy-filtered physical-point public contract
+are implemented and verified for **MVP screening**.  It does **not** claim a
+high-precision absolute force measurement, a human-weight reconstruction, a
+clinical result, or metrological certification.  The two contact areas,
+unmeasured contact profile/temperature, limited load range and missing
+repeatability/long-term-drift study remain explicit follow-up limits rather
+than P1 blockers.
+
+## 2026-07-30 product terminology and input-contract migration
+
+Product direction now fixes **all screening calculations** on the frozen
+`estimated_force_n` curve.  The public hardware-to-algorithm object is
+`estimated-force-session/1.0`, whose frames expose `estimated_force_n`; no
+product path reads, derives, or describes a separate “real”, “final”, or
+medical-grade force value.  The existing known-weight evidence establishes the
+screening curve and its version, not a medical or metrological claim.
+
+Verification after migration:
+
+```text
+bash scripts/local-env.sh python -m pytest \
+  tests/hardware_standardization tests/cloud/analysis \
+  tests/cloud/reporting/test_static_balance_reporting.py -q --tb=short
+# 135 passed in 1.04s
+
+bash scripts/local-env.sh python -m ruff check <changed Python files>
+# All checks passed
+```
+
+Implementation and contract-migration commit:
+`c833b684de1a4b4f13ef0aa2e1c5f7a3c1625b98`.

@@ -1,4 +1,4 @@
-"""Minimal hardware-to-algorithm physical-force export.
+"""Minimal hardware-to-algorithm screening estimated-force export.
 
 This module is the only public boundary for a hardware-standardized session.
 It deliberately accepts the whole-session decision produced by the hardware
@@ -44,42 +44,42 @@ class PhysicalPressurePoint:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalPressureFrame:
-    """One algorithm-facing force vector at a measured monotonic time."""
+    """One algorithm-facing estimated-force vector at measured monotonic time."""
 
     timestamp_s: float
-    normal_force_n: tuple[float, ...]
+    estimated_force_n: tuple[float, ...]
 
     def __post_init__(self) -> None:
         if not isfinite(self.timestamp_s) or self.timestamp_s < 0:
             raise ValueError("timestamp_s must be finite and non-negative")
-        if not self.normal_force_n or any(
-            not isfinite(value) or value < 0 for value in self.normal_force_n
+        if not self.estimated_force_n or any(
+            not isfinite(value) or value < 0 for value in self.estimated_force_n
         ):
-            raise ValueError("normal_force_n must contain finite non-negative values")
+            raise ValueError("estimated_force_n must contain finite non-negative values")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "timestamp_s": self.timestamp_s,
-            "normal_force_n": list(self.normal_force_n),
+            "estimated_force_n": list(self.estimated_force_n),
         }
 
 
 @dataclass(frozen=True, slots=True)
 class PhysicalPressureSession:
-    """Hardware-independent `physical-pressure-session/1.0` input object."""
+    """Hardware-independent `estimated-force-session/1.0` input object."""
 
     session_id: str
     points: tuple[PhysicalPressurePoint, ...]
     frames: tuple[PhysicalPressureFrame, ...]
-    schema_version: str = "physical-pressure-session/1.0"
+    schema_version: str = "estimated-force-session/1.0"
     coordinate_frame: str = "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN"
     coordinate_unit: str = "mm"
     force_unit: str = "N"
     time_unit: str = "s"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "physical-pressure-session/1.0":
-            raise ValueError("unsupported public pressure session schema")
+        if self.schema_version != "estimated-force-session/1.0":
+            raise ValueError("unsupported estimated-force session schema")
         if not self.session_id:
             raise ValueError("session_id is required")
         if self.coordinate_frame != "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN":
@@ -95,7 +95,7 @@ class PhysicalPressureSession:
         timestamps = tuple(frame.timestamp_s for frame in self.frames)
         if any(current <= previous for previous, current in zip(timestamps, timestamps[1:])):
             raise ValueError("public frame timestamps must be strictly increasing")
-        if any(len(frame.normal_force_n) != len(self.points) for frame in self.frames):
+        if any(len(frame.estimated_force_n) != len(self.points) for frame in self.frames):
             raise ValueError("public force vectors must match public point count")
 
     def to_dict(self) -> dict[str, object]:
@@ -118,12 +118,11 @@ def export_committed_valid_hardware_session(
     *,
     local_session_committed: bool,
 ) -> PhysicalPressureSession:
-    """Export only an already-committed, hardware-accepted force session.
+    """Export only an already-committed, hardware-accepted estimated-force session.
 
-    ``estimated_force_n`` is the frozen MVP screening force conversion selected
-    by the hardware layer.  It is deliberately renamed to the public contract's
-    ``normal_force_n`` here; no raw-count, voltage, repair, quality or protocol
-    attribute is copied across the boundary.
+    The frozen MVP screening ``estimated_force_n`` is the public algorithm
+    value.  No raw-count, voltage, repair, quality or protocol attribute is
+    copied across the boundary.
     """
 
     if evaluation.validity is not HardwareDataValidity.VALID:
@@ -152,30 +151,28 @@ def export_committed_valid_hardware_session(
     frames = tuple(
         PhysicalPressureFrame(
             timestamp_s=frame.timestamp_s,
-            normal_force_n=_final_normal_force(frame, active_indices),
+            estimated_force_n=_estimated_force(frame, active_indices),
         )
         for frame in source.frames
     )
     return PhysicalPressureSession(session_id=source.session_id, points=points, frames=frames)
 
 
-def _final_normal_force(
+def _estimated_force(
     frame: PhysicalArrayFrame, active_indices: tuple[int, ...]
 ) -> tuple[float, ...]:
     values: tuple[float | None, ...] | None = None
-    if all(value is not None for value in frame.normal_force_n):
-        values = frame.normal_force_n
-    elif frame.estimated_force_n is not None and all(
+    if frame.estimated_force_n is not None and all(
         value is not None for value in frame.estimated_force_n
     ):
         values = frame.estimated_force_n
     if values is None:
         raise PublicPressureExportError(
-            "hardware session is missing a final force value for at least one point"
+            "hardware session is missing an estimated force value for at least one point"
         )
     force = tuple(float(values[index]) for index in active_indices)
     if any(not isfinite(value) or value < 0 for value in force):
         raise PublicPressureExportError(
-            "public normal-force values must be finite and non-negative"
+            "public estimated-force values must be finite and non-negative"
         )
     return force

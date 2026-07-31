@@ -1,6 +1,6 @@
 """Workflow-owned static-balance context, associated with a force session by ID.
 
-This is intentionally not part of ``physical-pressure-session/1.0``.  It is
+This is intentionally not part of ``estimated-force-session/1.0``.  It is
 provided by the screening workflow after operator confirmation and is hashed
 into the immutable analysis-run identity.
 """

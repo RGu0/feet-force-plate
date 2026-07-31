@@ -65,7 +65,6 @@ def test_session_preserves_raw_and_relative_values_without_claiming_force() -> N
                 raw_count=(4, 8),
                 zero_corrected_count=(1.0, -1.0),
                 relative_load_count=(1.0, 0.0),
-                normal_force_n=(None, None),
                 quality=FrameQuality.DEGRADED,
                 quality_flags=frozenset({"ZERO_OFFSET_APPLIED", "FORCE_UNCALIBRATED"}),
             ),
@@ -77,24 +76,23 @@ def test_session_preserves_raw_and_relative_values_without_claiming_force() -> N
 
     assert session.frames[0].raw_count == (4, 8)
     assert session.frames[0].relative_load_count == (1.0, 0.0)
-    assert session.frames[0].normal_force_n == (None, None)
+    assert session.frames[0].estimated_force_n is None
     assert session.uncertainty.validation == "UNVALIDATED"
 
 
-def test_algorithm_physical_pressure_session_rejects_unvalidated_or_missing_newtons() -> None:
+def test_algorithm_estimated_force_session_rejects_missing_screening_estimate() -> None:
     frame = PhysicalArrayFrame(
         timestamp_s=0.0,
         raw_count=(1,),
         zero_corrected_count=(0.0,),
         relative_load_count=(0.0,),
-        normal_force_n=(None,),
         quality=FrameQuality.DEGRADED,
         quality_flags=frozenset({"FORCE_UNCALIBRATED"}),
     )
 
-    with pytest.raises(ValueError, match="validated normal force"):
+    with pytest.raises(ValueError, match="MVP screening estimated force"):
         PhysicalArraySession(
-            schema_version="physical-pressure-session/1.0",
+            schema_version="estimated-force-session/1.0",
             session_id="not-ready-for-algorithm",
             coordinate_frame="BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
             coordinate_unit="mm",
@@ -117,7 +115,6 @@ def test_session_rejects_duplicate_source_indices_and_non_increasing_time() -> N
         raw_count=(1, 2),
         zero_corrected_count=None,
         relative_load_count=None,
-        normal_force_n=(None, None),
         quality=FrameQuality.DEGRADED,
         quality_flags=frozenset({"BASELINE_MISSING", "FORCE_UNCALIBRATED"}),
     )

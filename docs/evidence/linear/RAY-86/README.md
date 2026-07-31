@@ -208,3 +208,140 @@ and automated mappings are present, but that UI acceptance is not claimed here.
 ## Commit
 
 Automated acceptance evidence commit: pending.
+
+Renewed physical-runtime evidence: `3f74320` — `Record RAY-86 hardware acceptance`.
+
+## 2026-07-29 renewed local hardware acceptance
+
+With `/dev/cu.usbserial-1140` available, the existing production-composition
+acceptance script completed a local 5-second empty-board baseline followed by a
+600-second capture, valid-session commit and fresh recovery scan. The result
+was `COMPLETED` / `VALID` / committed with 12,404 real decoded frames. Five
+tail-failure candidates were retained as audit events and reconstructed only in
+the derived stream; the largest neighboring-valid gap was 112.671125 ms, below
+the 5-second invalidation threshold. Candidate CheckSum mismatched all observed
+frames and remained observe-only.
+
+The post-restart store reported `CLOSED` / `VALID`, one derived artifact, and
+no temporary recovery, quarantine, orphan registration, requeue or interrupted
+staging action. Sanitized details are in
+[`2026-07-29-runtime-acceptance.md`](2026-07-29-runtime-acceptance.md). This
+adds real-device evidence; RAY-86 still requires an operator-visible UI
+consumption check of `HardwareUiFailure` before it can be marked Done.
+
+## 2026-07-29 HardwareUiFailure application/UI consumption
+
+The previously missing software/UI consumption path is implemented and covered by focused
+controller, coordinator and Qt tests. Only the typed `HardwareUiFailure` crosses from hardware
+into the app; the result page renders a localized recovery instruction without raw transport,
+protocol or sensor detail. Retry is visible only for retryable failures, while support-only
+failures instruct the operator to contact support and do not offer a misleading retry.
+
+Automated/UI visual evidence is in
+[`2026-07-29-hardware-ui-consumption.md`](2026-07-29-hardware-ui-consumption.md), implementation
+commit `63aad63`. A deployed-composition operator acknowledgement is still required, so RAY-86
+remains `In Review` rather than `Done`.
+
+## 2026-07-30 current P1 audit and interrupted-run cleanup
+
+The 2026-07-29 real-device 10-minute `VALID` / local-commit / fresh-recovery
+acceptance remains the authoritative long-run evidence. A planned duplicate
+600-second run on the available CH340 device was deliberately stopped after it
+was recognized as redundant; it is **not** a new acceptance result and no raw
+output from that attempt was retained in this repository.
+
+The isolated `/private/tmp` staging directory created before the deliberate
+interrupt was reopened through the existing `RecoveryScanner`. It discarded one
+interrupted staging directory and found zero formal sessions, segments and
+derived artifacts. This only confirms the already-required interrupted-capture
+cleanup boundary; it does not add another valid session or replace the existing
+ten-minute evidence.
+
+Current automatic P1 regression:
+
+```text
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization -q
+# 151 passed in 1.45s
+```
+
+`git diff --check` passed and the worktree was clean. RAY-86 remains `In Review`
+until an engineering/operator person verifies the deployed UI's localized
+`HardwareUiFailure` recovery guidance and re-test choice. That acknowledgement
+cannot be inferred from fixtures, screenshots or a serial capture.
+
+## 2026-07-30 assisted physical cable-removal rerun
+
+This was a new, person-assisted true-device run on `/dev/cu.usbserial-1140`.
+Before starting, the device was enumerated and had no `lsof` owner. The operator
+kept the board empty for the 5-second baseline, then physically removed the USB
+cable when prompted, held it disconnected for about five seconds and reinserted
+it. The host subsequently re-enumerated the same `/dev/cu.usbserial-1140` node
+with no process holding it.
+
+The local-only production acceptance runner requested a 5-second baseline and
+120-second capture. The baseline passed with 111 decoded frames over
+5.139628208 seconds and a maximum cell-median count of 3. The physical removal
+produced `INVALID` / `committed=false` after 970 valid decoded frames, with the
+sanitized reason class `transport disconnected`. There were no invalid parser
+candidates or derived reconstructions before the removal; candidate checksum
+remained observe-only and mismatched all observed frames.
+
+Fresh SQLite and filesystem checks after the runner ended found zero formal
+sessions, segments and derived artifacts; the staging directory had no child.
+The raw/encrypted staging data remained only under the isolated `/private/tmp`
+test root and was not copied into the repository. The repository contains only
+the sanitized summary:
+[`cable-removal-runtime-20260730.json`](cable-removal-runtime-20260730.json)
+(SHA-256 `9e698d2086bed1ffefa99d7b411d4afdb3144a4c2caa9be68411230c969d8086`).
+
+This is physical cable-removal and reconnect evidence for the reliable-capture
+invalid-session boundary. It is not a calibrated-force, normal-foot-load,
+dynamic-defect, full-disk, power-loss or customer-UI result. RAY-86 remains
+`In Review` pending the separate deployed UI/operator acknowledgement.
+
+## 2026-07-30 person-assisted application UI acceptance
+
+The remaining RAY-86 operator-facing acceptance was performed by a person in
+the local Qt application shell. The deliberately narrow launcher added in
+`b5396b0` (`Add RAY-86 manual UI acceptance runner`) constructs one typed
+`HardwareUiFailure` at a time; it never opens a serial device, reads a session,
+or writes patient, raw-frame, or session data.
+
+The operator visually confirmed both presentations:
+
+1. `DEVICE_DISCONNECTED` / `RECONNECT_DEVICE` showed the localized reconnect
+   instruction, stable `E-DEV-002`, **本次检测未完成**, and a single retry action
+   **重新检测**. Screenshot:
+   [`manual-ui-device-disconnected-20260730.png`](manual-ui-device-disconnected-20260730.png)
+   (SHA-256 `ca41f44b55e30dc14ee33aef3fda1b26432219a3e034e4256ee61de32fbf9a12`).
+2. `LOCAL_FINALIZATION_FAILED` / `CONTACT_SUPPORT` showed stable `E-DAT-102`,
+   **本次检测未完成**, and the localized contact-support/local-save instruction.
+   It offered only **返回工作台**, not an unsafe retry. Screenshot:
+   [`manual-ui-local-finalization-failed-20260730.png`](manual-ui-local-finalization-failed-20260730.png)
+   (SHA-256 `5ef0918191a558ed7ea8b2578f5b8d8c7e78aca590c6039bc8a17b9790d36f27`).
+
+In both views, the person confirmed that no serial path, raw exception,
+protocol/checksum term, raw matrix, bad-point/quality detail, or stack trace
+was shown. This completes the issue's software/UI-layer human recovery-guidance
+acceptance; the prior physical 10-minute and cable-removal records remain the
+separate true-device evidence.
+
+Reproducible commands:
+
+```text
+bash scripts/local-env.sh python scripts/run_hardware_ui_manual_acceptance.py --scenario device-disconnected
+bash scripts/local-env.sh python scripts/run_hardware_ui_manual_acceptance.py --scenario local-finalization-failed
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization tests/startup_validation client/tests/test_ray_86_hardware_ui.py client/tests/test_ray_101_controller.py client/tests/test_ray_101_coordinator.py client/tests/test_ray_101_qt_shell.py tests/device/test_hardware_ui_manual_acceptance_script.py -q
+# 218 passed in 2.88s
+```
+
+Acceptance boundary: the UI launcher injects typed faults into the real
+application controller/shell. The physical cable removal was separately
+verified by the production acquisition runner. This evidence does not claim a
+physical calibrated-force load, a true power-loss at an arbitrary filesystem
+write, or OS secure-storage validation; those are outside RAY-86's checklist
+and/or tracked in the corresponding P1 issues.
+
+## Commit
+
+Manual UI launcher: `b5396b0` — `Add RAY-86 manual UI acceptance runner`.

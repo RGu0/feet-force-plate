@@ -43,6 +43,26 @@ def _dynamic_frames(*, failed_cells: tuple[tuple[int, int], ...] = ()) -> tuple[
     return tuple(frames)
 
 
+def _widespread_low_response_frames() -> tuple[np.ndarray, ...]:
+    """A moving field with many low cells is not per-cell defect evidence."""
+
+    frames = []
+    for level in (20.0, 35.0, 55.0, 80.0, 110.0, 150.0):
+        values = np.full(SHAPE, level, dtype=np.float64)
+        values[1:-1:2, 1:-1:2] = 0.0
+        frames.append(values)
+    return tuple(frames)
+
+
+def _edge_failed_frames() -> tuple[np.ndarray, ...]:
+    frames = []
+    for level in (20.0, 35.0, 55.0, 80.0, 110.0, 150.0):
+        values = np.full(SHAPE, level, dtype=np.float64)
+        values[0, 5] = 0.0
+        frames.append(values)
+    return tuple(frames)
+
+
 def test_dynamic_neighbour_and_temporal_evidence_promotes_only_after_two_sessions() -> None:
     failed = (4, 5)
     first = observe_dynamic_defects(
@@ -52,6 +72,8 @@ def test_dynamic_neighbour_and_temporal_evidence_promotes_only_after_two_session
     source_index = failed[1] * SHAPE[0] + failed[0]
     assert first.candidate_source_indices == (source_index,)
     assert first.updated_mask.entries[0].status is DynamicDefectStatus.SUSPECT
+    assert first.updated_mask.entries[0].positive_frame_observations == 6
+    assert first.updated_mask.entries[0].supported_frame_opportunities == 6
     assert not first.updated_mask.repairable_source_indices
 
     second = observe_dynamic_defects(
@@ -63,8 +85,30 @@ def test_dynamic_neighbour_and_temporal_evidence_promotes_only_after_two_session
     entry = second.updated_mask.entries[0]
     assert entry.status is DynamicDefectStatus.REPAIRABLE
     assert entry.confirmed_observations == 2
+    assert entry.positive_frame_observations == 12
+    assert entry.supported_frame_opportunities == 12
     assert second.updated_mask.repairable_source_indices == frozenset({source_index})
     assert second.updated_mask.health_status(DynamicDefectPolicy()) is DeviceHealthStatus.READY
+
+
+def test_repeated_edge_evidence_is_accumulated_but_makes_the_device_unavailable() -> None:
+    failed = (0, 5)
+    first = observe_dynamic_defects(
+        _mask(), session_id="edge-1", matrices=_edge_failed_frames()
+    )
+    second = observe_dynamic_defects(
+        first.updated_mask,
+        session_id="edge-2",
+        matrices=_edge_failed_frames(),
+    )
+
+    source_index = failed[1] * SHAPE[0] + failed[0]
+    entry = second.updated_mask.entries[0]
+    assert second.candidate_source_indices == (source_index,)
+    assert entry.positive_frame_observations == 12
+    assert entry.supported_frame_opportunities == 12
+    assert entry.status is DynamicDefectStatus.REPAIRABLE
+    assert second.updated_mask.health_status(DynamicDefectPolicy()) is DeviceHealthStatus.HEALTH_UNAVAILABLE
 
 
 def test_static_window_and_ordinary_dynamic_pressure_do_not_create_a_mask_entry() -> None:
@@ -78,6 +122,40 @@ def test_static_window_and_ordinary_dynamic_pressure_do_not_create_a_mask_entry(
     assert not static_result.updated_mask.entries
     assert not normal_result.candidate_source_indices
     assert not normal_result.updated_mask.entries
+
+
+def test_widespread_low_response_is_suppressed_not_persisted_as_sensor_evidence() -> None:
+    result = observe_dynamic_defects(
+        _mask(),
+        session_id="broad-human-contact",
+        matrices=_widespread_low_response_frames(),
+    )
+
+    assert result.candidate_source_indices == ()
+    assert result.suppressed_candidate_count > 8
+    assert result.updated_mask.mask_version == 0
+    assert result.updated_mask.entries == ()
+
+
+def test_suppressed_candidate_flood_is_audited_without_persisting_coordinates(tmp_path) -> None:
+    store = DynamicDefectMaskStore(
+        data_root=tmp_path,
+        device_id="do-p4864-flood-audit",
+        shape=SHAPE,
+    )
+    observation = store.update_after_session(
+        store.load_for_session(),
+        session_id="broad-human-contact",
+        matrices=_widespread_low_response_frames(),
+    )
+
+    with DeviceHealthAuditStore(tmp_path) as audit:
+        events = audit.history("do-p4864-flood-audit")
+
+    assert observation.updated_mask.entries == ()
+    assert [(event.event_type.value, event.candidate_count) for event in events] == [
+        ("SUSPECT_FLOOD_SUPPRESSED", observation.suppressed_candidate_count)
+    ]
 
 
 def test_adjacent_promoted_bad_cells_make_device_unavailable_and_gate_rejects_capture() -> None:

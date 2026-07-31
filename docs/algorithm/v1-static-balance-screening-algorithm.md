@@ -6,7 +6,7 @@
 | 协议版本 | `1.0` |
 | 算法集版本 | `fall-screen-rule-set/1.0` |
 | 指标管线版本 | `static-balance-feature-pipeline/1.0` |
-| 标准输入版本 | `physical-pressure-session/1.0` |
+| 标准输入版本 | `estimated-force-session/1.0` |
 | 适用人群 | 60 岁及以上 |
 | 产品用途 | 机构端初步筛查和进一步评估提示 |
 | 非用途 | 医疗诊断、治疗建议、处方建议、未来跌倒概率预测 |
@@ -14,7 +14,7 @@
 
 ## 1. 设计结论
 
-本文只适用于 `VALIDATED_RELEASE`：即输入已经满足 `physical-pressure-session/1.0` 的正式物理验证要求，并且可以进入机构端筛查结论与报告。当前 DO-P4864 首版候选力可以支持算法开发、回放和特征迭代，但必须走 `PROVISIONAL_RESEARCH` 路径；具体边界见 [算法层架构与输入分流](01-algorithm-layer-architecture.md) 与 [首版候选力算法实现说明](02-provisional-force-implementation.md)。
+本文以 `SCREENING_ESTIMATED` 为产品输入：输入满足 `estimated-force-session/1.0` 的硬件质量门控，并以冻结的 `estimated_force_n` 计算非医疗筛查特征、规则与报告。它不构成临床或计量级结论；具体边界见 [算法层架构与输入分流](01-algorithm-layer-architecture.md)。
 
 V1 采用“背景风险优先、动作完成参与判断、压力指标补充和发现隐匿风险”的分层规则模型，不采用固定百分比权重相加。
 
@@ -52,10 +52,10 @@ V1 采用“背景风险优先、动作完成参与判断、压力指标补充�
 
 ### 2.2 标准物理输入
 
-核心算法不直接接收设备原始阵列，而只接收 [`physical-pressure-session/1.0`](physical-input-interface-v1.md) 标准压力信息流：
+核心算法不直接接收设备原始阵列，而只接收 [`estimated-force-session/1.0`](physical-input-interface-v1.md) 筛查估计力信息流：
 
 - 每个物理点具有稳定 `point_id` 与板面坐标 `board_x_mm / board_y_mm`；
-- 每帧提供与物理点同序的最终法向力 `normal_force_n`；
+- 每帧提供与板面点同序的筛查估计力 `estimated_force_n`；
 - 每帧提供严格递增的实际单调时间 `timestamp_s`；
 - 坐标统一为板面坐标；算法依据阶段朝向和前脚语义归一化为身体 ML/AP；
 - 输入声明物理、时间、坐标和测量不确定度的验证状态与版本。
@@ -230,10 +230,10 @@ AP(t)      = Σ(F_k(t) × AP_k) / F_total(t)
 
 处理顺序：
 
-1. 校验 `physical-pressure-session/1.0` 模式、单位、板面坐标和版本；
+1. 校验 `estimated-force-session/1.0` 模式、单位、板面坐标和冻结曲线版本；
 2. 从工作流会话关联阶段边界、完成状态，并校验严格递增时间轴；
-3. 只处理硬件层已审核后输出的完整物理力场，不在算法内重新解释设备错误或质量状态；
-4. 按阶段姿态将板面坐标归一化为身体 ML/AP，再按真实法向力计算压力中心；
+3. 只处理硬件层已审核后输出的完整筛查估计力场，不在算法内重新解释设备错误或质量状态；
+4. 按阶段姿态将板面坐标归一化为身体 ML/AP，再按 `estimated_force_n` 计算压力中心；
 5. 对压力中心轨迹使用版本化的轻量去毛刺和低通处理；
 6. 不跨越超出能力门槛的时间缺口插值；
 7. 从正式 20 秒区间计算指标。
@@ -549,7 +549,7 @@ final_score = clamp_to_overall_risk_band(
 ### 12.4 第四部分：图表和方法
 
 - 四阶段热力图或代表帧；
-- 人体 AP/ML 方向的真实物理压力中心轨迹；
+- 人体 AP/ML 方向的筛查估计力加权压力中心轨迹；
 - 主要曲线；
 - 协议、算法、参考人群和报告版本；
 - 生成时间和报告 ID。

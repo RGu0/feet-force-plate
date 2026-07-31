@@ -5,7 +5,7 @@
 ## 当前设计基线
 
 - 协议版本：`static-balance-fall-screen/1.0`
-- 设计状态：已完成产品方案确认；首版候选力输入可用于算法开发与回放，尚未完成正式物理输入验证、参考人群建模和前瞻性临床验证
+- 设计状态：产品统一使用冻结 `estimated_force_n` 进行非医疗筛查；不声明临床或计量级绝对力，参考人群与前瞻性临床验证不属于当前声明
 - 算法边界：核心算法与硬件解耦。现阶段支持明确标记的候选力研究输入；正式筛查算法只接收已经通过物理验证的标准物理数据
 - 产品定位：养老机构和社区的初步健康筛查与风险提示，不用于疾病诊断，不输出未来跌倒概率
 - 测试动作：双足并拢睁眼 20 秒、双足并拢闭眼 20 秒、固定向左转 90°、左脚在前半串联睁眼 20 秒、右脚在前半串联睁眼 20 秒
@@ -15,7 +15,7 @@
 ## 文档索引
 
 1. [算法层架构与输入分流](01-algorithm-layer-architecture.md)
-   - 硬件观测、首版候选力与正式物理输入的边界
+   - 硬件观测与产品筛查估计力输入的边界
    - `PROVISIONAL_RESEARCH` 与 `VALIDATED_RELEASE` 两条输入路径
    - 上下游责任、运行身份与输出门控
 
@@ -26,7 +26,7 @@
 
 3. [算法验证、运行与交付说明](03-validation-and-operations.md)
    - 可复现分析运行、版本和数据质量记录
-   - 从候选力升级为正式物理输入的验证条件
+   - 筛查估计力的版本、边界与未来高精度研究条件
    - 本地存储、上传确认和当前通信链路边界
 
 4. [V1 静态平衡筛查算法设计](v1-static-balance-screening-algorithm.md)
@@ -45,11 +45,11 @@
 
 6. [硬件层—算法层交互接口 V1](00-hardware-algorithm-interaction-v1.md)
    - 设备私有观测与设备无关物理压力会话的边界
-   - 公开物理点场、时间和最终法向力字段
+   - 公开板面点、时间和 `estimated_force_n` 字段
    - 无效会话在硬件层丢弃，质量与修复信息不进入算法层
 
 7. [硬件层到云端算法的物理输入接口 V1](physical-input-interface-v1.md)
-   - `physical-pressure-session/1.0` 硬件层唯一标准压力信息流
+   - `estimated-force-session/1.0` 硬件层唯一标准筛查估计力信息流
    - 算法层负责姿态归一化、COP 和全部压力特征
    - 物理点位置、时间与法向力字段
    - 硬件质量拦截与接收规则
@@ -66,4 +66,4 @@
 
 正式筛查的核心算法输入以 [`physical-input-interface-v1.md`](physical-input-interface-v1.md) 为准：硬件层只提供板面坐标、最终法向载荷和实际时间；无效会话在硬件层丢弃，质量与设备实现不进入算法层。算法层负责姿态归一化、COP 和全部压力特征。接口不依赖设备型号、阵列行列数、点尺寸、点间距、原始值类型或通信协议。首款 DO-P4864 的解析和物理换算属于上游硬件适配层，以 [`docs/通信接口设计文档.md`](../通信接口设计文档.md) 为准。
 
-模式文件：[正式算法输入 `physical-pressure-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)；[硬件观测 `physical-sensor-observation/1.0`](schemas/physical-sensor-observation-1.0.schema.json)。后者含原始/零校正/候选力，不能进入正式筛查；但可按 [`02-provisional-force-implementation.md`](02-provisional-force-implementation.md) 进入受门控的首版算法开发与回放路径。
+模式文件：[产品筛查输入 `estimated-force-session/1.0`](schemas/physical-pressure-session-1.0.schema.json)；[硬件观测 `physical-sensor-observation/1.0`](schemas/physical-sensor-observation-1.0.schema.json)。后者含原始/零校正/估计力与审计；只有通过硬件质量门控并完成本地提交的 `estimated-force-session/1.0` 才进入产品筛查路径。

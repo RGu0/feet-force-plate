@@ -1,8 +1,8 @@
-"""Strict public hardware-to-algorithm physical-force input boundary.
+"""Strict public hardware-to-algorithm screening estimated-force boundary.
 
 This module deliberately contains no calibration details, device topology,
 quality flags, stage actions, or operator/safety metadata.  Hardware emits only
-validated physical positions, normal forces, and timestamps.  The workflow
+board positions, screening estimated forces, and timestamps.  The workflow
 service supplies test protocol context separately by ``session_id``.
 """
 
@@ -39,7 +39,7 @@ class PhysicalPoint:
 @dataclass(frozen=True, slots=True)
 class PhysicalFrame:
     timestamp_s: float
-    normal_force_n: tuple[float, ...]
+    estimated_force_n: tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +65,7 @@ _TOP_LEVEL_FIELDS = {
     "frames",
 }
 _POINT_FIELDS = {"point_id", "board_x_mm", "board_y_mm"}
-_FRAME_FIELDS = {"timestamp_s", "normal_force_n"}
+_FRAME_FIELDS = {"timestamp_s", "estimated_force_n"}
 
 
 def _ensure_mapping(value: object, name: str) -> Mapping[str, object]:
@@ -142,25 +142,25 @@ def _parse_frames(value: object, point_count: int) -> tuple[PhysicalFrame, ...]:
         if previous_timestamp is not None and timestamp <= previous_timestamp:
             raise InputValidationError("frame timestamps must be strictly increasing")
         previous_timestamp = timestamp
-        raw_forces = _sequence(raw["normal_force_n"], f"frames[{index}].normal_force_n")
+        raw_forces = _sequence(raw["estimated_force_n"], f"frames[{index}].estimated_force_n")
         if len(raw_forces) != point_count:
-            raise InputValidationError("normal_force_n length must match points")
+            raise InputValidationError("estimated_force_n length must match points")
         forces = tuple(
-            _number(force, f"frames[{index}].normal_force_n[{force_index}]")
+            _number(force, f"frames[{index}].estimated_force_n[{force_index}]")
             for force_index, force in enumerate(raw_forces)
         )
         if any(force < 0 for force in forces):
-            raise InputValidationError("normal_force_n cannot be negative")
-        frames.append(PhysicalFrame(timestamp_s=timestamp, normal_force_n=forces))
+            raise InputValidationError("estimated_force_n cannot be negative")
+        frames.append(PhysicalFrame(timestamp_s=timestamp, estimated_force_n=forces))
     return tuple(frames)
 
 
 def parse_physical_pressure_session(payload: Mapping[str, object]) -> PhysicalPressureSession:
-    """Parse the public ``physical-pressure-session/1.0`` force-field contract."""
+    """Parse the public ``estimated-force-session/1.0`` screening contract."""
 
     raw = _ensure_mapping(payload, "session")
     _ensure_fields(raw, _TOP_LEVEL_FIELDS, "session")
-    if raw["schema_version"] != "physical-pressure-session/1.0":
+    if raw["schema_version"] != "estimated-force-session/1.0":
         raise InputValidationError("unsupported schema_version")
     try:
         coordinate_frame = CoordinateFrame(raw["coordinate_frame"])
@@ -174,7 +174,7 @@ def parse_physical_pressure_session(payload: Mapping[str, object]) -> PhysicalPr
         raise InputValidationError("time_unit must be s")
     points = _parse_points(raw["points"])
     return PhysicalPressureSession(
-        schema_version="physical-pressure-session/1.0",
+        schema_version="estimated-force-session/1.0",
         session_id=_text(raw["session_id"], "session_id"),
         coordinate_frame=coordinate_frame,
         coordinate_unit="mm",
@@ -212,7 +212,7 @@ def _session_to_payload(session: PhysicalPressureSession) -> dict[str, object]:
         "frames": [
             {
                 "timestamp_s": frame.timestamp_s,
-                "normal_force_n": list(frame.normal_force_n),
+                "estimated_force_n": list(frame.estimated_force_n),
             }
             for frame in session.frames
         ],

@@ -44,7 +44,7 @@ def valid_protocol_context(session_id: str = "session-physical-1") -> StaticBala
 
 def valid_payload() -> dict[str, object]:
     return {
-        "schema_version": "physical-pressure-session/1.0",
+        "schema_version": "estimated-force-session/1.0",
         "session_id": "session-physical-1",
         "coordinate_frame": "BOARD_TOP_LEFT_X_RIGHT_Y_DOWN",
         "coordinate_unit": "mm",
@@ -56,9 +56,9 @@ def valid_payload() -> dict[str, object]:
             {"point_id": "c", "board_x_mm": 10.0, "board_y_mm": 40.0},
         ],
         "frames": [
-            {"timestamp_s": 0.0, "normal_force_n": [10.0, 20.0, 30.0]},
-            {"timestamp_s": 1.0, "normal_force_n": [11.0, 21.0, 31.0]},
-            {"timestamp_s": 80.0, "normal_force_n": [12.0, 22.0, 32.0]},
+            {"timestamp_s": 0.0, "estimated_force_n": [10.0, 20.0, 30.0]},
+            {"timestamp_s": 1.0, "estimated_force_n": [11.0, 21.0, 31.0]},
+            {"timestamp_s": 80.0, "estimated_force_n": [12.0, 22.0, 32.0]},
         ],
     }
 
@@ -94,9 +94,9 @@ def test_rejects_hardware_or_workflow_metadata_in_public_force_payload(field: st
     "mutate",
     [
         lambda payload: payload["points"].__setitem__(1, {**payload["points"][0]}),
-        lambda payload: payload["frames"][0].__setitem__("normal_force_n", [1.0]),
+        lambda payload: payload["frames"][0].__setitem__("estimated_force_n", [1.0]),
         lambda payload: payload["frames"][1].__setitem__("timestamp_s", 0.0),
-        lambda payload: payload["frames"][1]["normal_force_n"].__setitem__(0, -1.0),
+        lambda payload: payload["frames"][1]["estimated_force_n"].__setitem__(0, -1.0),
         lambda payload: payload["frames"][0].__setitem__("quality", "VALID"),
     ],
 )

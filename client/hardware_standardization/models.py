@@ -106,12 +106,10 @@ class PhysicalArrayFrame:
     raw_count: tuple[int | float, ...]
     zero_corrected_count: tuple[float, ...] | None
     relative_load_count: tuple[float, ...] | None
-    normal_force_n: tuple[float | None, ...]
     quality: FrameQuality
     quality_flags: frozenset[str]
     raw_voltage_v: tuple[float, ...] | None = None
     zero_corrected_voltage_v: tuple[float, ...] | None = None
-    provisional_force_n: tuple[float | None, ...] | None = None
     repaired_count: tuple[float, ...] | None = None
     repaired_cell_mask: tuple[bool, ...] | None = None
     estimated_force_n: tuple[float | None, ...] | None = None
@@ -138,10 +136,6 @@ class PhysicalArrayFrame:
             value < 0 for value in self.relative_load_count
         ):
             raise ValueError("relative_load_count must be non-negative")
-        if len(self.normal_force_n) != expected or any(
-            value is not None and not isfinite(value) for value in self.normal_force_n
-        ):
-            raise ValueError("normal_force_n must match raw_count length and be finite or null")
         for field_name, values in (
             ("raw_voltage_v", self.raw_voltage_v),
             ("zero_corrected_voltage_v", self.zero_corrected_voltage_v),
@@ -150,16 +144,6 @@ class PhysicalArrayFrame:
                 len(values) != expected or any(not isfinite(value) for value in values)
             ):
                 raise ValueError(f"{field_name} must be finite and match raw_count length")
-        if self.provisional_force_n is not None and (
-            len(self.provisional_force_n) != expected
-            or any(
-                value is not None and (not isfinite(value) or value < 0)
-                for value in self.provisional_force_n
-            )
-        ):
-            raise ValueError(
-                "provisional_force_n must be non-negative finite values or nulls matching raw_count"
-            )
         if self.repaired_count is not None and (
             len(self.repaired_count) != expected
             or any(not isfinite(value) for value in self.repaired_count)
@@ -199,7 +183,7 @@ class PhysicalArraySession:
     def __post_init__(self) -> None:
         if self.schema_version not in {
             "physical-sensor-observation/1.0",
-            "physical-pressure-session/1.0",
+            "estimated-force-session/1.0",
         }:
             raise ValueError("unsupported physical hardware schema version")
         if not self.session_id:
@@ -230,16 +214,16 @@ class PhysicalArraySession:
             )
         ):
             raise ValueError("adapter, geometry, and source schema versions are required")
-        if self.schema_version == "physical-pressure-session/1.0" and (
-            self.measurement_profile.force_validation != "VALIDATED"
+        if self.schema_version == "estimated-force-session/1.0" and (
+            not self.measurement_profile.force_validation.startswith("MVP_SCREENING_ESTIMATED")
             or any(
-                value is None or value < 0
+                frame.estimated_force_n is None
+                or any(value is None or value < 0 for value in frame.estimated_force_n)
                 for frame in self.frames
-                for value in frame.normal_force_n
             )
         ):
             raise ValueError(
-                "physical-pressure sessions require validated normal force values in N"
+                "estimated-force sessions require MVP screening estimated force values in N"
             )
 
 

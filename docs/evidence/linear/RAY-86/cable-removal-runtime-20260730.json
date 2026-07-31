@@ -1,0 +1,57 @@
+{
+  "schema_version": "do-p4864-runtime-acceptance-result/1",
+  "captured_at_utc": "2026-07-30T08:20:49Z",
+  "device": "/dev/cu.usbserial-1140",
+  "requested_baseline_seconds": 5.0,
+  "requested_capture_seconds": 120.0,
+  "baseline": {
+    "frames": 111,
+    "duration_seconds": 5.139628208,
+    "maximum_cell_median_count": 3.0,
+    "source_sha256": "4c56ee29b4dc07e04209e63ef4dfc30312b057ee711dabc24d4b3a63814f896f",
+    "parser": {
+      "decoded_frames": 111,
+      "checksum_observations": 111,
+      "checksum_mismatches": 111,
+      "invalid_frames": 0,
+      "resynchronizations": 1
+    }
+  },
+  "runtime": {
+    "outcome": "INVALID",
+    "frames_stored": 970,
+    "reason": "transport disconnected: serial read failed: SerialException: read failed: [Errno 6] Device not configured",
+    "validity": "INVALID",
+    "committed": false,
+    "communication_integrity": {
+      "policy_version": "do-p4864-valid-signal-continuity/1",
+      "maximum_no_valid_signal_ns": 5000000000,
+      "reconstructed_frame_count": 0,
+      "events": []
+    },
+    "parser": {
+      "valid_frames": 970,
+      "invalid_frames": 0,
+      "resynchronizations": 0,
+      "length_failures": 0,
+      "function_failures": 0,
+      "tail_failures": 0,
+      "checksum_mismatches": 970
+    }
+  },
+  "post_restart": {
+    "session_status": null,
+    "derived_artifact_count": 0,
+    "recovery": {
+      "temporary_recovered": 0,
+      "temporary_quarantined": 0,
+      "sealed_quarantined": 0,
+      "orphan_segments_registered": 0,
+      "sessions_marked_incomplete": 0,
+      "uploads_requeued": 0,
+      "promoted_sessions_recovered": 0,
+      "interrupted_staging_discarded": 0
+    }
+  },
+  "local_only_boundary": "Raw and derived encrypted data remain under output-root; this summary contains no raw matrices or AES key material."
+}

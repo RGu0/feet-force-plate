@@ -286,7 +286,7 @@ def _extract_stage_features(
     total_frame_count = len(indices)
     for frame_index in indices:
         frame = session.frames[frame_index]
-        forces = np.asarray(frame.normal_force_n, dtype=float)
+        forces = np.asarray(frame.estimated_force_n, dtype=float)
         total_force = float(forces.sum())
         if total_force < parameters.minimum_total_force_n:
             continue

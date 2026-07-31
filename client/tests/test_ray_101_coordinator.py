@@ -6,6 +6,7 @@ from pathlib import Path
 from client.workflow.coordinator import ScreeningCoordinator
 from client.workflow.models import (
     ClientAction,
+    ClientError,
     AnalysisStatus,
     LifecycleStatus,
     PreflightCheck,
@@ -339,6 +340,44 @@ class CoordinatorPreflightTests(unittest.TestCase):
                     "SerialException: /dev/cu.usbserial stack trace",
                 )
             ],
+        )
+
+    def test_typed_hardware_failure_closes_capture_with_stable_audit_only(self) -> None:
+        preflight = _PreflightPort(
+            PreflightSummary(checks=(PreflightCheck(key="device", ready=True),))
+        )
+        sessions = _SessionPort()
+        telemetry = _TelemetryPort()
+        reports = _ReportPort()
+        coordinator = _coordinator(
+            preflight=preflight,
+            sessions=sessions,
+            telemetry=telemetry,
+            reports=reports,
+        )
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+        coordinator.run_preflight()
+        assert _start_acquisition(coordinator)
+
+        coordinator.handle_hardware_failure(
+            error=ClientError(
+                code="E-DAT-102",
+                operator_message="本次检测未能完成本地保存，请联系技术支持。",
+                action=ClientAction.CONTACT_SUPPORT,
+            )
+        )
+
+        self.assertEqual(coordinator.state.step, ScreeningStep.INCOMPLETE)
+        self.assertEqual(coordinator.state.validity, SessionValidity.INCOMPLETE)
+        self.assertEqual(sessions.incomplete, ["session-1"])
+        self.assertEqual(coordinator.state.error.action, ClientAction.CONTACT_SUPPORT)
+        self.assertEqual(reports.created, [])
+        self.assertEqual(
+            telemetry.errors,
+            [("E-DAT-102", "session-1", "hardware_ui_failure:E-DAT-102")],
         )
 
     def test_quality_failure_requires_retry_and_never_creates_report(self) -> None:

@@ -7,6 +7,7 @@ from typing import Protocol
 
 from PySide6.QtCore import QTimer
 
+from client.device.session_ui import HardwareUiFailure
 from client.workflow.consent import (
     ConsentPolicy,
     ConsentReceipt,
@@ -14,7 +15,7 @@ from client.workflow.consent import (
     ConsentWorkflow,
     RequiredConsentDeclined,
 )
-from client.workflow.models import WorkflowState
+from client.workflow.models import ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 from client.local_analysis.display import DisplayRefreshController
 from client.workflow.participant import (
@@ -27,6 +28,9 @@ from client.workflow.participant import (
 )
 
 from .pages import PageId
+from .engineering_maintenance import EngineeringMaintenanceService
+from .session_deletion import CompletedSessionDeletionService
+from .hardware_failure import resolve_hardware_ui_failure
 from .live_display import LiveDisplayProjection
 from .qt_shell import ScreeningWindow
 from .ui_models import UiReadModelPort
@@ -64,6 +68,8 @@ class _CoordinatorPort(Protocol):
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None: ...
 
+    def handle_hardware_failure(self, *, error: ClientError) -> None: ...
+
     def observe_position(
         self,
         *,
@@ -98,6 +104,8 @@ class ApplicationController:
         live_display: LiveDisplayProjection | None = None,
         read_models: UiReadModelPort | None = None,
         device_support: _DeviceSupportPort | None = None,
+        engineering_maintenance: EngineeringMaintenanceService | None = None,
+        session_deletion: CompletedSessionDeletionService | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
@@ -108,6 +116,8 @@ class ApplicationController:
         self._live_display = live_display
         self._read_models = read_models
         self._device_support = device_support
+        self._engineering_maintenance = engineering_maintenance
+        self._session_deletion = session_deletion
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -116,6 +126,10 @@ class ApplicationController:
                 "participant, consent, and consent_policy must be configured together"
             )
         self.window = ScreeningWindow(on_action=self.dispatch)
+        self.window.set_engineering_maintenance_available(
+            engineering_maintenance is not None
+        )
+        self.window.set_session_deletion_available(session_deletion is not None)
         self._live_display_timer = QTimer(self.window)
         self._live_display_timer.setInterval(16)
         self._live_display_timer.timeout.connect(self._on_live_display_timer)
@@ -155,6 +169,18 @@ class ApplicationController:
             return
         if action in {"RECHECK_SYSTEM", "EXPORT_DIAGNOSTIC"}:
             self._dispatch_device_support(action)
+            return
+        if action == "OPEN_ENGINEERING_MAINTENANCE":
+            if self._engineering_maintenance is None:
+                self.window.show_form_error("工程检修功能尚未接入当前运行环境")
+            else:
+                self.window.show_engineering_maintenance(self._engineering_maintenance)
+            return
+        if action == "OPEN_SESSION_DELETION":
+            if self._session_deletion is None:
+                self.window.show_form_error("本地会话清理功能尚未接入当前运行环境")
+            else:
+                self.window.show_session_deletion(self._session_deletion)
             return
         if action == "CONFIRM_CONSENT":
             self._coordinator.confirm_consent()
@@ -199,6 +225,12 @@ class ApplicationController:
 
     def on_device_disconnected(self, technical_detail: str) -> None:
         self._coordinator.handle_device_disconnect(technical_detail=technical_detail)
+        self.refresh()
+
+    def on_hardware_failure(self, failure: HardwareUiFailure) -> None:
+        self._coordinator.handle_hardware_failure(
+            error=resolve_hardware_ui_failure(failure)
+        )
         self.refresh()
 
     def on_position_observation(
