@@ -221,3 +221,8 @@ not a real-device binding acceptance: the connected board must enumerate a
 stable USB serial number and be wired into the deployed composition before an
 engineer can perform that manual validation.  The prior 1,240-frame replay also
 remains evidence of flood suppression, not proof of a physical defect.
+
+Read-only enumeration of the currently attached CH340 has now confirmed that
+its USB descriptor provides no serial number, so the safety refusal was
+exercised against real hardware without opening the port.  See
+[`2026-07-30-device-identity-enumeration.md`](2026-07-30-device-identity-enumeration.md).
