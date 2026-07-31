@@ -9,6 +9,7 @@ from client.device.serial_transport import (
     SerialByteTransport,
     SerialPortCandidate,
     enumerate_ch340_ports,
+    stable_hardware_identity,
 )
 from client.device.transport import ByteTransport
 
@@ -55,6 +56,7 @@ class SerialValidationConnector:
             device_ref=_opaque_device_ref(candidate.device),
             transport=transport,
             parser=parser,
+            hardware_identity=stable_hardware_identity(candidate),
         )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import hashlib
 import os
 from typing import Any, Callable, Iterable
 
@@ -29,6 +30,7 @@ class SerialPortCandidate:
     hwid: str
     availability: PortAvailability
     probe_error: str | None = None
+    serial_number: str | None = None
 
 
 def _default_port_provider() -> Iterable[Any]:
@@ -107,9 +109,27 @@ def enumerate_ch340_ports(
                 hwid=str(getattr(port, "hwid", "") or ""),
                 availability=availability,
                 probe_error=probe_error,
+                serial_number=(
+                    str(getattr(port, "serial_number", "") or "").strip() or None
+                ),
             )
         )
     return sorted(candidates, key=lambda item: item.device)
+
+
+def stable_hardware_identity(candidate: SerialPortCandidate) -> str | None:
+    """Return an opaque physical-device identity only when USB supplies a serial.
+
+    A path, USB location, VID or PID alone identifies a host connection or model,
+    not the physical board.  They therefore must not be used to partition a
+    dynamic defect mask or to restore an engineering-selected device.
+    """
+
+    serial_number = (candidate.serial_number or "").strip()
+    if not serial_number:
+        return None
+    material = f"{candidate.vid}:{candidate.pid}:{serial_number}".encode("utf-8")
+    return f"usb-serial-{hashlib.sha256(material).hexdigest()[:20]}"
 
 
 class SerialByteTransport:
