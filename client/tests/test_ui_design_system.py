@@ -34,6 +34,7 @@ def test_workbench_has_source_topbar_statuses_and_central_primary_action(qtbot) 
     assert "QFrame#appHeader" in window.styleSheet()
     assert window.findChild(QWidget, "appNavigation") is not None
     assert window.findChild(QPushButton, "navP-01") is not None
+    assert not window.findChild(QWidget, "appHeader").isHidden()
 
     workbench = window.page_widget(PageId.WORKBENCH)
     primary = workbench.findChild(QPushButton, "START_NEW_SCREENING")

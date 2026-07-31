@@ -94,4 +94,22 @@
 - 不把截图和测试扩张解释为真实硬件、Windows 字体栅格化、打印机或现场可用性验收。
 - P-00 登录与 P-00b License 属于服务器授权入口，不在当前 P-01 至 P-11 本地回放闭环中；本轮未擅自接入尚未完成的服务器授权流程。
 
+## P-00 / P-00b 补充视觉验收
+
+- 设计真值：`docs/ui-desgin/scraps/p00b3.png` 与
+  `docs/ui-desgin/FeetForcePlate UI Set.dc.html` 的 P-00b。
+- 实现截图：`/private/tmp/feet-force-plate-license-ui-audit.E1vu3P/03-p00b-window.png`。
+- 并排比较：`/private/tmp/feet-force-plate-license-ui-audit.E1vu3P/04-p00b-comparison.png`。
+- 源图为 909 × 525；实现由 1440 × 928 pt 原生应用窗口截取。比较时统一全窗口高度，macOS 标题栏不计入产品表面的视觉差异。
+- P-00 是正式启动默认页，其 License 注册入口打开 P-00b；专项自动化覆盖字段、密码掩码、必填、密码确认与无服务状态。
+- P-00b 保留设计稿的 920 px 居中双栏卡、340 px 导览栏、品牌图片、Pulse Blue 主动作、四个注册字段、双密码列和底部动作区。
+- 设计稿展示的是已由服务器校验的样例；除精确匹配的 `FFP-2026-TEST-0001` 外，实现仍只显示“待联网校验”或格式错误。该测试码仅在当前应用进程内创建测试账户并验证本机登录，不连接服务、不进入设备检测，也不代表正式授权。
+- 字体、间距、颜色、品牌资产和文案均沿用现有 Steady Health Qt 设计系统；没有 P0/P1/P2 的可操作视觉偏差。
+
+### P-00 品牌 Logo 资源更新
+
+- 将此前的 `client/app/assets/logo-horizontal-trimmed.png` 替换为用户提供的透明原始 PNG（1239 × 383），不再使用截取或二次缩放后的旧资源。
+- 实机验证截图：`/private/tmp/feet-force-plate-license-ui-audit.E1vu3P/06-p00-login-new-logo.png`；P-00 中的品牌图标与“天富智柔 TechFlex”文字边缘清晰，透明背景与浅灰页面正确合成。
+- Retina 修复：P-00 保持 72 pt 的布局高度，但按屏幕 DPR 生成高分辨率位图；2× 屏幕使用 144 px 源位图，并以 DPR=2 交给 Qt 显示。复核截图：`/private/tmp/feet-force-plate-license-ui-audit.E1vu3P/07-p00-login-retina-logo.png`。
+
 final result: passed

@@ -63,7 +63,7 @@ _ACTION_LABELS = {
 }
 
 _WIZARD_STEPS = ("受试者", "选填信息", "授权确认", "设备预检", "站位引导")
-_TOPBAR_PAGES = {PageId.RESULT, PageId.RECORDS, PageId.SUPPORT}
+_TOPBAR_PAGES = {PageId.WORKBENCH, PageId.RESULT, PageId.RECORDS, PageId.SUPPORT}
 
 
 class ScreeningWindow(QMainWindow):

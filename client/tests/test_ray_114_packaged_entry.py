@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
+from client.app import packaged_entry
 from client.app.packaged_entry import build_mandatory_startup_gate
 from client.startup_validation.workflow import DeviceNotFound
 
@@ -46,3 +47,14 @@ def test_packaged_composition_uses_the_mandatory_gate_before_workbench(qtbot) ->
     assert gate.workbench is None
     assert gate.window.isVisible()
     assert [run.reason.value for run in audit.runs] == ["DEVICE_NOT_FOUND"]
+
+
+def test_formal_entry_starts_with_the_p00_institution_access_screen(qtbot) -> None:
+    """Catch a regression that sends unregistered users straight to device checks."""
+
+    window = packaged_entry.build_institution_access_screen()
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.objectName() == "institutionAccessWindow"
+    assert window.findChild(QWidget, "institutionLoginPage").isVisible()

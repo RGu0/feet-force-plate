@@ -23,6 +23,7 @@ from client.startup_validation.workflow import (
 
 from .qt_shell import ScreeningWindow
 from .app_icon import application_icon
+from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
 
 
@@ -77,6 +78,17 @@ def build_mandatory_startup_gate(
     )
 
 
+def build_institution_access_screen() -> InstitutionAccessWindow:
+    """Expose P-00 before startup hardware validation begins.
+
+    The current package does not include the remote License service, so this
+    is intentionally a UI-only access boundary.  A later authentication port
+    will decide when it may hand off to ``build_mandatory_startup_gate``.
+    """
+
+    return InstitutionAccessWindow()
+
+
 def _local_terminal_id() -> str:
     configured = os.environ.get("FEETFORCEPLATE_TERMINAL_ID", "").strip()
     if configured:
@@ -100,21 +112,13 @@ def _default_validation_audit_trail() -> tuple[ValidationAuditTrail, StateStore]
 
 
 def main() -> int:
-    """Start the package through the mandatory local device-validation gate."""
+    """Start the package at P-00 institution access."""
 
     app = QApplication(sys.argv)
     app.setWindowIcon(application_icon())
-    audit_trail, store = _default_validation_audit_trail()
-    gate = build_mandatory_startup_gate(
-        terminal_id=_local_terminal_id(),
-        app_version=APP_VERSION,
-        audit_trail=audit_trail,
-    )
-    gate.start()
-    try:
-        return app.exec()
-    finally:
-        store.close()
+    access = build_institution_access_screen()
+    access.show()
+    return app.exec()
 
 
 if __name__ == "__main__":
