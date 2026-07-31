@@ -186,7 +186,43 @@ failure in `test_ray_114_startup_ui.py::test_failure_has_plain_copy_one_primary_
 (the test passes in isolation and immediately after this feature's six tests).
 No startup-validation files were modified here.
 
-RAY-119 remains `In Review`: this extension does not implement the outstanding
-selected-ID-to-actual-device binding flow, deployment identity provider, or
-real-device operator acceptance. It also does not turn the prior 1,240-frame
-human-plantar replay into a hardware-defect conclusion.
+## 2026-07-30 engineering-selected device binding
+
+The follow-up implementation adds a local, atomic
+`engineering-device-binding/1` registry.  After deployment-owned engineering
+confirmation, an engineer can add/select an asset `device_id`, bind it to the
+currently connected device, and restore that selected asset after restart.
+The binding persists only the asset ID and an opaque hardware fingerprint; it
+does not persist raw frames, serial paths, participant data, mask content, or
+credentials.
+
+The hardware layer now emits a binding identity only when USB enumeration
+supplies a device serial number.  A serial path, VID/PID, USB location or model
+alone is rejected because it cannot identify a physical board.  On every read,
+the selected binding must equal the currently observed opaque identity; a
+mismatch prevents the defect mask from being displayed or used.  The
+engineering dialog exposes this as **确认并绑定当前连接设备** and leaves mask
+mutation unavailable.
+
+Automated verification:
+
+```text
+bash scripts/local-env.sh python -m pytest client/tests/test_engineering_maintenance.py tests/startup_validation/test_serial_connector.py -q
+# 11 passed
+
+bash scripts/local-env.sh python -m pytest tests/device tests/spool tests/hardware_standardization tests/startup_validation client/tests/test_engineering_maintenance.py -q --tb=short
+# 196 passed
+```
+
+The test suite covers explicit engineer confirmation, add/select persistence,
+last-device restoration, identity mismatch rejection, the read-only defect
+projection, and refusal to derive a binding from a serial path.  It is still
+not a real-device binding acceptance: the connected board must enumerate a
+stable USB serial number and be wired into the deployed composition before an
+engineer can perform that manual validation.  The prior 1,240-frame replay also
+remains evidence of flood suppression, not proof of a physical defect.
+
+Read-only enumeration of the currently attached CH340 has now confirmed that
+its USB descriptor provides no serial number, so the safety refusal was
+exercised against real hardware without opening the port.  See
+[`2026-07-30-device-identity-enumeration.md`](2026-07-30-device-identity-enumeration.md).

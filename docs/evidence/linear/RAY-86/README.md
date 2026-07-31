@@ -211,6 +211,18 @@ Automated acceptance evidence commit: pending.
 
 Renewed physical-runtime evidence: `3f74320` — `Record RAY-86 hardware acceptance`.
 
+## 2026-07-30 P1 milestone 30-minute real-device acceptance
+
+The P1 milestone requires a true-device continuous 30-minute run.  The
+production local acceptance composition completed a 5.156-second empty-board
+baseline followed by a requested 1,800-second capture: `COMPLETED` / `VALID`,
+committed, with 37,183 real decoded frames.  Forty-one short tail candidates
+were audited and reconstructed only in the derived stream; the longest valid
+signal gap was 113.001 ms, below the five-second invalidation limit.  Fresh
+restart recovery reported one `CLOSED` / `VALID` formal session and no temporary
+or quarantine action.  Full sanitized evidence and boundaries:
+[`2026-07-30-runtime-acceptance-30m.md`](2026-07-30-runtime-acceptance-30m.md).
+
 ## 2026-07-29 renewed local hardware acceptance
 
 With `/dev/cu.usbserial-1140` available, the existing production-composition

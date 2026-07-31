@@ -40,6 +40,7 @@ from .design_system import apply_design_system
 from .app_icon import application_icon
 from .engineering_maintenance import (
     EngineeringMaintenanceAccessDenied,
+    EngineeringMaintenanceConnectionUnavailable,
     EngineeringMaintenanceDeviceUnbound,
     EngineeringMaintenanceService,
     EngineeringMaintenanceSnapshot,
@@ -145,12 +146,26 @@ class _EngineeringMaintenanceDialog(QDialog):
         )
         instruction.setWordWrap(True)
         layout.addWidget(instruction)
+        selector = QComboBox()
+        selector.setObjectName("engineeringMaintenanceDeviceSelector")
+        selector.setAccessibleName("已绑定工程设备")
+        self._refresh_device_selector(selector)
+        layout.addWidget(selector)
+        device_id = QLineEdit()
+        device_id.setObjectName("engineeringMaintenanceDeviceId")
+        device_id.setPlaceholderText("添加或重新绑定的设备资产编号")
+        device_id.setAccessibleName("工程设备资产编号")
+        layout.addWidget(device_id)
         confirmation = QLineEdit()
         confirmation.setObjectName("engineeringMaintenanceConfirmation")
         confirmation.setEchoMode(QLineEdit.EchoMode.Password)
         confirmation.setPlaceholderText("输入工程确认信息")
         confirmation.setAccessibleName("工程确认信息")
         layout.addWidget(confirmation)
+        bind = QPushButton("确认并绑定当前连接设备")
+        bind.setObjectName("BIND_ENGINEERING_DEVICE")
+        bind.clicked.connect(self._bind_current_device)
+        layout.addWidget(bind, alignment=Qt.AlignmentFlag.AlignLeft)
         confirm = QPushButton("确认并查看")
         confirm.setObjectName("CONFIRM_ENGINEERING_MAINTENANCE")
         confirm.clicked.connect(self._load_distribution)
@@ -172,6 +187,44 @@ class _EngineeringMaintenanceDialog(QDialog):
         boundary.setProperty("mutedText", True)
         layout.addWidget(boundary)
 
+    def _refresh_device_selector(self, selector: QComboBox) -> None:
+        selected = self._service.selected_device_id()
+        selector.clear()
+        for device_id in self._service.device_ids():
+            selector.addItem(device_id, device_id)
+        if selected:
+            selector.setCurrentIndex(selector.findData(selected))
+
+    def _bind_current_device(self) -> None:
+        confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
+        device_id = self.findChild(QLineEdit, "engineeringMaintenanceDeviceId")
+        selector = self.findChild(QComboBox, "engineeringMaintenanceDeviceSelector")
+        status = self.findChild(QLabel, "engineeringMaintenanceStatus")
+        assert confirmation is not None
+        assert device_id is not None
+        assert selector is not None
+        assert status is not None
+        candidate = device_id.text().strip() or str(selector.currentData() or "")
+        try:
+            self._service.bind_current_device(confirmation.text(), candidate)
+        except EngineeringMaintenanceAccessDenied:
+            status.setText("工程确认未通过，未绑定设备。")
+            return
+        except EngineeringMaintenanceDeviceUnbound:
+            status.setText("设备绑定信息无效，未读取掩码。")
+            return
+        except ValueError:
+            status.setText("请输入有效的设备资产编号。")
+            return
+        except EngineeringMaintenanceConnectionUnavailable:
+            status.setText("当前连接缺少可验证的设备身份，未绑定设备。")
+            return
+        finally:
+            confirmation.clear()
+        device_id.clear()
+        self._refresh_device_selector(selector)
+        status.setText("已绑定当前连接设备；可确认后查看该设备的坏点分布。")
+
     def _load_distribution(self) -> None:
         confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
         status = self.findChild(QLabel, "engineeringMaintenanceStatus")
@@ -189,7 +242,7 @@ class _EngineeringMaintenanceDialog(QDialog):
             status.setText("工程确认未通过，未读取设备掩码。")
             return
         except EngineeringMaintenanceDeviceUnbound:
-            status.setText("当前终端没有已验证的物理设备绑定，无法查看分布。")
+            status.setText("当前连接与所选设备不匹配，无法查看分布。")
             return
         except ValueError:
             status.setText("已绑定设备的掩码不可读取，请按工程流程处理。")

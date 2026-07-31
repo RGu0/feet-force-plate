@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton
 
 from client.app.engineering_maintenance import (
     EngineeringMaintenanceAccessDenied,
+    EngineeringDeviceBindingStore,
     EngineeringMaintenanceDeviceUnbound,
     EngineeringMaintenanceService,
 )
@@ -106,6 +107,44 @@ def test_engineering_maintenance_rejects_an_unbound_device_and_never_guesses_ide
         service.read_distribution("approved")
 
 
+def test_engineering_binding_restores_selected_asset_only_for_same_connection(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _write_mask(store)
+    binding_store = EngineeringDeviceBindingStore(tmp_path)
+    current_connection = "usb-serial-fingerprint-7"
+    service = EngineeringMaintenanceService(
+        mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
+        confirmation_verifier=lambda confirmation: confirmation == "approved",
+        binding_store=binding_store,
+        connected_device_identity=lambda: current_connection,
+    )
+
+    service.bind_current_device("approved", store.device_id)
+
+    assert service.selected_device_id() == store.device_id
+    assert service.device_ids() == (store.device_id,)
+    assert service.read_distribution("approved").device_id == store.device_id
+
+    restored = EngineeringMaintenanceService(
+        mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
+        confirmation_verifier=lambda _confirmation: True,
+        binding_store=EngineeringDeviceBindingStore(tmp_path),
+        connected_device_identity=lambda: current_connection,
+    )
+    assert restored.read_distribution("approved").device_id == store.device_id
+
+    mismatched = EngineeringMaintenanceService(
+        mask_store_for_device=lambda _device_id: store,
+        confirmation_verifier=lambda _confirmation: True,
+        binding_store=EngineeringDeviceBindingStore(tmp_path),
+        connected_device_identity=lambda: "usb-serial-other-device",
+    )
+    with pytest.raises(EngineeringMaintenanceDeviceUnbound):
+        mismatched.read_distribution("approved")
+
+
 def test_engineering_distribution_is_read_only_and_excludes_frame_evidence(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _write_mask(store)
@@ -165,6 +204,41 @@ def test_support_page_exposes_engineering_distribution_only_when_configured(
     assert "SUSPECT 1" in dialog.findChild(QLabel, "engineeringMaintenanceSummary").text()
     assert "REPAIRABLE 1" in dialog.findChild(QLabel, "engineeringMaintenanceSummary").text()
     assert "原始压力" in dialog.findChild(QLabel, "engineeringMaintenanceBoundary").text()
+
+
+def test_engineering_dialog_binds_current_device_before_reading(tmp_path: Path, qtbot) -> None:
+    store = _store(tmp_path)
+    _write_mask(store)
+    service = EngineeringMaintenanceService(
+        mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
+        confirmation_verifier=lambda confirmation: confirmation == "approved",
+        binding_store=EngineeringDeviceBindingStore(tmp_path),
+        connected_device_identity=lambda: "usb-serial-fingerprint-7",
+    )
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.show_engineering_maintenance(service)
+    dialog = window.findChild(QDialog, "engineeringMaintenanceDialog")
+    assert dialog is not None
+    confirmation = dialog.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
+    device_id = dialog.findChild(QLineEdit, "engineeringMaintenanceDeviceId")
+    qtbot.keyClicks(confirmation, "approved")
+    qtbot.keyClicks(device_id, store.device_id)
+    qtbot.mouseClick(
+        dialog.findChild(QPushButton, "BIND_ENGINEERING_DEVICE"),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert "已绑定当前连接设备" in dialog.findChild(
+        QLabel, "engineeringMaintenanceStatus"
+    ).text()
+    qtbot.keyClicks(confirmation, "approved")
+    qtbot.mouseClick(
+        dialog.findChild(QPushButton, "CONFIRM_ENGINEERING_MAINTENANCE"),
+        Qt.MouseButton.LeftButton,
+    )
+    assert "SUSPECT 1" in dialog.findChild(QLabel, "engineeringMaintenanceSummary").text()
 
 
 def test_controller_wires_the_engineering_maintenance_entry(qtbot, tmp_path: Path) -> None:

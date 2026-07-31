@@ -19,6 +19,7 @@ class _Transport:
 def _candidate(
     device: str,
     availability: PortAvailability,
+    serial_number: str | None = None,
 ) -> SerialPortCandidate:
     return SerialPortCandidate(
         device=device,
@@ -27,6 +28,7 @@ def _candidate(
         description="USB Serial",
         hwid="opaque",
         availability=availability,
+        serial_number=serial_number,
     )
 
 
@@ -46,6 +48,27 @@ def test_connector_opens_available_ch340_and_returns_production_boundaries() -> 
     assert "/dev/" not in connection.device_ref
     assert connection.parser.profile.evidence is ProfileEvidence.CAPTURE_VERIFIED
     assert connection.parser.profile.version == "do-p4864-observed-compact-8bit/1"
+    assert connection.hardware_identity is None
+
+
+def test_connector_exposes_only_serial_backed_hardware_identity() -> None:
+    connector = SerialValidationConnector(
+        enumerate_ports=lambda: [
+            _candidate(
+                "/dev/cu.private-path",
+                PortAvailability.AVAILABLE,
+                serial_number="board-serial-7",
+            )
+        ],
+        transport_open=lambda _device: _Transport(),
+    )
+
+    connection = connector.connect()
+
+    assert connection.hardware_identity is not None
+    assert connection.hardware_identity.startswith("usb-serial-")
+    assert "board-serial-7" not in connection.hardware_identity
+    assert "/dev/" not in connection.hardware_identity
 
 
 def test_connector_distinguishes_absent_from_busy_without_exposing_port() -> None:

@@ -26,6 +26,7 @@ class ValidationConnection:
     device_ref: str
     transport: Any
     parser: Any
+    hardware_identity: str | None = None
 
 
 class ValidationConnector(Protocol):
