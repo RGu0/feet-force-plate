@@ -120,7 +120,7 @@ def _capture(*, device: str, seconds: float, output_dir: Path, read_size: int) -
         },
         "outcome": "DISCONNECTED" if disconnected else "COMPLETED",
         "disconnect_reason": disconnected,
-        "boundary": "Observed compact profile; CheckSum and raw-value semantics remain unverified. Raw bytes are local-only and must not be committed.",
+        "boundary": "Actual captures establish the compact frame boundary, big-endian length, header, function byte, tail, and column-major mapping. CheckSum remains audit-only; raw-value semantics remain independently unvalidated. Raw bytes are local-only and must not be committed.",
     }
     summary_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result

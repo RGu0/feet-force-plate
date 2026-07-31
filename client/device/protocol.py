@@ -1,8 +1,8 @@
 """DO-P4864 byte-stream protocol contracts.
 
-The manual does not prove the wire byte order of the length field or the
-CheckSum coverage range.  Those choices therefore live in an explicit profile
-instead of being hidden parser assumptions.
+Repeated physical capture establishes the frame boundary and big-endian length
+field. CheckSum coverage remains an explicit audit-only profile choice rather
+than a hidden parser assumption.
 """
 
 from __future__ import annotations
