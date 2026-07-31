@@ -18,3 +18,6 @@
 
 Offscreen PDF/preview tests do not validate an actual printer, production-cloud analysis, or a clinically validated full report.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

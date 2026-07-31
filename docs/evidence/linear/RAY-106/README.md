@@ -18,3 +18,6 @@
 
 The demo does not substitute for a real device, persistent storage, sync, or cloud adapter.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

@@ -22,3 +22,6 @@ The run is recorded in `/private/tmp/feetforceplate-p2-client-tests-after-workbe
 
 Qt offscreen checks and visual review do not replace Windows high-DPI, physical printer, real-device, or non-technical operator acceptance. Keep the parent and child issues `In Review` until those checks are completed.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

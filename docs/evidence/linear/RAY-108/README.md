@@ -18,3 +18,6 @@
 
 Actual institution authorization text, persistent cross-tenant isolation, and in-person usability remain external acceptance work.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

@@ -14,3 +14,6 @@
 
 This is not target Windows high-DPI, keyboard/screen-reader, real-device, physical-printer, or non-technical-operator acceptance. Those required observations keep this item `In Review`.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

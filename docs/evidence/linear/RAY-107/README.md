@@ -18,3 +18,6 @@
 
 The read models are development/test adapters; real institution isolation, diagnostic export handling, and operator acceptance still need integration validation.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

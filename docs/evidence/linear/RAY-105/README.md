@@ -19,3 +19,6 @@
 
 The review is Qt offscreen only; target Windows scaling and live operator use remain required before `Done`.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

@@ -18,3 +18,6 @@
 
 Real baseline/connection inputs and Windows/onsite operation remain separate hardware and field validations.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.

@@ -18,3 +18,6 @@
 
 This does not replace real DO-P4864 cadence, Windows high-DPI, or field-operator safety acceptance.
 
+## Commit
+
+Implementation and evidence: `aa9162f` — `Add institution access entry UI`.
