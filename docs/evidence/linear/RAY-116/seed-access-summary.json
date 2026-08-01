@@ -5,8 +5,8 @@
     "active_before_expand": 1,
     "historical_contributors": 3
   },
-  "generated_at": "2026-08-01T13:09:10.680516+00:00",
-  "implementation_sha": "80780caa4af4e02a5def9a6b71619cbd0b407714",
+  "generated_at": "2026-08-01T13:52:33.655856+00:00",
+  "implementation_sha": "2c590a663bb3a7d3d6d9e01e9c131aa91f81f087",
   "mode": "local-in-memory",
   "negative_cases": {
     "activation_replay_denied": true,
