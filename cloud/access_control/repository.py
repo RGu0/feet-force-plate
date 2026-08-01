@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime
+import hmac
 from typing import Protocol
 from uuid import UUID
 
@@ -136,6 +137,17 @@ class ActivatedAccess:
     installation: ClientInstallationRecord
 
 
+@dataclass(frozen=True, slots=True)
+class AuditEventRecord:
+    event_id: UUID
+    actor_id: UUID
+    action: str
+    tenant_id: UUID | None
+    resource_id: UUID | None
+    occurred_at: datetime
+    details: tuple[tuple[str, str], ...]
+
+
 class AccessRepository(Protocol):
     async def provision_tenant(
         self,
@@ -180,6 +192,7 @@ class InMemoryAccessRepository:
         self._activation_by_hash: dict[bytes, UUID] = {}
         self._installations: dict[UUID, ClientInstallationRecord] = {}
         self._group_history: list[AccessGroupHistoryRecord] = []
+        self._audit_events: list[AuditEventRecord] = []
 
     async def provision_tenant(
         self,
@@ -439,6 +452,95 @@ class InMemoryAccessRepository:
             except KeyError as exc:
                 raise AccessRepositoryError("license does not exist") from exc
 
+    async def tenant(self, tenant_id: UUID) -> TenantRecord:
+        async with self._lock:
+            try:
+                return self._tenants[tenant_id]
+            except KeyError as exc:
+                raise AccessRepositoryError("tenant does not exist") from exc
+
+    async def account(self, account_id: UUID) -> TenantAccountRecord:
+        async with self._lock:
+            try:
+                return self._accounts[account_id]
+            except KeyError as exc:
+                raise AccessRepositoryError("account does not exist") from exc
+
+    async def hardware(self, hardware_id: UUID) -> HardwareAssetRecord:
+        async with self._lock:
+            try:
+                return self._hardware[hardware_id]
+            except KeyError as exc:
+                raise AccessRepositoryError("hardware does not exist") from exc
+
+    async def access_group_for_license(
+        self, license_id: UUID
+    ) -> AccessGroupHistoryRecord:
+        async with self._lock:
+            for row in reversed(self._group_history):
+                if row.license_id == license_id and row.closed_at is None:
+                    return row
+            raise AccessRepositoryError("active access group does not exist")
+
+    async def replace_license(
+        self,
+        *,
+        license_id: UUID,
+        expected_version: int,
+        status: LicenseState,
+        issued_at: datetime,
+        valid_until: datetime,
+        key_id: str,
+        document_json: str,
+        signature: str,
+    ) -> LicenseEntitlementRecord:
+        async with self._lock:
+            try:
+                current = self._licenses[license_id]
+            except KeyError as exc:
+                raise AccessRepositoryError("license does not exist") from exc
+            if current.version != expected_version:
+                raise AccessRepositoryConflict("license version changed concurrently")
+            if valid_until <= current.valid_from:
+                raise ValueError("license validity window is invalid")
+            updated = replace(
+                current,
+                status=status,
+                issued_at=issued_at,
+                valid_until=valid_until,
+                version=current.version + 1,
+                key_id=key_id,
+                document_json=document_json,
+                signature=signature,
+            )
+            self._licenses[license_id] = updated
+            return updated
+
+    async def append_audit(self, event: AuditEventRecord) -> None:
+        async with self._lock:
+            self._audit_events.append(event)
+
+    async def audit_events(
+        self,
+        *,
+        tenant_id: UUID | None = None,
+    ) -> tuple[AuditEventRecord, ...]:
+        async with self._lock:
+            return tuple(
+                event
+                for event in self._audit_events
+                if tenant_id is None or event.tenant_id == tenant_id
+            )
+
+    async def activation_storage_contains(self, raw_code: str) -> bool:
+        raw = raw_code.encode("utf-8")
+        async with self._lock:
+            return any(
+                hmac.compare_digest(raw, stored_hash)
+                or raw in stored_hash
+                for stored_hash in self._activation_by_hash
+            )
+
 
 __all__ = [
     "AccessActivationRejected",
@@ -449,6 +551,7 @@ __all__ = [
     "AccessRepositoryError",
     "ActivatedAccess",
     "ActivationCodeRecord",
+    "AuditEventRecord",
     "ClientInstallationRecord",
     "HardwareAssetRecord",
     "InMemoryAccessRepository",
