@@ -42,3 +42,23 @@ Still open until the deployment steps complete:
 - physical hardware identity and operator workflow;
 - domain + public-CA certificate + port 443 for formal customer rollout;
 - clinical validation and production/compliance release review.
+
+## Current evidence matrix
+
+| Criterion | State | Evidence |
+|---|---|---|
+| Provider-provisioned account/License activation | PROVEN_LOCAL | `cloud/tests/test_tenant_authentication.py` |
+| Replacement computer, same License/hardware | PROVEN_LOCAL | `client/tests/test_seed_access_runtime.py` |
+| Dynamic tenant 1 -> 3 -> 2 | PROVEN_LOCAL | `seed-access-summary.json` |
+| Ten isolated synthetic ingestion lifecycles | PROVEN_LOCAL | `seed-access-summary.json` |
+| Private immutable filesystem objects | PROVEN_LOCAL | `cloud/tests/test_filesystem_object_store.py` |
+| Platform roles, masking and 15-minute grants | PROVEN_LOCAL | `RAY-103/platform-iam-summary.json` |
+| Full repository regression | PROVEN_LOCAL | `pytest-full-seed-access.xml`: 726 tests, 0 failures, 1 skipped, 51.226 s |
+| PostgreSQL role/RLS parity | PENDING_POSTGRES | skipped live test; three DSNs unavailable |
+| Encrypted clean restore | PENDING_POSTGRES | `RAY-97/restore-exercise.md` |
+| Aliyun 7443 lifecycle and restart | PENDING_ALIYUN | host prerequisites not installed |
+| Physical force-plate identity | NEEDS_HARDWARE | no real device run in this evidence |
+| Domain/public CA/443 | NEEDS_FORMAL_INGRESS | explicitly deferred commercial gate |
+
+Implementation checkpoint for the full local regression:
+`4122c781b222b4e0257c194db9bcda11b1aa8db6`.

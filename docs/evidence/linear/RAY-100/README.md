@@ -142,3 +142,17 @@ These missing client, live-database, hardware, and operational checks prevent `D
 - Current terminal identity is a short-lived server HMAC token. It proves API contract binding, not device-held private-key possession or certificate attestation.
 - Controlled upload after revocation lasts only while an already-issued token remains valid; post-expiry recovery must follow an explicit revocation-reason policy.
 - No secrets, personal data, activation codes, raw pressure frames, or customer report data are stored in this evidence directory.
+
+## 2026-08-01 account-bound License client refresh
+
+The current client uses provider-provisioned account activation and no customer
+tenant-search/create/admin controls. Login on a replacement computer creates a
+new client installation while keeping the same account-bound `license/2` and
+physical hardware identity. Stable USB serial identity is verified before the
+device opens; computer identity does not own the License.
+
+`pytest-seed-client-access.xml` records 248 passing client tests. Deterministic
+native Qt captures under `seed-access-ui/` show activation, login, session lock
+and suspended-License states. These prove local packaged composition and UI
+behavior. A real physical device run and public Aliyun activation remain open;
+the issue must not be marked Done for hardware-specific criteria yet.

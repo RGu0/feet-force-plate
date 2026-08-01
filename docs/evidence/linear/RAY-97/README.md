@@ -62,3 +62,22 @@ Linear uses `INGESTED_COMPLETE` in one acceptance sentence, while the approved c
 - Automated in-memory/ASGI tests are not a real PostgreSQL, S3, TLS, or terminal-certificate deployment.
 - Backup/restore drills, production least-privilege roles, and deployment-region privacy/compliance review require external environments and human approval.
 - The implementation, tests, initial evidence, and plan are committed at `d8466ead54cc25697185b2811c71937550f1b45b`. This evidence-only follow-up records that immutable SHA.
+
+## 2026-08-01 seed-access refresh
+
+- `PROVEN_LOCAL`: private filesystem object store uses tenant-prefixed immutable
+  keys, digest/size verification, 0700 directories, 0600 files, staging fsync and
+  atomic rename (`cloud/tests/test_filesystem_object_store.py`).
+- `PROVEN_LOCAL`: PostgreSQL access adapter has separate tenant, activation and
+  Platform pools, forced tenant context and row locks; SQL/mocking contracts pass.
+- `PROVEN_LOCAL`: 10 synthetic tenants each complete one isolated ingestion
+  lifecycle (`RAY-116/seed-access-summary.json`).
+- `PROVEN_LOCAL`: encrypted backup/restore assets enforce custom pg_dump,
+  external age recipient, object manifest and separate empty restore target.
+- `PENDING_POSTGRES`: migration/role/RLS parity test is the one skipped item in
+  `RAY-116/pytest-full-seed-access.xml` because the live role DSNs do not yet exist.
+- `PENDING_ALIYUN`: restore exercise remains explicitly pending in
+  `restore-exercise.md`; regional privacy/compliance review also remains open.
+
+No status change to Done is justified until live PostgreSQL, clean restore and
+Aliyun seed evidence pass.

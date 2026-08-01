@@ -104,3 +104,16 @@ These missing items require client-owned code and/or an integration environment.
 - The initial Linear status update timed out, but the retry succeeded; a subsequent `get_issue` confirmed `In Progress` and the startup comment was present.
 - Automated tests use deterministic in-memory server adapters. They do not prove durability across an actual client process crash or cloud outage.
 - No secrets, personal data, raw customer frames, or activation credentials are stored in this evidence directory.
+
+## 2026-08-01 seed client refresh
+
+- `PROVEN_LOCAL`: background access continuity refreshes credentials once across
+  concurrent consumers and keeps upload/heartbeat active while the UI is locked.
+- `PROVEN_LOCAL`: License suspended/expired/revoked states block only new tests;
+  existing upload and report access continue.
+- `PROVEN_LOCAL`: 24-hour, 50-session and 2-GiB local gates are wired to the
+  current signed `license/2` client policy.
+- `PROVEN_LOCAL`: synthetic ten-tenant upload, exact manifest and cross-tenant
+  denial are captured in `RAY-116/seed-access-summary.json`.
+- `PENDING_POSTGRES` / `PENDING_ALIYUN`: real process restart, live role DSNs,
+  lossy public network and server restart durability remain open.
