@@ -120,7 +120,9 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
 def test_systemd_entry_scripts_are_executable() -> None:
     for relative in (
         "cloud/api/run-seed.sh",
+        "scripts/local-env.sh",
         "deploy/aliyun/seed/backup.sh",
+        "deploy/aliyun/seed/check-secrets.sh",
         "deploy/aliyun/seed/restore-verify.sh",
     ):
         path = ROOT.parents[2] / relative

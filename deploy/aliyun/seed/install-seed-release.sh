@@ -68,7 +68,9 @@ chown -R "$service_user:$service_group" "$release_source"
 chmod -R a+rX "$release_source"
 chmod 0755 \
     "$release_source/cloud/api/run-seed.sh" \
+    "$release_source/scripts/local-env.sh" \
     "$release_source/deploy/aliyun/seed/backup.sh" \
+    "$release_source/deploy/aliyun/seed/check-secrets.sh" \
     "$release_source/deploy/aliyun/seed/restore-verify.sh" \
     "$release_source/deploy/aliyun/seed/install-layout.sh"
 
