@@ -62,6 +62,16 @@ def test_tenant_grows_one_to_three_then_reduces_to_two_without_data_move() -> No
         assert {row.license_id for row in history} == {group.license_id for group in groups}
         assert all(row.tenant_id == tenant.tenant_id for row in history)
         assert sum(row.closed_at is not None for row in history) == 1
+        assert (await repository.license(groups[2].license_id)).status is LicenseState.REVOKED
+        with pytest.raises(AccessActivationRejected):
+            await repository.activate_account_atomically(
+                login_name_hmac=groups[2].login_name_hmac,
+                activation_code_hash=groups[2].activation_code_hash,
+                hardware_identity=groups[2].hardware_identity,
+                password_hash="$ffp-scrypt$closed",
+                installation_id=uuid4(),
+                activated_at=NOW + timedelta(days=31),
+            )
 
     asyncio.run(exercise())
 

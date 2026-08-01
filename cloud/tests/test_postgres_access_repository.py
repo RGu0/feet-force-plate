@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+import hashlib
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -25,17 +26,28 @@ NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _group(index: int) -> AccessGroupSeed:
+def _group(index: int, *, run_nonce: bytes = b"") -> AccessGroupSeed:
+    seed = hashlib.sha256(run_nonce + index.to_bytes(4, "big")).digest()
     return AccessGroupSeed(
-        account_id=uuid4(), login_name_hmac=bytes([index]) * 32,
-        account_display_name=f"pg-seed-{index}", license_id=uuid4(),
-        hardware_id=uuid4(), hardware_identity=f"usb-serial-{index:020x}",
+        account_id=uuid4(), login_name_hmac=hashlib.sha256(b"login" + seed).digest(),
+        account_display_name=f"pg-seed-{index}-{seed.hex()[:8]}", license_id=uuid4(),
+        hardware_id=uuid4(),
+        hardware_identity=f"usb-serial-{hashlib.sha256(b'hardware' + seed).hexdigest()[:20]}",
         hardware_model="DO-P4864", activation_code_id=uuid4(),
-        activation_code_hash=bytes([index + 20]) * 32,
+        activation_code_hash=hashlib.sha256(b"activation" + seed).digest(),
         activation_expires_at=NOW + timedelta(days=7), license_valid_from=NOW,
         license_valid_until=NOW + timedelta(days=365),
         enabled_features=("reports.view", "screening.start", "sync.upload"),
     )
+
+
+def test_live_group_identifiers_are_unique_between_acceptance_runs() -> None:
+    first = _group(11, run_nonce=b"first-acceptance-run")
+    second = _group(11, run_nonce=b"second-acceptance-run")
+
+    assert first.login_name_hmac != second.login_name_hmac
+    assert first.activation_code_hash != second.activation_code_hash
+    assert first.hardware_identity != second.hardware_identity
 
 
 def test_constructor_requires_three_explicit_pools() -> None:
@@ -84,7 +96,8 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
             tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
         )
         tenant = TenantSeed(uuid4(), f"Postgres parity {uuid4()}")
-        groups = [_group(index) for index in (11, 12, 13)]
+        run_nonce = os.urandom(32)
+        groups = [_group(index, run_nonce=run_nonce) for index in (11, 12, 13)]
         try:
             async with activation_pool.acquire() as connection:
                 assert await connection.fetchval(

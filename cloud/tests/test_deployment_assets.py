@@ -115,6 +115,7 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
     assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
     assert path.stat().st_mode & stat.S_IXUSR
+    assert "0004_allow_unsigned_revoked_license.sql" in text
 
 
 def test_systemd_entry_scripts_are_executable() -> None:

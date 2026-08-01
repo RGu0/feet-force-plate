@@ -626,7 +626,7 @@ class PostgresAccessRepository:
                 tenant_id, license_id, closed_at, reason_code.strip(),
             )
             await connection.execute(
-                "UPDATE device.license_entitlements SET status='SUSPENDED',"
+                "UPDATE device.license_entitlements SET status='REVOKED',"
                 "license_version=license_version+1,updated_at=$3 "
                 "WHERE tenant_id=$1 AND license_id=$2", tenant_id, license_id, closed_at,
             )

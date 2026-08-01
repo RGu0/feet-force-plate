@@ -4,6 +4,11 @@ from pathlib import Path
 
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0003_seed_mvp_access_control.sql"
+REVOKED_LICENSE_MIGRATION = (
+    Path(__file__).parents[1]
+    / "migrations"
+    / "0004_allow_unsigned_revoked_license.sql"
+)
 
 TENANT_TABLES = (
     "iam.tenant_accounts",
@@ -96,3 +101,13 @@ def test_dynamic_bindings_keep_history_and_prevent_two_open_rows() -> None:
     assert "WHERE unassigned_at IS NULL" in sql
     assert "CREATE UNIQUE INDEX uq_open_hardware_lease" in sql
     assert "WHERE released_at IS NULL" in sql
+
+
+def test_unsigned_revoked_license_patch_is_transactional_and_idempotent() -> None:
+    sql = REVOKED_LICENSE_MIGRATION.read_text(encoding="utf-8")
+
+    assert sql.startswith("BEGIN;")
+    assert sql.rstrip().endswith("COMMIT;")
+    assert "license_entitlements_document_state_check" in sql
+    assert "status = 'REVOKED'" in sql
+    assert "pg_get_constraintdef" in sql

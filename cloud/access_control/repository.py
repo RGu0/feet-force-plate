@@ -526,7 +526,7 @@ class InMemoryAccessRepository:
                     license_record = self._licenses[license_id]
                     self._licenses[license_id] = replace(
                         license_record,
-                        status=LicenseState.SUSPENDED,
+                        status=LicenseState.REVOKED,
                         version=license_record.version + 1,
                     )
                     return license_id
