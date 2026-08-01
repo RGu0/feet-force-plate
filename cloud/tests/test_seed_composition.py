@@ -9,9 +9,11 @@ from tempfile import TemporaryDirectory
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+from httpx import ASGITransport, AsyncClient
 
 from cloud.api.seed import SeedSettings
 from cloud.api.seed import build_seed_app
+from cloud.api.seed import serve_seed
 
 
 def _values(root: Path) -> dict[str, str]:
@@ -101,10 +103,14 @@ class _Acquire:
 
 
 class _ReadyPool:
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+
     def acquire(self):
         return _Acquire(self)
 
     async def fetchval(self, query: str):
+        assert asyncio.get_running_loop() is self.loop
         assert query == "SELECT 1"
         return 1
 
@@ -129,5 +135,38 @@ def test_build_composes_only_seed_identity_and_data_plane_services() -> None:
             assert services.operations is None
             assert services.token_issuer is None
             assert services.operations_tokens is None
+
+    asyncio.run(exercise())
+
+
+def test_server_and_postgres_pools_share_one_event_loop() -> None:
+    async def exercise() -> None:
+        with TemporaryDirectory(dir="/private/tmp") as directory:
+            settings = SeedSettings(**_values(Path(directory) / "objects"))
+
+            async def pool_factory(**_kwargs):
+                return _ReadyPool()
+
+            class InspectingServer:
+                def __init__(self, config):
+                    self.config = config
+
+                async def serve(self) -> None:
+                    async with AsyncClient(
+                        transport=ASGITransport(app=self.config.app),
+                        base_url="http://seed.test",
+                    ) as client:
+                        response = await client.get("/health/ready")
+                    assert response.status_code == 200
+                    assert response.json()["dependencies"] == {
+                        "postgres": "ready",
+                        "object_store": "ready",
+                    }
+
+            await serve_seed(
+                settings,
+                pool_factory=pool_factory,
+                server_factory=InspectingServer,
+            )
 
     asyncio.run(exercise())

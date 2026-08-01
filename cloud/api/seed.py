@@ -279,18 +279,31 @@ async def build_seed_app(
     return app
 
 
-def main() -> None:
+async def serve_seed(
+    settings: SeedSettings | None = None,
+    *,
+    pool_factory: Callable[..., Any] | None = None,
+    server_factory: Callable[[Any], Any] | None = None,
+) -> None:
     import uvicorn
 
-    settings = SeedSettings.from_env()
-    app = asyncio.run(build_seed_app(settings))
+    resolved_settings = settings or SeedSettings.from_env()
+    app = await build_seed_app(resolved_settings, pool_factory=pool_factory)
     host = os.environ.get("FEETFORCEPLATE_BIND_HOST", "127.0.0.1")
     port = int(os.environ.get("FEETFORCEPLATE_BIND_PORT", "8743"))
-    uvicorn.run(app, host=host, port=port, proxy_headers=False, server_header=False)
+    config = uvicorn.Config(
+        app, host=host, port=port, proxy_headers=False, server_header=False
+    )
+    server = (server_factory or uvicorn.Server)(config)
+    await server.serve()
+
+
+def main() -> None:
+    asyncio.run(serve_seed())
 
 
 if __name__ == "__main__":
     main()
 
 
-__all__ = ["SeedSettings", "build_seed_app"]
+__all__ = ["SeedSettings", "build_seed_app", "serve_seed"]
