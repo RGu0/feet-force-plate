@@ -86,6 +86,10 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
         tenant = TenantSeed(uuid4(), f"Postgres parity {uuid4()}")
         groups = [_group(index) for index in (11, 12, 13)]
         try:
+            async with activation_pool.acquire() as connection:
+                assert await connection.fetchval(
+                    "SELECT has_table_privilege(current_user,'iam.tenants','SELECT')"
+                )
             await repository.provision_tenant(tenant, groups[0], created_at=NOW)
             await repository.add_access_group(tenant.tenant_id, groups[1], created_at=NOW)
             await repository.add_access_group(tenant.tenant_id, groups[2], created_at=NOW)
