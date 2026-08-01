@@ -145,3 +145,4 @@ def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
     text = (ROOT / "run-live-acceptance.sh").read_text()
     assert text.count("FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv") >= 3
     assert text.count("XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache") >= 3
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in text

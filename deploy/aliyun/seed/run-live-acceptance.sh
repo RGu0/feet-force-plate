@@ -117,6 +117,7 @@ runuser -u "$service_user" -- bash -c '
     export FEETFORCEPLATE_TEST_TENANT_DSN="$FEETFORCEPLATE_TENANT_DSN"
     export FEETFORCEPLATE_TEST_ACTIVATION_DSN="$FEETFORCEPLATE_ACTIVATION_DSN"
     export FEETFORCEPLATE_TEST_PLATFORM_DSN="$FEETFORCEPLATE_PLATFORM_DSN"
+    export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
     exec ./scripts/local-env.sh python -m pytest \
         cloud/tests/test_postgres_access_repository.py \
         --junitxml "$1" -q
