@@ -11,6 +11,7 @@ import unicodedata
 from uuid import UUID, uuid4
 
 from cloud.api.access_auth import LicenseDocumentSigner, PlatformAccessContext
+from cloud.api.errors import PlatformError
 from shared.contracts.access_control import (
     LicenseControlAction,
     LicenseControlRequest,
@@ -31,8 +32,12 @@ from .repository import (
 )
 
 
-class PlatformAuthorizationDenied(PermissionError):
+class PlatformAuthorizationDenied(PlatformError):
     """Platform identity lacks the explicit role for a provider operation."""
+
+    code = "E-PLT-403"
+    http_status = 403
+    action = "CONTACT_PLATFORM_OWNER"
 
 
 def normalize_login_name(value: str) -> str:

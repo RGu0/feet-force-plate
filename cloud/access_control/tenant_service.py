@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     RefreshTokenFactory,
+    TenantAccessContext,
     TenantAccessTokenIssuer,
     reject_local_test_license,
 )
@@ -315,6 +316,20 @@ class TenantAuthenticationService:
             self._refresh_tokens.digest(request.refresh_token),
             revoked_at=self._now(),
         )
+
+    async def current_license(self, context: TenantAccessContext) -> SignedLicenseV2:
+        if context.expires_at <= self._now():
+            raise TenantAuthenticationRejected("tenant access token is expired")
+        license_record = await self._repository.license(context.license_id)
+        group = await self._repository.access_group_for_license(context.license_id)
+        hardware = await self._repository.hardware(group.hardware_id)
+        if (
+            group.tenant_id != context.tenant_id
+            or group.account_id != context.account_id
+            or hardware.stable_identity != context.hardware_id
+        ):
+            raise TenantAuthenticationRejected("tenant License context does not match")
+        return self._stored_signed_license(license_record)
 
     async def _new_session_fields(
         self,

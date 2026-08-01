@@ -13,6 +13,7 @@ from cloud.api.access_auth import (
     PlatformAccessTokenIssuer,
     RefreshTokenFactory,
 )
+from cloud.api.errors import PlatformError
 from shared.contracts.access_control import (
     MaskedTenantSummary,
     PlatformLoginRequest,
@@ -35,8 +36,12 @@ from .repository import (
 )
 
 
-class PlatformPermissionDenied(PermissionError):
+class PlatformPermissionDenied(PlatformError):
     """A Platform role, grant, or token lifetime does not authorize an action."""
+
+    code = "E-PLT-403"
+    http_status = 403
+    action = "CONTACT_PLATFORM_OWNER"
 
 
 class PlatformIdentityService:
