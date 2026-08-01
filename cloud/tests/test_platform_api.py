@@ -28,7 +28,7 @@ from shared.contracts.access_control import (
 
 class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+        self.now = datetime.now(UTC).replace(microsecond=0)
         self.repository = InMemoryAccessRepository()
         private_key = Ed25519PrivateKey.generate()
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)

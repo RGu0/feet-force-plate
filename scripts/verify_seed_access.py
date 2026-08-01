@@ -58,7 +58,7 @@ from shared.contracts.cloud import (
 )
 
 
-START = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+START = datetime.now(UTC).replace(microsecond=0)
 
 
 @dataclass
