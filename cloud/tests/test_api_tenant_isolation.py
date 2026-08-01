@@ -25,6 +25,7 @@ class TenantAccessIsolationApiTests(unittest.IsolatedAsyncioTestCase):
         self.left_tenant = uuid4()
         self.right_tenant = uuid4()
         self.left_installation = uuid4()
+        self.left_replacement_installation = uuid4()
         self.right_installation = uuid4()
         self.site_id = uuid4()
         self.device_id = uuid4()
@@ -41,6 +42,11 @@ class TenantAccessIsolationApiTests(unittest.IsolatedAsyncioTestCase):
             self.right_tenant,
             uuid4(),
             self.right_installation,
+        )
+        repository.add_terminal(
+            self.left_tenant,
+            self.site_id,
+            self.left_replacement_installation,
         )
         repository.add_device(self.left_tenant, self.device_id, "DO-P4864")
         repository.add_subject(self.left_tenant, self.subject_id)
@@ -75,6 +81,16 @@ class TenantAccessIsolationApiTests(unittest.IsolatedAsyncioTestCase):
             license_id=uuid4(),
             hardware_id="usb-serial-right000000000000001",
             client_installation_id=self.right_installation,
+            token_version=1,
+            capabilities=capabilities,
+            now=self.now,
+        )
+        self.left_replacement_token = issuer.issue(
+            tenant_id=self.left_tenant,
+            account_id=uuid4(),
+            license_id=uuid4(),
+            hardware_id="usb-serial-left0000000000000001",
+            client_installation_id=self.left_replacement_installation,
             token_version=1,
             capabilities=capabilities,
             now=self.now,
@@ -136,6 +152,42 @@ class TenantAccessIsolationApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denied.status_code, 403, denied.text)
         self.assertNotIn(self.left_token, denied.text)
         self.assertNotIn(self.right_token, denied.text)
+
+    async def test_replacement_installation_can_read_its_tenants_session_status(
+        self,
+    ) -> None:
+        request = SessionCreateRequest(
+            session_id=self.session_id,
+            subject_uuid=self.subject_id,
+            consent_record_id=self.consent_id,
+            site_id=self.site_id,
+            terminal_id=self.left_installation,
+            device_id=self.device_id,
+            test_protocol=ProtocolContract(id="standard-screening", version="1.0"),
+            versions=SessionVersions(
+                app="0.1.0",
+                protocol_profile="do-p4864/1",
+                payload_schema="raw-segment/1",
+                calibration="calibration/1",
+            ),
+            started_at=self.now,
+        )
+        create_headers = self.headers(self.left_token)
+        create_headers["Idempotency-Key"] = "replacement-readable-session"
+        created = await self.client.post(
+            "/v1/sessions",
+            headers=create_headers,
+            json=request.model_dump(mode="json"),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+
+        status = await self.client.get(
+            f"/v1/sessions/{self.session_id}/status",
+            headers=self.headers(self.left_replacement_token),
+        )
+
+        self.assertEqual(status.status_code, 200, status.text)
+        self.assertEqual(status.json()["data"]["session_id"], str(self.session_id))
 
 
 if __name__ == "__main__":
