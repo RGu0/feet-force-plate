@@ -124,6 +124,7 @@ def test_systemd_entry_scripts_are_executable() -> None:
         "deploy/aliyun/seed/backup.sh",
         "deploy/aliyun/seed/check-secrets.sh",
         "deploy/aliyun/seed/restore-verify.sh",
+        "deploy/aliyun/seed/run-live-acceptance.sh",
         "deploy/aliyun/seed/resume-seed-cutover.sh",
     ):
         path = ROOT.parents[2] / relative
