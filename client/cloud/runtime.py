@@ -9,6 +9,7 @@ import binascii
 import os
 from pathlib import Path
 import time
+import threading
 from typing import Protocol
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -152,6 +153,7 @@ class ClientAccessRuntime:
         self._session: AuthenticatedInstitutionSession | None = None
         self._access_expires_at: datetime | None = None
         self._account_name: str | None = None
+        self._token_lock = threading.RLock()
 
     def discover_hardware_identity(self) -> str | None:
         result = self._hardware.discover()
@@ -215,30 +217,32 @@ class ClientAccessRuntime:
         return 30 if state is None else state.lock_timeout_minutes
 
     def current_access_token(self) -> str:
-        if self._session is None or self._access_expires_at is None:
-            raise StoredCredentialUnavailable("当前没有已登录机构会话")
-        if self._access_expires_at <= self._now() + self._REFRESH_EARLY:
-            self.refresh()
-        assert self._session is not None
-        return self._session.access_token
+        with self._token_lock:
+            if self._session is None or self._access_expires_at is None:
+                raise StoredCredentialUnavailable("当前没有已登录机构会话")
+            if self._access_expires_at <= self._now() + self._REFRESH_EARLY:
+                self.refresh()
+            assert self._session is not None
+            return self._session.access_token
 
     def refresh(self) -> AuthenticatedInstitutionSession:
-        refresh_token = self._store.refresh_token()
-        if refresh_token is None:
-            raise StoredCredentialUnavailable("登录凭据已失效，请重新登录")
-        try:
-            response = self._client.refresh(
-                RefreshRequest(
-                    refresh_token=refresh_token,
-                    client_installation_id=self.client_installation_id,
+        with self._token_lock:
+            refresh_token = self._store.refresh_token()
+            if refresh_token is None:
+                raise StoredCredentialUnavailable("登录凭据已失效，请重新登录")
+            try:
+                response = self._client.refresh(
+                    RefreshRequest(
+                        refresh_token=refresh_token,
+                        client_installation_id=self.client_installation_id,
+                    )
                 )
-            )
-        except AccessAuthenticationFailed:
-            self._store.clear_credentials()
-            self._session = None
-            self._access_expires_at = None
-            raise
-        return self._accept_session(response)
+            except AccessAuthenticationFailed:
+                self._store.clear_credentials()
+                self._session = None
+                self._access_expires_at = None
+                raise
+            return self._accept_session(response)
 
     def logout(self) -> None:
         refresh_token = self._store.refresh_token()

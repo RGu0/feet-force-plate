@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import base64
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -236,6 +237,25 @@ class ClientAccessRuntimeTests(unittest.TestCase):
             self.store.refresh_token(),
             "refresh-token-1-value-at-least-20",
         )
+
+    def test_concurrent_token_consumers_serialize_one_refresh_rotation(self) -> None:
+        self.client.short_access = True
+        self.runtime.login("seed-clinic", "correct-horse-battery-staple")
+        barrier = threading.Barrier(5)
+        tokens: list[str] = []
+
+        def consume() -> None:
+            barrier.wait()
+            tokens.append(self.runtime.current_access_token())
+
+        workers = [threading.Thread(target=consume) for _ in range(5)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=2)
+
+        self.assertEqual(len(self.client.refresh_requests), 1)
+        self.assertEqual(tokens, ["access-token-1-value-at-least-20"] * 5)
 
     def test_invalid_refresh_clears_credentials_but_preserves_access_metadata(self) -> None:
         self.runtime.login("seed-clinic", "correct-horse-battery-staple")
