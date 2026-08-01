@@ -2,6 +2,35 @@
 set -euo pipefail
 umask 077
 
+acceptance_cleanup() {
+    local exit_status="$1"
+    local state_path="$2"
+    local restart_path="$3"
+    if [[ "$exit_status" -eq 0 ]]; then
+        rm -f -- "$state_path" "$restart_path"
+    elif [[ -f "$state_path" ]]; then
+        echo "acceptance_state=preserved_for_resume secrets=not-printed" >&2
+    fi
+}
+
+acceptance_phase() {
+    local state_path="$1"
+    local restart_path="$2"
+    if [[ ! -f "$state_path" ]]; then
+        echo "before-restart"
+    elif [[ ! -f "$restart_path" ]]; then
+        echo "restart-required"
+    else
+        echo "after-restart"
+    fi
+}
+
+acceptance_public_junit_path() {
+    local redacted_output="$1"
+    printf '%s-postgres.xml\n' "${redacted_output%.json}"
+}
+
+main() {
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "run-live-acceptance.sh must run as root" >&2
     exit 2
@@ -13,17 +42,19 @@ fi
 
 ca_cert="$1"
 redacted_output="$2"
+public_junit_file="$(acceptance_public_junit_path "$redacted_output")"
 service_user="feetforceplate"
 app_root="/opt/feetforceplate/app"
 acceptance_root="/var/lib/feetforceplate/acceptance"
 state_file="$acceptance_root/private-state.json"
+restart_marker="$acceptance_root/restart-complete"
 evidence_file="$acceptance_root/aliyun-seed-summary.json"
 junit_file="$acceptance_root/postgres-role-parity.xml"
 env_file="/etc/feetforceplate/seed.env"
 
 install -d -o "$service_user" -g "$service_user" -m 0700 "$acceptance_root"
 cleanup() {
-    rm -f -- "$state_file"
+    acceptance_cleanup "$?" "$state_file" "$restart_marker"
 }
 trap cleanup EXIT
 
@@ -46,9 +77,14 @@ run_seed_python() {
     ' bash "$phase" "$ca_cert" "$state_file" "$evidence_file"
 }
 
-run_seed_python before-restart
-systemctl restart postgresql
-systemctl restart feetforceplate-seed
+phase="$(acceptance_phase "$state_file" "$restart_marker")"
+if [[ "$phase" == "before-restart" ]]; then
+    run_seed_python before-restart
+fi
+if [[ "$phase" != "after-restart" ]]; then
+    rm -f -- "$restart_marker"
+    systemctl restart postgresql
+    systemctl restart feetforceplate-seed
 
 source "$env_file"
 public_base_url="$FEETFORCEPLATE_PUBLIC_BASE_URL"
@@ -62,9 +98,11 @@ for _attempt in $(seq 1 30); do
     fi
     sleep 1
 done
-if [[ "$ready" -ne 1 ]]; then
-    echo "seed service did not recover after PostgreSQL and application restart" >&2
-    exit 1
+    if [[ "$ready" -ne 1 ]]; then
+        echo "seed service did not recover after PostgreSQL and application restart" >&2
+        exit 1
+    fi
+    install -o "$service_user" -g "$service_user" -m 0600 /dev/null "$restart_marker"
 fi
 
 run_seed_python after-restart
@@ -100,5 +138,12 @@ PY
 systemctl start feetforceplate-backup.service
 install -D -o "${SUDO_USER:-root}" -g "${SUDO_USER:-root}" -m 0644 \
     "$evidence_file" "$redacted_output"
+install -D -o "${SUDO_USER:-root}" -g "${SUDO_USER:-root}" -m 0644 \
+    "$junit_file" "$public_junit_file"
 printf 'live_acceptance=passed evidence=%s postgres_junit=%s secrets=not-printed\n' \
-    "$redacted_output" "$junit_file"
+    "$redacted_output" "$public_junit_file"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

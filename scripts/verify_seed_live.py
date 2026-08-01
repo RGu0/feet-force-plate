@@ -12,6 +12,8 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
+import time
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import httpx
@@ -69,8 +71,21 @@ class AcceptanceState:
 
 
 class Api:
-    def __init__(self, base_url: str, ca_file: Path) -> None:
-        self._client = httpx.Client(base_url=base_url, verify=str(ca_file), timeout=30)
+    def __init__(
+        self,
+        base_url: str,
+        ca_file: Path,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._client = httpx.Client(
+            base_url=base_url,
+            verify=str(ca_file),
+            timeout=30,
+            transport=transport,
+        )
+        self._sleep = sleep
 
     def close(self) -> None:
         self._client.close()
@@ -89,14 +104,24 @@ class Api:
         request_headers = dict(headers or {})
         if token is not None:
             request_headers["Authorization"] = f"Bearer {token}"
-        response = self._client.request(
-            method,
-            path,
-            headers=request_headers,
-            json=json_body,
-            content=content,
-        )
         accepted = (expected,) if isinstance(expected, int) else expected
+        for rate_limit_attempt in range(7):
+            response = self._client.request(
+                method,
+                path,
+                headers=request_headers,
+                json=json_body,
+                content=content,
+            )
+            if (
+                response.status_code != 429
+                or 429 in accepted
+                or rate_limit_attempt == 6
+            ):
+                break
+            retry_after = response.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after is not None else 13.0
+            self._sleep(max(delay, 1.0))
         if response.status_code not in accepted:
             raise RuntimeError(f"{method} {path} returned HTTP {response.status_code}")
         payload = response.json() if response.content else None
