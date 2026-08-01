@@ -54,6 +54,19 @@ async def tenant_transaction(pool, tenant_id: UUID) -> AsyncIterator[Any]:
             yield connection
 
 
+@asynccontextmanager
+async def pool_transaction(pool) -> AsyncIterator[Any]:
+    """Acquire a role-specific transaction for non-tenant routing tables.
+
+    Tenant-owned rows must continue to use :func:`tenant_transaction` so RLS
+    context is transaction-local and cannot leak through a pooled connection.
+    """
+
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            yield connection
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, str):
         return json.loads(value)

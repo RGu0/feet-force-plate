@@ -295,6 +295,40 @@ CREATE TABLE ops.authentication_attempts (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Opaque identifiers need a tenant route before an RLS-scoped transaction can
+-- begin. This directory deliberately stores no login, hardware, License
+-- document, or subject data.
+CREATE TABLE ops.access_resource_directory (
+    resource_type text NOT NULL CHECK (
+        resource_type IN ('ACCOUNT', 'LICENSE', 'HARDWARE', 'ACTIVATION_CODE', 'INSTALLATION')
+    ),
+    resource_id uuid NOT NULL,
+    tenant_id uuid NOT NULL REFERENCES iam.tenants(tenant_id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (resource_type, resource_id)
+);
+
+CREATE TABLE device.hardware_identity_directory (
+    stable_identity text PRIMARY KEY CHECK (stable_identity ~ '^usb-serial-[0-9a-f]{20}$'),
+    tenant_id uuid NOT NULL REFERENCES iam.tenants(tenant_id),
+    hardware_id uuid NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    FOREIGN KEY (tenant_id, hardware_id) REFERENCES device.hardware_assets(tenant_id, hardware_id)
+);
+
+CREATE TABLE ops.access_audit_events (
+    access_audit_event_id uuid PRIMARY KEY,
+    actor_id uuid NOT NULL,
+    action text NOT NULL,
+    tenant_id uuid REFERENCES iam.tenants(tenant_id),
+    resource_id uuid,
+    occurred_at timestamptz NOT NULL,
+    details jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX ix_access_audit_events_tenant_time
+ON ops.access_audit_events (tenant_id, occurred_at, access_audit_event_id);
+
 CREATE INDEX ix_authentication_attempts_window
 ON ops.authentication_attempts (login_name_hmac, attempted_at DESC);
 
@@ -353,6 +387,9 @@ WITH CHECK (tenant_id = ops.current_tenant_id());
 REVOKE ALL ON iam.account_login_directory FROM PUBLIC;
 REVOKE ALL ON iam.refresh_session_directory FROM PUBLIC;
 REVOKE ALL ON ops.authentication_attempts FROM PUBLIC;
+REVOKE ALL ON ops.access_resource_directory FROM PUBLIC;
+REVOKE ALL ON device.hardware_identity_directory FROM PUBLIC;
+REVOKE ALL ON ops.access_audit_events FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA iam, device, subject, screening, ops TO ffp_tenant_app;
 GRANT USAGE ON SCHEMA iam, device, ops TO ffp_activation_app;
@@ -368,9 +405,11 @@ GRANT SELECT, INSERT, UPDATE ON device.hardware_bindings TO ffp_tenant_app;
 GRANT SELECT, INSERT, UPDATE ON device.client_installations TO ffp_tenant_app;
 GRANT SELECT, INSERT, UPDATE ON device.hardware_leases TO ffp_tenant_app;
 
-GRANT SELECT ON iam.account_login_directory TO ffp_activation_app;
+GRANT SELECT, UPDATE ON iam.account_login_directory TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON iam.refresh_session_directory TO ffp_activation_app;
 GRANT SELECT, INSERT ON ops.authentication_attempts TO ffp_activation_app;
+GRANT SELECT, INSERT ON ops.access_resource_directory TO ffp_activation_app;
+GRANT SELECT ON device.hardware_identity_directory TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON iam.tenant_accounts TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON iam.account_activation_codes TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON iam.tenant_refresh_sessions TO ffp_activation_app;
@@ -388,6 +427,9 @@ GRANT SELECT, INSERT, UPDATE ON iam.platform_refresh_sessions TO ffp_platform_ap
 GRANT SELECT, INSERT, UPDATE ON iam.account_login_directory TO ffp_platform_app;
 GRANT SELECT, INSERT, UPDATE ON iam.refresh_session_directory TO ffp_platform_app;
 GRANT SELECT, INSERT ON ops.authentication_attempts TO ffp_platform_app;
+GRANT SELECT, INSERT, UPDATE ON ops.access_resource_directory TO ffp_platform_app;
+GRANT SELECT, INSERT, UPDATE ON device.hardware_identity_directory TO ffp_platform_app;
+GRANT SELECT, INSERT ON ops.access_audit_events TO ffp_platform_app;
 GRANT SELECT, INSERT, UPDATE ON iam.tenants TO ffp_platform_app;
 GRANT SELECT, INSERT, UPDATE ON iam.tenant_accounts TO ffp_platform_app;
 GRANT SELECT, INSERT, UPDATE ON iam.account_activation_codes TO ffp_platform_app;
