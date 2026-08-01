@@ -1,0 +1,40 @@
+[Unit]
+Description=FeetForcePlate seed-pilot API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=feetforceplate
+Group=feetforceplate
+WorkingDirectory=/opt/feetforceplate/app
+EnvironmentFile=/etc/feetforceplate/seed.env
+Environment=FEETFORCEPLATE_BIND_HOST=127.0.0.1
+Environment=FEETFORCEPLATE_BIND_PORT=8743
+ExecStart=/opt/feetforceplate/app/cloud/api/run-seed.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/opt/feetforceplate/app /etc/feetforceplate/seed.env
+ReadWritePaths=/var/lib/feetforceplate/objects
+
+[Install]
+WantedBy=multi-user.target

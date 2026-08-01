@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
+
+
+def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
+    text = (ROOT / "feetforceplate-seed.service").read_text()
+    for token in (
+        "User=feetforceplate", "Group=feetforceplate", "NoNewPrivileges=true",
+        "PrivateTmp=true", "ProtectSystem=strict", "ProtectHome=true",
+        "ReadWritePaths=/var/lib/feetforceplate/objects",
+        "EnvironmentFile=/etc/feetforceplate/seed.env", "Restart=on-failure",
+        "FEETFORCEPLATE_BIND_HOST=127.0.0.1", "FEETFORCEPLATE_BIND_PORT=8743",
+    ):
+        assert token in text
+    assert "User=root" not in text
+
+
+def test_nginx_7443_ingress_has_tls_limits_rates_and_no_private_static_mapping() -> None:
+    text = (ROOT / "nginx-feetforceplate-seed.conf").read_text()
+    for token in (
+        "listen 7443 ssl", "ssl_protocols TLSv1.2 TLSv1.3",
+        "client_max_body_size", "client_header_timeout", "client_body_timeout",
+        "proxy_connect_timeout", "proxy_read_timeout", "limit_req_zone",
+        "limit_req zone=seed_general", "limit_req zone=seed_auth",
+        "X-Request-ID", "proxy_pass http://127.0.0.1:8743", "limit_req_status 429",
+    ):
+        assert token in text
+    assert "Authorization" not in text.split("log_format", 1)[1].split(";", 1)[0]
+    assert "/var/lib/feetforceplate/objects" not in text
+    assert "/var/lib/feetforceplate/backups" not in text
+    assert "alias " not in text and "root " not in text
+
+
+def test_postgres_roles_are_non_privileged_and_network_is_loopback_only() -> None:
+    text = (ROOT / "postgresql-role-grants.sql").read_text()
+    for role in ("ffp_seed_tenant", "ffp_seed_activation", "ffp_seed_platform"):
+        assert role in text
+    assert text.count("NOSUPERUSER") >= 3
+    assert text.count("NOBYPASSRLS") >= 3
+    assert "listen_addresses = '127.0.0.1,::1'" in text
+    assert "0.0.0.0" not in text
+
+
+def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -> None:
+    layout = (ROOT / "install-layout.sh").read_text()
+    checker = (ROOT / "check-secrets.sh").read_text()
+    for path in (
+        "/opt/feetforceplate/releases", "/opt/feetforceplate/app",
+        "/etc/feetforceplate/seed.env", "/var/lib/feetforceplate/objects",
+        "/var/lib/feetforceplate/backups",
+    ):
+        assert path in layout
+    assert "-user root" in layout
+    assert "must not be root-owned" in layout
+    assert "0600" in layout and "0700" in layout
+    assert "stat" in checker and "printf" in checker
+    assert "source " not in checker and "cat " not in checker
+    assert "cut " not in checker and "awk " not in checker
