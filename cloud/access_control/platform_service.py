@@ -27,7 +27,7 @@ from shared.contracts.client_sync import canonical_json_bytes
 from .repository import (
     AccessGroupSeed,
     AuditEventRecord,
-    InMemoryAccessRepository,
+    AccessRepository,
     TenantSeed,
 )
 
@@ -57,7 +57,7 @@ class PlatformProvisioningService:
 
     def __init__(
         self,
-        repository: InMemoryAccessRepository,
+        repository: AccessRepository,
         *,
         login_lookup_hmac_key: bytes,
         activation_hmac_key: bytes,
@@ -237,7 +237,7 @@ class PlatformProvisioningService:
         if current.status is LicenseState.REVOKED:
             raise ValueError("revoked License is terminal")
 
-        status = current.status
+        status: LicenseState = current.status
         valid_until = current.valid_until
         if request.action is LicenseControlAction.RENEW:
             assert request.valid_until is not None

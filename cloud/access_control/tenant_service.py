@@ -37,7 +37,7 @@ from .repository import (
     AccessActivationRejected,
     AuthenticationAttemptRecord,
     HardwareAssetRecord,
-    InMemoryAccessRepository,
+    AccessRepository,
     LicenseEntitlementRecord,
     RefreshSessionRecord,
     TenantAccountRecord,
@@ -59,7 +59,7 @@ class TenantAuthenticationService:
 
     def __init__(
         self,
-        repository: InMemoryAccessRepository,
+        repository: AccessRepository,
         *,
         login_lookup_hmac_key: bytes,
         activation_hmac_key: bytes,

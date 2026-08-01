@@ -17,7 +17,7 @@ from .repository import (
     AccessRepositoryConflict,
     AccessRepositoryError,
     HardwareLeaseRecord,
-    InMemoryAccessRepository,
+    AccessRepository,
 )
 
 
@@ -30,7 +30,7 @@ class HardwareLeaseConflict(PlatformError):
 class HardwareLeaseService:
     _TTL = timedelta(minutes=10)
 
-    def __init__(self, repository: InMemoryAccessRepository, *, now=None) -> None:
+    def __init__(self, repository: AccessRepository, *, now=None) -> None:
         self._repository = repository
         self._now = now or (lambda: datetime.now(UTC))
 

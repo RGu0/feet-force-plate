@@ -29,7 +29,7 @@ from .platform_service import normalize_login_name
 from .repository import (
     AccessRepositoryConflict,
     AuditEventRecord,
-    InMemoryAccessRepository,
+    AccessRepository,
     PlatformIdentityRecord,
     PlatformRoleBindingRecord,
     SensitiveAccessGrantRecord,
@@ -49,7 +49,7 @@ class PlatformIdentityService:
 
     def __init__(
         self,
-        repository: InMemoryAccessRepository,
+        repository: AccessRepository,
         *,
         login_lookup_hmac_key: bytes,
         token_issuer: PlatformAccessTokenIssuer,
@@ -207,7 +207,7 @@ class PlatformIdentityService:
 class SensitiveAccessService:
     _DISCLOSE_ROLES = frozenset({PlatformRole.OWNER, PlatformRole.SUPPORT})
 
-    def __init__(self, repository: InMemoryAccessRepository, *, now=None) -> None:
+    def __init__(self, repository: AccessRepository, *, now=None) -> None:
         self._repository = repository
         self._now = now or (lambda: datetime.now(UTC))
 

@@ -9,12 +9,52 @@ This package implements the institution-facing cloud ingestion boundary for heal
 - S3-compatible object storage with versioning and server-side KMS encryption
 - TLS 1.2+ terminated by the deployment ingress; production must reject direct plaintext HTTP
 
-Install dependencies into an isolated environment:
+Install and run through the repository's per-machine `uv` wrapper; it keeps the
+environment outside the OneDrive checkout:
 
 ```bash
-python -m venv .venv-cloud
-.venv-cloud/bin/pip install -r cloud/api/requirements.txt
+./scripts/local-env.sh python -m pytest cloud/tests -q
 ```
+
+## Seed-pilot persistent composition
+
+`cloud.api.seed` is the supported seed-pilot composition. It uses separate
+PostgreSQL DSNs for migration, tenant data, pre-authentication/activation, and
+Platform operations; a private filesystem object root outside the checkout;
+independent tenant/Platform token and refresh keys; and an Ed25519 License key.
+It deliberately does not inject the legacy terminal enrollment or operations
+control plane. Nginx terminates TLS on the public seed port and proxies only to
+the loopback Uvicorn listener.
+
+The service environment file must be owned by the service account with mode
+`0600`. Start the loopback application with:
+
+```bash
+FEETFORCEPLATE_SEED_ENV_FILE=/etc/feetforceplate/seed.env \
+  ./cloud/api/run-seed.sh
+```
+
+Provider-only lifecycle commands are:
+
+```bash
+./scripts/local-env.sh python -m cloud.access_control.cli bootstrap-platform-owner \
+  --login-name platform-owner --display-name "Platform Owner"
+./scripts/local-env.sh python -m cloud.access_control.cli provision-tenant \
+  --platform-login platform-owner --tenant-name "Seed Clinic" \
+  --account-name seed-clinic --hardware-id usb-serial-0123456789abcdef0123 \
+  --license-period-months 12
+./scripts/local-env.sh python -m cloud.access_control.cli rotate-platform-role \
+  --platform-login platform-owner --target-login platform-support \
+  --roles PLATFORM_SUPPORT
+./scripts/local-env.sh python -m cloud.access_control.cli inspect-license \
+  --license-id "$FEETFORCEPLATE_LICENSE_ID"
+```
+
+`provision-tenant --json-input -` supports controlled automation. Passwords are
+read from stdin/getpass, activation codes are printed only in the one successful
+provision response, and inspection never prints hashes, DSNs, private keys, or
+signed License material. `/health/live` and `/health/ready` expose only named
+dependency classes and readiness states.
 
 Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002_p5_device_operations.sql`, with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
 
