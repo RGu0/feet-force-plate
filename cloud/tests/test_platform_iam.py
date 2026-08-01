@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import pytest
+
+from cloud.access_control.platform_iam import (
+    PlatformIdentityService,
+    PlatformPermissionDenied,
+    SensitiveAccessService,
+)
+from cloud.access_control.repository import AccessGroupSeed, InMemoryAccessRepository, TenantSeed
+from cloud.api.access_auth import PlatformAccessTokenIssuer, RefreshTokenFactory
+from shared.contracts.access_control import (
+    PlatformLoginRequest,
+    PlatformRole,
+    SensitiveAccessGrantRequest,
+)
+
+
+START = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+
+@dataclass
+class MutableClock:
+    value: datetime = START
+
+    def __call__(self) -> datetime:
+        return self.value
+
+
+def _services():
+    repository = InMemoryAccessRepository()
+    clock = MutableClock()
+    identities = PlatformIdentityService(
+        repository,
+        login_lookup_hmac_key=b"platform-login-lookup-key-at-least-32-bytes",
+        token_issuer=PlatformAccessTokenIssuer(
+            secret=b"platform-token-secret-must-be-at-least-32-bytes",
+            key_id="platform/1",
+        ),
+        refresh_tokens=RefreshTokenFactory(
+            digest_key=b"platform-refresh-key-must-be-at-least-32-bytes"
+        ),
+        now=clock,
+    )
+    sensitive = SensitiveAccessService(repository, now=clock)
+    return repository, clock, identities, sensitive
+
+
+async def _seed_tenant(repository: InMemoryAccessRepository):
+    tenant_id = uuid4()
+    await repository.provision_tenant(
+        TenantSeed(tenant_id=tenant_id, name="Seed Clinic"),
+        AccessGroupSeed(
+            account_id=uuid4(),
+            login_name_hmac=b"a" * 32,
+            account_display_name="seed-clinic",
+            license_id=uuid4(),
+            hardware_id=uuid4(),
+            hardware_identity="usb-serial-0123456789abcdef0123",
+            hardware_model="DO-P4864",
+            activation_code_id=uuid4(),
+            activation_code_hash=b"b" * 32,
+            activation_expires_at=START + timedelta(days=1),
+            license_valid_from=START,
+            license_valid_until=START + timedelta(days=365),
+            enabled_features=("screening.start",),
+        ),
+        created_at=START,
+    )
+    return tenant_id
+
+
+def test_bootstrap_owner_then_create_multiple_platform_identities() -> None:
+    async def exercise() -> None:
+        _, _, identities, _ = _services()
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        owner_context = identities.verify_access_token(owner.access_token)
+        support = await identities.create_identity(
+            owner_context,
+            login_name="platform-support",
+            display_name="Support One",
+            password="support-password-long-enough",
+            roles=(PlatformRole.SUPPORT,),
+        )
+        engineer = await identities.create_identity(
+            owner_context,
+            login_name="platform-engineer",
+            display_name="Engineer One",
+            password="engineer-password-long-enough",
+            roles=(PlatformRole.ENGINEER,),
+        )
+
+        assert set(owner.roles) == {PlatformRole.OWNER}
+        assert set(support.roles) == {PlatformRole.SUPPORT}
+        assert set(engineer.roles) == {PlatformRole.ENGINEER}
+        with pytest.raises(RuntimeError, match="already been completed"):
+            await identities.bootstrap_owner(
+                login_name="second-owner",
+                display_name="Second Owner",
+                password="another-password-long-enough",
+            )
+
+    asyncio.run(exercise())
+
+
+def test_platform_login_uses_independent_identity_and_roles() -> None:
+    async def exercise() -> None:
+        _, _, identities, _ = _services()
+        await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+
+        response = await identities.login(
+            PlatformLoginRequest(
+                login_name="platform-owner",
+                password="correct-horse-battery-staple",
+            )
+        )
+        context = identities.verify_access_token(response.access_token)
+        assert context.platform_identity_id == response.platform_identity_id
+        assert context.roles == frozenset({PlatformRole.OWNER})
+
+    asyncio.run(exercise())
+
+
+def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> None:
+    async def exercise() -> None:
+        repository, clock, identities, sensitive = _services()
+        tenant_id = await _seed_tenant(repository)
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        owner_context = identities.verify_access_token(owner.access_token)
+        support_login = await identities.create_identity(
+            owner_context,
+            login_name="platform-support",
+            display_name="Support One",
+            password="support-password-long-enough",
+            roles=(PlatformRole.SUPPORT,),
+        )
+        engineer_login = await identities.create_identity(
+            owner_context,
+            login_name="platform-engineer",
+            display_name="Engineer One",
+            password="engineer-password-long-enough",
+            roles=(PlatformRole.ENGINEER,),
+        )
+        support = identities.verify_access_token(support_login.access_token)
+        engineer = identities.verify_access_token(engineer_login.access_token)
+        request = SensitiveAccessGrantRequest(
+            tenant_id=tenant_id,
+            purpose_code="SUPPORT_DIAGNOSIS",
+            ticket_reference="SUP-100",
+            requested_duration_minutes=15,
+        )
+
+        with pytest.raises(PlatformPermissionDenied):
+            await sensitive.issue_grant(engineer, request)
+        grant = await sensitive.issue_grant(support, request)
+        identity = await sensitive.read_identity(
+            support,
+            grant_id=grant.grant_id,
+            tenant_id=tenant_id,
+            subject_id=uuid4(),
+            identity_loader=lambda: ("Patient One", "masked@example.test"),
+        )
+        assert identity.display_name == "Patient One"
+        assert identity.grant_id == grant.grant_id
+
+        clock.value += timedelta(minutes=15)
+        with pytest.raises(PlatformPermissionDenied):
+            await sensitive.read_identity(
+                support,
+                grant_id=grant.grant_id,
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=lambda: ("Patient Two", None),
+            )
+
+        actions = [event.action for event in await repository.audit_events(tenant_id=tenant_id)]
+        assert actions == ["sensitive-access.grant", "sensitive-access.use"]
+
+    asyncio.run(exercise())
+
+
+def test_cross_tenant_platform_listing_is_masked_operational_summary() -> None:
+    async def exercise() -> None:
+        repository, _, identities, sensitive = _services()
+        tenant_id = await _seed_tenant(repository)
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        context = identities.verify_access_token(owner.access_token)
+
+        rows = await sensitive.list_tenants(context)
+
+        assert len(rows) == 1
+        assert rows[0].tenant_id == tenant_id
+        assert rows[0].active_account_count == 1
+        serialized = rows[0].model_dump_json().lower()
+        assert "patient" not in serialized
+        assert "contact" not in serialized
+
+    asyncio.run(exercise())

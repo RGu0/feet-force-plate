@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 import hmac
 from typing import Protocol
 from uuid import UUID
 
-from shared.contracts.access_control import AccountState, LicenseState
+from shared.contracts.access_control import AccountState, LicenseState, PlatformRole
 
 
 class AccessRepositoryError(RuntimeError):
@@ -189,6 +189,39 @@ class HardwareLeaseRecord:
     release_reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PlatformIdentityRecord:
+    platform_identity_id: UUID
+    login_name_hmac: bytes
+    display_name: str
+    password_hash: str
+    status: str
+    token_version: int
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformRoleBindingRecord:
+    binding_id: UUID
+    platform_identity_id: UUID
+    role: PlatformRole
+    valid_from: datetime
+    valid_to: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SensitiveAccessGrantRecord:
+    grant_id: UUID
+    tenant_id: UUID
+    platform_identity_id: UUID
+    purpose_code: str
+    ticket_reference: str
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
 class AccessRepository(Protocol):
     async def provision_tenant(
         self,
@@ -242,6 +275,10 @@ class InMemoryAccessRepository:
         self._authentication_attempts: list[AuthenticationAttemptRecord] = []
         self._hardware_leases: dict[UUID, HardwareLeaseRecord] = {}
         self._open_lease_by_hardware: dict[UUID, UUID] = {}
+        self._platform_identities: dict[UUID, PlatformIdentityRecord] = {}
+        self._platform_identity_by_login: dict[bytes, UUID] = {}
+        self._platform_role_bindings: list[PlatformRoleBindingRecord] = []
+        self._sensitive_grants: dict[UUID, SensitiveAccessGrantRecord] = {}
 
     async def provision_tenant(
         self,
@@ -853,6 +890,121 @@ class InMemoryAccessRepository:
                 for stored_hash in self._activation_by_hash
             )
 
+    async def platform_identity_count(self) -> int:
+        async with self._lock:
+            return len(self._platform_identities)
+
+    async def create_platform_identity(
+        self,
+        identity: PlatformIdentityRecord,
+        roles: tuple[PlatformRoleBindingRecord, ...],
+    ) -> PlatformIdentityRecord:
+        async with self._lock:
+            if (
+                identity.platform_identity_id in self._platform_identities
+                or identity.login_name_hmac in self._platform_identity_by_login
+            ):
+                raise AccessRepositoryConflict("platform identity already exists")
+            if (
+                not roles
+                or any(
+                    binding.platform_identity_id != identity.platform_identity_id
+                    for binding in roles
+                )
+                or len({binding.role for binding in roles}) != len(roles)
+            ):
+                raise ValueError("platform roles must be non-empty and unique")
+            self._platform_identities[identity.platform_identity_id] = identity
+            self._platform_identity_by_login[identity.login_name_hmac] = (
+                identity.platform_identity_id
+            )
+            self._platform_role_bindings.extend(roles)
+            return identity
+
+    async def platform_identity_by_login_hmac(
+        self, login_name_hmac: bytes
+    ) -> PlatformIdentityRecord | None:
+        async with self._lock:
+            identity_id = self._platform_identity_by_login.get(login_name_hmac)
+            return (
+                None if identity_id is None else self._platform_identities[identity_id]
+            )
+
+    async def platform_roles(
+        self,
+        platform_identity_id: UUID,
+        *,
+        at: datetime,
+    ) -> tuple[PlatformRole, ...]:
+        async with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        binding.role
+                        for binding in self._platform_role_bindings
+                        if binding.platform_identity_id == platform_identity_id
+                        and binding.valid_from <= at
+                        and (binding.valid_to is None or at < binding.valid_to)
+                    ),
+                    key=lambda role: role.value,
+                )
+            )
+
+    async def list_tenants(self) -> tuple[TenantRecord, ...]:
+        async with self._lock:
+            return tuple(sorted(self._tenants.values(), key=lambda row: str(row.tenant_id)))
+
+    async def tenant_access_counts(self, tenant_id: UUID) -> tuple[int, int]:
+        async with self._lock:
+            active_account_ids = {
+                row.account_id
+                for row in self._group_history
+                if row.tenant_id == tenant_id and row.closed_at is None
+            }
+            active_license_ids = {
+                row.license_id
+                for row in self._group_history
+                if row.tenant_id == tenant_id and row.closed_at is None
+            }
+            return len(active_account_ids), len(active_license_ids)
+
+    async def create_sensitive_grant(
+        self, grant: SensitiveAccessGrantRecord
+    ) -> SensitiveAccessGrantRecord:
+        async with self._lock:
+            if grant.grant_id in self._sensitive_grants:
+                raise AccessRepositoryConflict("sensitive grant already exists")
+            if grant.tenant_id not in self._tenants:
+                raise AccessRepositoryError("tenant does not exist")
+            if grant.expires_at <= grant.issued_at or (
+                grant.expires_at - grant.issued_at > timedelta(minutes=15)
+            ):
+                raise ValueError("sensitive grant duration is invalid")
+            self._sensitive_grants[grant.grant_id] = grant
+            return grant
+
+    async def use_sensitive_grant(
+        self,
+        *,
+        grant_id: UUID,
+        tenant_id: UUID,
+        platform_identity_id: UUID,
+        used_at: datetime,
+    ) -> SensitiveAccessGrantRecord:
+        async with self._lock:
+            grant = self._sensitive_grants.get(grant_id)
+            if (
+                grant is None
+                or grant.tenant_id != tenant_id
+                or grant.platform_identity_id != platform_identity_id
+                or grant.revoked_at is not None
+                or grant.expires_at <= used_at
+            ):
+                raise AccessRepositoryConflict("sensitive grant is invalid")
+            used = replace(grant, last_used_at=used_at)
+            self._sensitive_grants[grant_id] = used
+            return used
+
 
 __all__ = [
     "AccessActivationRejected",
@@ -870,7 +1022,10 @@ __all__ = [
     "HardwareLeaseRecord",
     "InMemoryAccessRepository",
     "LicenseEntitlementRecord",
+    "PlatformIdentityRecord",
+    "PlatformRoleBindingRecord",
     "RefreshSessionRecord",
+    "SensitiveAccessGrantRecord",
     "TenantAccountRecord",
     "TenantRecord",
     "TenantSeed",
