@@ -124,6 +124,17 @@ def test_systemd_entry_scripts_are_executable() -> None:
         "deploy/aliyun/seed/backup.sh",
         "deploy/aliyun/seed/check-secrets.sh",
         "deploy/aliyun/seed/restore-verify.sh",
+        "deploy/aliyun/seed/resume-seed-cutover.sh",
     ):
         path = ROOT.parents[2] / relative
         assert path.stat().st_mode & stat.S_IXUSR
+
+
+def test_resume_cutover_requires_persistent_readiness_before_stopping_legacy() -> None:
+    text = (ROOT / "resume-seed-cutover.sh").read_text()
+    assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
+    assert text.index("https://127.0.0.1:17443/health/ready") < text.index("kill -TERM")
+    assert "uvicorn cloud.api.integration:app_from_environment" in text
+    assert "\"postgres\":\"ready\"" in text
+    assert "\"object_store\":\"ready\"" in text
+    assert "systemctl start feetforceplate-backup.service" in text
