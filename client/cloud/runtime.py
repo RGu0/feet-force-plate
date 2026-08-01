@@ -151,6 +151,7 @@ class ClientAccessRuntime:
         self._monotonic_ns = monotonic_ns or time.monotonic_ns
         self._session: AuthenticatedInstitutionSession | None = None
         self._access_expires_at: datetime | None = None
+        self._account_name: str | None = None
 
     def discover_hardware_identity(self) -> str | None:
         result = self._hardware.discover()
@@ -179,7 +180,9 @@ class ClientAccessRuntime:
                 client_installation_id=self.client_installation_id,
             )
         )
-        return self._accept_session(response, expected_hardware_id=observed)
+        session = self._accept_session(response, expected_hardware_id=observed)
+        self._account_name = account_name
+        return session
 
     def login(
         self,
@@ -194,7 +197,22 @@ class ClientAccessRuntime:
                 client_installation_id=self.client_installation_id,
             )
         )
-        return self._accept_session(response, expected_hardware_id=observed)
+        session = self._accept_session(response, expected_hardware_id=observed)
+        self._account_name = account_name
+        return session
+
+    def verify_password(self, password: str) -> bool:
+        if self._account_name is None:
+            return False
+        try:
+            self.login(self._account_name, password)
+        except Exception:
+            return False
+        return True
+
+    def lock_timeout_minutes(self) -> int | None:
+        state = self._store.load()
+        return 30 if state is None else state.lock_timeout_minutes
 
     def current_access_token(self) -> str:
         if self._session is None or self._access_expires_at is None:
@@ -231,6 +249,7 @@ class ClientAccessRuntime:
                 self._store.clear_credentials()
         self._session = None
         self._access_expires_at = None
+        self._account_name = None
 
     def _require_hardware(self) -> str:
         result = self._hardware.discover()

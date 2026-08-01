@@ -28,6 +28,8 @@ from client.startup_validation.workflow import (
 )
 
 from .qt_shell import ScreeningWindow
+from .pages import PageId
+from .session_lock import LockTimeout, SessionLockController
 from .app_icon import application_icon
 from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
@@ -165,6 +167,29 @@ def main() -> int:
     def authenticated(session: AuthenticatedInstitutionSession) -> None:
         access.hide()
         audit_trail, audit_store = _default_validation_audit_trail()
+        timeout_minutes = runtime.lock_timeout_minutes() if runtime is not None else 30
+        timeout = (
+            LockTimeout.NEVER
+            if timeout_minutes is None
+            else LockTimeout(str(timeout_minutes))
+        )
+        lock_controller = SessionLockController(
+            lambda password: bool(runtime and runtime.verify_password(password)),
+            timeout=timeout,
+        )
+        workbench_holder: dict[str, ScreeningWindow] = {}
+
+        def workbench_factory() -> ScreeningWindow:
+            window = ScreeningWindow(
+                session_lock_controller=lock_controller,
+                protected_operation_active=lambda: (
+                    workbench_holder.get("window") is not None
+                    and workbench_holder["window"].current_page_id is PageId.ACQUIRING
+                ),
+            )
+            workbench_holder["window"] = window
+            return window
+
         gate = build_mandatory_startup_gate(
             audit_actor_id=session.client_installation_id,
             app_version=APP_VERSION,
@@ -172,8 +197,14 @@ def main() -> int:
                 expected_hardware_identity=session.hardware_id
             ),
             audit_trail=audit_trail,
+            workbench_factory=workbench_factory,
         )
-        references.update(gate=gate, audit_store=audit_store)
+        references.update(
+            gate=gate,
+            audit_store=audit_store,
+            lock_controller=lock_controller,
+            workbench_holder=workbench_holder,
+        )
         gate.start()
 
     access = build_institution_access_screen(
