@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 
 
 ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
@@ -46,6 +47,23 @@ def test_postgres_roles_are_non_privileged_and_network_is_loopback_only() -> Non
     assert text.count("NOBYPASSRLS") >= 3
     assert "listen_addresses = '127.0.0.1,::1'" in text
     assert "0.0.0.0" not in text
+    assert text.count("NOBYPASSRLS") >= 3
+    assert "ffp_seed_backup" in text and "BYPASSRLS" in text
+    assert "SET password_encryption = 'scram-sha-256'" in text
+
+
+def test_managed_nginx_and_postgres_configs_expose_only_seed_loopback_boundaries() -> None:
+    nginx = (ROOT / "nginx.conf").read_text()
+    pg_hba = (ROOT / "pg_hba.conf").read_text()
+    assert "include /etc/nginx/conf.d/*.conf" in nginx
+    assert "listen" not in nginx
+    assert "127.0.0.1/32" in pg_hba and "::1/128" in pg_hba
+    assert "trust" not in pg_hba
+    assert "0.0.0.0" not in pg_hba
+    for role in (
+        "ffp_seed_tenant", "ffp_seed_activation", "ffp_seed_platform", "ffp_seed_backup",
+    ):
+        assert role in pg_hba
 
 
 def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -> None:
@@ -82,3 +100,28 @@ def test_host_prerequisites_are_idempotent_and_do_not_cut_over_7443() -> None:
     assert "pkill" not in text
     assert "kill " not in text
     assert "nginx-feetforceplate-seed.conf" not in text
+
+
+def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
+    path = ROOT / "install-seed-release.sh"
+    text = path.read_text()
+    for token in (
+        "sha256sum", "scram-sha-256", "17443", "/health/ready",
+        "uvicorn cloud.api.integration:app_from_environment", "kill -TERM \"$old_pid\"",
+        "systemctl start feetforceplate-backup.service", "secrets=not-printed",
+    ):
+        assert token in text
+    assert text.index("https://127.0.0.1:17443/health/ready") < text.index("kill -TERM")
+    assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
+    assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
+    assert path.stat().st_mode & stat.S_IXUSR
+
+
+def test_systemd_entry_scripts_are_executable() -> None:
+    for relative in (
+        "cloud/api/run-seed.sh",
+        "deploy/aliyun/seed/backup.sh",
+        "deploy/aliyun/seed/restore-verify.sh",
+    ):
+        path = ROOT.parents[2] / relative
+        assert path.stat().st_mode & stat.S_IXUSR

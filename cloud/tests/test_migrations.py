@@ -75,6 +75,18 @@ def test_application_roles_are_explicitly_non_privileged() -> None:
     assert " BYPASSRLS" not in sql.replace("NOBYPASSRLS", "")
 
 
+def test_tenant_role_has_explicit_data_plane_permissions_without_platform_identity_access() -> None:
+    sql = _sql()
+    for table in (
+        "device.terminals", "device.devices", "subject.subjects", "subject.consents",
+        "screening.sessions", "screening.session_segments", "screening.session_manifests",
+        "ops.idempotency_keys", "ops.outbox_events",
+    ):
+        assert f" ON {table} TO ffp_tenant_app;" in sql
+    for table in PLATFORM_TABLES:
+        assert f" ON {table} TO ffp_tenant_app;" not in sql
+
+
 def test_dynamic_bindings_keep_history_and_prevent_two_open_rows() -> None:
     sql = _sql()
 
