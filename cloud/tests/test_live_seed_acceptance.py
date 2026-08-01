@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import httpx
 
-from scripts.verify_seed_live import AcceptanceState, Api
+from scripts.verify_seed_live import AcceptanceState, Api, _after
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -172,3 +172,53 @@ def test_acceptance_public_junit_path_is_next_to_redacted_json(tmp_path: Path) -
     )
 
     assert result.stdout.strip() == str(tmp_path / "aliyun-seed-summary-postgres.xml")
+
+
+def test_after_restart_resume_does_not_reacquire_a_hardware_lease(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "private-state.json"
+    evidence_path = tmp_path / "evidence.json"
+    state = AcceptanceState(
+        tenant_id=uuid4(),
+        account_name="acceptance-tenant",
+        account_password="secret-password-value",
+        hardware_id="usb-serial-0123456789abcdef0123",
+        hardware_asset_id=uuid4(),
+        installation_id=uuid4(),
+        session_id=uuid4(),
+        platform_login="seed-owner",
+        activation_code="secret-activation-code",
+        access_token="secret-access-token",
+        refresh_token="secret-refresh-token",
+    )
+    state.write_private(state_path)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "restart_persistence_verified": False,
+                "postgres_role_parity_verified": False,
+            }
+        )
+    )
+    requested_paths: list[str] = []
+
+    class RecordingApi:
+        def request(self, method: str, path: str, **kwargs):
+            requested_paths.append(path)
+            if path == "/v1/access/login":
+                return object(), {"access_token": "replacement-access-token"}
+            if path.startswith("/v1/access/hardware-lease"):
+                raise AssertionError("resume must not reacquire a hardware lease")
+            return object(), None
+
+    _after(RecordingApi(), state_path, evidence_path)
+
+    assert requested_paths[0] == "/v1/access/login"
+    assert requested_paths[1].startswith("/v1/terminals/")
+    assert requested_paths[1].endswith("/heartbeats")
+    assert requested_paths[2] == f"/v1/sessions/{state.session_id}/status"
+    assert all("hardware-lease" not in path for path in requested_paths)
+    evidence = json.loads(evidence_path.read_text())
+    assert evidence["restart_persistence_verified"] is True
+    assert evidence["replacement_projection_after_restart"] is True

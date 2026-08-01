@@ -515,26 +515,9 @@ def _after(api: Api, state_path: Path, evidence_path: Path) -> None:
         },
         json_body=_heartbeat(installation, state.hardware_asset_id),
     )
-    _, lease = api.request(
-        "POST",
-        "/v1/access/hardware-lease",
-        expected=201,
-        token=str(session["access_token"]),
-        json_body={
-            "hardware_id": state.hardware_id,
-            "client_installation_id": str(installation),
-        },
-    )
-    assert isinstance(lease, dict)
     api.request(
         "GET",
         f"/v1/sessions/{state.session_id}/status",
-        expected=200,
-        token=str(session["access_token"]),
-    )
-    api.request(
-        "DELETE",
-        f"/v1/access/hardware-lease/{lease['lease_id']}",
         expected=200,
         token=str(session["access_token"]),
     )
