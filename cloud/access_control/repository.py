@@ -174,6 +174,21 @@ class AuthenticationAttemptRecord:
     attempted_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class HardwareLeaseRecord:
+    lease_id: UUID
+    tenant_id: UUID
+    license_id: UUID
+    account_id: UUID
+    hardware_id: UUID
+    client_installation_id: UUID
+    acquired_at: datetime
+    renewed_at: datetime
+    expires_at: datetime
+    released_at: datetime | None = None
+    release_reason: str | None = None
+
+
 class AccessRepository(Protocol):
     async def provision_tenant(
         self,
@@ -225,6 +240,8 @@ class InMemoryAccessRepository:
         self._refresh_sessions: dict[UUID, RefreshSessionRecord] = {}
         self._refresh_by_hash: dict[bytes, UUID] = {}
         self._authentication_attempts: list[AuthenticationAttemptRecord] = []
+        self._hardware_leases: dict[UUID, HardwareLeaseRecord] = {}
+        self._open_lease_by_hardware: dict[UUID, UUID] = {}
 
     async def provision_tenant(
         self,
@@ -612,6 +629,114 @@ class InMemoryAccessRepository:
                 for attempt in self._authentication_attempts
             )
 
+    async def acquire_hardware_lease(
+        self,
+        lease: HardwareLeaseRecord,
+        *,
+        acquired_at: datetime,
+    ) -> HardwareLeaseRecord:
+        async with self._lock:
+            open_lease_id = self._open_lease_by_hardware.get(lease.hardware_id)
+            if open_lease_id is not None:
+                current = self._hardware_leases[open_lease_id]
+                if current.expires_at > acquired_at and current.released_at is None:
+                    if (
+                        current.tenant_id == lease.tenant_id
+                        and current.license_id == lease.license_id
+                        and current.account_id == lease.account_id
+                        and current.client_installation_id == lease.client_installation_id
+                    ):
+                        return current
+                    raise AccessRepositoryConflict("hardware already has an active lease")
+                self._hardware_leases[open_lease_id] = replace(
+                    current,
+                    released_at=max(current.expires_at, acquired_at),
+                    release_reason="TTL_EXPIRED",
+                )
+                self._open_lease_by_hardware.pop(lease.hardware_id, None)
+            group = next(
+                (
+                    row
+                    for row in reversed(self._group_history)
+                    if row.tenant_id == lease.tenant_id
+                    and row.license_id == lease.license_id
+                    and row.account_id == lease.account_id
+                    and row.hardware_id == lease.hardware_id
+                    and row.closed_at is None
+                ),
+                None,
+            )
+            installation = self._installations.get(lease.client_installation_id)
+            if (
+                group is None
+                or installation is None
+                or installation.tenant_id != lease.tenant_id
+                or installation.account_id != lease.account_id
+                or lease.lease_id in self._hardware_leases
+                or lease.expires_at <= acquired_at
+            ):
+                raise AccessRepositoryConflict("hardware lease binding is invalid")
+            self._hardware_leases[lease.lease_id] = lease
+            self._open_lease_by_hardware[lease.hardware_id] = lease.lease_id
+            return lease
+
+    async def renew_hardware_lease(
+        self,
+        *,
+        lease_id: UUID,
+        tenant_id: UUID,
+        account_id: UUID,
+        license_id: UUID,
+        installation_id: UUID,
+        renewed_at: datetime,
+        expires_at: datetime,
+    ) -> HardwareLeaseRecord:
+        async with self._lock:
+            current = self._hardware_leases.get(lease_id)
+            if (
+                current is None
+                or current.tenant_id != tenant_id
+                or current.account_id != account_id
+                or current.license_id != license_id
+                or current.client_installation_id != installation_id
+                or current.released_at is not None
+                or current.expires_at <= renewed_at
+                or expires_at <= renewed_at
+            ):
+                raise AccessRepositoryConflict("hardware lease cannot be renewed")
+            updated = replace(current, renewed_at=renewed_at, expires_at=expires_at)
+            self._hardware_leases[lease_id] = updated
+            return updated
+
+    async def release_hardware_lease(
+        self,
+        *,
+        lease_id: UUID,
+        tenant_id: UUID,
+        account_id: UUID,
+        license_id: UUID,
+        installation_id: UUID,
+        released_at: datetime,
+        reason: str,
+    ) -> None:
+        async with self._lock:
+            current = self._hardware_leases.get(lease_id)
+            if (
+                current is None
+                or current.tenant_id != tenant_id
+                or current.account_id != account_id
+                or current.license_id != license_id
+                or current.client_installation_id != installation_id
+            ):
+                raise AccessRepositoryConflict("hardware lease cannot be released")
+            if current.released_at is None:
+                self._hardware_leases[lease_id] = replace(
+                    current,
+                    released_at=max(released_at, current.acquired_at),
+                    release_reason=reason,
+                )
+                self._open_lease_by_hardware.pop(current.hardware_id, None)
+
     async def account_by_login_hmac(
         self, login_name_hmac: bytes
     ) -> TenantAccountRecord | None:
@@ -652,6 +777,13 @@ class InMemoryAccessRepository:
                 return self._hardware[hardware_id]
             except KeyError as exc:
                 raise AccessRepositoryError("hardware does not exist") from exc
+
+    async def hardware_by_identity(
+        self, stable_identity: str
+    ) -> HardwareAssetRecord | None:
+        async with self._lock:
+            hardware_id = self._hardware_by_identity.get(stable_identity)
+            return None if hardware_id is None else self._hardware[hardware_id]
 
     async def access_group_for_license(
         self, license_id: UUID
@@ -735,6 +867,7 @@ __all__ = [
     "AuditEventRecord",
     "ClientInstallationRecord",
     "HardwareAssetRecord",
+    "HardwareLeaseRecord",
     "InMemoryAccessRepository",
     "LicenseEntitlementRecord",
     "RefreshSessionRecord",
