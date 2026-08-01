@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Isolated feature worktrees
+/.worktrees/
+
 # Local replay-demo output. These files are reproducible and must not be
 # mistaken for versioned product assets or subject data.
 /replay-debug-report.pdf
