@@ -24,6 +24,9 @@ Lifecycle and restore evidence release:
   temporary database/object/private-key material was removed.
 - Network: only 7443 is reachable among tested service ports; 5432 and 8743
   remain loopback-only, while 80 and 443 are closed.
+- Follow-up deployment: release `0a049890af6e905ccc05d5e1f40d034e131f366e`
+  is ready with the backup timer active; its newly generated encrypted bundle
+  passed a standard SHA-256 sidecar check.
 
 ## Evidence files
 
@@ -35,6 +38,7 @@ Lifecycle and restore evidence release:
 | `aliyun-seed-summary-ddea38b-postgres.xml` | 4 PostgreSQL tests, 0 failures/errors/skips |
 | `restore-drill-ddea38b.json` | encrypted clean restore and cleanup verified |
 | `network-boundary-ddea38b.json` | public/internal port boundary and TLS readiness |
+| `deployment-0a04989.json` | follow-up release health, listeners, timer and backup sidecar verification |
 
 The PostgreSQL XML is a redacted copy of source SHA-256
 `018cb889aae083177fdf29795f506f0d793d0d99290ba4afb7b6b735959e8ede`;
