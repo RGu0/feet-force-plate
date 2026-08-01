@@ -48,6 +48,7 @@ class InstitutionAccessWindow(QMainWindow):
         on_activate: Callable[[str, str, str, str, str], None] | None = None,
         stable_hardware_id: str | None = None,
         allow_local_test_handoff: bool = False,
+        environment_label: str | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("institutionAccessWindow")
@@ -59,6 +60,7 @@ class InstitutionAccessWindow(QMainWindow):
         self._on_activate = on_activate
         self._stable_hardware_id = stable_hardware_id
         self._allow_local_test_handoff = allow_local_test_handoff
+        self._environment_label = environment_label
         self._local_test_accounts: dict[str, str] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("institutionAccessStack")
@@ -89,6 +91,13 @@ class InstitutionAccessWindow(QMainWindow):
         title.setStyleSheet("font-size: 32px; font-weight: 600; color: #0F172A;")
         brand_layout.addWidget(title)
         brand_layout.addSpacing(12)
+        if self._environment_label:
+            environment = QLabel(self._environment_label)
+            environment.setObjectName("accessEnvironmentLabel")
+            environment.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            environment.setStyleSheet("color: #B45309; font-weight: 600;")
+            brand_layout.addWidget(environment)
+            brand_layout.addSpacing(8)
         subtitle = QLabel("请使用机构账号登录后开始检测")
         subtitle.setObjectName("accessSubtitle")
         subtitle.setProperty("secondaryText", True)
@@ -423,7 +432,11 @@ class InstitutionAccessWindow(QMainWindow):
             notice.show()
             return
         notice.hide()
-        self._on_login(account.strip(), password)
+        try:
+            self._on_login(account.strip(), password)
+        except Exception:
+            notice.setText("登录未完成，请检查账号、网络和已连接设备后重试。")
+            notice.show()
 
     def _submit_activation(
         self,
@@ -475,13 +488,17 @@ class InstitutionAccessWindow(QMainWindow):
             notice.show()
             return
         notice.hide()
-        self._on_activate(
-            normalized_account,
-            activation_code.strip(),
-            password,
-            password_confirmation,
-            self._stable_hardware_id,
-        )
+        try:
+            self._on_activate(
+                normalized_account,
+                activation_code.strip(),
+                password,
+                password_confirmation,
+                self._stable_hardware_id,
+            )
+        except Exception:
+            notice.setText("激活未完成，请核对账号、激活码、网络和硬件后重试。")
+            notice.show()
 
     def set_hardware_identity(self, stable_hardware_id: str | None) -> None:
         self._stable_hardware_id = stable_hardware_id
