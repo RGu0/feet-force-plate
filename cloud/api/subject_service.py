@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from cloud.api.auth import TerminalContext
+from cloud.ingestion.principal import IngestionPrincipal
+from cloud.ingestion.principal import coerce_ingestion_principal
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.client_sync import canonical_json_bytes
 from shared.contracts.cloud import (
@@ -100,8 +102,9 @@ class SubjectConsentService:
         self._identity = identity_protector
 
     async def resolve(
-        self, context: TerminalContext, request: SubjectResolveRequest
+        self, context: IngestionPrincipal | TerminalContext, request: SubjectResolveRequest
     ) -> SubjectSummary | None:
+        context = coerce_ingestion_principal(context)
         context.ensure_active()
         return await self._repository.resolve_subject(
             context,
@@ -117,11 +120,12 @@ class SubjectConsentService:
 
     async def create_subject(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         request: SubjectCreateRequest,
         idempotency_key: str,
     ) -> SubjectSummary:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_start_new()
         protected = None
         protected_identity = None
         if request.external_identifier is not None:
@@ -158,22 +162,24 @@ class SubjectConsentService:
 
     async def create_consent(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         request: ConsentCreateRequest,
         idempotency_key: str,
     ) -> ConsentResponse:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_start_new()
         return await self._repository.create_consent(
             context, request, canonical_sha256(request), idempotency_key
         )
 
     async def revoke_consent(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         consent_record_id,
         request: ConsentRevokeRequest,
         idempotency_key: str,
     ) -> ConsentResponse:
+        context = coerce_ingestion_principal(context)
         context.ensure_active()
         digest = canonical_sha256(
             {"consent_record_id": str(consent_record_id), "revocation": request}

@@ -26,6 +26,11 @@ from cloud.api.errors import (
     TenantAccessDenied,
 )
 from cloud.ingestion.service import IngestionService
+from cloud.ingestion.principal import (
+    IngestionPrincipal,
+    legacy_terminal_principal,
+    tenant_ingestion_principal,
+)
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -226,6 +231,32 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return container.tenant_tokens.verify(token)
 
     TenantAccessDependency = Annotated[TenantAccessContext, Depends(tenant_context)]
+
+    def data_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+        terminal_header_id: Annotated[
+            UUID | None,
+            Header(alias="X-Terminal-ID"),
+        ] = None,
+    ) -> IngestionPrincipal:
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            raise AuthenticationError("缺少有效数据 Bearer 凭据")
+        if container.tenant_tokens is not None:
+            return tenant_ingestion_principal(container.tenant_tokens.verify(token))
+        if container.token_issuer is None:
+            raise RepositoryUnavailable("数据身份服务暂不可用")
+        if terminal_header_id is None:
+            raise AuthenticationError("缺少 X-Terminal-ID")
+        terminal = container.token_issuer.verify(token)
+        if terminal.terminal_id != terminal_header_id:
+            raise TenantAccessDenied(
+                "X-Terminal-ID 与终端凭据不一致",
+                terminal_id=str(terminal_header_id),
+            )
+        return legacy_terminal_principal(terminal)
+
+    DataDependency = Annotated[IngestionPrincipal, Depends(data_context)]
 
     def platform_context(
         authorization: Annotated[str, Header(alias="Authorization")],
@@ -591,7 +622,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_session(
         request: Request,
         body: SessionCreateRequest,
-        context: TerminalDependency,
+        context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.ingestion.create_session(context, body, idempotency_key)
@@ -601,7 +632,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def resolve_subject(
         request: Request,
         body: SubjectResolveRequest,
-        context: TerminalDependency,
+        context: DataDependency,
     ):
         result = await container.subjects.resolve(context, body)
         if result is None:
@@ -612,7 +643,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_subject(
         request: Request,
         body: SubjectCreateRequest,
-        context: TerminalDependency,
+        context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.create_subject(context, body, idempotency_key)
@@ -622,7 +653,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_consent(
         request: Request,
         body: ConsentCreateRequest,
-        context: TerminalDependency,
+        context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.create_consent(context, body, idempotency_key)
@@ -633,7 +664,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         consent_record_id: UUID,
         body: ConsentRevokeRequest,
-        context: TerminalDependency,
+        context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.revoke_consent(
@@ -646,7 +677,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         session_id: UUID,
         segment_index: int,
-        context: TerminalDependency,
+        context: DataDependency,
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
         schema_version: Annotated[str, Header(alias="X-Schema-Version")],
         metadata_header: Annotated[str, Header(alias="X-Segment-Metadata")],
@@ -666,7 +697,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/segments")
     async def list_segments(
-        request: Request, session_id: UUID, context: TerminalDependency
+        request: Request, session_id: UUID, context: DataDependency
     ):
         result = await container.ingestion.list_segments(context, session_id)
         return _data_response(request, result)
@@ -676,7 +707,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         session_id: UUID,
         body: SessionManifest,
-        context: TerminalDependency,
+        context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
         schema_version: Annotated[str, Header(alias="X-Schema-Version")],
@@ -690,7 +721,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/status")
     async def session_status(
-        request: Request, session_id: UUID, context: TerminalDependency
+        request: Request, session_id: UUID, context: DataDependency
     ):
         result = await container.ingestion.get_status(context, session_id)
         return _data_response(request, result)

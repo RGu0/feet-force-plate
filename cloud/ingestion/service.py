@@ -4,6 +4,7 @@ from typing import AsyncIterable
 from uuid import UUID
 
 from cloud.api.auth import TerminalContext
+
 from cloud.api.errors import (
     DigestMismatch,
     QualityGateRejected,
@@ -26,6 +27,7 @@ from shared.contracts.cloud import (
 )
 
 from .object_store import ObjectStore
+from .principal import IngestionPrincipal, coerce_ingestion_principal
 
 
 class IngestionService:
@@ -44,11 +46,12 @@ class IngestionService:
 
     async def create_session(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
     ) -> SessionCreateResponse:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_start_new()
         if request.versions.payload_schema not in self._payload_schemas:
             raise SchemaUnsupported(
                 "客户端原始分段模式不受支持",
@@ -58,13 +61,14 @@ class IngestionService:
 
     async def put_segment(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
         route_index: int,
         metadata: SegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> SegmentAcknowledgement:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
         if route_index != metadata.segment_index:
             raise ValueError("route segment index must equal signed metadata index")
         if metadata.payload_schema_version not in self._payload_schemas:
@@ -126,8 +130,9 @@ class IngestionService:
         )
 
     async def list_segments(
-        self, context: TerminalContext, session_id: UUID
+        self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SegmentListResponse:
+        context = coerce_ingestion_principal(context)
         accepted = await self._repository.list_segments(context, session_id)
         indices = [record.metadata.segment_index for record in accepted]
         expected_count = await self._repository.expected_segment_count(context, session_id)
@@ -148,13 +153,14 @@ class IngestionService:
 
     async def complete_session(
         self,
-        context: TerminalContext,
+        context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
         manifest: SessionManifest,
         expected_sha256: str,
         idempotency_key: str,
     ) -> ManifestCompletionResponse:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
         actual_sha256 = canonical_sha256(manifest)
         if actual_sha256 != expected_sha256:
             raise DigestMismatch(
@@ -192,6 +198,7 @@ class IngestionService:
             raise
 
     async def get_status(
-        self, context: TerminalContext, session_id: UUID
+        self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
+        context = coerce_ingestion_principal(context)
         return await self._repository.status(context, session_id)
