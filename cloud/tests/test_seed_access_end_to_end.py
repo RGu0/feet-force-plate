@@ -27,6 +27,7 @@ def test_ten_institution_seed_access_lifecycle_and_negative_cases() -> None:
         "revoked_new_test_denied": True,
         "sensitive_identity_without_grant_denied": True,
         "suspended_new_test_denied": True,
+        "unprovisioned_eleventh_tenant_denied": True,
         "wrong_audience_token_denied": True,
         "wrong_hardware_activation_denied": True,
     }

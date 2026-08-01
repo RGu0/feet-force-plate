@@ -185,6 +185,19 @@ async def run_local_acceptance() -> dict[str, object]:
     except TenantAccessDenied:
         negative["cross_tenant_session_denied"] = True
 
+    unprovisioned_tenant_token = tenant_tokens.issue(
+        tenant_id=uuid4(), account_id=uuid4(), license_id=uuid4(),
+        hardware_id="usb-serial-unprovisioned", client_installation_id=uuid4(),
+        token_version=1, capabilities=sessions[0][2].capabilities, now=clock.value,
+    )
+    unprovisioned_context = tenant_ingestion_principal(
+        tenant_tokens.verify(unprovisioned_tenant_token, now=clock.value)
+    )
+    try:
+        await ingestion.get_status(unprovisioned_context, sessions[0][4])
+    except TenantAccessDenied:
+        negative["unprovisioned_eleventh_tenant_denied"] = True
+
     platform_token = platform_tokens.issue(
         platform_identity_id=operator.platform_identity_id,
         roles=(PlatformRole.OPERATIONS,), token_version=1, now=clock.value,

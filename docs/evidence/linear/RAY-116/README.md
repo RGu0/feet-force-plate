@@ -16,7 +16,8 @@ Implementation SHA: `29e198602cbb2f1078c7023dbb98572e4bcfc7e6`
 The deterministic acceptance provisions ten synthetic institutions, each with
 one account, License, physical-hardware identity placeholder, installation and
 synthetic ingestion session. Each tenant sees its own single ingested session;
-cross-tenant access is denied. Tenant 1 then changes from one active access
+cross-tenant access is denied, and a signed context for an unprovisioned
+eleventh tenant cannot read a provisioned tenant resource. Tenant 1 then changes from one active access
 group to three and back to two while all three contribution records remain in
 the same tenant history.
 

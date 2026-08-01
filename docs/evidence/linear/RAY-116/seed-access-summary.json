@@ -5,8 +5,8 @@
     "active_before_expand": 1,
     "historical_contributors": 3
   },
-  "generated_at": "2026-08-01T10:47:10.280671+00:00",
-  "implementation_sha": "29e198602cbb2f1078c7023dbb98572e4bcfc7e6",
+  "generated_at": "2026-08-01T11:14:23.517164+00:00",
+  "implementation_sha": "2ce636c8ad0ced093adb158789755d17bb612091",
   "mode": "local-in-memory",
   "negative_cases": {
     "activation_replay_denied": true,
@@ -18,6 +18,7 @@
     "revoked_new_test_denied": true,
     "sensitive_identity_without_grant_denied": true,
     "suspended_new_test_denied": true,
+    "unprovisioned_eleventh_tenant_denied": true,
     "wrong_audience_token_denied": true,
     "wrong_hardware_activation_denied": true
   },
