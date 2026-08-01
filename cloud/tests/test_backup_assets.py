@@ -16,6 +16,8 @@ def test_backup_is_custom_format_manifested_encrypted_and_atomically_published()
         assert token in text
     assert "AGE_RECIPIENT=" not in text
     assert "PRIVATE_KEY" not in text
+    assert 'sha256sum "$bundle_final" >"$bundle_final.sha256.tmp"' in text
+    assert 'mv "$bundle_final.sha256.tmp" "$bundle_final.sha256"' in text
 
 
 def test_retention_preserves_newest_verified_backup() -> None:
@@ -37,6 +39,7 @@ def test_restore_requires_separate_empty_targets_and_verifies_objects() -> None:
     ):
         assert token in text
     assert "--clean" not in text
+    assert "sha256sum --check --quiet" in text
 
 
 def test_daily_systemd_timer_and_service_are_present() -> None:
@@ -47,3 +50,24 @@ def test_daily_systemd_timer_and_service_are_present() -> None:
     assert "ReadWritePaths=/var/lib/feetforceplate/backups" in service
     assert "OnCalendar=daily" in timer
     assert "Persistent=true" in timer
+
+
+def test_restore_drill_uses_isolated_targets_and_cleans_private_material() -> None:
+    path = ROOT / "run-restore-drill.sh"
+    text = path.read_text()
+
+    for token in (
+        "feetforceplate_restore_",
+        "FEETFORCEPLATE_RESTORE_DSN",
+        "FEETFORCEPLATE_RESTORE_OBJECT_ROOT",
+        "runuser -u postgres",
+        "restore-verify.sh",
+        "production_unchanged=true",
+        "cleanup=verified",
+        "dropdb --if-exists",
+    ):
+        assert token in text
+    assert 'rm -rf -- "$work_root"' in text
+    assert 'rm -f -- "$identity_source"' in text
+    assert "dropdb --if-exists feetforceplate_seed" not in text
+    assert path.stat().st_mode & 0o100

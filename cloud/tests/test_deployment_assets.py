@@ -116,6 +116,7 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
     assert path.stat().st_mode & stat.S_IXUSR
     assert "0004_allow_unsigned_revoked_license.sql" in text
+    assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
 
 
 def test_systemd_entry_scripts_are_executable() -> None:
@@ -125,6 +126,7 @@ def test_systemd_entry_scripts_are_executable() -> None:
         "deploy/aliyun/seed/backup.sh",
         "deploy/aliyun/seed/check-secrets.sh",
         "deploy/aliyun/seed/restore-verify.sh",
+        "deploy/aliyun/seed/run-restore-drill.sh",
         "deploy/aliyun/seed/run-live-acceptance.sh",
         "deploy/aliyun/seed/resume-seed-cutover.sh",
     ):

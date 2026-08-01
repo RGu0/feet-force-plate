@@ -44,8 +44,9 @@ pg_restore --no-owner --no-privileges --exit-on-error \
 tar -C "$FEETFORCEPLATE_RESTORE_OBJECT_ROOT" -xf "$work/objects.tar"
 (
     cd "$FEETFORCEPLATE_RESTORE_OBJECT_ROOT"
-    sha256sum --check "$work/object-manifest.sha256"
+    sha256sum --check --quiet "$work/object-manifest.sha256"
 )
+printf 'objects_verified=%s\n' "$(wc -l <"$work/object-manifest.sha256" | tr -d ' ')"
 psql "$FEETFORCEPLATE_RESTORE_DSN" -v ON_ERROR_STOP=1 -Atqc \
     "SELECT 'tenants=' || count(*) FROM iam.tenants;
      SELECT 'licenses=' || count(*) FROM device.license_entitlements;

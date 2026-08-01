@@ -1,65 +1,53 @@
 # RAY-116 — Seed MVP access lifecycle evidence
 
-## Verified locally
+## Verified outcomes
 
-Implementation SHA: `29e198602cbb2f1078c7023dbb98572e4bcfc7e6`
+Lifecycle and restore evidence release:
+`ddea38b10dfe5ff26b73b2354895b9bb257acc4b`.
 
-```bash
-./scripts/local-env.sh python -m pytest cloud/tests/test_seed_access_end_to_end.py -q
-# 1 passed in 0.87s
+- Local full regression: `723 passed, 1 skipped`; the single local skip is the
+  live PostgreSQL DSN test executed separately on Aliyun.
+- Deterministic local lifecycle: ten isolated synthetic institutions plus an
+  unprovisioned eleventh context; tenant 1 expands from one access group to
+  three and contracts to two without moving or deleting tenant history.
+- Aliyun lifecycle: provider provisioning, activation, replacement computer,
+  hardware lease exclusion, heartbeat, session creation, License suspension,
+  continued in-flight upload, restore, invalid-login safety, platform/tenant
+  token separation, service/PostgreSQL restart, and historical session access.
+- Native PostgreSQL parity: four tests, zero failures/errors/skips, covering
+  the three application pools, least-privilege grants, activation atomicity,
+  hardware projection, License lifecycle, Platform support grants, and dynamic
+  access-group history.
+- Encrypted restore: newest age-encrypted bundle restored into a separate
+  database and object root; four object digests, six tenants, twelve Licenses,
+  and 38 forced-RLS tables verified. Production counts were unchanged and all
+  temporary database/object/private-key material was removed.
+- Network: only 7443 is reachable among tested service ports; 5432 and 8743
+  remain loopback-only, while 80 and 443 are closed.
 
-./scripts/local-env.sh python scripts/verify_seed_access.py \
-  --output docs/evidence/linear/RAY-116/seed-access-summary.json
-# tenant_count: 10
-```
+## Evidence files
 
-The deterministic acceptance provisions ten synthetic institutions, each with
-one account, License, physical-hardware identity placeholder, installation and
-synthetic ingestion session. Each tenant sees its own single ingested session;
-cross-tenant access is denied, and a signed context for an unprovisioned
-eleventh tenant cannot read a provisioned tenant resource. Tenant 1 then changes from one active access
-group to three and back to two while all three contribution records remain in
-the same tenant history.
+| Evidence | Result |
+|---|---|
+| `seed-access-summary.json` | 10+1 local tenant isolation and dynamic 1 -> 3 -> 2 |
+| `pytest-full-seed-access.xml` | 723 passed, 1 skipped locally |
+| `aliyun-seed-summary-ddea38b.json` | live lifecycle and restart, secrets excluded |
+| `aliyun-seed-summary-ddea38b-postgres.xml` | 4 PostgreSQL tests, 0 failures/errors/skips |
+| `restore-drill-ddea38b.json` | encrypted clean restore and cleanup verified |
+| `network-boundary-ddea38b.json` | public/internal port boundary and TLS readiness |
 
-Negative evidence covers wrong audience, wrong hardware, activation replay,
-refresh replay, concurrent hardware lease, suspended/expired/revoked new-test
-denial, ungranted sensitive identity access, and rejection of the documented
-local UI test License at the cloud boundary. The JSON contains only numbered
-tenant slots and booleans—no raw activation code, password, token, account
-lookup, hardware serial, subject identity, DSN, or signing material.
+The PostgreSQL XML is a redacted copy of source SHA-256
+`018cb889aae083177fdf29795f506f0d793d0d99290ba4afb7b6b735959e8ede`;
+only the internal host name was replaced. The live JSON SHA-256 is
+`54dbab3932f166a3e28434f59e39f9b3022c1c8acff2c89bd818d50ff9c4584e`.
 
 ## Evidence boundary
 
-This is synthetic software lifecycle and tenant-isolation evidence. The
-“visible session” represents a generated data segment plus verified manifest;
-it is not evidence of a physical force-plate capture, clinical report content,
-operator usability, or a medically validated conclusion.
+The hardware identities and acquisition payload in these automated checks are
+synthetic. This evidence does not prove a physical DO-P4864 run, operator
+acceptance, clinical validity, or formal production/compliance release.
 
-Still open until the deployment steps complete:
-
-- live PostgreSQL migrations and the three application-role/RLS matrix;
-- public 7443 TLS/network integration and certificate pinning;
-- backup restore into a clean PostgreSQL/object-store instance;
-- physical hardware identity and operator workflow;
-- domain + public-CA certificate + port 443 for formal customer rollout;
-- clinical validation and production/compliance release review.
-
-## Current evidence matrix
-
-| Criterion | State | Evidence |
-|---|---|---|
-| Provider-provisioned account/License activation | PROVEN_LOCAL | `cloud/tests/test_tenant_authentication.py` |
-| Replacement computer, same License/hardware | PROVEN_LOCAL | `client/tests/test_seed_access_runtime.py` |
-| Dynamic tenant 1 -> 3 -> 2 | PROVEN_LOCAL | `seed-access-summary.json` |
-| Ten isolated synthetic ingestion lifecycles | PROVEN_LOCAL | `seed-access-summary.json` |
-| Private immutable filesystem objects | PROVEN_LOCAL | `cloud/tests/test_filesystem_object_store.py` |
-| Platform roles, masking and 15-minute grants | PROVEN_LOCAL | `RAY-103/platform-iam-summary.json` |
-| Full repository regression | PROVEN_LOCAL | `pytest-full-seed-access.xml`: 726 tests, 0 failures, 1 skipped, 51.226 s |
-| PostgreSQL role/RLS parity | PENDING_POSTGRES | skipped live test; three DSNs unavailable |
-| Encrypted clean restore | PENDING_POSTGRES | `RAY-97/restore-exercise.md` |
-| Aliyun 7443 lifecycle and restart | PENDING_ALIYUN | host prerequisites not installed |
-| Physical force-plate identity | NEEDS_HARDWARE | no real device run in this evidence |
-| Domain/public CA/443 | NEEDS_FORMAL_INGRESS | explicitly deferred commercial gate |
-
-Implementation checkpoint for the full local regression:
-`4122c781b222b4e0257c194db9bcda11b1aa8db6`.
+The MVP ingress currently uses a pinned self-signed certificate on port 7443.
+A customer domain, public-CA certificate and standard port 443 remain explicit
+commercial-rollout gates. The SSH post-quantum key-exchange warning is also a
+separate host-hardening item; it did not affect HTTPS/API verification.

@@ -72,6 +72,7 @@ chmod 0755 \
     "$release_source/deploy/aliyun/seed/backup.sh" \
     "$release_source/deploy/aliyun/seed/check-secrets.sh" \
     "$release_source/deploy/aliyun/seed/restore-verify.sh" \
+    "$release_source/deploy/aliyun/seed/run-restore-drill.sh" \
     "$release_source/deploy/aliyun/seed/run-live-acceptance.sh" \
     "$release_source/deploy/aliyun/seed/install-layout.sh"
 

@@ -30,6 +30,7 @@ mkdir -m 0700 "$stage"
 cleanup() {
     rm -rf -- "$stage"
     rm -f -- "$bundle_stage"
+    rm -f -- "$bundle_final.sha256.tmp"
 }
 trap cleanup EXIT
 
@@ -44,17 +45,18 @@ pg_dump --format=custom --no-owner --no-privileges \
 ) >"$stage/object-manifest.sha256"
 tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
 
-schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control"
+schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license"
 printf '{"backup_id":"%s","implementation_sha":"%s","schema_versions":"%s","created_at":"%s"}\n' \
     "$backup_id" "$implementation_sha" "$schema_versions" "$(date -u +%FT%TZ)" \
     >"$stage/metadata.json"
 
 tar -C "$stage" -cf - database.dump objects.tar object-manifest.sha256 metadata.json \
     | age --recipient "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT" --output "$bundle_stage"
-sha256sum "$bundle_stage" >"$bundle_stage.sha256"
 sync -f "$bundle_stage"
 mv "$bundle_stage" "$bundle_final"
-mv "$bundle_stage.sha256" "$bundle_final.sha256"
+sha256sum "$bundle_final" >"$bundle_final.sha256.tmp"
+sync -f "$bundle_final.sha256.tmp"
+mv "$bundle_final.sha256.tmp" "$bundle_final.sha256"
 sync -f "$FEETFORCEPLATE_BACKUP_ROOT"
 trap - EXIT
 rm -rf -- "$stage"
