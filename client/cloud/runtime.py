@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import base64
+import binascii
 import os
 from pathlib import Path
 import time
@@ -27,6 +29,7 @@ from .hardware_identity import (
     ActivationHardwareIdentityProvider,
     ActivationHardwareStatus,
 )
+from .policy import AccountHardwareLicenseVerifier
 
 
 class AccessClientPort(Protocol):
@@ -77,6 +80,8 @@ class AccessRuntimeSettings:
     base_url: str
     verify: bool | str
     integration_mode: bool
+    license_key_id: str
+    license_public_key_file: Path
 
     @property
     def environment_label(self) -> str | None:
@@ -100,7 +105,21 @@ class AccessRuntimeSettings:
             raise ValueError("integration endpoint requires an explicit CA bundle")
         if ca_bundle and not Path(ca_bundle).is_file():
             raise ValueError("configured CA bundle does not exist")
-        return cls(raw_url.rstrip("/"), verify, integration_mode)
+        license_key_id = env.get(
+            "FEETFORCEPLATE_LICENSE_KEY_ID", "license/2-key-1"
+        ).strip()
+        public_key_file = Path(
+            env.get("FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE", "").strip()
+        )
+        if not license_key_id or not public_key_file.is_file():
+            raise ValueError("a pinned License public key file is required")
+        return cls(
+            raw_url.rstrip("/"),
+            verify,
+            integration_mode,
+            license_key_id,
+            public_key_file,
+        )
 
 
 class ClientAccessRuntime:
@@ -114,6 +133,7 @@ class ClientAccessRuntime:
         store: ClientAccessStore,
         hardware: HardwareIdentityPort,
         *,
+        license_verifier: AccountHardwareLicenseVerifier,
         client_installation_id: UUID | None = None,
         now=None,
         monotonic_ns=None,
@@ -121,6 +141,7 @@ class ClientAccessRuntime:
         self._client = client
         self._store = store
         self._hardware = hardware
+        self._license_verifier = license_verifier
         stored = store.load()
         self.client_installation_id = (
             client_installation_id
@@ -231,6 +252,20 @@ class ClientAccessRuntime:
             and response.hardware_id != expected_hardware_id
         ):
             raise LicenseHardwareMismatch("当前硬件与机构 License 不匹配")
+        stored = self._store.load()
+        minimum_version = (
+            stored.license_version
+            if stored is not None and stored.license_id == response.license_id
+            else 0
+        )
+        self._license_verifier.verify(
+            response.signed_license,
+            expected_tenant_id=response.tenant_id,
+            expected_account_id=response.account_id,
+            expected_license_id=response.license_id,
+            expected_hardware_id=response.hardware_id,
+            minimum_version=minimum_version,
+        )
         server_time = self._client.last_server_time
         if server_time is None:
             raise ClientAccessRuntimeError("机构服务未返回可信时间")
@@ -268,10 +303,21 @@ def build_client_access_runtime(
         KeyringCredentialStore(),
     )
     client = CloudAccessClient(settings.base_url, verify=settings.verify)
+    raw_public_key = settings.license_public_key_file.read_bytes().strip()
+    if len(raw_public_key) != 32:
+        try:
+            raw_public_key = base64.b64decode(raw_public_key, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("License public key file is invalid") from exc
+    if len(raw_public_key) != 32:
+        raise ValueError("License public key must contain 32 raw bytes")
     return ClientAccessRuntime(
         client,
         store,
         ActivationHardwareIdentityProvider(),
+        license_verifier=AccountHardwareLicenseVerifier(
+            {settings.license_key_id: raw_public_key}
+        ),
     )
 
 

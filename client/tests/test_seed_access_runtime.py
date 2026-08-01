@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import base64
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from client.cloud.access_client import AccessAuthenticationFailed
 from client.cloud.access_store import ClientAccessStore
@@ -17,6 +21,9 @@ from client.cloud.runtime import (
     ClientAccessRuntime,
     LicenseHardwareMismatch,
 )
+from client.cloud.policy import AccountHardwareLicenseVerifier
+from shared.contracts.access_control import LicenseDocumentV2
+from shared.contracts.client_sync import canonical_json_bytes
 from shared.contracts.access_control import (
     ActivateAccountResponse,
     LoginResponse,
@@ -63,9 +70,38 @@ class FakeAccessClient:
         self.logout_requests = []
         self.refresh_rejected = False
         self.short_access = False
+        self.private_key = Ed25519PrivateKey.generate()
+        public_key = self.private_key.public_key().public_bytes(
+            Encoding.Raw,
+            PublicFormat.Raw,
+        )
+        self.verifier = AccountHardwareLicenseVerifier(
+            {"license/2-key-1": public_key}
+        )
 
     def data(self, installation_id: UUID, *, refresh_index: int = 0) -> dict:
         expires = timedelta(seconds=30) if self.short_access else timedelta(minutes=15)
+        document = LicenseDocumentV2.model_validate(
+            {
+                "tenant_id": self.tenant_id,
+                "account_id": self.account_id,
+                "license_id": self.license_id,
+                "hardware_id": self.hardware_id,
+                "status": "ACTIVE",
+                "issued_at": self.now,
+                "valid_from": self.now,
+                "valid_until": self.now + timedelta(days=365),
+                "version": 1 + refresh_index,
+                "enabled_features": [
+                    "reports.view",
+                    "screening.start",
+                    "sync.upload",
+                ],
+            }
+        )
+        signature = base64.b64encode(
+            self.private_key.sign(canonical_json_bytes(document))
+        ).decode("ascii")
         return {
             "tenant_id": self.tenant_id,
             "account_id": self.account_id,
@@ -78,24 +114,9 @@ class FakeAccessClient:
             "refresh_idle_expires_at": self.now + timedelta(days=30),
             "refresh_absolute_expires_at": self.now + timedelta(days=180),
             "signed_license": {
-                "document": {
-                    "tenant_id": self.tenant_id,
-                    "account_id": self.account_id,
-                    "license_id": self.license_id,
-                    "hardware_id": self.hardware_id,
-                    "status": "ACTIVE",
-                    "issued_at": self.now,
-                    "valid_from": self.now,
-                    "valid_until": self.now + timedelta(days=365),
-                    "version": 1 + refresh_index,
-                    "enabled_features": [
-                        "reports.view",
-                        "screening.start",
-                        "sync.upload",
-                    ],
-                },
+                "document": document.model_dump(mode="json"),
                 "key_id": "license/2-key-1",
-                "signature": "A" * 86,
+                "signature": signature,
             },
             "capabilities": {
                 "allow_new_test": True,
@@ -145,6 +166,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
             self.client,
             self.store,
             FixedHardware(self.hardware_id),
+            license_verifier=self.client.verifier,
             client_installation_id=self.installation_id,
             now=lambda: self.now,
             monotonic_ns=lambda: 100,
@@ -186,6 +208,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
                 self.client,
                 replacement_store,
                 FixedHardware(self.hardware_id),
+                license_verifier=self.client.verifier,
                 client_installation_id=replacement_installation,
                 now=lambda: self.now,
                 monotonic_ns=lambda: 200,
@@ -233,11 +256,19 @@ class ClientAccessRuntimeTests(unittest.TestCase):
     def test_settings_require_https_and_explicit_7443_integration_ca(self) -> None:
         ca_path = Path(self.temp.name) / "integration-ca.pem"
         ca_path.write_text("test ca", encoding="utf-8")
+        public_key_path = Path(self.temp.name) / "license-public-key"
+        public_key_path.write_bytes(
+            self.client.private_key.public_key().public_bytes(
+                Encoding.Raw,
+                PublicFormat.Raw,
+            )
+        )
         settings = AccessRuntimeSettings.from_environment(
             {
                 "FEETFORCEPLATE_API_BASE_URL": "https://127.0.0.1:7443",
                 "FEETFORCEPLATE_INTEGRATION_MODE": "1",
                 "FEETFORCEPLATE_CA_BUNDLE": str(ca_path),
+                "FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE": str(public_key_path),
             }
         )
         assert settings is not None
@@ -246,11 +277,17 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.assertEqual(settings.verify, str(ca_path))
         with self.assertRaises(ValueError):
             AccessRuntimeSettings.from_environment(
-                {"FEETFORCEPLATE_API_BASE_URL": "http://127.0.0.1:7443"}
+                {
+                    "FEETFORCEPLATE_API_BASE_URL": "http://127.0.0.1:7443",
+                    "FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE": str(public_key_path),
+                }
             )
         with self.assertRaises(ValueError):
             AccessRuntimeSettings.from_environment(
-                {"FEETFORCEPLATE_API_BASE_URL": "https://127.0.0.1:7443"}
+                {
+                    "FEETFORCEPLATE_API_BASE_URL": "https://127.0.0.1:7443",
+                    "FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE": str(public_key_path),
+                }
             )
 
 

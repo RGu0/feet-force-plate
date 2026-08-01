@@ -55,6 +55,10 @@ class GateReason(StrEnum):
     PENDING_SESSION_LIMIT = "PENDING_SESSION_LIMIT"
     PENDING_BYTES_LIMIT = "PENDING_BYTES_LIMIT"
     CLOCK_ROLLBACK = "CLOCK_ROLLBACK"
+    HARDWARE_MISMATCH = "HARDWARE_MISMATCH"
+    LICENSE_DOWNGRADE = "LICENSE_DOWNGRADE"
+    LEASE_REQUIRED = "LEASE_REQUIRED"
+    LEASE_CONFLICT = "LEASE_CONFLICT"
 
 
 FeatureName = Annotated[
@@ -96,8 +100,8 @@ class SignedLicense(ContractModel):
     signature: Annotated[str, StringConstraints(min_length=80, max_length=128)]
 
 
-class LicenseVerifier:
-    """Verifies a cacheable license with pinned Ed25519 public keys."""
+class LegacyTerminalLicenseVerifier:
+    """Legacy License/1 terminal-bound verifier retained for compatibility."""
 
     def __init__(self, public_keys: Mapping[str, bytes]) -> None:
         if not public_keys:
@@ -134,6 +138,11 @@ class LicenseVerifier:
         if now < document.not_before or now >= document.expires_at:
             raise ValueError("license validity window is not active")
         return document
+
+
+# Backward-compatible import name for existing License/1 callers. New client
+# compositions use AccountHardwareLicenseVerifier from client.cloud.policy.
+LicenseVerifier = LegacyTerminalLicenseVerifier
 
 
 class DevicePolicyThresholds(ContractModel):
