@@ -34,6 +34,13 @@ GRANT CONNECT ON DATABASE :"database_name"
 GRANT USAGE ON SCHEMA iam, device, subject, screening, ops TO ffp_seed_backup;
 GRANT SELECT ON ALL TABLES IN SCHEMA iam, device, subject, screening, ops TO ffp_seed_backup;
 
+-- The seed License activation role materializes compatibility rows consumed by
+-- the existing ingestion schema. It still has no subject, screening, report,
+-- or cross-tenant privilege, and remains NOBYPASSRLS.
+GRANT SELECT, INSERT, UPDATE ON device.devices TO ffp_activation_app;
+GRANT SELECT, INSERT, UPDATE ON device.terminals TO ffp_activation_app;
+GRANT SELECT, INSERT, UPDATE ON device.terminal_device_bindings TO ffp_activation_app;
+
 ALTER ROLE ffp_seed_tenant SET statement_timeout = '60s';
 ALTER ROLE ffp_seed_activation SET statement_timeout = '30s';
 ALTER ROLE ffp_seed_platform SET statement_timeout = '60s';

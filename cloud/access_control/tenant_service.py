@@ -392,6 +392,7 @@ class TenantAuthenticationService:
             "tenant_id": account.tenant_id,
             "account_id": account.account_id,
             "license_id": license_record.license_id,
+            "hardware_asset_id": hardware.hardware_id,
             "hardware_id": hardware.stable_identity,
             "client_installation_id": installation_id,
             "access_token": access_token,

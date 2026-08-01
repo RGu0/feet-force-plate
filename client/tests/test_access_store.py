@@ -43,12 +43,14 @@ class ClientAccessStoreTests(unittest.TestCase):
         tenant_id = uuid4()
         license_id = uuid4()
         installation_id = uuid4()
+        hardware_asset_id = uuid4()
         hardware_id = "usb-serial-0123456789abcdef0123"
         return ActivateAccountResponse.model_validate(
             {
                 "tenant_id": tenant_id,
                 "account_id": self.account_id,
                 "license_id": license_id,
+                "hardware_asset_id": hardware_asset_id,
                 "hardware_id": hardware_id,
                 "client_installation_id": installation_id,
                 "access_token": self.access_token,

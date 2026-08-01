@@ -65,6 +65,7 @@ class FakeAccessClient:
         self.tenant_id = uuid4()
         self.account_id = uuid4()
         self.license_id = uuid4()
+        self.hardware_asset_id = uuid4()
         self.activation_requests = []
         self.login_requests = []
         self.refresh_requests = []
@@ -107,6 +108,7 @@ class FakeAccessClient:
             "tenant_id": self.tenant_id,
             "account_id": self.account_id,
             "license_id": self.license_id,
+            "hardware_asset_id": self.hardware_asset_id,
             "hardware_id": self.hardware_id,
             "client_installation_id": installation_id,
             "access_token": f"access-token-{refresh_index}-value-at-least-20",
@@ -192,6 +194,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.hardware_id, self.hardware_id)
         self.assertEqual(stored.client_installation_id, self.installation_id)
         self.assertEqual(session.client_installation_id, str(self.installation_id))
+        self.assertEqual(session.hardware_asset_id, str(self.client.hardware_asset_id))
         self.assertEqual(
             self.store.refresh_token(),
             "refresh-token-0-value-at-least-20",

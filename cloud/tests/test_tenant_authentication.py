@@ -110,8 +110,10 @@ def test_activation_is_atomic_and_code_replay_is_rejected() -> None:
         request = _activation(provisioned)
 
         activated = await service.activate(request, source_fingerprint=b"source-a")
+        group = await repository.access_group_for_license(provisioned.license_id)
 
         assert activated.tenant_id == provisioned.tenant_id
+        assert activated.hardware_asset_id == group.hardware_id
         assert activated.hardware_id == HARDWARE_ID
         assert activated.signed_license.document.version == 1
         assert activated.capabilities.allow_new_test

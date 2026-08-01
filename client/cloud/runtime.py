@@ -70,6 +70,7 @@ class AuthenticatedInstitutionSession:
     tenant_id: str
     account_id: str
     license_id: str
+    hardware_asset_id: str
     hardware_id: str
     client_installation_id: str
     access_token: str
@@ -303,6 +304,7 @@ class ClientAccessRuntime:
             tenant_id=str(response.tenant_id),
             account_id=str(response.account_id),
             license_id=str(response.license_id),
+            hardware_asset_id=str(response.hardware_asset_id),
             hardware_id=response.hardware_id,
             client_installation_id=str(response.client_installation_id),
             access_token=response.access_token,

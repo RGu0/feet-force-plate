@@ -30,6 +30,7 @@ from cloud.api.access_auth import (
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.postgres import PostgresPlatformRepository
 from cloud.api.subject_service import IdentityProtector, SubjectConsentService
+from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
 
@@ -232,6 +233,7 @@ async def build_seed_app(
                 supported_manifest_schemas={"session-manifest/1"},
             ),
             subjects=SubjectConsentService(data_repository, identity),
+            heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
             hardware_leases=HardwareLeaseService(access_repository),

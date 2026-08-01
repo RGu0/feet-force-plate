@@ -131,6 +131,7 @@ def test_build_composes_only_seed_identity_and_data_plane_services() -> None:
             assert services.tenant_access is not None
             assert services.platform_access is not None
             assert services.ingestion is not None
+            assert services.heartbeats is not None
             assert services.devices is None
             assert services.operations is None
             assert services.token_issuer is None

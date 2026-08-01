@@ -19,8 +19,10 @@ from cloud.api.access_auth import (
     TenantAccessTokenIssuer,
 )
 from cloud.api.app import ServiceContainer, create_app
+from cloud.api.auth import TerminalTokenIssuer
 from cloud.api.repository import InMemoryPlatformRepository
 from cloud.api.subject_service import IdentityProtector, SubjectConsentService
+from cloud.device_management.service import DeviceManagementService
 from cloud.ingestion.object_store import InMemoryObjectStore
 from cloud.ingestion.service import IngestionService
 from shared.contracts.access_control import (
@@ -38,6 +40,10 @@ from shared.contracts.cloud import (
     ManifestSegment,
     MissingValueState,
     ProfileValue,
+    HeartbeatDevice,
+    HeartbeatHealth,
+    HeartbeatRequest,
+    HeartbeatSync,
     SegmentMetadata,
     SessionCreateRequest,
     SessionManifest,
@@ -129,6 +135,12 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
             self.device_id,
             hardware.model,
         )
+        self.data_repository.bind_terminal_device(
+            self.provisioned.tenant_id,
+            self.installation_id,
+            self.device_id,
+            self.now,
+        )
         ingestion = IngestionService(
             self.data_repository,
             InMemoryObjectStore(),
@@ -143,10 +155,21 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
                 key_version="identity/1",
             ),
         )
+        devices = DeviceManagementService(
+            self.data_repository,
+            TerminalTokenIssuer(
+                secret=b"legacy-terminal-token-secret-at-least-32-bytes",
+                key_id="terminal/legacy-test",
+                token_ttl=timedelta(minutes=15),
+            ),
+            activation_code_hmac_key=b"legacy-activation-key-at-least-32-bytes",
+            now=lambda: self.now,
+        )
         app = create_app(
             ServiceContainer(
                 ingestion=ingestion,
                 subjects=subjects,
+                devices=devices,
                 tenant_access=self.tenant_access,
                 tenant_tokens=self.tenant_tokens,
             )
@@ -337,3 +360,41 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
         self.assertNotIn(alien_token, response.text)
+
+    async def test_tenant_access_token_records_heartbeat_for_its_installation(self) -> None:
+        headers = self.headers(self.session.access_token)
+        headers.update(
+            {
+                "X-Terminal-ID": str(self.installation_id),
+                "Idempotency-Key": "seed-heartbeat-1",
+            }
+        )
+        heartbeat = HeartbeatRequest(
+            app_version="0.1.0",
+            config_version="seed/1",
+            protocol_version="do-p4864/1",
+            device=HeartbeatDevice(
+                device_id=self.device_id,
+                model="DO-P4864",
+                connection_state="READY",
+            ),
+            sync=HeartbeatSync(
+                last_successful_sync=self.now,
+                pending_sessions=0,
+                pending_bytes=0,
+            ),
+            health=HeartbeatHealth(
+                disk_free_bytes=1_000_000,
+                clock_skew_seconds=0.0,
+            ),
+            observed_at=self.now,
+        )
+
+        response = await self.client.post(
+            f"/v1/terminals/{self.installation_id}/heartbeats",
+            headers=headers,
+            json=heartbeat.model_dump(mode="json"),
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["terminal_id"], str(self.installation_id))

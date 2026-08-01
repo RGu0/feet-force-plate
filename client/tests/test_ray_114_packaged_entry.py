@@ -74,6 +74,7 @@ class _AccessRuntime:
             tenant_id="tenant",
             account_id="account",
             license_id="license",
+            hardware_asset_id="hardware-asset",
             hardware_id="usb-serial-0123456789abcdef0123",
             client_installation_id="installation",
             access_token="access-token-value-at-least-20",

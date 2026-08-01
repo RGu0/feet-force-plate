@@ -109,6 +109,25 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
                 license_signature="s" * 86,
             )
             assert activated.account.password_hash == "$ffp-scrypt$good"
+            async with tenant_pool.acquire() as connection:
+                async with connection.transaction():
+                    await connection.execute(
+                        "SELECT set_config('app.tenant_id', $1, true)", str(tenant.tenant_id)
+                    )
+                    projected = await connection.fetchrow(
+                        """SELECT
+                               EXISTS (SELECT 1 FROM device.terminals
+                                       WHERE tenant_id=$1 AND terminal_id=$2) AS terminal_ok,
+                               EXISTS (SELECT 1 FROM device.devices
+                                       WHERE tenant_id=$1 AND device_id=$3) AS device_ok,
+                               EXISTS (SELECT 1 FROM device.terminal_device_bindings
+                                       WHERE tenant_id=$1 AND terminal_id=$2
+                                         AND device_id=$3 AND valid_to IS NULL) AS binding_ok""",
+                        tenant.tenant_id,
+                        activated.installation.client_installation_id,
+                        groups[0].hardware_id,
+                    )
+                    assert all(projected.values())
             with pytest.raises(AccessActivationRejected):
                 await repository.activate_account_atomically(
                     login_name_hmac=groups[0].login_name_hmac,

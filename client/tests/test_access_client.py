@@ -27,6 +27,7 @@ class CloudAccessClientTests(unittest.TestCase):
         self.tenant_id = uuid4()
         self.account_id = uuid4()
         self.license_id = uuid4()
+        self.hardware_asset_id = uuid4()
         self.installation_id = uuid4()
         self.lease_id = uuid4()
         self.hardware_id = "usb-serial-0123456789abcdef0123"
@@ -65,6 +66,7 @@ class CloudAccessClientTests(unittest.TestCase):
             "tenant_id": str(self.tenant_id),
             "account_id": str(self.account_id),
             "license_id": str(self.license_id),
+            "hardware_asset_id": str(self.hardware_asset_id),
             "hardware_id": self.hardware_id,
             "client_installation_id": str(self.installation_id),
             "access_token": "access-token-value-at-least-20-chars",

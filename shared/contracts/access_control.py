@@ -171,6 +171,7 @@ class AccessSession(ContractModel):
     tenant_id: UUID
     account_id: UUID
     license_id: UUID
+    hardware_asset_id: UUID
     hardware_id: HardwareIdentity
     client_installation_id: UUID
     access_token: SecretValue

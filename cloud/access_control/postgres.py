@@ -226,6 +226,66 @@ class PostgresAccessRepository:
                 resource_type, resource_id, tenant_id, created_at,
             )
 
+    async def _ensure_data_plane_projection(
+        self,
+        connection: Any,
+        *,
+        tenant_id: UUID,
+        account_id: UUID,
+        installation_id: UUID,
+        projected_at: datetime,
+    ) -> None:
+        hardware = await connection.fetchrow(
+            """SELECT h.hardware_id,h.model
+               FROM device.license_assignments la
+               JOIN device.hardware_bindings hb
+                 ON hb.tenant_id=la.tenant_id AND hb.license_id=la.license_id
+                AND hb.unbound_at IS NULL
+               JOIN device.hardware_assets h
+                 ON h.tenant_id=hb.tenant_id AND h.hardware_id=hb.hardware_id
+               WHERE la.tenant_id=$1 AND la.account_id=$2 AND la.unassigned_at IS NULL""",
+            tenant_id,
+            account_id,
+        )
+        if hardware is None:
+            raise AccessRepositoryConflict("active hardware binding does not exist")
+        await connection.execute(
+            """INSERT INTO device.devices
+               (device_id,tenant_id,model,capabilities,status,created_at,updated_at)
+               VALUES ($1,$2,$3,'{}'::jsonb,'ACTIVE',$4,$4)
+               ON CONFLICT (device_id) DO NOTHING""",
+            hardware["hardware_id"],
+            tenant_id,
+            hardware["model"],
+            projected_at,
+        )
+        await connection.execute(
+            """INSERT INTO device.terminals
+               (terminal_id,tenant_id,site_id,installation_id,client_public_key,status,
+                last_seen_at,created_at,updated_at)
+               VALUES ($1,$2,NULL,$1,'tenant-access-v1','ACTIVE',$3,$3,$3)
+               ON CONFLICT (terminal_id) DO UPDATE
+               SET status='ACTIVE',last_seen_at=GREATEST(device.terminals.last_seen_at,$3),
+                   updated_at=GREATEST(device.terminals.updated_at,$3)""",
+            installation_id,
+            tenant_id,
+            projected_at,
+        )
+        await connection.execute(
+            """INSERT INTO device.terminal_device_bindings
+               (terminal_device_binding_id,tenant_id,terminal_id,device_id,valid_from,created_at)
+               SELECT $1,$2,$3,$4,$5,$5
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM device.terminal_device_bindings
+                   WHERE tenant_id=$2 AND terminal_id=$3 AND device_id=$4 AND valid_to IS NULL
+               )""",
+            uuid4(),
+            tenant_id,
+            installation_id,
+            hardware["hardware_id"],
+            projected_at,
+        )
+
     async def provision_tenant(
         self, tenant: TenantSeed, group: AccessGroupSeed, *, created_at: datetime
     ) -> None:
@@ -348,6 +408,13 @@ class PostgresAccessRepository:
                     "INSERT INTO ops.access_resource_directory "
                     "(resource_type,resource_id,tenant_id,created_at) "
                     "VALUES ('INSTALLATION',$1,$2,$3)", installation_id, tenant_id, activated_at,
+                )
+                await self._ensure_data_plane_projection(
+                    connection,
+                    tenant_id=tenant_id,
+                    account_id=row["account_id"],
+                    installation_id=installation_id,
+                    projected_at=activated_at,
                 )
                 account_row = await connection.fetchrow(
                     "SELECT * FROM iam.tenant_accounts WHERE account_id=$1", row["account_id"]
@@ -597,6 +664,13 @@ class PostgresAccessRepository:
                     "(resource_type,resource_id,tenant_id,created_at) "
                     "VALUES ('INSTALLATION',$1,$2,$3)", installation_id, tenant_id, seen_at,
                 )
+            await self._ensure_data_plane_projection(
+                connection,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                installation_id=installation_id,
+                projected_at=seen_at,
+            )
         return _installation(row)
 
     async def create_refresh_session(self, session: RefreshSessionRecord) -> RefreshSessionRecord:

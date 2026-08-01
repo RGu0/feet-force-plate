@@ -73,6 +73,7 @@ class ServiceContainer:
     token_issuer: TerminalTokenIssuer | None = None
     subjects: object | None = None
     devices: object | None = None
+    heartbeats: object | None = None
     operations: object | None = None
     operations_tokens: OperationsTokenIssuer | None = None
     tenant_access: object | None = None
@@ -207,6 +208,31 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return context
 
     TerminalDependency = Annotated[TerminalContext, Depends(terminal_context)]
+
+    def heartbeat_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+        terminal_header_id: Annotated[UUID, Header(alias="X-Terminal-ID")],
+    ) -> IngestionPrincipal | TerminalContext:
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            raise AuthenticationError("缺少有效终端 Bearer 凭据")
+        if container.tenant_tokens is not None:
+            context = tenant_ingestion_principal(container.tenant_tokens.verify(token))
+        elif container.token_issuer is not None:
+            context = container.token_issuer.verify(token)
+        else:
+            raise RepositoryUnavailable("终端身份服务暂不可用")
+        if context.terminal_id != terminal_header_id:
+            raise TenantAccessDenied(
+                "X-Terminal-ID 与终端凭据不一致",
+                terminal_id=str(terminal_header_id),
+            )
+        return context
+
+    HeartbeatDependency = Annotated[
+        IngestionPrincipal | TerminalContext,
+        Depends(heartbeat_context),
+    ]
 
     def operations_context(
         authorization: Annotated[str, Header(alias="Authorization")],
@@ -602,15 +628,16 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         terminal_id: UUID,
         body: HeartbeatRequest,
-        context: TerminalDependency,
+        context: HeartbeatDependency,
         idempotency_key: Annotated[
             str,
             Header(alias="Idempotency-Key", min_length=1, max_length=256),
         ],
     ):
-        if container.devices is None:
+        service = container.heartbeats or container.devices
+        if service is None:
             raise RepositoryUnavailable("终端心跳服务暂不可用")
-        result = await container.devices.record_heartbeat(
+        result = await service.record_heartbeat(
             context,
             terminal_id,
             body,
