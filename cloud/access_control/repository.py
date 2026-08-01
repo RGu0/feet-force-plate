@@ -148,6 +148,32 @@ class AuditEventRecord:
     details: tuple[tuple[str, str], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RefreshSessionRecord:
+    refresh_session_id: UUID
+    tenant_id: UUID
+    account_id: UUID
+    client_installation_id: UUID
+    refresh_token_hash: bytes
+    issued_at: datetime
+    last_used_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+    rotated_at: datetime | None = None
+    revoked_at: datetime | None = None
+    replaced_by_session_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationAttemptRecord:
+    authentication_attempt_id: UUID
+    login_name_hmac: bytes
+    source_fingerprint: bytes
+    attempt_kind: str
+    succeeded: bool
+    attempted_at: datetime
+
+
 class AccessRepository(Protocol):
     async def provision_tenant(
         self,
@@ -174,6 +200,9 @@ class AccessRepository(Protocol):
         password_hash: str,
         installation_id: UUID,
         activated_at: datetime,
+        license_key_id: str | None = None,
+        license_document_json: str | None = None,
+        license_signature: str | None = None,
     ) -> ActivatedAccess: ...
 
 
@@ -193,6 +222,9 @@ class InMemoryAccessRepository:
         self._installations: dict[UUID, ClientInstallationRecord] = {}
         self._group_history: list[AccessGroupHistoryRecord] = []
         self._audit_events: list[AuditEventRecord] = []
+        self._refresh_sessions: dict[UUID, RefreshSessionRecord] = {}
+        self._refresh_by_hash: dict[bytes, UUID] = {}
+        self._authentication_attempts: list[AuthenticationAttemptRecord] = []
 
     async def provision_tenant(
         self,
@@ -374,8 +406,16 @@ class InMemoryAccessRepository:
         password_hash: str,
         installation_id: UUID,
         activated_at: datetime,
+        license_key_id: str | None = None,
+        license_document_json: str | None = None,
+        license_signature: str | None = None,
     ) -> ActivatedAccess:
         async with self._lock:
+            signed_fields = (license_key_id, license_document_json, license_signature)
+            if any(value is not None for value in signed_fields) and not all(
+                value is not None for value in signed_fields
+            ):
+                raise ValueError("signed License fields must be stored together")
             account_id = self._account_by_login.get(login_name_hmac)
             activation_code_id = self._activation_by_hash.get(activation_code_hash)
             if account_id is None or activation_code_id is None:
@@ -409,6 +449,9 @@ class InMemoryAccessRepository:
                 license_record,
                 status=LicenseState.ACTIVE,
                 issued_at=activated_at,
+                key_id=license_key_id,
+                document_json=license_document_json,
+                signature=license_signature,
             )
             consumed_code = replace(activation, consumed_at=activated_at)
             installation = ClientInstallationRecord(
@@ -430,6 +473,143 @@ class InMemoryAccessRepository:
                 hardware=hardware,
                 activation_code=consumed_code,
                 installation=installation,
+            )
+
+    async def active_group_for_account(
+        self, account_id: UUID
+    ) -> AccessGroupHistoryRecord:
+        async with self._lock:
+            for row in reversed(self._group_history):
+                if row.account_id == account_id and row.closed_at is None:
+                    return row
+            raise AccessRepositoryError("active account access group does not exist")
+
+    async def register_or_touch_installation(
+        self,
+        *,
+        tenant_id: UUID,
+        account_id: UUID,
+        installation_id: UUID,
+        seen_at: datetime,
+    ) -> ClientInstallationRecord:
+        async with self._lock:
+            existing = self._installations.get(installation_id)
+            if existing is not None:
+                if existing.tenant_id != tenant_id or existing.account_id != account_id:
+                    raise AccessRepositoryConflict("installation belongs to another account")
+                if existing.status != "ACTIVE":
+                    raise AccessRepositoryConflict("installation is revoked")
+                updated = replace(existing, last_seen_at=max(existing.last_seen_at, seen_at))
+                self._installations[installation_id] = updated
+                return updated
+            installation = ClientInstallationRecord(
+                tenant_id=tenant_id,
+                client_installation_id=installation_id,
+                account_id=account_id,
+                first_seen_at=seen_at,
+                last_seen_at=seen_at,
+                status="ACTIVE",
+            )
+            self._installations[installation_id] = installation
+            return installation
+
+    async def create_refresh_session(
+        self, session: RefreshSessionRecord
+    ) -> RefreshSessionRecord:
+        async with self._lock:
+            if (
+                session.refresh_session_id in self._refresh_sessions
+                or session.refresh_token_hash in self._refresh_by_hash
+            ):
+                raise AccessRepositoryConflict("refresh session already exists")
+            installation = self._installations.get(session.client_installation_id)
+            if (
+                installation is None
+                or installation.tenant_id != session.tenant_id
+                or installation.account_id != session.account_id
+            ):
+                raise AccessRepositoryConflict("refresh installation is invalid")
+            self._refresh_sessions[session.refresh_session_id] = session
+            self._refresh_by_hash[session.refresh_token_hash] = session.refresh_session_id
+            return session
+
+    async def refresh_session_by_hash(
+        self, token_hash: bytes
+    ) -> RefreshSessionRecord | None:
+        async with self._lock:
+            session_id = self._refresh_by_hash.get(token_hash)
+            return None if session_id is None else self._refresh_sessions[session_id]
+
+    async def rotate_refresh_session(
+        self,
+        *,
+        current_token_hash: bytes,
+        expected_installation_id: UUID,
+        replacement: RefreshSessionRecord,
+        rotated_at: datetime,
+    ) -> RefreshSessionRecord:
+        async with self._lock:
+            current_id = self._refresh_by_hash.get(current_token_hash)
+            current = None if current_id is None else self._refresh_sessions[current_id]
+            if (
+                current is None
+                or current.client_installation_id != expected_installation_id
+                or current.rotated_at is not None
+                or current.revoked_at is not None
+                or current.idle_expires_at <= rotated_at
+                or current.absolute_expires_at <= rotated_at
+                or replacement.tenant_id != current.tenant_id
+                or replacement.account_id != current.account_id
+                or replacement.client_installation_id != current.client_installation_id
+                or replacement.absolute_expires_at != current.absolute_expires_at
+                or replacement.refresh_token_hash in self._refresh_by_hash
+            ):
+                raise AccessActivationRejected("refresh credential is invalid")
+            retired = replace(
+                current,
+                rotated_at=rotated_at,
+                last_used_at=rotated_at,
+                replaced_by_session_id=replacement.refresh_session_id,
+            )
+            self._refresh_sessions[current.refresh_session_id] = retired
+            self._refresh_sessions[replacement.refresh_session_id] = replacement
+            self._refresh_by_hash[replacement.refresh_token_hash] = replacement.refresh_session_id
+            return replacement
+
+    async def revoke_refresh_session(
+        self, token_hash: bytes, *, revoked_at: datetime
+    ) -> None:
+        async with self._lock:
+            session_id = self._refresh_by_hash.get(token_hash)
+            if session_id is None:
+                return
+            session = self._refresh_sessions[session_id]
+            if session.revoked_at is None:
+                self._refresh_sessions[session_id] = replace(
+                    session,
+                    revoked_at=revoked_at,
+                )
+
+    async def record_authentication_attempt(
+        self, attempt: AuthenticationAttemptRecord
+    ) -> None:
+        async with self._lock:
+            self._authentication_attempts.append(attempt)
+
+    async def failed_authentication_attempts(
+        self,
+        *,
+        login_name_hmac: bytes,
+        source_fingerprint: bytes,
+        since: datetime,
+    ) -> int:
+        async with self._lock:
+            return sum(
+                not attempt.succeeded
+                and attempt.login_name_hmac == login_name_hmac
+                and attempt.source_fingerprint == source_fingerprint
+                and attempt.attempted_at >= since
+                for attempt in self._authentication_attempts
             )
 
     async def account_by_login_hmac(
@@ -551,11 +731,13 @@ __all__ = [
     "AccessRepositoryError",
     "ActivatedAccess",
     "ActivationCodeRecord",
+    "AuthenticationAttemptRecord",
     "AuditEventRecord",
     "ClientInstallationRecord",
     "HardwareAssetRecord",
     "InMemoryAccessRepository",
     "LicenseEntitlementRecord",
+    "RefreshSessionRecord",
     "TenantAccountRecord",
     "TenantRecord",
     "TenantSeed",

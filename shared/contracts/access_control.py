@@ -28,7 +28,7 @@ HardwareIdentity = Annotated[
     str,
     StringConstraints(pattern=r"^usb-serial-[0-9a-f]{20}$", min_length=31, max_length=31),
 ]
-SecretValue = Annotated[str, StringConstraints(min_length=20, max_length=512)]
+SecretValue = Annotated[str, StringConstraints(min_length=20, max_length=8192)]
 PasswordValue = Annotated[str, StringConstraints(min_length=12, max_length=256)]
 PurposeCode = Annotated[
     str,
