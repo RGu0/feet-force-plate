@@ -142,3 +142,17 @@ git diff --check
 ```
 
 These tests use deterministic in-memory adapters plus SQL/transaction contract checks. They do not prove a live PostgreSQL migration, RLS role matrix, S3/KMS policy, TLS ingress, terminal certificate, backup restore, load target, or regional privacy review.
+
+## Seed MVP access model
+
+The current seed composition authenticates tenant accounts with the
+`feetforceplate-tenant` audience and Platform identities with the independent
+`feetforceplate-platform` audience. `terminal_id` remains legacy terminal
+compatibility metadata; `license/2` is authoritative through account assignment
+and physical hardware binding, while client installation identifies a login
+session on a replaceable computer. Suspension or expiry blocks new sessions;
+upload and report access continue.
+
+The seed object adapter is a private filesystem object store. The public 7443
+endpoint is controlled integration only; commercial ingress requires
+domain + public CA + 443.

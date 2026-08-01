@@ -50,7 +50,11 @@ GET  /v1/sessions/{id}/status            查询接收/分析/报告状态
 POST /v1/telemetry/batches                批量上传日志和设备指标
 ```
 
-每个写请求包含：`tenant_id`、`terminal_id`、`session_id`、幂等键、模式版本、内容摘要和终端认证上下文。服务端对相同索引和相同摘要返回成功；相同索引不同摘要返回冲突，禁止静默覆盖。
+当前 seed 写请求由 `feetforceplate-tenant` audience 的 tenant access token 推导
+`tenant_id/account_id/license_id/client installation`，载荷不能自选租户；
+`terminal_id` 仅保留 legacy terminal compatibility 审计字段。每个写请求还含
+`session_id`、幂等键、模式版本和内容摘要。相同索引与摘要幂等成功，不同摘要
+明确冲突，禁止静默覆盖。
 
 ## 5. 上传顺序
 
@@ -104,3 +108,11 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 - 慢网下串口采集和本地报告性能不下降；
 - 三个离线门槛分别触发正确限制；
 - 服务端确认前本地数据不被清理。
+
+## Seed MVP access model
+
+15-minute tenant access token 过期前通过 30-day idle / 180-day absolute 刷新
+会话轮换。License 暂停、过期或撤销后禁止创建新会话，但
+**upload and report access continue**，保证既有数据收尾。24-hour offline grace、
+50 次和 2 GB 门槛只阻止新测试。公网 IP:7443 为联调环境；正式同步入口要求
+**domain + public CA + 443**。

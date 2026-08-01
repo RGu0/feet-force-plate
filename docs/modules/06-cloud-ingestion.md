@@ -96,3 +96,16 @@ tenant/{tenant_uuid}/sessions/{session_uuid}/segments/{index}-{sha256_prefix}.ff
 - 租户越权和伪造终端被拒绝并审计；
 - `SessionIngested` 对一个会话只产生一个业务效果；
 - 容量和并发测试覆盖目标机构峰值的至少两倍。
+
+## Seed MVP access model
+
+数据面认证来自 `feetforceplate-tenant` audience 的 tenant access token；Platform
+运营使用独立 `feetforceplate-platform` audience，二者不能互换。会话中的
+`terminal_id` 是 **legacy terminal compatibility** 审计身份，License 权威来自
+tenant account + `license/2` + hardware binding + client installation。
+
+种子环境使用 **private filesystem object store**：租户前缀、摘要/大小校验、
+staging + fsync + atomic rename 和不可变键；接口保持可替换，规模增长后迁往
+分布式对象存储。License 状态只阻止新会话；既有会话的
+**upload and report access continue**。IP:7443 不是正式商业入口，后者需要
+**domain + public CA + 443**。
