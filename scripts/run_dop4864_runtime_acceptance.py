@@ -26,11 +26,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from client.device.acquisition import (
-    MAXIMUM_NO_VALID_SIGNAL_NS,
-    ConnectionStateMachine,
-    LatestFrameMailbox,
-)
+from client.device.acquisition import ConnectionStateMachine, LatestFrameMailbox
 from client.device.protocol import DaoOneP4864Parser, ProtocolProfile, RawFrame
 from client.device.serial_transport import SerialByteTransport
 from client.device.session_runtime import HardwareSessionRuntime
@@ -76,10 +72,18 @@ def _profile() -> ProtocolProfile:
 
 
 def _collect_baseline(
-    *, device: str, duration_ns: int
+    *, device: str, duration_ns: int, maximum_no_valid_signal_ns: int
 ) -> tuple[tuple[RawFrame, ...], dict[str, int]]:
     parser = DaoOneP4864Parser(_profile())
-    transport = SerialByteTransport.open(device, timeout_seconds=0.5)
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
+    transport = SerialByteTransport.open(
+        device,
+        timeout_seconds=0.5,
+        baud_rate=specification.serial_baud_rate,
+        data_bits=specification.serial_data_bits,
+        parity=specification.serial_parity,
+        stop_bits=specification.serial_stop_bits,
+    )
     frames: list[RawFrame] = []
     first_ns: int | None = None
     last_valid_signal_ns = time.monotonic_ns()
@@ -87,8 +91,8 @@ def _collect_baseline(
         while first_ns is None or frames[-1].host_monotonic_ns - first_ns < duration_ns:
             chunk = transport.read(16_384)
             if not chunk:
-                if time.monotonic_ns() - last_valid_signal_ns >= MAXIMUM_NO_VALID_SIGNAL_NS:
-                    raise RuntimeError("baseline received no valid decoded signal for five seconds")
+                if time.monotonic_ns() - last_valid_signal_ns >= maximum_no_valid_signal_ns:
+                    raise RuntimeError("baseline received no valid decoded signal within the device limit")
                 continue
             decoded = parser.feed(chunk)
             for frame in decoded:
@@ -110,7 +114,7 @@ def _collect_baseline(
 
 
 def _baseline_reference(
-    frames: tuple[RawFrame, ...], *, maximum_empty_count: float
+    frames: tuple[RawFrame, ...], *, maximum_empty_count: float, minimum_duration_ns: int
 ):
     if len(frames) < 2:
         raise RuntimeError("baseline did not contain at least two frames")
@@ -142,7 +146,7 @@ def _baseline_reference(
             for frame in frames
         ),
     )
-    return build_baseline_reference(window), {
+    return build_baseline_reference(window, minimum_duration_ns=minimum_duration_ns), {
         "frames": len(frames),
         "duration_seconds": window.duration_ns / 1_000_000_000,
         "maximum_cell_median_count": float(cell_median.max()),
@@ -150,9 +154,26 @@ def _baseline_reference(
     }
 
 
+def _safe_acquisition_reason_code(reason: str | None) -> str | None:
+    """Collapse transport/runtime detail before emitting acceptance evidence."""
+
+    if reason is None:
+        return None
+    normalized = reason.lower()
+    if "transport disconnected" in normalized or "serial" in normalized:
+        return "TRANSPORT_DISCONNECTED"
+    if "no valid" in normalized or "signal" in normalized:
+        return "SIGNAL_UNAVAILABLE"
+    return "ACQUISITION_INVALID"
+
+
 def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
-    if args.baseline_seconds < 5:
-        raise ValueError("baseline-seconds must be at least 5")
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
+    minimum_baseline_seconds = specification.baseline_min_duration_s
+    if args.baseline_seconds is None:
+        args.baseline_seconds = minimum_baseline_seconds
+    if args.baseline_seconds < minimum_baseline_seconds:
+        raise ValueError("baseline-seconds must meet the selected device specification")
     if args.capture_seconds <= 0:
         raise ValueError("capture-seconds must be positive")
     if args.serial_timeout_seconds <= 0:
@@ -161,10 +182,16 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     spool_root = root / "spool"
     key_provider = FileAesKeyProvider(args.key_file.resolve())
     baseline_frames, baseline_parser = _collect_baseline(
-        device=args.device, duration_ns=round(args.baseline_seconds * 1_000_000_000)
+        device=args.device,
+        duration_ns=round(args.baseline_seconds * 1_000_000_000),
+        maximum_no_valid_signal_ns=round(
+            specification.startup_validation.maximum_no_valid_signal_s * 1_000_000_000
+        ),
     )
     baseline, baseline_summary = _baseline_reference(
-        baseline_frames, maximum_empty_count=args.maximum_empty_count
+        baseline_frames,
+        maximum_empty_count=args.maximum_empty_count,
+        minimum_duration_ns=round(minimum_baseline_seconds * 1_000_000_000),
     )
     store = StateStore(root / "state.sqlite3", SensitiveBlobCodec(key_provider))
     session_id = str(uuid.uuid4())
@@ -192,7 +219,12 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         connection.mark_ready()
         parser = DaoOneP4864Parser(_profile())
         transport = SerialByteTransport.open(
-            args.device, timeout_seconds=args.serial_timeout_seconds
+            args.device,
+            timeout_seconds=args.serial_timeout_seconds,
+            baud_rate=specification.serial_baud_rate,
+            data_bits=specification.serial_data_bits,
+            parity=specification.serial_parity,
+            stop_bits=specification.serial_stop_bits,
         )
         try:
             result = HardwareSessionRuntime(
@@ -227,19 +259,21 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     return {
         "schema_version": "do-p4864-runtime-acceptance-result/1",
         "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "device": args.device,
         "requested_baseline_seconds": args.baseline_seconds,
         "requested_capture_seconds": args.capture_seconds,
         "baseline": {**baseline_summary, "parser": baseline_parser},
         "runtime": {
             "outcome": result.acquisition.outcome.value,
             "frames_stored": result.acquisition.frames_stored,
-            "reason": result.reason,
+            "reason_code": _safe_acquisition_reason_code(result.reason),
             "validity": result.validity.value,
             "committed": result.committed,
             "communication_integrity": {
                 "policy_version": "do-p4864-valid-signal-continuity/1",
-                "maximum_no_valid_signal_ns": MAXIMUM_NO_VALID_SIGNAL_NS,
+                "maximum_no_valid_signal_ns": round(
+                    specification.startup_validation.maximum_no_valid_signal_s
+                    * 1_000_000_000
+                ),
                 "reconstructed_frame_count": len(
                     result.acquisition.reconstructed_frames
                 ),
@@ -273,7 +307,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
             "derived_artifact_count": artifact_count,
             "recovery": asdict(recovery),
         },
-        "local_only_boundary": "Raw and derived encrypted data remain under output-root; this summary contains no raw matrices or AES key material.",
+        "local_only_boundary": "Raw and derived encrypted data remain under output-root; this summary contains no raw matrices, device paths, AES key material, or runtime exception text.",
     }
 
 
@@ -286,7 +320,7 @@ def main() -> int:
         type=Path,
         default=Path("/private/tmp/feetforceplate-runtime-acceptance.aes256"),
     )
-    parser.add_argument("--baseline-seconds", type=float, default=5.0)
+    parser.add_argument("--baseline-seconds", type=float)
     parser.add_argument("--capture-seconds", type=float, default=600.0)
     parser.add_argument("--maximum-empty-count", type=float, default=5.0)
     parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
@@ -307,7 +341,6 @@ def main() -> int:
         result = {
             "schema_version": "do-p4864-runtime-acceptance-result/1",
             "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "device": args.device,
             "requested_baseline_seconds": args.baseline_seconds,
             "requested_capture_seconds": args.capture_seconds,
             "runtime": {

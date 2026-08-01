@@ -27,3 +27,18 @@ def test_invalid_fixture_is_exposed_as_a_safe_preflight_failure() -> None:
     assert failure.error_code == "E-FIX-001"
     assert failure.operator_message == "回放调试数据不可用，请联系技术支持"
     assert bootstrap.source is None
+
+
+def test_valid_replay_marks_zero_load_as_not_applicable_instead_of_waiting() -> None:
+    """Catch a ready replay page leaving the new zero-load row unresolved."""
+
+    bootstrap = FixtureReplayBootstrap(
+        lambda: FixtureReplaySource.from_repository(Path(__file__))
+    )
+
+    summary = bootstrap.preflight_summary()
+    checks = {check.key: check for check in summary.checks}
+
+    assert summary.ready
+    assert checks["zero_load"].ready
+    assert checks["zero_load"].operator_message == "回放模式，不适用"

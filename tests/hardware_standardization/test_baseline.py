@@ -27,7 +27,7 @@ def _window() -> UnloadedBaselineWindow:
 def test_baseline_uses_per_cell_median_and_mad_without_mutating_samples() -> None:
     window = _window()
 
-    reference = build_baseline_reference(window)
+    reference = build_baseline_reference(window, minimum_duration_ns=5_000_000_000)
 
     assert reference.zero_offset_count == (11.0, 20.0)
     assert reference.noise_mad_count == (1.0, 2.0)
@@ -35,7 +35,9 @@ def test_baseline_uses_per_cell_median_and_mad_without_mutating_samples() -> Non
 
 
 def test_zero_reference_preserves_signed_residual_and_nonnegative_relative_load() -> None:
-    corrected = apply_zero_reference((15, 18), build_baseline_reference(_window()))
+    corrected = apply_zero_reference(
+        (15, 18), build_baseline_reference(_window(), minimum_duration_ns=5_000_000_000)
+    )
 
     assert corrected.zero_corrected_count == (4.0, -2.0)
     assert corrected.relative_load_count == (4.0, 0.0)
@@ -56,4 +58,4 @@ def test_baseline_rejects_failed_or_incomplete_window() -> None:
     )
 
     with pytest.raises(ValueError, match="PASS"):
-        build_baseline_reference(failed)
+        build_baseline_reference(failed, minimum_duration_ns=5_000_000_000)

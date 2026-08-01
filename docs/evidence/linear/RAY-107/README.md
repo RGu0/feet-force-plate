@@ -2,7 +2,7 @@
 
 - Issue: `RAY-107` 检测记录与设备支持（P-09、P-11）
 - Milestone: `P2：一键筛查`
-- Status: `In Review`
+- Status: `Done` on 2026-07-31.
 
 ## Delivered scope
 
@@ -21,3 +21,9 @@ The read models are development/test adapters; real institution isolation, diagn
 ## Commit
 
 Implementation and evidence: `aa9162f` — `Add institution access entry UI`.
+
+## 2026-07-31 hardware-independent closeout
+
+- Fresh full client regression: `204 passed in 36.05s`; full project regression: `592 passed, 3 warnings, 9 subtests passed in 40.44s`.
+- Fresh P-09 and P-11 captures were generated at 1440×900 and 1280×720. Records filtering/view actions remain read-model driven and report references remain pinned; support actions and summaries expose no serial, queue, log, signature or internal-quality details.
+- RAY-107 implements and tests the UI/read-model boundary. A production tenant store or diagnostic exporter is an adapter/integration concern outside this issue and is not represented by the development fixtures.

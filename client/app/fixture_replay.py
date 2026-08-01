@@ -11,8 +11,8 @@ from dataclasses import replace
 import numpy as np
 from PySide6.QtCore import QObject, QTimer
 
-from client.device.protocol import RawFrame
 from client.hardware_standardization.live_processing import FrameStandardizer
+from client.hardware_standardization.runtime import HardwareRuntime, active_hardware_runtime
 from client.workflow.models import PreflightCheck, PreflightSummary
 
 
@@ -81,6 +81,16 @@ class FixtureReplayBootstrap:
                     True,
                     operator_message="本地调试，无需云端同步",
                 ),
+                PreflightCheck(
+                    "zero_load",
+                    self._error is None,
+                    error_code=None if self._error is None else "E-FIX-001",
+                    operator_message=(
+                        "回放模式，不适用"
+                        if self._error is None
+                        else "回放调试数据不可用"
+                    ),
+                ),
             )
         )
 
@@ -99,7 +109,14 @@ class UnavailableFixtureReplaySource:
 
 
 class FixtureReplaySource:
-    def __init__(self, fixture: Path, metadata: Path) -> None:
+    def __init__(
+        self,
+        fixture: Path,
+        metadata: Path,
+        *,
+        hardware: HardwareRuntime | None = None,
+    ) -> None:
+        self._hardware = hardware or active_hardware_runtime()
         details = json.loads(metadata.read_text(encoding="utf-8"))
         observed = hashlib.sha256(fixture.read_bytes()).hexdigest()
         if observed != details["fixture_sha256"]:
@@ -111,7 +128,11 @@ class FixtureReplaySource:
         with np.load(fixture, allow_pickle=False) as source:
             for stage_id, pose in _POSES:
                 values = np.asarray(source[pose])
-                if values.ndim != 3 or values.shape[1:] != (48, 64) or len(values) < 400:
+                if (
+                    values.ndim != 3
+                    or values.shape[1:] != self._hardware.display_geometry.matrix_shape
+                    or len(values) < 400
+                ):
                     raise ValueError(f"回放阶段数据不完整：{stage_id}")
                 if values.dtype != np.uint8:
                     raise ValueError(f"回放阶段数据类型不受支持：{stage_id}")
@@ -133,15 +154,10 @@ class FixtureReplaySource:
         except KeyError as exc:
             raise KeyError(f"未知回放阶段：{stage_id}") from exc
         for index, matrix in enumerate(values):
-            copied = matrix.copy()
-            copied.setflags(write=False)
-            yield RawFrame(
-                values=copied,
+            yield self._hardware.make_fixture_frame(
+                matrix,
                 host_monotonic_ns=index * 50_000_000,
-                host_wall_time_ns=index * 50_000_000,
                 source_index=index,
-                device_frame_seq=None,
-                device_timestamp_ns=None,
                 quality_flags=frozenset({"FIXTURE_REPLAY", "UNSCALED_RELATIVE_COUNTS"}),
             )
 

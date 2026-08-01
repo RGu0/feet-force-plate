@@ -7,6 +7,7 @@ import numpy as np
 from PySide6.QtWidgets import QApplication
 
 from client.app.app_icon import application_icon
+from client.hardware_standardization.runtime import active_hardware_runtime
 
 from client.local_analysis.display import build_display_frame
 from client.reporting.models import (
@@ -130,8 +131,11 @@ class DesignDemoController:
     def _seed_display_frame(self) -> None:
         # Four smooth pressure lobes create a believable bilateral standing
         # preview while remaining entirely local development data.
-        rows, columns = np.indices((48, 64))
-        counts = np.zeros((48, 64), dtype=np.float64)
+        geometry = active_hardware_runtime().display_geometry
+        row_indexes, column_indexes = np.indices(geometry.matrix_shape)
+        counts = np.zeros(geometry.matrix_shape, dtype=np.float64)
+        scale_x = geometry.columns / 64.0
+        scale_y = geometry.rows / 48.0
         for center_x, center_y, amplitude, radius_x, radius_y in (
             (18, 12, 720.0, 3.5, 2.8),
             (18, 33, 1_100.0, 5.5, 4.8),
@@ -139,7 +143,10 @@ class DesignDemoController:
             (46, 33, 950.0, 5.5, 4.8),
         ):
             counts += amplitude * np.exp(
-                -(((columns - center_x) / radius_x) ** 2 + ((rows - center_y) / radius_y) ** 2)
+                -(
+                    ((column_indexes - center_x * scale_x) / (radius_x * scale_x)) ** 2
+                    + ((row_indexes - center_y * scale_y) / (radius_y * scale_y)) ** 2
+                )
             )
         self.window.present_display_frame(
             build_display_frame(

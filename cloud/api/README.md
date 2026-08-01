@@ -102,3 +102,17 @@ git diff --check
 ```
 
 These tests use deterministic in-memory adapters plus SQL/transaction contract checks. They do not prove a live PostgreSQL migration, RLS role matrix, S3/KMS policy, TLS ingress, terminal certificate, backup restore, load target, or regional privacy review.
+
+## Aliyun network integration environment
+
+`cloud.api.integration:app_from_environment` is an explicit remote integration
+composition for exercising the real HTTP contracts before production cloud
+dependencies are provisioned. It requires all identifiers and secrets through
+environment variables, exposes `/health/live` and `/health/ready`, and can be
+started with `cloud/api/run-integration.sh` behind a TLS certificate.
+
+Its repository and object store are process-memory only. A restart intentionally
+loses tenants, activation codes, sessions and uploaded objects before they are
+reseeded from the protected environment file. This entry point must never be
+reported as PostgreSQL, S3/KMS, backup/restore, production IAM, or production
+availability evidence.

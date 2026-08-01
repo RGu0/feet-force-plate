@@ -9,6 +9,7 @@ device-specific fields for an algorithm consumer to depend on.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
 
@@ -156,6 +157,86 @@ def export_committed_valid_hardware_session(
         for frame in source.frames
     )
     return PhysicalPressureSession(session_id=source.session_id, points=points, frames=frames)
+
+
+def restore_committed_physical_pressure_session(
+    observation: Mapping[str, object],
+    *,
+    local_session_committed: bool,
+) -> PhysicalPressureSession:
+    """Restore the public contract from one authenticated private observation."""
+
+    if not local_session_committed:
+        raise PublicPressureExportError(
+            "a public pressure session requires a committed local hardware session"
+        )
+    if observation.get("schema_version") != "hardware-derived-observation/1":
+        raise PublicPressureExportError("unsupported derived observation schema")
+    session_id = observation.get("session_id")
+    cells = observation.get("cells")
+    frames = observation.get("frames")
+    if not isinstance(session_id, str) or not session_id:
+        raise PublicPressureExportError("derived observation session_id is required")
+    if not _is_sequence(cells) or not cells:
+        raise PublicPressureExportError("derived observation cells are required")
+    if not _is_sequence(frames) or not frames:
+        raise PublicPressureExportError("derived observation frames are required")
+
+    active: list[tuple[int, Mapping[str, object]]] = []
+    for index, value in enumerate(cells):
+        if not isinstance(value, Mapping):
+            raise PublicPressureExportError("derived observation cell is invalid")
+        if value.get("status") == CellStatus.ACTIVE.value:
+            active.append((index, value))
+    if not active:
+        raise PublicPressureExportError("derived observation has no active points")
+
+    public_points = tuple(
+        PhysicalPressurePoint(
+            point_id=f"point-{public_index:04d}",
+            board_x_mm=_finite_number(cell.get("board_x_mm"), "board_x_mm"),
+            board_y_mm=_finite_number(cell.get("board_y_mm"), "board_y_mm"),
+        )
+        for public_index, (_source_index, cell) in enumerate(active, start=1)
+    )
+    public_frames: list[PhysicalPressureFrame] = []
+    for value in frames:
+        if not isinstance(value, Mapping):
+            raise PublicPressureExportError("derived observation frame is invalid")
+        forces = value.get("estimated_force_n")
+        if not _is_sequence(forces) or len(forces) != len(cells):
+            raise PublicPressureExportError(
+                "derived observation force vector must match cells"
+            )
+        public_frames.append(
+            PhysicalPressureFrame(
+                timestamp_s=_finite_number(value.get("timestamp_s"), "timestamp_s"),
+                estimated_force_n=tuple(
+                    _finite_number(forces[source_index], "estimated_force_n")
+                    for source_index, _cell in active
+                ),
+            )
+        )
+    return PhysicalPressureSession(
+        session_id=session_id,
+        points=public_points,
+        frames=tuple(public_frames),
+    )
+
+
+def _is_sequence(value: object) -> bool:
+    return isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    )
+
+
+def _finite_number(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PublicPressureExportError(f"derived observation {field} must be numeric")
+    number = float(value)
+    if not isfinite(number):
+        raise PublicPressureExportError(f"derived observation {field} must be finite")
+    return number
 
 
 def _estimated_force(

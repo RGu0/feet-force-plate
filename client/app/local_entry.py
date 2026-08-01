@@ -21,11 +21,11 @@ from client.app.fixture_replay import (
 from client.app.local_store import LocalReplayStore
 from client.app.live_display import LiveDisplayProjection
 from client.app.ui_integration import build_connected_ui
-from client.device.acquisition import LatestFrameMailbox
 from client.hardware_standardization.live_processing import (
-    DoP4864LiveFrameStandardizer,
     replay_debug_profile,
 )
+from client.hardware_standardization.runtime import active_hardware_runtime
+from client.app.heatmap import PhysicalGridOverlay
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.local_analysis.v1_debug import V1ReplayDebugProcessor
 from client.reporting.delivery import ReportDeliveryService
@@ -37,11 +37,6 @@ from client.workflow.protocol import (
     ProtocolParadigm,
     default_standard_protocol,
 )
-
-
-class _Audit:
-    def record_subject_access(self, **kwargs): _ = kwargs
-    def record_subject_export(self, **kwargs): _ = kwargs
 
 
 class _Telemetry:
@@ -123,20 +118,21 @@ def build_local_replay_runtime(
 
     fixture_bootstrap = FixtureReplayBootstrap(FixtureReplaySource.from_repository)
     source = fixture_bootstrap.source or UnavailableFixtureReplaySource()
+    hardware = active_hardware_runtime()
     standardizer = (
-        DoP4864LiveFrameStandardizer(
+        hardware.make_live_standardizer(
             replay_debug_profile(fixture_sha256=source.fixture_sha256)
         )
         if fixture_bootstrap.source is not None
         else None
     )
-    raw, display = LatestFrameMailbox(), LatestDisplayFrameMailbox()
+    raw, display = hardware.make_latest_frame_mailbox(), LatestDisplayFrameMailbox()
     acquisition = FixtureReplayAcquisition(source, raw, speed=replay_speed)
     store = LocalReplayStore(storage_root)
     from client.workflow.participant import ParticipantWorkflow
 
     participant = ParticipantWorkflow(
-        tenant_id="local-replay", issuer="local", subjects=store, audit=_Audit()
+        tenant_id="local-replay", issuer="local", subjects=store, audit=store
     )
     consent = ConsentWorkflow(
         tenant_id="local-replay",
@@ -160,7 +156,10 @@ def build_local_replay_runtime(
         persisted_reports=store,
         spooler=_Print(),
         telemetry=_Telemetry(),
-        display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30),
+        display_refresh=DisplayRefreshController(
+            display,
+            maximum_refresh_hz=hardware.display_geometry.maximum_refresh_hz,
+        ),
         export_destination=lambda: export_destination
         or Path.cwd() / "replay-debug-report.pdf",
         protocol=ProtocolCatalog((replay_protocol,)).select(
@@ -183,6 +182,9 @@ def build_local_replay_runtime(
             if standardizer
             else None,
             "read_models": store,
+            "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
+                hardware.display_geometry, specification_id=hardware.specification_id
+            ),
         },
     )
     return LocalReplayRuntime(source, acquisition, store, runtime.controller)

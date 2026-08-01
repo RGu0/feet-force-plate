@@ -906,7 +906,7 @@ class StateStore:
         reasons: list[GateReason] = []
         if (
             snapshot.last_successful_online_ns is None
-            or now_ns - snapshot.last_successful_online_ns >= OFFLINE_LIMIT_NS
+            or now_ns - snapshot.last_successful_online_ns > OFFLINE_LIMIT_NS
         ):
             reasons.append(GateReason.OFFLINE_TOO_LONG)
         if snapshot.pending_session_count >= PENDING_SESSION_LIMIT:

@@ -7,16 +7,17 @@ from statistics import median
 from .models import BaselineReference, UnloadedBaselineWindow, ZeroCorrectedValues
 
 
-MINIMUM_WINDOW_NS = 5_000_000_000
-
-
-def build_baseline_reference(window: UnloadedBaselineWindow) -> BaselineReference:
+def build_baseline_reference(
+    window: UnloadedBaselineWindow, *, minimum_duration_ns: int
+) -> BaselineReference:
     """Derive per-cell median offset and median absolute deviation in raw counts."""
 
     if window.validation_outcome != "PASS":
         raise ValueError("baseline validation outcome must be PASS")
-    if window.duration_ns < MINIMUM_WINDOW_NS:
-        raise ValueError("baseline window must cover at least 5 seconds")
+    if minimum_duration_ns <= 0:
+        raise ValueError("minimum baseline duration must be positive")
+    if window.duration_ns < minimum_duration_ns:
+        raise ValueError("baseline window does not meet the device minimum duration")
     columns = tuple(zip(*(sample.values for sample in window.samples), strict=True))
     zero_offset = tuple(float(median(values)) for values in columns)
     noise_mad = tuple(

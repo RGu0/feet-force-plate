@@ -8,6 +8,7 @@ import uuid
 
 from client.device.protocol import FRAME_LENGTH, DaoOneP4864Parser, RawFrame
 from client.device.transport import ByteTransport, TransportDisconnected
+from client.hardware_standardization.runtime import active_hardware_runtime
 
 from .models import (
     DeviceValidationRun,
@@ -92,7 +93,7 @@ class DeviceValidationService:
             raise ValueError("no_data_timeout_ns must be positive")
         self._transport = transport
         self._parser = parser
-        self._thresholds = thresholds or ValidationThresholds()
+        self._thresholds = thresholds or active_hardware_runtime().make_validation_thresholds()
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
         self._id_factory = id_factory
@@ -243,7 +244,7 @@ class DeviceValidationService:
                         attempt_number=request.attempt_number,
                         app_version=request.app_version,
                         protocol_version=self._parser.profile.version,
-                        data_mode_version="48x64-uint8-column-major/1",
+                        data_mode_version=self._thresholds.data_mode_version,
                         rules_version=self._thresholds.rules_version,
                         threshold_version=self._thresholds.version,
                         started_at_wall_ns=started_at_wall_ns,
@@ -289,7 +290,7 @@ class DeviceValidationService:
             attempt_number=request.attempt_number,
             app_version=request.app_version,
             protocol_version=self._parser.profile.version,
-            data_mode_version="48x64-uint8-column-major/1",
+            data_mode_version=self._thresholds.data_mode_version,
             rules_version=self._thresholds.rules_version,
             threshold_version=self._thresholds.version,
             started_at_wall_ns=started_at_wall_ns,

@@ -109,6 +109,35 @@ class ConsentWorkflowTests(unittest.TestCase):
         self.assertEqual(consents.create_calls, [])
         self.assertIsNone(workflow.state.receipt)
 
+    def test_non_research_purpose_removal_requires_confirmation(self) -> None:
+        old_receipt = ConsentReceipt(
+            consent_record_id="consent-old",
+            tenant_id="tenant-a",
+            subject_uuid="subject-1",
+            policy_version="privacy-policy/1.0",
+            purpose_codes=("SCREENING_SERVICE", "OUTREACH"),
+            data_categories=("PRESSURE_RAW",),
+        )
+        workflow = ConsentWorkflow(
+            tenant_id="tenant-a",
+            terminal_id="terminal-1",
+            consents=_ConsentPort(valid=old_receipt),
+        )
+        current_policy = ConsentPolicy(
+            policy_version="privacy-policy/1.0",
+            purpose_codes=("SCREENING_SERVICE",),
+            data_categories=("PRESSURE_RAW",),
+            research_purpose_code="ALGORITHM_RESEARCH",
+        )
+
+        resolution = workflow.resolve("subject-1", current_policy)
+
+        self.assertEqual(
+            resolution.status,
+            ConsentResolutionStatus.CONFIRMATION_REQUIRED,
+        )
+        self.assertIsNone(workflow.state.receipt)
+
     def test_confirmation_records_required_and_optional_research_separately(self) -> None:
         policy = ConsentPolicy(
             policy_version="privacy-policy/2.0",

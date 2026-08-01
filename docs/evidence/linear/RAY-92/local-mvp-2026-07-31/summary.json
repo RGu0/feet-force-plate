@@ -1,0 +1,44 @@
+{
+  "algorithm_status": "DEBUG_READY",
+  "artifacts": [
+    "01-preflight.png",
+    "02-stage-1.png",
+    "03-stage-2.png",
+    "04-stage-3.png",
+    "05-stage-4.png",
+    "06-report-preview.png",
+    "report.pdf",
+    "summary.json"
+  ],
+  "fixture": {
+    "frame_count": 1658,
+    "raw_matrices_included": false,
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90",
+    "stage_frame_counts": {
+      "BILATERAL_EYES_CLOSED": 415,
+      "BILATERAL_EYES_OPEN": 414,
+      "SEMI_TANDEM_LEFT_FORWARD": 414,
+      "SEMI_TANDEM_RIGHT_FORWARD": 415
+    }
+  },
+  "generated_at": "2026-07-31T15:53:33.555858+00:00",
+  "local_only": true,
+  "report": {
+    "kind": "V1_REPLAY_DEBUG",
+    "pdf": "report.pdf",
+    "report_id": "replay-8cf2ec7cd539",
+    "version": 1
+  },
+  "schema_version": "local-mvp-validation/1",
+  "stage_ids": [
+    "BILATERAL_EYES_OPEN",
+    "BILATERAL_EYES_CLOSED",
+    "SEMI_TANDEM_LEFT_FORWARD",
+    "SEMI_TANDEM_RIGHT_FORWARD"
+  ],
+  "status": "PASSED",
+  "subject_audit": {
+    "encrypted_payload": true,
+    "export_event_count": 1
+  }
+}

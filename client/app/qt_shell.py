@@ -38,6 +38,7 @@ from client.workflow.models import ClientAction, ReportStatus, SessionValidity, 
 
 from .design_system import apply_design_system
 from .app_icon import application_icon
+from .heatmap import PhysicalGridOverlay
 from .engineering_maintenance import (
     EngineeringMaintenanceAccessDenied,
     EngineeringMaintenanceConnectionUnavailable,
@@ -328,13 +329,19 @@ class _SessionDeletionDialog(QDialog):
 class ScreeningWindow(QMainWindow):
     """Operator desktop shell faithfully composed from the Steady Health kit."""
 
-    def __init__(self, *, on_action: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        on_action: Callable[[str], None] | None = None,
+        physical_grid: PhysicalGridOverlay | None = None,
+    ) -> None:
         super().__init__()
         self.setObjectName("screeningWindow")
         self.setWindowTitle("FeetForcePlate 足底压力健康筛查")
         self.setWindowIcon(application_icon())
         self.setMinimumSize(1280, 720)
         self._on_action = on_action
+        self._physical_grid = physical_grid
         self._stop_confirmation_pending = False
         self._preflight_failed = False
         self._preflight_ready = False
@@ -1247,6 +1254,7 @@ class ScreeningWindow(QMainWindow):
             ("storageCheck", "数据存储", "空间充足"),
             ("calibrationCheck", "校准状态", "等待检查"),
             ("syncCheck", "数据同步", "已同步"),
+            ("zeroLoadCheck", "设备零载", "等待检查"),
         ):
             checks.addWidget(self._checklist_item(object_name, label, hint, "success"))
         body_layout.addWidget(checklist)
@@ -1354,7 +1362,7 @@ class ScreeningWindow(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(32, 32, 32, 32)
-        heatmap = HeatmapWidget()
+        heatmap = HeatmapWidget(physical_grid=self._physical_grid)
         heatmap.setMinimumHeight(480)
         left_layout.addWidget(heatmap, 1)
         content_layout.addWidget(left, 3)
@@ -2016,7 +2024,7 @@ class ScreeningWindow(QMainWindow):
         charts_title.setProperty("reportSection", True)
         layout.addWidget(charts_title)
         chart_row = QHBoxLayout()
-        mini_heatmap = HeatmapWidget()
+        mini_heatmap = HeatmapWidget(physical_grid=self._physical_grid)
         mini_heatmap.setMinimumSize(230, 150)
         mini_heatmap.setMaximumHeight(150)
         chart_row.addWidget(mini_heatmap)
@@ -2254,12 +2262,15 @@ class ScreeningWindow(QMainWindow):
                 "回放模式，不适用",
             ),
             "data_sync": ("syncCheck", "本地调试，无需云端同步"),
+            "network_gate": ("syncCheck", "联网与待传门槛允许新检测"),
+            "zero_load": ("zeroLoadCheck", "五秒空载检查已通过"),
         }
         default_targets = (
             ("deviceCheck", "等待检查"),
             ("storageCheck", "等待检查"),
             ("calibrationCheck", "等待检查"),
             ("syncCheck", "等待检查"),
+            ("zeroLoadCheck", "等待检查"),
         )
         if not state.preflight_checks:
             for object_name, text in default_targets:
@@ -2292,7 +2303,7 @@ class ScreeningWindow(QMainWindow):
         else:
             instruction.setText("请确保压力垫上暂时无人站立")
             note.setText(
-                "四项预检已通过，请点击进入站位引导"
+                "五项预检已通过，请点击进入站位引导"
                 if state.preflight_ready
                 else "正在执行本次设备预检"
             )

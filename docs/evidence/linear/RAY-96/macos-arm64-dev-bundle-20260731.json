@@ -1,0 +1,31 @@
+{
+  "artifact_retained_in_repository": false,
+  "boundary": "Local arm64 developer bundle only; not Developer ID signed, notarized, Gatekeeper accepted, universal2, or external-pilot ready.",
+  "build_status": "PASSED",
+  "bundle": {
+    "bundle_identifier": "com.steadyhealth.feetforceplate",
+    "file_count": 592,
+    "info_plist_sha256": "e5ca50eab606d296f7e1cd92dea55f72a639f4278441a60a95786272f843898c",
+    "main_executable_sha256": "9dfb640bc748bbf82c952006742d79ba3bde51437b2993e51c2cd291288f64b9",
+    "short_version": "0.1.0",
+    "size_mib_approx": 195,
+    "target_architecture": "arm64"
+  },
+  "codesign": {
+    "deep_strict_verify": "PASSED",
+    "signature": "adhoc",
+    "team_identifier": null
+  },
+  "environment": {
+    "macos_version": "26.5.2",
+    "pyinstaller_version": "6.21.0",
+    "python_version": "3.11.15"
+  },
+  "gatekeeper_assessment": "FAILED_INTERNAL_ERROR",
+  "launch_smoke": {
+    "duration_seconds": 5,
+    "mode": "QT_QPA_PLATFORM=offscreen",
+    "status": "PROCESS_REMAINED_RUNNING_WITHOUT_STARTUP_EXCEPTION"
+  },
+  "schema_version": "ray-96-macos-dev-bundle-evidence/1"
+}

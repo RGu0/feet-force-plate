@@ -19,7 +19,7 @@ class PipelineBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["display_replacements"], 35)
         self.assertGreater(result["parallel_upload_reader_iterations"], 0)
         self.assertEqual(result["matrix_shape"], [48, 64])
-        self.assertEqual(result["input_nominal_hz"], 12.0)
+        self.assertEqual(result["input_nominal_hz"], 20.7)
 
 
 if __name__ == "__main__":

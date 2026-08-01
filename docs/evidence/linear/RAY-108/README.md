@@ -2,7 +2,7 @@
 
 - Issue: `RAY-108` 建档与授权页面（P-02～P-04）
 - Milestone: `P2：一键筛查`
-- Status: `In Review`
+- Status: `Done` on 2026-07-31.
 
 ## Delivered scope
 
@@ -21,3 +21,9 @@ Actual institution authorization text, persistent cross-tenant isolation, and in
 ## Commit
 
 Implementation and evidence: `aa9162f` — `Add institution access entry UI`.
+
+## 2026-07-31 hardware-independent closeout
+
+- Fresh full client regression: `204 passed in 36.05s`; full project regression: `592 passed, 3 warnings, 9 subtests passed in 40.44s`.
+- Fresh P-02, conflict, P-03 and P-04 captures were generated at 1440×900 and 1280×720. Manual review confirmed visible correction/continuation actions, optional identity fields, explicit missing-value semantics, and two unselected consent choices.
+- Formal institution policy approval and persistent tenant isolation remain outside this page-implementation task. This evidence does not claim either one.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -8,27 +9,60 @@ from client.device.protocol import RawFrame
 
 from .models import ValidationOutcome, ValidationReason, ValidationStatistics
 
+if TYPE_CHECKING:
+    from client.hardware_standardization.device_specification import DeviceSpecification
+
 
 @dataclass(frozen=True, slots=True)
 class ValidationThresholds:
-    version: str = "startup-baseline-thresholds/2"
-    rules_version: str = "startup-baseline/2"
-    window_duration_ns: int = 5_000_000_000
-    observed_nominal_rate_hz: float = 20.7
-    minimum_rate_hz: float = 12.0
-    maximum_rate_hz: float = 35.0
-    maximum_gap_ns: int = 250_000_000
-    unloaded_frame_mean_max: float = 4.0
-    unloaded_active_count_max: int = 64
-    unloaded_active_threshold: int = 8
-    saturation_value: int = 255
-    saturation_fraction_max: float = 0.001
-    minimum_changed_sensor_count: int = 1
-    fixed_nonzero_fraction_max: float = 0.20
-    local_persistent_value_max: float = 32.0
-    temporal_noise_p95_max: float = 2.0
-    drift_mean_delta_max: float = 2.0
-    service_required_after: int = 3
+    version: str
+    rules_version: str
+    window_duration_ns: int
+    observed_nominal_rate_hz: float
+    minimum_rate_hz: float
+    maximum_rate_hz: float
+    maximum_gap_ns: int
+    unloaded_frame_mean_max: float
+    unloaded_active_count_max: int
+    unloaded_active_threshold: int
+    saturation_value: int
+    saturation_fraction_max: float
+    minimum_changed_sensor_count: int
+    fixed_nonzero_fraction_max: float
+    local_persistent_value_max: float
+    temporal_noise_p95_max: float
+    drift_mean_delta_max: float
+    service_required_after: int
+    matrix_shape: tuple[int, int]
+    data_mode_version: str
+
+    @classmethod
+    def from_device_specification(
+        cls, specification: "DeviceSpecification"
+    ) -> "ValidationThresholds":
+        configuration = specification.startup_validation
+        return cls(
+            version=configuration.threshold_version,
+            rules_version=configuration.rules_version,
+            window_duration_ns=round(specification.baseline_min_duration_s * 1_000_000_000),
+            observed_nominal_rate_hz=specification.observed_frame_rate_hz,
+            minimum_rate_hz=configuration.minimum_frame_rate_hz,
+            maximum_rate_hz=configuration.maximum_frame_rate_hz,
+            maximum_gap_ns=round(configuration.maximum_gap_ms * 1_000_000),
+            unloaded_frame_mean_max=configuration.unloaded_frame_mean_max,
+            unloaded_active_count_max=configuration.unloaded_active_count_max,
+            unloaded_active_threshold=configuration.unloaded_active_threshold,
+            saturation_value=configuration.saturation_value,
+            saturation_fraction_max=configuration.saturation_fraction_max,
+            minimum_changed_sensor_count=configuration.minimum_changed_sensor_count,
+            fixed_nonzero_fraction_max=configuration.fixed_nonzero_fraction_max,
+            local_persistent_value_max=configuration.local_persistent_value_max,
+            temporal_noise_p95_max=configuration.temporal_noise_p95_max,
+            drift_mean_delta_max=configuration.drift_mean_delta_max,
+            service_required_after=configuration.service_required_after,
+            matrix_shape=specification.matrix_shape,
+            data_mode_version=specification.data_mode_version,
+        )
 
     def __post_init__(self) -> None:
         if self.window_duration_ns <= 0:
@@ -50,15 +84,40 @@ class ValidationEvaluation:
     unit: str = "raw_count"
 
 
-def is_obviously_loaded(frame: RawFrame, thresholds: ValidationThresholds) -> bool:
+@dataclass(frozen=True, slots=True)
+class LoadDetectorObservation:
+    """Non-identifying result of one frame's startup-load guard evaluation."""
+
+    mean_guard_triggered: bool
+    active_area_guard_triggered: bool
+
+    @property
+    def detected(self) -> bool:
+        return self.mean_guard_triggered or self.active_area_guard_triggered
+
+
+def observe_load_detector(
+    frame: RawFrame,
+    thresholds: ValidationThresholds,
+) -> LoadDetectorObservation:
+    """Evaluate the two public startup-load guards without retaining frame data."""
+
     values = frame.values
-    if values.shape != (48, 64) or values.dtype != np.uint8:
-        return False
-    return bool(
-        float(values.mean()) > thresholds.unloaded_frame_mean_max
-        or int(np.count_nonzero(values > thresholds.unloaded_active_threshold))
-        > thresholds.unloaded_active_count_max
+    if values.shape != thresholds.matrix_shape or values.dtype != np.uint8:
+        return LoadDetectorObservation(False, False)
+    return LoadDetectorObservation(
+        mean_guard_triggered=(
+            float(values.mean()) > thresholds.unloaded_frame_mean_max
+        ),
+        active_area_guard_triggered=(
+            int(np.count_nonzero(values > thresholds.unloaded_active_threshold))
+            > thresholds.unloaded_active_count_max
+        ),
     )
+
+
+def is_obviously_loaded(frame: RawFrame, thresholds: ValidationThresholds) -> bool:
+    return observe_load_detector(frame, thresholds).detected
 
 
 def evaluate_baseline(
@@ -69,7 +128,7 @@ def evaluate_baseline(
     if not frames:
         return _failed(ValidationReason.NO_DATA)
     if any(
-        frame.values.shape != (48, 64) or frame.values.dtype != np.uint8
+        frame.values.shape != thresholds.matrix_shape or frame.values.dtype != np.uint8
         for frame in frames
     ):
         return _failed(ValidationReason.SIGNAL_INVALID)

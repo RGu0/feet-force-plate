@@ -48,6 +48,7 @@ class InstitutionAccessWindow(QMainWindow):
         on_login: Callable[[str, str], None] | None = None,
         on_validate_license: Callable[[str], None] | None = None,
         on_register: Callable[[dict[str, str]], None] | None = None,
+        allow_local_test_handoff: bool = True,
     ) -> None:
         super().__init__()
         self.setObjectName("institutionAccessWindow")
@@ -58,6 +59,7 @@ class InstitutionAccessWindow(QMainWindow):
         self._on_login = on_login
         self._on_validate_license = on_validate_license
         self._on_register = on_register
+        self._allow_local_test_handoff = allow_local_test_handoff
         self._local_test_accounts: dict[str, str] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("institutionAccessStack")
@@ -417,7 +419,7 @@ class InstitutionAccessWindow(QMainWindow):
             notice.setStyleSheet("color: #15803D; font-size: 14px;")
             notice.setText("本机测试账户登录成功。该账户仅在本次应用运行期间有效。")
             notice.show()
-            if self._on_login is not None:
+            if self._allow_local_test_handoff and self._on_login is not None:
                 self._on_login(account.strip(), password)
             return
         if self._on_login is None:
@@ -426,6 +428,14 @@ class InstitutionAccessWindow(QMainWindow):
             return
         notice.hide()
         self._on_login(account.strip(), password)
+
+    def show_login_error(self, message: str) -> None:
+        """Show a composition-layer error without exposing adapter details."""
+
+        notice = self.findChild(QLabel, "accessFormNotice")
+        notice.setStyleSheet("color: #C23B3B; font-size: 14px;")
+        notice.setText(message)
+        notice.show()
 
     def _validate_license(self, license_code: str) -> None:
         normalized = license_code.strip().upper()

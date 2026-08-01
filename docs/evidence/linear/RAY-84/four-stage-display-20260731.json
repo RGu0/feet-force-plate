@@ -1,0 +1,91 @@
+{
+  "all_stage_cop_present": true,
+  "all_stage_display_frames": true,
+  "all_stage_heatmap_shape": [
+    48,
+    64
+  ],
+  "all_stage_loads_present": true,
+  "boundary": "The saved live run proves the real CH340-to-P-07 path. The four-stage replay proves current deterministic display behavior; neither is clinical evidence.",
+  "display_geometry": {
+    "columns": 64,
+    "height_mm": 381.3,
+    "maximum_refresh_hz": 20.7,
+    "rows": 48,
+    "width_mm": 509.3
+  },
+  "fixture": {
+    "frame_count": 1658,
+    "kind": "deidentified_real_device_four_stage_engineering_replay",
+    "raw_matrices_included_in_evidence": false,
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90"
+  },
+  "real_live_evidence_sha256": "e92dbc9d46e4709e3e2aa88e25f82ebda5a774a4bd57de4870dfd7e22f5965ca",
+  "real_live_run": {
+    "frames_observed": 201,
+    "last_source_index": 200,
+    "p07_countdown_advanced": true,
+    "p07_qt_frame_rendered": true,
+    "reader_error": null,
+    "reader_stopped": true
+  },
+  "result_sha256": "3065bcb462af3a888bdd4df2eb5c3129531ee32eb5794b92958a568c23f587c2",
+  "schema_version": "ray-84-four-stage-display-evidence/1",
+  "source_mutated": false,
+  "stage_count": 4,
+  "stages": [
+    {
+      "capture_timestamp_preserved": true,
+      "cop_present": true,
+      "display_heatmap_shape": [
+        48,
+        64
+      ],
+      "last_source_index": 413,
+      "left_right_sum_percent": 100.0,
+      "source_frame_count": 414,
+      "stage_id": "BILATERAL_EYES_OPEN",
+      "total_relative_load_positive": true
+    },
+    {
+      "capture_timestamp_preserved": true,
+      "cop_present": true,
+      "display_heatmap_shape": [
+        48,
+        64
+      ],
+      "last_source_index": 414,
+      "left_right_sum_percent": 100.0,
+      "source_frame_count": 415,
+      "stage_id": "BILATERAL_EYES_CLOSED",
+      "total_relative_load_positive": true
+    },
+    {
+      "capture_timestamp_preserved": true,
+      "cop_present": true,
+      "display_heatmap_shape": [
+        48,
+        64
+      ],
+      "last_source_index": 413,
+      "left_right_sum_percent": 100.0,
+      "source_frame_count": 414,
+      "stage_id": "SEMI_TANDEM_LEFT_FORWARD",
+      "total_relative_load_positive": true
+    },
+    {
+      "capture_timestamp_preserved": true,
+      "cop_present": true,
+      "display_heatmap_shape": [
+        48,
+        64
+      ],
+      "last_source_index": 414,
+      "left_right_sum_percent": 100.0,
+      "source_frame_count": 415,
+      "stage_id": "SEMI_TANDEM_RIGHT_FORWARD",
+      "total_relative_load_positive": true
+    }
+  ],
+  "status": "PASSED"
+}

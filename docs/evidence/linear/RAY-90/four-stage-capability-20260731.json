@@ -1,0 +1,122 @@
+{
+  "all_stage_customer_metrics": [
+    "left_load_percent",
+    "right_load_percent",
+    "total_relative_load"
+  ],
+  "all_stage_heatmaps": true,
+  "all_stage_relative_loads": true,
+  "boundary": "Engineering replay of previously captured relative counts; proves local software behavior only, not calibration, clinical validity, or live hardware.",
+  "cop_release": {
+    "reason": "DURATION_TOO_SHORT",
+    "required_duration_seconds": 30.0,
+    "status": "WITHHELD"
+  },
+  "deterministic": true,
+  "fixture": {
+    "frame_count": 1658,
+    "kind": "deidentified_real_device_four_stage_engineering_replay",
+    "raw_matrices_included_in_evidence": false,
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90"
+  },
+  "input_mutated": false,
+  "metric_definition_fields": [
+    "definition",
+    "version",
+    "unit",
+    "required_sample_rate_hz",
+    "calibration_requirement",
+    "required_duration_seconds",
+    "applicable_protocol_ids",
+    "validation_status",
+    "customer_visible"
+  ],
+  "network_fault": "all_socket_construction_rejected",
+  "result_sha256": "89c46b8ebffeab161417ceb88cd6d0d5091c2faf9a2f3c32c625f583f499be59",
+  "schema_version": "ray-90-four-stage-capability-evidence/1",
+  "stage_count": 4,
+  "stages": [
+    {
+      "cop_release_reason": "DURATION_TOO_SHORT",
+      "customer_metric_keys": [
+        "left_load_percent",
+        "right_load_percent",
+        "total_relative_load"
+      ],
+      "duration_seconds": 20.7,
+      "frame_count": 414,
+      "left_right_sum_percent": 100.0,
+      "raw_heatmap_shape": [
+        48,
+        64
+      ],
+      "relative_heatmap_shape": [
+        48,
+        64
+      ],
+      "stage_id": "BILATERAL_EYES_OPEN"
+    },
+    {
+      "cop_release_reason": "DURATION_TOO_SHORT",
+      "customer_metric_keys": [
+        "left_load_percent",
+        "right_load_percent",
+        "total_relative_load"
+      ],
+      "duration_seconds": 20.75,
+      "frame_count": 415,
+      "left_right_sum_percent": 100.0,
+      "raw_heatmap_shape": [
+        48,
+        64
+      ],
+      "relative_heatmap_shape": [
+        48,
+        64
+      ],
+      "stage_id": "BILATERAL_EYES_CLOSED"
+    },
+    {
+      "cop_release_reason": "DURATION_TOO_SHORT",
+      "customer_metric_keys": [
+        "left_load_percent",
+        "right_load_percent",
+        "total_relative_load"
+      ],
+      "duration_seconds": 20.7,
+      "frame_count": 414,
+      "left_right_sum_percent": 100.0,
+      "raw_heatmap_shape": [
+        48,
+        64
+      ],
+      "relative_heatmap_shape": [
+        48,
+        64
+      ],
+      "stage_id": "SEMI_TANDEM_LEFT_FORWARD"
+    },
+    {
+      "cop_release_reason": "DURATION_TOO_SHORT",
+      "customer_metric_keys": [
+        "left_load_percent",
+        "right_load_percent",
+        "total_relative_load"
+      ],
+      "duration_seconds": 20.75,
+      "frame_count": 415,
+      "left_right_sum_percent": 99.99999999999997,
+      "raw_heatmap_shape": [
+        48,
+        64
+      ],
+      "relative_heatmap_shape": [
+        48,
+        64
+      ],
+      "stage_id": "SEMI_TANDEM_RIGHT_FORWARD"
+    }
+  ],
+  "status": "PASSED",
+  "unvalidated_customer_metrics": []
+}

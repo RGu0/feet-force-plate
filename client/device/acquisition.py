@@ -35,7 +35,16 @@ class AcquisitionOutcome(StrEnum):
     INVALID = "INVALID"
 
 
-MAXIMUM_NO_VALID_SIGNAL_NS = 5_000_000_000
+def default_maximum_no_valid_signal_ns() -> int:
+    """Read the active device's acquisition continuity limit at composition time."""
+
+    from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
+
+    configuration = (
+        DoP4864StandardizationAdapter.observed_compact_8bit()
+        .specification.startup_validation
+    )
+    return round(configuration.maximum_no_valid_signal_s * 1_000_000_000)
 
 
 class IllegalConnectionTransition(RuntimeError):
@@ -232,14 +241,16 @@ class AcquisitionRunner:
         latest_mailbox: LatestFrameMailbox,
         connection: ConnectionStateMachine,
         read_size: int = FRAME_LENGTH,
-        maximum_no_valid_signal_ns: int = MAXIMUM_NO_VALID_SIGNAL_NS,
+        maximum_no_valid_signal_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         if read_size <= 0:
             raise ValueError("read_size must be positive")
-        if maximum_no_valid_signal_ns != MAXIMUM_NO_VALID_SIGNAL_NS:
-            raise ValueError("maximum_no_valid_signal_ns is fixed at five seconds")
+        if maximum_no_valid_signal_ns is None:
+            maximum_no_valid_signal_ns = default_maximum_no_valid_signal_ns()
+        if maximum_no_valid_signal_ns <= 0:
+            raise ValueError("maximum_no_valid_signal_ns must be positive")
         if storage_append_timeout_s is not None and storage_append_timeout_s < 0:
             raise ValueError("storage_append_timeout_s must not be negative when set")
         self._transport = transport

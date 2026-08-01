@@ -54,8 +54,12 @@ def analyze_local(
     cop_x, cop_y = _cop_trajectory(source)
     calculators: dict[str, Callable[[], float]] = {
         "total_relative_load": lambda: total,
-        "left_load_percent": lambda: _load_percent(mean_frame[:, :32], total),
-        "right_load_percent": lambda: _load_percent(mean_frame[:, 32:], total),
+        "left_load_percent": lambda: _load_percent(
+            mean_frame[:, : mean_frame.shape[1] // 2], total
+        ),
+        "right_load_percent": lambda: _load_percent(
+            mean_frame[:, mean_frame.shape[1] // 2 :], total
+        ),
         "cop_x_sensor_index": lambda: float(np.mean(cop_x)),
         "cop_y_sensor_index": lambda: float(np.mean(cop_y)),
         "cop_path_length": lambda: _cop_path_length(cop_x, cop_y),
@@ -115,8 +119,8 @@ def analyze_local(
 
 def _validated_frames(frames: NDArray[np.number]) -> FloatArray:
     source = np.asarray(frames, dtype=np.float64)
-    if source.ndim != 3 or source.shape[1:] != (48, 64) or source.shape[0] == 0:
-        raise ValueError("frames must have shape (n, 48, 64)")
+    if source.ndim != 3 or 0 in source.shape:
+        raise ValueError("frames must be a non-empty three-dimensional sequence")
     if not np.all(np.isfinite(source)):
         raise ValueError("frames must contain finite counts")
     if np.any(source < 0):
@@ -145,8 +149,9 @@ def _cop_trajectory(source: FloatArray) -> tuple[FloatArray, FloatArray]:
     valid = totals > 0
     if not np.any(valid):
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
-    x_coordinates = np.arange(64, dtype=np.float64)[None, None, :]
-    y_coordinates = np.arange(48, dtype=np.float64)[None, :, None]
+    rows, columns = source.shape[1:]
+    x_coordinates = np.arange(columns, dtype=np.float64)[None, None, :]
+    y_coordinates = np.arange(rows, dtype=np.float64)[None, :, None]
     x = np.sum(source * x_coordinates, axis=(1, 2))[valid] / totals[valid]
     y = np.sum(source * y_coordinates, axis=(1, 2))[valid] / totals[valid]
     return x, y

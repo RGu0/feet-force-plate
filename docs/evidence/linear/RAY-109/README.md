@@ -2,7 +2,7 @@
 
 - Issue: `RAY-109` 结果与报告预览（P-08、P-10）
 - Milestone: `P2：一键筛查`
-- Status: `In Review`
+- Status: `Done` on 2026-07-31.
 
 ## Delivered scope
 
@@ -21,3 +21,9 @@ Offscreen PDF/preview tests do not validate an actual printer, production-cloud 
 ## Commit
 
 Implementation and evidence: `aa9162f` — `Add institution access entry UI`.
+
+## 2026-07-31 hardware-independent closeout
+
+- Fresh full client regression: `204 passed in 36.05s`; full project regression: `592 passed, 3 warnings, 9 subtests passed in 40.44s`.
+- Fresh P-08 success/failure and P-10 report captures were generated at both target sizes. Manual review confirmed that invalid input has a retest path and no customer report, while BASIC_READY offers the next-screening action and the selected report version stays visible with export/print actions.
+- This completes the result/report UI and controller contract only. It does not claim a physical printer, production-cloud analysis or a clinically validated complete report.

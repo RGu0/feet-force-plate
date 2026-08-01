@@ -2,24 +2,16 @@
 
 The bridge deliberately owns only UI projection state.  It never opens a
 serial device, stores a raw frame, or decides session validity.  A hardware
-adapter publishes immutable ``RawFrame`` objects into its own latest-only
+adapter publishes immutable decoded observations into its own latest-only
 mailbox; the application polls that port and produces an independent
 ``DisplayFrame`` for the Qt view.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
-
-from client.device.protocol import RawFrame
 from client.hardware_standardization.live_processing import FrameStandardizer
+from client.hardware_standardization.ports import LatestHardwareFramePort
 from client.local_analysis.display import DisplayFrame, LatestDisplayFrameMailbox, build_display_frame
-
-
-class LatestRawFramePort(Protocol):
-    """Read-only application boundary over a hardware latest-frame mailbox."""
-
-    def read(self) -> RawFrame | None: ...
 
 
 class LiveDisplayProjection:
@@ -28,7 +20,7 @@ class LiveDisplayProjection:
     def __init__(
         self,
         *,
-        source: LatestRawFramePort,
+        source: LatestHardwareFramePort,
         destination: LatestDisplayFrameMailbox,
         standardizer: FrameStandardizer,
     ) -> None:

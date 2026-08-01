@@ -11,18 +11,20 @@ from typing import Any
 
 import numpy as np
 
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
+
 from .acquisition import LatestFrameMailbox
 from .pipeline import PreallocatedFrameBuffer
 from .protocol import RawFrame
 
 
-def _frame(index: int) -> RawFrame:
+def _frame(index: int, *, observed_frame_rate_hz: float) -> RawFrame:
     values = np.full((48, 64), index & 0x0FFF, dtype=np.uint16)
     values.setflags(write=False)
     return RawFrame(
         values=values,
-        host_monotonic_ns=index * 83_333_333,
-        host_wall_time_ns=index * 83_333_333,
+        host_monotonic_ns=round(index * 1_000_000_000 / observed_frame_rate_hz),
+        host_wall_time_ns=round(index * 1_000_000_000 / observed_frame_rate_hz),
         source_index=index,
         device_frame_seq=None,
         device_timestamp_ns=None,
@@ -42,6 +44,7 @@ def run_pipeline_benchmark(
         raise ValueError("frame_count and storage_capacity must be positive")
     if storage_delay_seconds < 0:
         raise ValueError("storage_delay_seconds cannot be negative")
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
     storage = PreallocatedFrameBuffer(capacity=storage_capacity)
     display = LatestFrameMailbox()
     consumed: list[int] = []
@@ -76,7 +79,7 @@ def run_pipeline_benchmark(
     if not parallel_started.wait(1.0):
         raise TimeoutError("parallel reader did not start")
     for index in range(frame_count):
-        frame = _frame(index)
+        frame = _frame(index, observed_frame_rate_hz=specification.observed_frame_rate_hz)
         storage.append("benchmark-session", frame)
         display.publish(frame)
     consumer.join(timeout=10.0)
@@ -88,8 +91,8 @@ def run_pipeline_benchmark(
     metrics = storage.metrics
     return {
         "benchmark_schema": "ray-83-pipeline-benchmark/1",
-        "input_nominal_hz": 12.0,
-        "matrix_shape": [48, 64],
+        "input_nominal_hz": specification.observed_frame_rate_hz,
+        "matrix_shape": list(specification.matrix_shape),
         "frame_count": frame_count,
         "storage_capacity": storage_capacity,
         "storage_delay_seconds": storage_delay_seconds,

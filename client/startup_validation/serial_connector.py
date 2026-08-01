@@ -1,65 +1,40 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-import hashlib
+from collections.abc import Callable
 
-from client.device.protocol import DaoOneP4864Parser, ProtocolProfile
-from client.device.serial_transport import (
-    PortAvailability,
-    SerialByteTransport,
-    SerialPortCandidate,
-    enumerate_ch340_ports,
-    stable_hardware_identity,
+from client.hardware_standardization.runtime import (
+    HardwareConnectionUnavailable,
+    HardwareRuntime,
+    active_hardware_runtime,
 )
-from client.device.transport import ByteTransport
 
 from .workflow import DeviceBusy, DeviceNotFound, ValidationConnection
 
 
 class SerialValidationConnector:
-    """Open one production CH340 byte source for a startup validation attempt."""
+    """Adapt the hardware layer's generic startup connection to the workflow."""
 
     def __init__(
         self,
         *,
-        enumerate_ports: Callable[[], Sequence[SerialPortCandidate]] = enumerate_ch340_ports,
-        transport_open: Callable[[str], ByteTransport] = SerialByteTransport.open,
+        runtime: HardwareRuntime | None = None,
+        connection_factory: Callable[[], object] | None = None,
     ) -> None:
-        self._enumerate_ports = enumerate_ports
-        self._transport_open = transport_open
+        self._runtime = runtime or active_hardware_runtime()
+        self._connection_factory = connection_factory or self._runtime.connect_startup
 
     def connect(self) -> ValidationConnection:
         try:
-            candidates = tuple(self._enumerate_ports())
+            connection = self._connection_factory()
+        except HardwareConnectionUnavailable as error:
+            if error.code == "BUSY":
+                raise DeviceBusy("supported pressure device is unavailable") from error
+            raise DeviceNotFound("supported pressure device was not found") from error
         except Exception as error:
             raise DeviceNotFound("supported pressure device discovery failed") from error
-        available = tuple(
-            candidate
-            for candidate in candidates
-            if candidate.availability is PortAvailability.AVAILABLE
-        )
-        if not available:
-            if candidates:
-                raise DeviceBusy("supported pressure device is unavailable")
-            raise DeviceNotFound("supported pressure device was not found")
-
-        candidate = available[0]
-        try:
-            transport = self._transport_open(candidate.device)
-        except Exception as error:
-            raise DeviceBusy("supported pressure device could not be opened") from error
-        profile = ProtocolProfile.observed_compact_8bit(
-            version="do-p4864-observed-compact-8bit/1"
-        )
-        parser = DaoOneP4864Parser(profile)
         return ValidationConnection(
-            device_ref=_opaque_device_ref(candidate.device),
-            transport=transport,
-            parser=parser,
-            hardware_identity=stable_hardware_identity(candidate),
+            device_ref=connection.device_ref,
+            transport=connection.transport,
+            parser=connection.parser,
+            hardware_identity=connection.hardware_identity,
         )
-
-
-def _opaque_device_ref(device: str) -> str:
-    digest = hashlib.sha256(device.encode("utf-8")).hexdigest()[:20]
-    return f"ch340-{digest}"

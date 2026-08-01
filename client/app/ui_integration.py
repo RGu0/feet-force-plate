@@ -179,6 +179,11 @@ class ReportConnectedController(ApplicationController):
                 destination = self._export_destination()
                 if destination is not None:
                     self._report_documents.export_pdf(report_id, version, destination)
+                    if self._participant is not None:
+                        self._participant.record_selected_export(
+                            report_id=report_id,
+                            report_version=version,
+                        )
             else:
                 self._report_documents.print_report(report_id, version)
             return

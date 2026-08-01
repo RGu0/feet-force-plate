@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from client.app.controller import ApplicationController
+from client.app.heatmap import PhysicalGridOverlay
 from client.app.live_display import LiveDisplayProjection
 from client.device.acquisition import LatestFrameMailbox
 from client.device.protocol import DaoOneP4864Parser, ProtocolProfile
@@ -32,6 +33,7 @@ from client.hardware_standardization.live_processing import (
     DoP4864LiveProcessingProfile,
 )
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.workflow.models import WorkflowState
 from client.workflow.state_machine import ScreeningStep
@@ -105,6 +107,7 @@ def validate(
 ) -> dict[str, Any]:
     if seconds <= 0:
         raise ValueError("seconds must be positive")
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
     raw_mailbox = LatestFrameMailbox()
     display_mailbox = LatestDisplayFrameMailbox()
     bridge = LiveDisplayProjection(
@@ -116,8 +119,12 @@ def validate(
     coordinator = _ValidationCoordinator()
     controller = ApplicationController(
         coordinator,
-        display_refresh=DisplayRefreshController(display_mailbox, maximum_refresh_hz=30.0),
+        display_refresh=DisplayRefreshController(
+            display_mailbox,
+            maximum_refresh_hz=specification.observed_frame_rate_hz,
+        ),
         live_display=bridge,
+        physical_grid=PhysicalGridOverlay.from_device_specification(specification),
     )
     controller.window.resize(1280, 800)
     controller.window.show()
@@ -129,7 +136,14 @@ def validate(
     def read_device() -> None:
         parser = DaoOneP4864Parser(_profile())
         try:
-            transport = SerialByteTransport.open(device, timeout_seconds=0.25)
+            transport = SerialByteTransport.open(
+                device,
+                timeout_seconds=0.25,
+                baud_rate=specification.serial_baud_rate,
+                data_bits=specification.serial_data_bits,
+                parity=specification.serial_parity,
+                stop_bits=specification.serial_stop_bits,
+            )
             transport_box["transport"] = transport
             while not stop.is_set():
                 chunk = transport.read(16_384)
@@ -183,6 +197,8 @@ def validate(
         "reader_stopped": not reader.is_alive(),
         "screenshot_saved": bool(outcome.get("screenshot_saved", False)),
         "live_processing_profile": processing_profile.version,
+        "device_specification": specification.specification_id,
+        "observed_frame_rate_hz": specification.observed_frame_rate_hz,
         "boundary": "Display-only validation; no subject, durable session, analysis result, or report was created.",
     }
 

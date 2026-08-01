@@ -5,7 +5,7 @@
 - 初次抓取时间：2026-07-20T08:54:41Z
 - 开始实现时间：2026-07-20T10:11:18Z
 - 初次抓取状态：Backlog
-- 当前工作流状态：In Review（2026-07-20T10:18:01Z 写入并重新读取确认）
+- 当前工作流状态：Done（2026-07-31T16:34:23Z 写入并重新读取确认）
 - 里程碑：P2：一键筛查
 - 优先级：High
 - 关系：related issue `RAY-91`；无阻塞/被阻塞关系
@@ -73,3 +73,35 @@ QT_QPA_PLATFORM=offscreen /private/tmp/feetforceplate-subtask-b-venv/bin/python 
 
 - 实现与本 evidence：`174b4ee643fa6b459040d78d7cdb3e30b1cfe77d`。
 - SHA 回填：`dc14550c234e0a1feeb26e079bb394e73034e61b`。
+
+## 2026-07-31 四阶段真机采集数据本机收口
+
+本轮重新按 Linear 的八项验收逐条核对，不把实时连机、物理标定或临床验证加入本 issue 的软件完成定义。使用 2026-07-23 已采集并去标识化的四阶段工程 fixture，在本机完成下列验证：
+
+1. 四个阶段共 1,658 帧均通过 `analyze_local()`；每段生成 48×64 原始计数热力图与相对热力图，并输出总相对载荷、左侧和右侧相对负重。左右和在 `1e-9` 容差内为 100%。
+2. COP 当前点、路径、横纵幅度与边界面积继续由版本化 registry 登记单位及采样率/时长/标定/协议前置条件。实际四阶段每段约 20.7 秒，未达到 30 秒门槛，因此客户 COP 按真实输入被稳定拒绝为 `DURATION_TOO_SHORT`，没有借回放绕开门控。
+3. 频域、稳定性评分、参考范围和物理力值仍为 `UNVALIDATED`/非客户可见；真实四阶段证据中的客户指标键严格只有三个相对指标。
+4. registry 测试覆盖 definition、version、unit、required sample rate、calibration、duration、protocol、validation status 与 customer visibility。
+5. 无效质量、低采样率和时长不足均不输出不满足前置条件的客户数值；四阶段实测同时覆盖时长不足路径。
+6. 固定 golden fixture 与四阶段真实采集 fixture 都可重复；四阶段在拒绝所有 socket 构造时双跑结果哈希一致，且输入矩阵未修改。
+7. 聚焦矩阵包含生产 `PhysicalAnalysisOrchestrator` 同一公开物理输入双跑测试，所有 56 个阶段标量与本地结果按 `1e-12` 绝对容差对齐；不再使用旧的手算公式冒充云端生产对齐。
+8. 输出为不可变、版本化 `LocalAnalysisResult`，原始输入保持不变。
+
+### 新增证据
+
+- 脱敏四阶段摘要：[`four-stage-capability-20260731.json`](four-stage-capability-20260731.json)
+  - fixture SHA-256：`2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90`
+  - evidence SHA-256：`e67896aaaa4ac902228ab6563ce617891e6c9eb49f892038751ffe1fff11da09`
+  - result SHA-256：`89c46b8ebffeab161417ceb88cd6d0d5091c2faf9a2f3c32c625f583f499be59`
+  - 原始矩阵未写入 evidence。
+- 聚焦 JUnit：[`pytest-four-stage-capability-20260731.xml`](pytest-four-stage-capability-20260731.xml)，`14 passed`，SHA-256 `22456bd1a0705ecaabe900fed73b2cd2089f226a169f8e09321df6dd09e86217`。
+- 全仓 JUnit：[`pytest-full-four-stage-capability-20260731.xml`](pytest-full-four-stage-capability-20260731.xml)，`610 passed, 3 existing collection warnings, 9 subtests passed`，SHA-256 `dfe2d9202df7e9e14a33b8e2a9fe9052609001ea72d1f736e697f2e9bfa30908`。
+- 新增生成器：`scripts/run_ray90_four_stage_evidence.py`；新增证据测试：`client/tests/test_ray_90_four_stage_evidence.py`。
+- Ruff 与 `git diff --check`：通过。
+
+### 完成边界
+
+- 本 issue 完成的是经能力门控的本地相对指标、内部 COP 能力、元数据登记、失败关闭、固定 fixture 回归、生产云端同定义对齐和不可变结果输出。
+- 不据此宣称：实时连机验收、经过批准的物理标定、COP 客户发布、参考人群/临床效度或诊断结论。
+- 这些未声明能力由硬件、标定、发布门控和临床证据任务承担，不再作为 RAY-90 软件范围的隐含阻断项。
+- Linear 回读：八项均为 `[X]`，证据评论 `20adfff2-e647-4bcd-960a-b2dc02428ff3` 已存在，状态为 `Done`，完成时间 `2026-07-31T16:34:23.506Z`。

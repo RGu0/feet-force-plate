@@ -12,6 +12,12 @@ class ConsentPolicy:
     data_categories: tuple[str, ...]
     research_purpose_code: str | None = "ALGORITHM_RESEARCH"
 
+    def accepts_purpose_codes(self, purpose_codes: tuple[str, ...]) -> bool:
+        actual = set(purpose_codes)
+        if self.research_purpose_code is not None:
+            actual.discard(self.research_purpose_code)
+        return actual == set(self.purpose_codes)
+
 
 @dataclass(frozen=True, slots=True)
 class ConsentReceipt:
@@ -152,7 +158,7 @@ class ConsentWorkflow:
             receipt.tenant_id == self._tenant_id
             and receipt.subject_uuid == subject_uuid
             and receipt.policy_version == policy.policy_version
-            and set(policy.purpose_codes).issubset(receipt.purpose_codes)
+            and policy.accepts_purpose_codes(receipt.purpose_codes)
             and receipt.data_categories == policy.data_categories
         )
 

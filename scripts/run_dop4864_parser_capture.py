@@ -22,8 +22,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from client.device.protocol import DaoOneP4864Parser, ProtocolProfile
-from client.device.serial_transport import BAUD_RATE, SerialByteTransport
+from client.device.serial_transport import SerialByteTransport
 from client.device.transport import TransportDisconnected
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 
 
 def _quantiles_ms(values_ns: list[int]) -> dict[str, float | None]:
@@ -52,6 +53,7 @@ def _capture(*, device: str, seconds: float, output_dir: Path, read_size: int) -
         version="do-p4864/observed-compact-column-major-48x64-20260721"
     )
     parser = DaoOneP4864Parser(profile)
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
     intervals_ns: list[int] = []
     quality_counts: dict[str, int] = {}
     previous_frame_ns: int | None = None
@@ -60,7 +62,14 @@ def _capture(*, device: str, seconds: float, output_dir: Path, read_size: int) -
     received_bytes = 0
     disconnected: str | None = None
 
-    transport = SerialByteTransport.open(device, timeout_seconds=0.25)
+    transport = SerialByteTransport.open(
+        device,
+        timeout_seconds=0.25,
+        baud_rate=specification.serial_baud_rate,
+        data_bits=specification.serial_data_bits,
+        parity=specification.serial_parity,
+        stop_bits=specification.serial_stop_bits,
+    )
     try:
         with raw_path.open("xb") as raw_file:
             while time.monotonic_ns() < deadline_ns:
@@ -91,7 +100,10 @@ def _capture(*, device: str, seconds: float, output_dir: Path, read_size: int) -
         "tool": "scripts/run_dop4864_parser_capture.py",
         "captured_at_utc": stamp,
         "device": device,
-        "serial": {"baud_rate": BAUD_RATE, "format": "8N1"},
+        "serial": {
+            "baud_rate": specification.serial_baud_rate,
+            "format": f"{specification.serial_data_bits}{specification.serial_parity}{specification.serial_stop_bits}",
+        },
         "requested_duration_seconds": seconds,
         "elapsed_duration_seconds": (ended_ns - started_ns) / 1_000_000_000,
         "raw_capture": {

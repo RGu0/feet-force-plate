@@ -19,6 +19,25 @@ def _runner_module():
 
 
 class RuntimeAcceptanceScriptTests(unittest.TestCase):
+    def test_runtime_reason_is_collapsed_to_a_stable_safe_code(self) -> None:
+        module = _runner_module()
+
+        self.assertEqual(
+            module._safe_acquisition_reason_code(
+                "transport disconnected: serial read failed: device configured"
+            ),
+            "TRANSPORT_DISCONNECTED",
+        )
+        self.assertEqual(
+            module._safe_acquisition_reason_code("no valid signal for five seconds"),
+            "SIGNAL_UNAVAILABLE",
+        )
+        self.assertEqual(
+            module._safe_acquisition_reason_code("unexpected runner failure"),
+            "ACQUISITION_INVALID",
+        )
+        self.assertIsNone(module._safe_acquisition_reason_code(None))
+
     def test_main_writes_external_sanitized_summary_when_acceptance_raises(self) -> None:
         module = _runner_module()
         with tempfile.TemporaryDirectory() as directory:
@@ -43,3 +62,4 @@ class RuntimeAcceptanceScriptTests(unittest.TestCase):
             self.assertEqual(payload["runtime"]["validity"], "INVALID")
             self.assertEqual(payload["runtime"]["reason"], "acceptance runner failed: OSError")
             self.assertNotIn("No space left on device", json.dumps(payload))
+            self.assertNotIn("/dev/test-serial", json.dumps(payload))

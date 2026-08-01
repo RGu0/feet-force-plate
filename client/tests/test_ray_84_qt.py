@@ -5,6 +5,8 @@ import pytest
 from PySide6.QtWidgets import QLabel
 
 from client.app.heatmap import HeatmapWidget, PhysicalGridOverlay, _relative_color
+from client.hardware_standardization.ports import HardwareDisplayGeometry
+from client.hardware_standardization.runtime import active_hardware_runtime
 from client.app.heatmap_display import HeatmapDisplayConfig
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -45,7 +47,13 @@ def test_physical_grid_uses_declared_board_dimensions_and_centimetre_ticks(qtbot
     grid = widget.physical_grid
     target = widget._board_rect()
 
-    assert grid == PhysicalGridOverlay()
+    hardware = active_hardware_runtime()
+    geometry = hardware.display_geometry
+    assert grid == PhysicalGridOverlay.from_hardware_geometry(
+        geometry, specification_id=hardware.specification_id
+    )
+    assert grid.specification_id == hardware.specification_id
+    assert (grid.rows, grid.columns) == geometry.matrix_shape
     assert grid.width_mm == 509.3
     assert grid.height_mm == 381.3
     assert grid.minor_x_mm[:3] == (0.0, 10.0, 20.0)
@@ -55,6 +63,25 @@ def test_physical_grid_uses_declared_board_dimensions_and_centimetre_ticks(qtbot
     assert target.width() / target.height() == pytest.approx(
         grid.width_mm / grid.height_mm
     )
+
+
+def test_physical_grid_uses_the_selected_hardware_geometry_not_ui_defaults() -> None:
+    selected = HardwareDisplayGeometry(
+        rows=32,
+        columns=40,
+        width_mm=320.0,
+        height_mm=240.0,
+        maximum_refresh_hz=18.0,
+    )
+
+    grid = PhysicalGridOverlay.from_hardware_geometry(
+        selected, specification_id="test-device/physical-grid/1"
+    )
+
+    assert grid.specification_id == "test-device/physical-grid/1"
+    assert (grid.rows, grid.columns) == (32, 40)
+    assert grid.width_mm == 320.0
+    assert grid.height_mm == 240.0
 
 
 def test_low_pressure_display_color_fades_into_the_black_board() -> None:

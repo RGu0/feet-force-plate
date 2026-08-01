@@ -30,8 +30,8 @@ def build_display_frame(
     total_trend: tuple[float, ...],
 ) -> DisplayFrame:
     matrix = np.asarray(counts, dtype=np.float64)
-    if matrix.shape != (48, 64):
-        raise ValueError("display counts must have shape (48, 64)")
+    if matrix.ndim != 2 or 0 in matrix.shape:
+        raise ValueError("display counts must be a non-empty two-dimensional matrix")
     if not np.all(np.isfinite(matrix)) or np.any(matrix < 0):
         raise ValueError("display counts must be finite and non-negative")
     total = float(np.sum(matrix))
@@ -44,12 +44,14 @@ def build_display_frame(
         right = 0.0
         next_trail = cop_trail[-24:]
     else:
-        x = np.arange(64, dtype=np.float64)[None, :]
-        y = np.arange(48, dtype=np.float64)[:, None]
+        rows, columns = matrix.shape
+        x = np.arange(columns, dtype=np.float64)[None, :]
+        y = np.arange(rows, dtype=np.float64)[:, None]
         cop_x = float(np.sum(matrix * x) / total)
         cop_y = float(np.sum(matrix * y) / total)
-        left = float(np.sum(matrix[:, :32]) / total * 100.0)
-        right = float(np.sum(matrix[:, 32:]) / total * 100.0)
+        midpoint = columns // 2
+        left = float(np.sum(matrix[:, :midpoint]) / total * 100.0)
+        right = float(np.sum(matrix[:, midpoint:]) / total * 100.0)
         next_trail = (*cop_trail, (cop_x, cop_y))[-24:]
     return DisplayFrame(
         sequence=sequence,
@@ -99,6 +101,10 @@ class DisplayRefreshController:
         self._minimum_interval = 1.0 / maximum_refresh_hz
         self._next_allowed = 0.0
         self.last_sequence = -1
+
+    @property
+    def maximum_refresh_hz(self) -> float:
+        return 1.0 / self._minimum_interval
 
     def poll(self, *, now_monotonic_seconds: float) -> DisplayFrame | None:
         if now_monotonic_seconds < self._next_allowed:

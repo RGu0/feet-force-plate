@@ -6,6 +6,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
+from client.hardware_standardization.ports import HardwareDisplayGeometry
+from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayFrame
 
 from .heatmap_display import HeatmapDisplayConfig, HeatmapDisplayRefiner
@@ -13,12 +15,27 @@ from .heatmap_display import HeatmapDisplayConfig, HeatmapDisplayRefiner
 
 @dataclass(frozen=True, slots=True)
 class PhysicalGridOverlay:
-    """Declared board-local dimensions used only for a visual coordinate grid."""
+    """Device-declared board geometry used only for visual coordinates."""
 
-    width_mm: float = 509.3
-    height_mm: float = 381.3
+    specification_id: str
+    rows: int
+    columns: int
+    width_mm: float
+    height_mm: float
     minor_interval_mm: float = 10.0
     major_interval_mm: float = 50.0
+
+    @classmethod
+    def from_hardware_geometry(
+        cls, geometry: HardwareDisplayGeometry, *, specification_id: str
+    ) -> "PhysicalGridOverlay":
+        return cls(
+            specification_id=specification_id,
+            rows=geometry.rows,
+            columns=geometry.columns,
+            width_mm=geometry.width_mm,
+            height_mm=geometry.height_mm,
+        )
 
     def _positions(self, *, extent_mm: float, interval_mm: float) -> tuple[float, ...]:
         count = int(extent_mm // interval_mm)
@@ -49,26 +66,40 @@ class PhysicalGridOverlay:
         )
 
 
+def _default_physical_grid() -> PhysicalGridOverlay:
+    """Resolve the active device's geometry; UI code owns no physical constants."""
+
+    runtime = active_hardware_runtime()
+    return PhysicalGridOverlay.from_hardware_geometry(
+        runtime.display_geometry, specification_id=runtime.specification_id
+    )
+
+
 class HeatmapWidget(QWidget):
-    """High-DPI vector overlay over a 64x48 display-only raster."""
+    """High-DPI vector overlay over the selected device's display-only raster."""
 
     def __init__(
         self,
         *,
         display_config: HeatmapDisplayConfig | None = None,
-        physical_grid: PhysicalGridOverlay = PhysicalGridOverlay(),
+        physical_grid: PhysicalGridOverlay | None = None,
     ) -> None:
         super().__init__()
+        self._physical_grid = physical_grid or _default_physical_grid()
         self.setObjectName("heatmapHost")
-        self.setAccessibleName("48×64 实时相对压力热力图与 COP")
+        self.setAccessibleName(
+            f"{self._physical_grid.rows}×{self._physical_grid.columns} 实时相对压力热力图与 COP"
+        )
         self.setAccessibleDescription(
             "颜色表示相对压力；显示 1 厘米物理网格、5 厘米主刻度，以及 COP 和左右负重"
         )
         self.setMinimumHeight(320)
         self._display_frame: DisplayFrame | None = None
-        self._refiner = HeatmapDisplayRefiner(display_config)
+        self._refiner = HeatmapDisplayRefiner(
+            display_config,
+            matrix_shape=(self._physical_grid.rows, self._physical_grid.columns),
+        )
         self._rendered_heatmap: tuple[tuple[float, ...], ...] | None = None
-        self._physical_grid = physical_grid
 
     @property
     def display_frame(self) -> DisplayFrame | None:
@@ -108,8 +139,13 @@ class HeatmapWidget(QWidget):
                 "等待设备压力帧",
             )
             return
-        image = QImage(64, 48, QImage.Format.Format_RGBA8888)
+        grid = self._physical_grid
+        image = QImage(grid.columns, grid.rows, QImage.Format.Format_RGBA8888)
         values_by_row = self._rendered_heatmap or frame.relative_heatmap
+        if len(values_by_row) != grid.rows or any(
+            len(values) != grid.columns for values in values_by_row
+        ):
+            raise ValueError("display frame must match the selected device geometry")
         for row, values in enumerate(values_by_row):
             for column, value in enumerate(values):
                 image.setPixelColor(column, row, _relative_color(value))
@@ -150,8 +186,9 @@ class HeatmapWidget(QWidget):
 
     def _sensor_point(self, x: float, y: float, target: QRectF) -> QPointF:
         return QPointF(
-            target.left() + (x + 0.5) / 64.0 * target.width(),
-            target.top() + (y + 0.5) / 48.0 * target.height(),
+            target.left()
+            + (x + 0.5) / self._physical_grid.columns * target.width(),
+            target.top() + (y + 0.5) / self._physical_grid.rows * target.height(),
         )
 
     def _draw_physical_grid(self, painter: QPainter, target: QRectF) -> None:

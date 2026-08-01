@@ -1,4 +1,4 @@
-"""Display-only refinement for the live 48×64 heatmap.
+"""Display-only refinement for the selected device's live heatmap.
 
 This module deliberately has no device, storage, workflow, analysis, or report
 dependencies.  It turns an immutable display-frame copy into a calmer raster
@@ -15,7 +15,6 @@ from numpy.typing import NDArray
 from scipy.ndimage import gaussian_filter, label
 
 
-_SHAPE = (48, 64)
 _CARDINAL_STRUCTURE = np.asarray(
     ((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=np.uint8
 )
@@ -53,8 +52,14 @@ class HeatmapDisplayConfig:
 class HeatmapDisplayRefiner:
     """Own the latest three display copies and refine only their visual output."""
 
-    def __init__(self, config: HeatmapDisplayConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: HeatmapDisplayConfig | None = None,
+        *,
+        matrix_shape: tuple[int, int] | None = None,
+    ) -> None:
         self.config = config or HeatmapDisplayConfig()
+        self._matrix_shape = matrix_shape
         self._history: deque[NDArray[np.float64]] = deque(
             maxlen=self.config.temporal_window
         )
@@ -63,14 +68,16 @@ class HeatmapDisplayRefiner:
         self, values: tuple[tuple[float, ...], ...]
     ) -> tuple[tuple[float, ...], ...]:
         """Return a separate render matrix while leaving ``values`` untouched."""
-        current = _copied_matrix(values)
+        current = _copied_matrix(values, expected_shape=self._matrix_shape)
+        if self._matrix_shape is None:
+            self._matrix_shape = current.shape
         if not self.config.enabled:
             return _as_tuple(current)
         if not np.any(current > 0):
             # Never preserve a ghost footprint merely because the two preceding
             # display frames had contact.
             self._history.clear()
-            return _as_tuple(np.zeros(_SHAPE, dtype=np.float64))
+            return _as_tuple(np.zeros(self._matrix_shape, dtype=np.float64))
 
         self._history.append(current.copy())
         temporal = np.median(np.stack(tuple(self._history)), axis=0)
@@ -88,10 +95,12 @@ class HeatmapDisplayRefiner:
         return _as_tuple(np.where(contact, blurred, 0.0))
 
 
-def _copied_matrix(values: tuple[tuple[float, ...], ...]) -> NDArray[np.float64]:
+def _copied_matrix(
+    values: tuple[tuple[float, ...], ...], *, expected_shape: tuple[int, int] | None
+) -> NDArray[np.float64]:
     matrix = np.array(values, dtype=np.float64, copy=True)
-    if matrix.shape != _SHAPE:
-        raise ValueError("display heatmap must be 48×64")
+    if expected_shape is not None and matrix.shape != expected_shape:
+        raise ValueError("display heatmap must match the selected device specification")
     if not np.all(np.isfinite(matrix)) or np.any(matrix < 0):
         raise ValueError("display heatmap values must be finite and non-negative")
     return matrix

@@ -11,7 +11,6 @@ from typing import Any, Callable, Iterable
 from .transport import TransportDisconnected
 
 
-BAUD_RATE = 1_000_000
 CH340_VENDOR_ID = 0x1A86
 
 
@@ -49,13 +48,21 @@ def _default_serial_factory(**kwargs: Any) -> Any:
     return serial.Serial(**kwargs)
 
 
-def _serial_options(device: str, timeout_seconds: float) -> dict[str, Any]:
+def _serial_options(
+    device: str,
+    timeout_seconds: float,
+    *,
+    baud_rate: int,
+    data_bits: int,
+    parity: str,
+    stop_bits: int,
+) -> dict[str, Any]:
     options: dict[str, Any] = {
         "port": device,
-        "baudrate": BAUD_RATE,
-        "bytesize": 8,
-        "parity": "N",
-        "stopbits": 1,
+        "baudrate": baud_rate,
+        "bytesize": data_bits,
+        "parity": parity,
+        "stopbits": stop_bits,
         "timeout": timeout_seconds,
     }
     # POSIX serial devices may otherwise permit concurrent opens.  Both the
@@ -83,6 +90,10 @@ def enumerate_ch340_ports(
     port_provider: Callable[[], Iterable[Any]] = _default_port_provider,
     serial_factory: Callable[..., Any] = _default_serial_factory,
     probe_availability: bool = True,
+    baud_rate: int,
+    data_bits: int,
+    parity: str,
+    stop_bits: int,
 ) -> list[SerialPortCandidate]:
     """List CH340 candidates; failed probes are conservatively non-available."""
 
@@ -94,7 +105,16 @@ def enumerate_ch340_ports(
         probe_error: str | None = None
         if probe_availability:
             try:
-                handle = serial_factory(**_serial_options(port.device, 0.0))
+                handle = serial_factory(
+                    **_serial_options(
+                        port.device,
+                        0.0,
+                        baud_rate=baud_rate,
+                        data_bits=data_bits,
+                        parity=parity,
+                        stop_bits=stop_bits,
+                    )
+                )
                 handle.close()
                 availability = PortAvailability.AVAILABLE
             except Exception as exc:
@@ -146,13 +166,26 @@ class SerialByteTransport:
         *,
         serial_factory: Callable[..., Any] = _default_serial_factory,
         timeout_seconds: float = 0.5,
+        baud_rate: int,
+        data_bits: int,
+        parity: str,
+        stop_bits: int,
     ) -> SerialByteTransport:
         if not device:
             raise ValueError("device is required")
         if timeout_seconds < 0:
             raise ValueError("timeout_seconds cannot be negative")
         try:
-            handle = serial_factory(**_serial_options(device, timeout_seconds))
+            handle = serial_factory(
+                **_serial_options(
+                    device,
+                    timeout_seconds,
+                    baud_rate=baud_rate,
+                    data_bits=data_bits,
+                    parity=parity,
+                    stop_bits=stop_bits,
+                )
+            )
         except Exception as exc:
             raise TransportDisconnected(
                 f"could not open serial device {device}: {type(exc).__name__}: {exc}"

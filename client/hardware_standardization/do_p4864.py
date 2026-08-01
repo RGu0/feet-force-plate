@@ -36,6 +36,12 @@ class DoP4864StandardizationAdapter:
         return self._layout
 
     @property
+    def specification(self) -> DeviceSpecification:
+        """Expose the declared device capabilities to display composition."""
+
+        return self._specification
+
+    @property
     def frozen_configuration_versions(self) -> dict[str, str]:
         """Version identifiers that must travel with every valid device session."""
 

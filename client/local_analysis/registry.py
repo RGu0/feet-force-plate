@@ -102,22 +102,22 @@ def default_metric_registry() -> MetricRegistry:
             ),
             _relative_basic(
                 "left_load_percent",
-                "Left 32 columns divided by total relative load.",
+                "Left half of the selected device grid divided by total relative load.",
                 "percent",
             ),
             _relative_basic(
                 "right_load_percent",
-                "Right 32 columns divided by total relative load.",
+                "Right half of the selected device grid divided by total relative load.",
                 "percent",
             ),
             _cop_internal(
                 "cop_x_sensor_index",
-                "Count-weighted center column on the 64-column sensor grid.",
+                "Count-weighted center column on the selected device grid.",
                 "sensor_index",
             ),
             _cop_internal(
                 "cop_y_sensor_index",
-                "Count-weighted center row on the 48-row sensor grid.",
+                "Count-weighted center row on the selected device grid.",
                 "sensor_index",
             ),
             _cop_internal(

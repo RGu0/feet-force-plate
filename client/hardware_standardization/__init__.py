@@ -3,6 +3,14 @@
 from .baseline import apply_zero_reference, build_baseline_reference
 from .calibration import TwoSlopeMonotonicVoltageToForceModel, VoltageToForceModel
 from .device_specification import DeviceSpecification, load_device_specification
+from .ports import (
+    DecodedHardwareFrame,
+    HardwareDisplayGeometry,
+    HardwareUiFailure,
+    HardwareUiFailureCode,
+    LatestHardwareFramePort,
+)
+from .runtime import HardwareRuntime, active_hardware_runtime
 from .defect_repair import (
     RepairedSensorFrame,
     SensorDefectRepairPolicy,
@@ -40,10 +48,16 @@ __all__ = (
     "BoardCoordinateLayout",
     "CellStatus",
     "DeviceSpecification",
+    "DecodedHardwareFrame",
     "DoP4864LiveFrameStandardizer",
     "DoP4864LiveProcessingProfile",
     "FrameStandardizationError",
     "FrameStandardizer",
+    "HardwareDisplayGeometry",
+    "HardwareRuntime",
+    "HardwareUiFailure",
+    "HardwareUiFailureCode",
+    "LatestHardwareFramePort",
     "RepairedSensorFrame",
     "SensorDefectRepairPolicy",
     "SensorDefectRepairResult",
@@ -61,6 +75,7 @@ __all__ = (
     "TwoSlopeMonotonicVoltageToForceModel",
     "VoltageToForceModel",
     "apply_zero_reference",
+    "active_hardware_runtime",
     "build_baseline_reference",
     "load_device_specification",
     "repair_sensor_defects",

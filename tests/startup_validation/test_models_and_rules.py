@@ -5,6 +5,7 @@ from dataclasses import asdict
 import numpy as np
 
 from client.device.protocol import RawFrame
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.startup_validation.models import (
     DeviceValidationRun,
     ValidationOutcome,
@@ -14,6 +15,7 @@ from client.startup_validation.models import (
 from client.startup_validation.rules import (
     ValidationThresholds,
     evaluate_baseline,
+    observe_load_detector,
 )
 
 
@@ -51,8 +53,14 @@ def _statistics(frames: tuple[RawFrame, ...]) -> ValidationStatistics:
     )
 
 
+def _thresholds() -> ValidationThresholds:
+    return ValidationThresholds.from_device_specification(
+        DoP4864StandardizationAdapter.observed_compact_8bit().specification
+    )
+
+
 def _reasons(frames: tuple[RawFrame, ...]) -> tuple[ValidationReason, ...]:
-    return evaluate_baseline(frames, _statistics(frames), ValidationThresholds()).reasons
+    return evaluate_baseline(frames, _statistics(frames), _thresholds()).reasons
 
 
 def test_run_is_versioned_auditable_and_contains_no_raw_frame_payload() -> None:
@@ -104,7 +112,7 @@ def test_healthy_unloaded_window_passes_without_claiming_physical_units() -> Non
     evaluation = evaluate_baseline(
         frames,
         _statistics(frames),
-        ValidationThresholds(),
+        _thresholds(),
     )
 
     assert evaluation.reasons == ()
@@ -153,7 +161,7 @@ def test_rule_engine_accepts_sparse_real_empty_board_jitter() -> None:
         frames[index] = _frame(values, frame.host_monotonic_ns, frame.source_index)
 
     evaluation = evaluate_baseline(
-        tuple(frames), _statistics(tuple(frames)), ValidationThresholds()
+        tuple(frames), _statistics(tuple(frames)), _thresholds()
     )
 
     assert evaluation.outcome is ValidationOutcome.PASS
@@ -200,8 +208,29 @@ def test_rule_engine_rejects_wrong_shape_or_dtype_as_signal_invalid() -> None:
     evaluation = evaluate_baseline(
         tuple(bad),
         _statistics(tuple(bad)),
-        ValidationThresholds(),
+        _thresholds(),
     )
 
     assert evaluation.outcome is ValidationOutcome.RETRYABLE_FAIL
     assert evaluation.reasons == (ValidationReason.SIGNAL_INVALID,)
+
+
+def test_load_detector_reports_which_nonempty_guard_matched_without_values() -> None:
+    thresholds = _thresholds()
+    mean_trigger = _frame(np.full((48, 64), 5, dtype=np.uint8), 0, 0)
+    active_trigger_values = np.zeros((48, 64), dtype=np.uint8)
+    active_trigger_values.flat[:65] = 9
+    active_trigger = _frame(active_trigger_values, 50_000_000, 1)
+    invalid = _frame(np.zeros((32, 32), dtype=np.uint8), 100_000_000, 2)
+
+    mean_observation = observe_load_detector(mean_trigger, thresholds)
+    active_observation = observe_load_detector(active_trigger, thresholds)
+    invalid_observation = observe_load_detector(invalid, thresholds)
+
+    assert mean_observation.mean_guard_triggered is True
+    assert mean_observation.active_area_guard_triggered is False
+    assert mean_observation.detected is True
+    assert active_observation.mean_guard_triggered is False
+    assert active_observation.active_area_guard_triggered is True
+    assert active_observation.detected is True
+    assert invalid_observation.detected is False

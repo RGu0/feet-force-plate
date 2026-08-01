@@ -1,6 +1,7 @@
+import json
 import tempfile
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -9,6 +10,7 @@ from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapt
 from client.hardware_standardization.models import BaselineReference
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.spool.derived_artifact import read_derived_observation
+from client.spool import session_commit
 from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
@@ -164,6 +166,72 @@ class ValidSessionStagerTests(unittest.TestCase):
         assert isinstance(first, dict)
         self.assertIsNotNone(first["estimated_force_n"])
         self.assertNotIn("raw_count", first)
+
+    def test_committed_derived_observation_reopens_as_public_physical_session(
+        self,
+    ) -> None:
+        stager = self._stager("local-analysis-source")
+        frames = tuple(_frame(index + 10) for index in range(2))
+        for frame in frames:
+            stager.append(frame)
+        adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
+        baseline = BaselineReference(
+            schema_version="baseline-reference/1",
+            baseline_window_id="baseline-public-reopen",
+            layout_digest=adapter.layout.digest,
+            zero_offset_count=(0.0,) * (48 * 64),
+            noise_mad_count=(0.0,) * (48 * 64),
+            rules_version="do-p4864-unloaded-baseline/1",
+            threshold_version="do-p4864-quality/1",
+            source_digest="b" * 64,
+        )
+        quality = DoP4864HardwareQualityGate(baseline_reference=baseline).evaluate(
+            session_id="local-analysis-source",
+            frames=stager.staged_frames(),
+        )
+        self.assertEqual(quality.validity.value, "VALID")
+        assert quality.physical_session is not None
+        stager.stage_derived_observation(
+            quality.physical_session,
+            processing_metadata=quality.processing_metadata,
+        )
+        stager.commit_valid(ended_at_ns=1_100_000_000)
+
+        reopened = session_commit.read_committed_physical_session(
+            self.root / "data",
+            session_id="local-analysis-source",
+            store=self.store,
+            key_provider=self.keys,
+        )
+
+        payload = reopened.to_dict()
+        self.assertEqual(
+            set(payload),
+            {
+                "schema_version",
+                "session_id",
+                "coordinate_frame",
+                "coordinate_unit",
+                "force_unit",
+                "time_unit",
+                "points",
+                "frames",
+            },
+        )
+        self.assertEqual(payload["schema_version"], "estimated-force-session/1.0")
+        self.assertEqual(payload["session_id"], "local-analysis-source")
+        self.assertEqual(len(payload["points"]), 48 * 64)
+        self.assertEqual(len(payload["frames"]), 2)
+        serialized = json.dumps(payload, sort_keys=True)
+        for private_field in (
+            "raw_count",
+            "relative_load_count",
+            "repaired_count",
+            "quality_flags",
+            "source_index",
+            "hardware_processing",
+        ):
+            self.assertNotIn(private_field, serialized)
 
     def test_cloud_confirmation_retains_data_until_one_manual_session_delete(self) -> None:
         stager = self._stager("manual-delete")

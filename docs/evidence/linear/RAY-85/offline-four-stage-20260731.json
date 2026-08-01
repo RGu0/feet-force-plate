@@ -1,0 +1,26 @@
+{
+  "boundary": "Engineering replay and local determinism evidence only; not calibrated physical, customer-report, clinical, or live-hardware evidence.",
+  "customer_metric_count": 0,
+  "distinct_result_sha256_count": 1,
+  "elapsed_seconds": [
+    0.016721458872780204,
+    0.012209916021674871,
+    0.01224850001744926,
+    0.01228250004351139,
+    0.01203870796598494
+  ],
+  "fixture": {
+    "frame_count": 1658,
+    "kind": "deidentified_real_device_four_stage_engineering_replay",
+    "raw_matrices_included_in_evidence": false,
+    "sha256": "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90"
+  },
+  "maximum_elapsed_seconds": 0.016721458872780204,
+  "median_elapsed_seconds": 0.01224850001744926,
+  "network_fault": "all_socket_construction_rejected",
+  "result_sha256": "3a3b1a6f53fcd5d0a73907ff11281e5dd10fbd4b32ecf6b8da7a707262d9387a",
+  "run_count": 5,
+  "schema_version": "ray-85-offline-analysis-evidence/1",
+  "status": "PASSED",
+  "withheld_metric_count": 16
+}

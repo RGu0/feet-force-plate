@@ -7,6 +7,7 @@
   "raw_value_unit": "uint8_count",
   "decoded_value_dtype": "uint8",
   "payload_value_order": "COLUMN_MAJOR",
+  "data_mode_version": "48x64-uint8-column-major/1",
   "measurement_profile_version": "physical-pressure-profile/do-p4864/1",
   "adc": {
     "resolution_bits": 8,
@@ -31,6 +32,34 @@
   "baseline": {
     "profile_version": "do-p4864-unloaded-baseline/1",
     "minimum_duration_s": 5.0
+  },
+  "timing": {
+    "observed_frame_rate_hz": 20.7
+  },
+  "serial_transport": {
+    "baud_rate": 1000000,
+    "data_bits": 8,
+    "parity": "N",
+    "stop_bits": 1
+  },
+  "startup_validation": {
+    "rules_version": "startup-baseline/2",
+    "threshold_version": "startup-baseline-thresholds/2",
+    "maximum_no_valid_signal_s": 5.0,
+    "minimum_frame_rate_hz": 12.0,
+    "maximum_frame_rate_hz": 35.0,
+    "maximum_gap_ms": 250.0,
+    "unloaded_frame_mean_max": 4.0,
+    "unloaded_active_count_max": 64,
+    "unloaded_active_threshold": 8,
+    "saturation_value": 255,
+    "saturation_fraction_max": 0.001,
+    "minimum_changed_sensor_count": 1,
+    "fixed_nonzero_fraction_max": 0.2,
+    "local_persistent_value_max": 32.0,
+    "temporal_noise_p95_max": 2.0,
+    "drift_mean_delta_max": 2.0,
+    "service_required_after": 3
   },
   "force_calibration": {
     "profile_version": "do-p4864-voltage-force/mvp-screening-v1-20260722",

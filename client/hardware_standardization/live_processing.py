@@ -19,6 +19,7 @@ from client.device.protocol import RawFrame
 from .defect_repair import SensorDefectRepairPolicy, repair_sensor_defects
 from .do_p4864 import DoP4864StandardizationAdapter
 from .models import BaselineReference, StandardizationStatus
+from .ports import DecodedHardwareFrame
 
 
 class FrameStandardizationError(ValueError):
@@ -28,7 +29,7 @@ class FrameStandardizationError(ValueError):
 class FrameStandardizer(Protocol):
     """Maps immutable decoded frames to immutable standardized derivatives."""
 
-    def standardize(self, frame: RawFrame) -> RawFrame: ...
+    def standardize(self, frame: DecodedHardwareFrame) -> DecodedHardwareFrame: ...
 
 
 @dataclass(frozen=True, slots=True)

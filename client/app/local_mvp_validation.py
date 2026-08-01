@@ -27,12 +27,20 @@ class LocalMvpValidationResult:
 
 class _LocalMvpValidationRun:
     _SCREENSHOTS = (
-        "01-preflight.png",
-        "02-stage-1.png",
-        "03-stage-2.png",
-        "04-stage-3.png",
-        "05-stage-4.png",
-        "06-report-preview.png",
+        "00-workbench.png",
+        "01-subject.png",
+        "02-profile.png",
+        "03-consent.png",
+        "04-preflight.png",
+        "05-position-guidance.png",
+        "06-stage-1.png",
+        "07-stage-2.png",
+        "08-stage-3.png",
+        "09-stage-4.png",
+        "10-result.png",
+        "11-report-preview.png",
+        "12-records.png",
+        "13-support.png",
     )
 
     def __init__(self, *, output_dir: Path, replay_speed: float) -> None:
@@ -44,6 +52,7 @@ class _LocalMvpValidationRun:
         self._finished = False
         self._stage_index = 0
         self._deadline = 0.0
+        self._visited_page_ids: list[str] = []
 
     def run(self) -> LocalMvpValidationResult:
         try:
@@ -94,7 +103,9 @@ class _LocalMvpValidationRun:
 
     def _start(self) -> None:
         try:
+            self._capture("00-workbench.png")
             self._controller.dispatch("START_NEW_SCREENING")
+            self._capture("01-subject.png")
             identifier = self._controller.window.findChild(
                 QLineEdit, "subjectExternalIdInput"
             )
@@ -104,7 +115,9 @@ class _LocalMvpValidationRun:
             identifier.setText("MVP-REPLAY-0001")
             self._controller.dispatch("LOOKUP_SUBJECT")
             self._controller.dispatch("CONFIRM_SUBJECT")
+            self._capture("02-profile.png")
             self._controller.dispatch("SKIP_PROFILE")
+            self._capture("03-consent.png")
             consent.setChecked(True)
             self._controller.dispatch("CONFIRM_CONSENT")
             self._wait_for(
@@ -116,7 +129,7 @@ class _LocalMvpValidationRun:
             self._fail(error)
 
     def _preflight_ready(self) -> None:
-        self._capture(self._SCREENSHOTS[0])
+        self._capture("04-preflight.png")
         self._controller.dispatch("ENTER_POSITION")
         self._wait_for(
             lambda: self._controller._coordinator.state.step
@@ -125,6 +138,8 @@ class _LocalMvpValidationRun:
         )
 
     def _start_stage(self) -> None:
+        if self._stage_index == 0:
+            self._capture("05-position-guidance.png")
         now_seconds = float(self._stage_index * 10)
         self._controller.on_position_observation(
             now_seconds=now_seconds,
@@ -139,7 +154,7 @@ class _LocalMvpValidationRun:
         self._controller.dispatch("START_ACQUISITION")
         if self._controller._coordinator.state.step is not ScreeningStep.ACQUIRING:
             raise RuntimeError("回放阶段未进入采集状态")
-        self._capture(self._SCREENSHOTS[self._stage_index + 1])
+        self._capture(f"{self._stage_index + 6:02d}-stage-{self._stage_index + 1}.png")
 
     def _complete_stage(self) -> None:
         try:
@@ -171,16 +186,21 @@ class _LocalMvpValidationRun:
                 "SELECT COUNT(*) FROM replay_stage_completions"
             ).fetchone()[0] != 4:
                 raise RuntimeError("四阶段回放记录不完整")
+            self._capture("10-result.png")
             self._controller.dispatch("VIEW_BASIC_REPORT")
-            self._capture(self._SCREENSHOTS[-1])
+            self._capture("11-report-preview.png")
             self._controller.dispatch("EXPORT_PDF")
             pdf_path = self._output_dir / "report.pdf"
             if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
                 raise RuntimeError("本地调试报告 PDF 未生成")
             self._controller.window.present_records(self._runtime.store.recent_records())
+            self._controller.window.show_page(PageId.RECORDS)
+            self._capture("12-records.png")
             self._controller.dispatch(f"OPEN_REPORT:{state.report_id}:{state.report_version}")
             if self._controller.window.current_page_id is not PageId.REPORT_PREVIEW:
                 raise RuntimeError("本地历史记录未能重新打开调试报告")
+            self._controller.window.show_page(PageId.SUPPORT)
+            self._capture("13-support.png")
             report = BasicReportDocument.from_json(
                 self._runtime.store.load_report(state.report_id, state.report_version)
             )
@@ -203,6 +223,9 @@ class _LocalMvpValidationRun:
 
     def _capture(self, filename: str) -> None:
         QApplication.processEvents()
+        page_id = self._controller.window.current_page_id.value
+        if page_id not in self._visited_page_ids:
+            self._visited_page_ids.append(page_id)
         destination = self._output_dir / filename
         if not self._controller.window.grab().save(str(destination), "PNG"):
             raise RuntimeError(f"无法保存本机 MVP UI 截图：{filename}")
@@ -216,6 +239,16 @@ class _LocalMvpValidationRun:
             stage_id: sum(1 for _ in self._source.frames_for(stage_id))
             for stage_id in self._source.stage_ids
         }
+        audit_payloads = self._runtime.store.db.execute(
+            "SELECT payload FROM subject_audit_events "
+            "WHERE tenant=? AND event_type=? ORDER BY rowid",
+            ("local-replay", "SUBJECT_EXPORT"),
+        ).fetchall()
+        if len(audit_payloads) != 1:
+            raise RuntimeError("本地报告导出未留下唯一审计记录")
+        audit_is_encrypted = report.report_id.encode() not in audit_payloads[0][0]
+        if not audit_is_encrypted:
+            raise RuntimeError("本地报告导出审计载荷未加密")
         payload = {
             "schema_version": "local-mvp-validation/1",
             "status": "PASSED",
@@ -228,12 +261,17 @@ class _LocalMvpValidationRun:
                 "raw_matrices_included": False,
             },
             "stage_ids": list(self._source.stage_ids),
+            "visited_page_ids": self._visited_page_ids,
             "algorithm_status": "DEBUG_READY",
             "report": {
                 "report_id": report.report_id,
                 "version": report.version,
                 "kind": report.kind,
                 "pdf": "report.pdf",
+            },
+            "subject_audit": {
+                "encrypted_payload": audit_is_encrypted,
+                "export_event_count": len(audit_payloads),
             },
             "artifacts": [*self._SCREENSHOTS, "report.pdf", "summary.json"],
         }

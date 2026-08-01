@@ -13,8 +13,8 @@
 ## 验收条目快照与当前结论
 
 - [ ] Windows 安装器与 CH340 驱动检查：已实现 PyInstaller Windows 目标合同、驱动探测端口和进入设备前门控；尚未在 Windows 生成/签名安装器或验证 CH340 安装。
-- [ ] macOS 开发/试点包及签名流程：已实现 pilot 目标与签名/公证合同；尚未生成签名、公证的真实试点包。
-- [x] 首次联网激活及机构/站点/终端绑定：客户端实现可注入 `ActivationPort` 的机构、站点、终端绑定门控；未实现明确排除在本任务外的 License 后台。
+- [x] macOS 开发/试点包及签名流程：已生成并启动验证 arm64 onedir 开发 `.app`，严格深层 ad-hoc 签名校验通过；Developer ID、hardened runtime、公证、Gatekeeper 与 universal2 仍是外部试点边界。
+- [ ] 首次联网激活及机构/站点/终端绑定：客户端只有可注入 `ActivationPort` 的门控；真实 License 后台激活与绑定尚未联调。
 - [x] 用户数据、加密分段和日志目录规范：安装目录与数据库、加密分段、日志、配置缓存分离，并声明卸载保留集合。
 - [x] 升级前兼容、数据库迁移、失败回滚：覆盖签名、摘要、最低版本、数据模式、空闲状态、数据库快照、迁移和应用/数据库联合回滚。
 - [x] 受控升级与最低支持版本：升级策略拒绝未签名、摘要不符、版本过低、采集中或模式不兼容的候选包。
@@ -68,7 +68,26 @@ git diff --check
 - 实体打印机版式、分页、字体、缩放和操作员确认流程。
 - 打包环境的 CJK 字体回退/随包分发验证。
 
-此外，当前环境未调用 PyInstaller，未持有 Windows 构建工具、签名证书、Apple 公证凭据、真实打印机或 CH340 目标机；`packaged_entry.py` 是烟测入口而非最终生产组合根。
+此外，当前环境仍未持有 Windows 构建工具、Developer ID 分发签名/Apple 公证凭据、真实打印机或 Windows CH340 目标机；正式默认包仍没有真实 License 后台或最终生产工作台组合根。
+
+## 2026-07-31 本机 macOS 开发包与软件合同收口
+
+本轮先用真实 PyInstaller 6.21.0 构建发现并修复了三个会直接阻断发布的缺陷：spec 相对路径解析到了错误目录；直接冻结 `client/app/packaged_entry.py` 导致包内相对导入失败；收集整个 PySide6 工具链把 `Assistant.app` 等开发工具带入 bundle，导致深层签名失败并把包体放大到 796 MB。随后把正式入口改为仓库 `main.py`、路径绑定到 `SPECPATH` 推导的仓库根目录、切换为标准 onedir bundle，并只依赖 PyInstaller 的 import-driven Qt hooks。
+
+最终本机产物：
+
+- 环境：macOS 26.5.2 arm64；Python 3.11.15；PyInstaller 6.21.0。
+- 产物：`FeetForcePlate.app`，arm64 Mach-O，592 个文件，195 MB；临时构建位于 `/private/tmp`，未提交到仓库。
+- Bundle ID：`com.steadyhealth.feetforceplate`；`CFBundleShortVersionString=0.1.0`，从 `pyproject.toml` 读取。
+- 主可执行 SHA-256：`9dfb640bc748bbf82c952006742d79ba3bde51437b2993e51c2cd291288f64b9`。
+- Info.plist SHA-256：`e5ca50eab606d296f7e1cd92dea55f72a639f4278441a60a95786272f843898c`。
+- `codesign --verify --deep --strict`：通过；当前是 ad-hoc signature，无 TeamIdentifier。
+- `QT_QPA_PLATFORM=offscreen` 启动 5 秒保持运行，无导入或启动异常；验证后以信号安全终止。
+- `spctl --assess`：未通过（Code Signing subsystem internal error），因此该包不是可对外分发的已公证试点包。
+
+专项自动测试：`20 passed in 1.56s`；JUnit `pytest-local-closeout-20260731.xml`，SHA-256 `9724e74490e8d9398eb80af1c30b9d8f82c3613a78205c3eabf06b2ad2b634db`。同一工作树全仓新鲜验证：`622 passed, 3 existing collection warnings, 9 subtests passed in 55.48s`；JUnit `pytest-full-local-closeout-20260731.xml`，SHA-256 `7bae6ba1169045dd767527fce57ab4d4595959f984da6b86209f227d39a94048`。
+
+据此可在 Linear 勾选 macOS **开发包**、持久目录规范、升级兼容/迁移/回滚、最低支持版本策略和构建版本记录，共 5/9。仍不勾选 Windows 安装器/CH340、真实联网激活绑定、双平台真实安装升级卸载保留冒烟、安装后非技术操作员直达工作台。RAY-96 保持 `In Review`。
 
 ## 提交
 

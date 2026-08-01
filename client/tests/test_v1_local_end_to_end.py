@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QCheckBox, QLineEdit, QPushButton
 from client.app.fixture_replay import FixtureReplayAcquisition, FixtureReplayBootstrap, FixtureReplaySource
 from client.app.fixture_replay import StandardizedReplaySource
 from client.app.live_display import LiveDisplayProjection
-from client.app.local_entry import _Audit, _Print, _Telemetry
+from client.app.local_entry import _Print, _Telemetry
 from client.app.local_store import LocalReplayStore
 from client.app.pages import PageId
 from client.app.ui_integration import build_connected_ui
@@ -19,6 +19,7 @@ from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
 from client.security.key_envelope import DualEnvelopeBlobCodec, KeyringTerminalKeyHandle, ServerKeyset, generate_test_keypair
 from client.hardware_standardization.live_processing import DoP4864LiveFrameStandardizer, replay_debug_profile
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.state_machine import ScreeningStep
@@ -56,7 +57,7 @@ def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qt
     raw, display = LatestFrameMailbox(), LatestDisplayFrameMailbox()
     acquisition = FixtureReplayAcquisition(source, raw, speed=replay_speed)
     participant = ParticipantWorkflow(
-        tenant_id="local-replay", issuer="local", subjects=store, audit=_Audit()
+        tenant_id="local-replay", issuer="local", subjects=store, audit=store
     )
     consent = ConsentWorkflow(
         tenant_id="local-replay",
@@ -73,7 +74,13 @@ def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qt
         persisted_reports=store,
         spooler=_Print(),
         telemetry=_Telemetry(),
-        display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30),
+        display_refresh=DisplayRefreshController(
+            display,
+            maximum_refresh_hz=(
+                DoP4864StandardizationAdapter.observed_compact_8bit()
+                .specification.observed_frame_rate_hz
+            ),
+        ),
         export_destination=lambda: pdf_path,
         data_source_mode="REPLAY_DEBUG",
         controller_options={
@@ -109,7 +116,13 @@ def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qt
         and controller._coordinator.state.preflight_ready,
         timeout=5_000,
     )
-    assert len(controller._coordinator.state.preflight_checks) == 4
+    assert {check.key for check in controller._coordinator.state.preflight_checks} == {
+        "device_connected",
+        "storage_space",
+        "calibration_status",
+        "data_sync",
+        "zero_load",
+    }
     controller.dispatch("ENTER_POSITION")
 
     for stage_index in range(4):
@@ -148,6 +161,9 @@ def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qt
     controller.dispatch("VIEW_BASIC_REPORT")
     controller.dispatch("EXPORT_PDF")
     assert pdf_path.exists() and pdf_path.stat().st_size > 0
+    assert store.db.execute(
+        "SELECT event_type FROM subject_audit_events ORDER BY rowid"
+    ).fetchall() == [("SUBJECT_EXPORT",)]
     controller.window.present_records(store.recent_records())
     controller.window.page_widget(PageId.RECORDS).findChild(QPushButton, "recordsTableView0").click()
     assert controller.window.current_page_id is PageId.REPORT_PREVIEW

@@ -101,6 +101,7 @@ def test_qt_timer_projects_hardware_latest_frame_into_p07(qtbot) -> None:
     )
     qtbot.addWidget(controller.window)
     controller.window.show()
+    assert controller._live_display_timer.interval() == round(1_000 / 30.0)
     hardware.publish(_raw_frame(11, left=160, right=40))
 
     page = controller.window.page_widget(PageId.ACQUIRING)

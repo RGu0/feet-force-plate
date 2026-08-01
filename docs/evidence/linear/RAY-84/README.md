@@ -5,7 +5,7 @@
 - 初次抓取时间：2026-07-20T08:54:41Z
 - 开始实现时间：2026-07-20T10:28:25Z
 - 初次抓取状态：Backlog
-- 当前工作流状态：In Review（2026-07-20T10:35:22Z 写入并重新读取确认）
+- 当前工作流状态：Done（2026-07-31T16:42:19Z 写入并重新读取确认）
 - 里程碑：P2：一键筛查
 - 优先级：High
 - 关系：无阻塞、被阻塞或 related issue
@@ -173,3 +173,28 @@ FEETFORCEPLATE_VENV=/private/tmp/feetforceplate-subtask-b-venv \
   现场人工验收。
 - 初始物理网格提交：`6df1845`（`Add physical grid to live heatmap`）。黑底
   主题修正提交：`9fd42bf`（`Use black board for live heatmap grid`）。
+
+## 2026-07-31 真实实时链 + 四阶段本机收口
+
+本轮按当前 Linear 的七项验收重新核对，不再沿用旧的固定 `48×64@约12 Hz` 文案。设备规格是唯一尺寸/布局/刷新上限来源；当前 DO-P4864 规格为 48×64、509.3×381.3 mm、`observed_frame_rate_hz=20.7`。
+
+### 证据组合
+
+1. 既有真实实时运行：2026-07-23 的实际 CH340→hardware latest mailbox→display projection→P-07 Qt 路径在 10 秒内收到 201 帧，最后 source index 200，无读取错误，线程正常停止，P-07 实际渲染且倒计时推进。脱敏摘要 [`live-display-validation-success-20260723.json`](live-display-validation-success-20260723.json) SHA-256 `e92dbc9d46e4709e3e2aa88e25f82ebda5a774a4bd57de4870dfd7e22f5965ca`；原始帧和截图未进入仓库。
+2. 当前代码离线重放：2026-07-23 去标识化四阶段 fixture 共 1,658 帧，四段均经过当前 hardware standardizer、latest-only mailbox 和 `LiveDisplayProjection`；每段都有 48×64 显示帧、COP、总量与左右负重，设备时间戳保持，源矩阵未修改。
+3. 当前 P-07 合同：页面显示剩余时间、站位状态和单一停止动作；高 DPI 自绘、可访问名称、大字号与色彩/文字双重表达由 Qt 回归覆盖；错误显示使用通俗动作和稳定编号，不接收协议异常或堆栈。
+4. 线程/存储隔离：聚焦矩阵覆盖 UI stalled consumer、100 帧并发 latest-only 发布、慢可靠存储、独立上传读取和工作流无显示/上传事件时的倒计时；可靠存储 36/36 消费、0 静默丢帧，UI 只保留最新 source index。
+
+### 新增证据与验证
+
+- 脱敏汇总：[`four-stage-display-20260731.json`](four-stage-display-20260731.json)，SHA-256 `40f82601c5fb7826ce415a4ae121085eb2d05f25d552a3017904b13305b5d377`；result SHA-256 `3065bcb462af3a888bdd4df2eb5c3129531ee32eb5794b92958a568c23f587c2`；不含原始矩阵。
+- 聚焦 JUnit：[`pytest-four-stage-display-20260731.xml`](pytest-four-stage-display-20260731.xml)，`36 passed`，SHA-256 `af574f094755dd9916a87c06b8591a594b34399c671d2e27d0ce4d34120ef8a6`。
+- 全仓 JUnit：[`pytest-full-four-stage-display-20260731.xml`](pytest-full-four-stage-display-20260731.xml)，`611 passed, 3 existing collection warnings, 9 subtests passed`，SHA-256 `dfd039c773e38b83a7819d424a800f0328063c5247c7f49c4b59d8a631b7338a`。
+- 新增生成器：`scripts/run_ray84_four_stage_display_evidence.py`；新增证据测试：`client/tests/test_ray_84_four_stage_display_evidence.py`。
+- Ruff 与 `git diff --check`：通过。
+
+### 完成边界
+
+- RAY-84 完成的是 P-07 检测中显示的软件合同和已发生的真实实时链验证：设备规格热力图、COP/负重、必要状态、latest-only 与可靠存储隔离、可访问表达、通俗错误和卡顿注入。
+- 不据此声明：物理标定、可靠会话/报告闭环、临床含义、Windows 专用发布包或现场非技术操作员验收；这些分别属于 RAY-85、RAY-96、RAY-101 及发布/临床范围。
+- Linear 回读：七项均为 `[X]`，证据评论 `7384b7bf-426e-4104-b8e2-5d920cf407cf` 已存在，状态为 `Done`，完成时间 `2026-07-31T16:42:19.056Z`。

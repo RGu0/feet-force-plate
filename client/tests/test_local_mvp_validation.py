@@ -24,15 +24,31 @@ def test_local_mvp_validation_exports_the_complete_offline_evidence_bundle(
     assert summary["fixture"]["frame_count"] == 1_658
     assert summary["fixture"]["raw_matrices_included"] is False
     assert len(summary["stage_ids"]) == 4
+    assert len(summary["visited_page_ids"]) == 11
+    assert set(summary["visited_page_ids"]) == {
+        f"P-{index:02d}" for index in range(1, 12)
+    }
     assert summary["report"]["kind"] == "V1_REPLAY_DEBUG"
+    assert summary["subject_audit"] == {
+        "encrypted_payload": True,
+        "export_event_count": 1,
+    }
     assert (output_dir / "report.pdf").stat().st_size > 0
     assert {
-        "01-preflight.png",
-        "02-stage-1.png",
-        "03-stage-2.png",
-        "04-stage-3.png",
-        "05-stage-4.png",
-        "06-report-preview.png",
+        "00-workbench.png",
+        "01-subject.png",
+        "02-profile.png",
+        "03-consent.png",
+        "04-preflight.png",
+        "05-position-guidance.png",
+        "06-stage-1.png",
+        "07-stage-2.png",
+        "08-stage-3.png",
+        "09-stage-4.png",
+        "10-result.png",
+        "11-report-preview.png",
+        "12-records.png",
+        "13-support.png",
     } == {path.name for path in output_dir.glob("*.png")}
 
 

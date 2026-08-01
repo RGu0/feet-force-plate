@@ -27,6 +27,13 @@ def test_do_p4864_specification_owns_device_geometry_and_measurement_configurati
     assert specification.layout.cell_by_source_index(0).board_y_mm == 0.0
     assert specification.layout.cell_by_source_index(48).board_x_mm == 7.99
     assert specification.baseline_min_duration_s == 5.0
+    assert specification.observed_frame_rate_hz == 20.7
+    assert specification.serial_baud_rate == 1_000_000
+    assert specification.serial_data_bits == 8
+    assert specification.serial_parity == "N"
+    assert specification.serial_stop_bits == 1
+    assert specification.startup_validation.minimum_frame_rate_hz == 12.0
+    assert specification.startup_validation.maximum_no_valid_signal_s == 5.0
     assert specification.force_validation == "MVP_SCREENING_ESTIMATED_V1"
     assert specification.quality_policy_version == "do-p4864-quality/1"
     assert specification.force_model.output_unit == "N"

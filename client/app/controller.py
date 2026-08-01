@@ -7,7 +7,7 @@ from typing import Protocol
 
 from PySide6.QtCore import QTimer
 
-from client.device.session_ui import HardwareUiFailure
+from client.hardware_standardization.ports import HardwareUiFailure
 from client.workflow.consent import (
     ConsentPolicy,
     ConsentReceipt,
@@ -28,6 +28,7 @@ from client.workflow.participant import (
 )
 
 from .pages import PageId
+from .heatmap import PhysicalGridOverlay
 from .engineering_maintenance import EngineeringMaintenanceService
 from .session_deletion import CompletedSessionDeletionService
 from .hardware_failure import resolve_hardware_ui_failure
@@ -106,6 +107,7 @@ class ApplicationController:
         device_support: _DeviceSupportPort | None = None,
         engineering_maintenance: EngineeringMaintenanceService | None = None,
         session_deletion: CompletedSessionDeletionService | None = None,
+        physical_grid: PhysicalGridOverlay | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
@@ -125,13 +127,21 @@ class ApplicationController:
             raise ValueError(
                 "participant, consent, and consent_policy must be configured together"
             )
-        self.window = ScreeningWindow(on_action=self.dispatch)
+        self.window = ScreeningWindow(
+            on_action=self.dispatch,
+            physical_grid=physical_grid,
+        )
         self.window.set_engineering_maintenance_available(
             engineering_maintenance is not None
         )
         self.window.set_session_deletion_available(session_deletion is not None)
         self._live_display_timer = QTimer(self.window)
-        self._live_display_timer.setInterval(16)
+        refresh_interval_ms = (
+            16
+            if display_refresh is None
+            else max(1, round(1_000 / display_refresh.maximum_refresh_hz))
+        )
+        self._live_display_timer.setInterval(refresh_interval_ms)
         self._live_display_timer.timeout.connect(self._on_live_display_timer)
         self.refresh()
 

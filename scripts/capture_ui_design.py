@@ -1,4 +1,4 @@
-"""Capture deterministic 1440×900 Steady Health UI review frames.
+"""Capture deterministic Steady Health UI review frames.
 
 Development-only utility.  It seeds the local read models, never opens a
 device/database/network adapter, and is intended for visual regression review.
@@ -48,13 +48,17 @@ CAPTURES = (
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("/private/tmp/feetforceplate-ui-captures"))
+    parser.add_argument("--width", type=int, default=1440)
+    parser.add_argument("--height", type=int, default=900)
     args = parser.parse_args()
+    if args.width <= 0 or args.height <= 0:
+        parser.error("--width and --height must be positive integers")
     args.output.mkdir(parents=True, exist_ok=True)
 
     app = QApplication.instance() or QApplication([])
     demo = DesignDemoController()
     window = demo.window
-    window.resize(1440, 900)
+    window.resize(args.width, args.height)
     window.show()
     app.processEvents()
 

@@ -9,6 +9,8 @@ import time
 import uuid
 from typing import Any, Protocol
 
+from client.hardware_standardization.runtime import active_hardware_runtime
+
 from .models import DeviceValidationRun, ValidationOutcome, ValidationReason
 from .service import CollectionPhase, CollectionProgress, ValidationRequest
 
@@ -347,6 +349,7 @@ class StartupValidationCoordinator:
         device_ref: str = "unavailable-device",
     ) -> DeviceValidationRun:
         now = self._wall_time_ns()
+        metadata = active_hardware_runtime().startup_metadata
         run = DeviceValidationRun(
             validation_run_id=self._id_factory(),
             previous_validation_run_id=(
@@ -357,9 +360,9 @@ class StartupValidationCoordinator:
             attempt_number=attempt,
             app_version=self._app_version,
             protocol_version="unavailable",
-            data_mode_version="48x64-uint8-column-major/1",
-            rules_version="startup-baseline/1",
-            threshold_version="startup-baseline-thresholds/1",
+            data_mode_version=metadata.data_mode_version,
+            rules_version=metadata.rules_version,
+            threshold_version=metadata.threshold_version,
             started_at_wall_ns=now,
             completed_at_wall_ns=now,
             outcome=ValidationOutcome.RETRYABLE_FAIL,

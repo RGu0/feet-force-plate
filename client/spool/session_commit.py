@@ -11,6 +11,10 @@ import uuid
 
 from client.device.protocol import RawFrame
 from client.hardware_standardization.models import PhysicalArraySession
+from client.hardware_standardization.public_export import (
+    PhysicalPressureSession,
+    restore_committed_physical_pressure_session,
+)
 
 from .derived_artifact import (
     DerivedArtifact,
@@ -45,6 +49,40 @@ class CommittedValidSession:
     total_frames: int
     manifest_sha256: str
     session_directory: Path
+
+
+def read_committed_physical_session(
+    root: str | Path,
+    *,
+    session_id: str,
+    store: StateStore,
+    key_provider: KeyProvider,
+) -> PhysicalPressureSession:
+    """Read one locally committed valid session through the public RAY-117 contract."""
+
+    lifecycle, validity, _ended_at_ns = store.session_status(session_id)
+    if (lifecycle, validity) != ("CLOSED", "VALID"):
+        raise ValueError("local analysis requires a completed valid session")
+    artifacts = tuple(
+        artifact
+        for artifact in store.session_artifacts(session_id)
+        if artifact.kind == "HARDWARE_DERIVED_OBSERVATION"
+        and artifact.schema_version == "hardware-derived-observation/1"
+    )
+    if len(artifacts) != 1:
+        raise ValueError(
+            "local analysis requires exactly one hardware-derived observation"
+        )
+    observation = read_derived_observation(
+        Path(root) / artifacts[0].relative_path,
+        key_provider=key_provider,
+    )
+    if observation.get("session_id") != session_id:
+        raise ValueError("derived observation session identity mismatch")
+    return restore_committed_physical_pressure_session(
+        observation,
+        local_session_committed=True,
+    )
 
 
 class ValidSessionStager:

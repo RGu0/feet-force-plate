@@ -117,8 +117,8 @@ def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -
     assert (assets / "status-warning.svg").is_file()
     assert (assets / "app-icon.png").is_file()
     assert (assets / "FeetForcePlate.icns").is_file()
-    assert 'Tree("client/app/assets"' in packaging_spec
-    assert 'icon="client/app/assets/FeetForcePlate.icns"' in packaging_spec
+    assert 'datas = [(str(assets), "client/app/assets")]' in packaging_spec
+    assert 'icon = assets / "FeetForcePlate.icns"' in packaging_spec
 
 
 def test_repeated_signal_failure_prompts_support_without_technical_leak(qtbot) -> None:

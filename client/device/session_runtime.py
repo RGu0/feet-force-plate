@@ -11,12 +11,12 @@ from typing import Protocol
 from client.spool.session_commit import StagedFrameSink, ValidSessionStager
 
 from .acquisition import (
-    MAXIMUM_NO_VALID_SIGNAL_NS,
     AcquisitionOutcome,
     AcquisitionResult,
     AcquisitionRunner,
     ConnectionStateMachine,
     LatestFrameMailbox,
+    default_maximum_no_valid_signal_ns,
 )
 from .protocol import DaoOneP4864Parser, RawFrame
 from .session_ui import (
@@ -73,6 +73,7 @@ class HardwareSessionRuntime:
         mailbox: LatestFrameMailbox,
         stager: ValidSessionStager,
         quality_gate: HardwareQualityGate,
+        maximum_no_valid_signal_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
         wall_time_ns: Callable[[], int] = time.time_ns,
     ) -> None:
@@ -82,6 +83,11 @@ class HardwareSessionRuntime:
         self._mailbox = mailbox
         self._stager = stager
         self._quality_gate = quality_gate
+        self._maximum_no_valid_signal_ns = (
+            default_maximum_no_valid_signal_ns()
+            if maximum_no_valid_signal_ns is None
+            else maximum_no_valid_signal_ns
+        )
         self._storage_append_timeout_s = storage_append_timeout_s
         self._wall_time_ns = wall_time_ns
 
@@ -99,6 +105,7 @@ class HardwareSessionRuntime:
             durable_sink=StagedFrameSink(self._stager),
             latest_mailbox=self._mailbox,
             connection=self._connection,
+            maximum_no_valid_signal_ns=self._maximum_no_valid_signal_ns,
             storage_append_timeout_s=self._storage_append_timeout_s,
         ).run(
             session_id=session_id,
@@ -152,7 +159,7 @@ class HardwareSessionRuntime:
                 )
                 processing_metadata["communication_integrity"] = {
                     "policy_version": "do-p4864-valid-signal-continuity/1",
-                    "maximum_no_valid_signal_ns": MAXIMUM_NO_VALID_SIGNAL_NS,
+                    "maximum_no_valid_signal_ns": self._maximum_no_valid_signal_ns,
                     "reconstructed_frame_count": len(acquisition.reconstructed_frames),
                     "events": [
                         {
@@ -204,7 +211,7 @@ class HardwareSessionRuntime:
     def _frozen_runtime_versions(self) -> dict[str, str]:
         versions = {
             "protocol_profile": self._parser.profile.version,
-            "maximum_no_valid_signal_ns": str(MAXIMUM_NO_VALID_SIGNAL_NS),
+            "maximum_no_valid_signal_ns": str(self._maximum_no_valid_signal_ns),
             "reconstruction_policy": "interpolate-adjacent-valid-frames/1",
             "storage_append_timeout_ms": str(
                 None

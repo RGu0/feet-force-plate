@@ -1,12 +1,7 @@
 import os
 import unittest
 
-from client.device.serial_transport import (
-    BAUD_RATE,
-    PortAvailability,
-    SerialByteTransport,
-    enumerate_ch340_ports,
-)
+from client.device.serial_transport import PortAvailability, SerialByteTransport, enumerate_ch340_ports
 from client.device.transport import ByteTransport, TransportDisconnected
 
 
@@ -35,6 +30,13 @@ class FakeSerial:
 
 
 class SerialDiscoveryTests(unittest.TestCase):
+    _serial_options = {
+        "baud_rate": 1_000_000,
+        "data_bits": 8,
+        "parity": "N",
+        "stop_bits": 1,
+    }
+
     def test_enumeration_filters_ch340_and_probes_availability(self) -> None:
         ports = [
             FakePort("/dev/cu.ch340-a", vid=0x1A86, pid=0x7523),
@@ -53,6 +55,7 @@ class SerialDiscoveryTests(unittest.TestCase):
             port_provider=lambda: ports,
             serial_factory=factory,
             probe_availability=True,
+            **self._serial_options,
         )
 
         self.assertEqual(
@@ -77,6 +80,7 @@ class SerialDiscoveryTests(unittest.TestCase):
         candidates = enumerate_ch340_ports(
             port_provider=lambda: [FakePort("COM7", vid=0x1A86)],
             probe_availability=False,
+            **self._serial_options,
         )
 
         self.assertEqual(candidates[0].availability, PortAvailability.UNKNOWN)
@@ -92,12 +96,18 @@ class SerialTransportTests(unittest.TestCase):
             return serial
 
         transport = SerialByteTransport.open(
-            "/dev/cu.ch340-a", serial_factory=factory, timeout_seconds=0.25
+            "/dev/cu.ch340-a",
+            serial_factory=factory,
+            timeout_seconds=0.25,
+            baud_rate=1_000_000,
+            data_bits=8,
+            parity="N",
+            stop_bits=1,
         )
 
         self.assertIsInstance(transport, ByteTransport)
         self.assertEqual(transport.read(3), b"abc")
-        self.assertEqual(calls[0]["baudrate"], BAUD_RATE)
+        self.assertEqual(calls[0]["baudrate"], 1_000_000)
         self.assertEqual(calls[0]["bytesize"], 8)
         self.assertEqual(calls[0]["parity"], "N")
         self.assertEqual(calls[0]["stopbits"], 1)

@@ -6,7 +6,24 @@ This directory defines the repeatable packaging inputs for the institution clien
 
 - `FeetForcePlate.spec` describes the PyInstaller application bundle.
 - `build-config.json` records target-platform, signing, driver-readiness, persistent-data, and controlled-upgrade requirements.
-- `client/app/packaged_entry.py` is the package smoke-test entry point.
+- Repository `main.py` is the frozen application entry point; it routes the
+  no-argument package to the formal institution application and keeps replay
+  and design-demo modes explicit.
+
+Local macOS development build (the wrapper keeps the uv environment outside
+OneDrive):
+
+```text
+./scripts/local-env.sh uv run --extra dev --extra build python -m PyInstaller \
+  --noconfirm --clean \
+  --distpath /private/tmp/feetforceplate-macos/dist \
+  --workpath /private/tmp/feetforceplate-macos/build \
+  client/app/packaging/FeetForcePlate.spec
+```
+
+The spec produces an onedir `.app` bundle, reads the application version from
+`pyproject.toml`, and relies on PyInstaller's import-driven PySide6 hooks rather
+than bundling the complete Qt development toolchain.
 
 Signing certificates, notarization credentials, activation credentials, and other secrets must be supplied only by the protected CI keychain or secret store. They must never be embedded in the repository or package metadata.
 
@@ -24,4 +41,9 @@ Signing certificates, notarization credentials, activation credentials, and othe
 4. Run the migration, activate the candidate, and retain the previous app version.
 5. If migration or activation fails, restore both the previous app version and database snapshot.
 
-Real Windows and macOS builds, signing/notarization, CH340 installation, upgrade/uninstall, data-retention, activation, and printer smoke tests remain target-OS/manual acceptance work.
+A local arm64 macOS development bundle can be built and ad-hoc signed for
+developer smoke tests. Developer ID signing, hardened runtime, notarization,
+Gatekeeper acceptance, universal2 output, install/upgrade/uninstall and
+data-retention smoke tests remain external-pilot or target-OS acceptance work.
+Windows signing/builds, CH340 installation, real activation, and printer smoke
+tests also remain target-OS/manual acceptance work.

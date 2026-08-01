@@ -136,9 +136,54 @@ Not verified here:
 
 These missing client, live-database, hardware, and operational checks prevent `Done`. RAY-100 is eligible only for `In Review` after the implementation/evidence commits.
 
+## 2026-07-31 本机软件合同回读与 Linear 收口
+
+本轮重新对照当前 Linear 的 10 项验收条件，复验云端激活/心跳、共享
+License 与门槛策略、客户端 P-05 新检测门控，以及本地 SQLite 待传状态。
+当前可由仓库代码和本机自动测试直接证明 6/10：
+
+- [x] 首次在线激活的一次性、过期、幂等和 tenant/site/terminal/device
+  绑定软件事务；真实 PostgreSQL 部署与并发审计仍属于部署验收。
+- [x] 周期心跳严格使用运营字段白名单，并拒绝且不回显受试者/报告/
+  原始数据字段。
+- [x] 最近成功联网恰好 24 小时仍允许，超过才限制新测试；该门槛已接入
+  客户端 P-05 的 `network_gate`。
+- [x] 50 个待传会话或 2 GiB 待传数据各自独立限制新测试，并由本地
+  SQLite 快照事务计算。
+- [x] 门槛只移除 `START_NEW_TEST`；进行中会话、既有报告、继续上传与
+  诊断能力仍保留。
+- [x] 时间回拨与无效凭据进入支持状态。
+
+仍保留 4 项：客户端安全凭据存储与启动静默登录；License 安全持久缓存/
+密钥轮换/真实吊销轮询；运行中网络恢复后的自动重新校验与 UI 解锁；真实
+采集进程在授权服务短暂故障下的连续性。策略纯函数已经覆盖其中部分规则，
+但不能替代运行中集成证据。
+
+专项命令通过仓库规定的 `./scripts/local-env.sh` 运行，结果为
+`28 passed in 0.99s`；JUnit `pytest-local-closeout-20260731.xml`，SHA-256
+`7b7e77deebce40c0ef7d0af3772b069fc0fe6bbdc42b42438fc471f39fc297c3`。
+同一代码工作树的全仓新鲜回归为
+`622 passed, 3 existing collection warnings, 9 subtests passed in 55.48s`；
+JUnit 位于 `../RAY-96/pytest-full-local-closeout-20260731.xml`，SHA-256
+`7bae6ba1169045dd767527fce57ab4d4595959f984da6b86209f227d39a94048`。
+因此只同步 6 项到 Linear，状态保持 `In Review`，不标记 Done。
+
 ## Failures and limitations
 
 - The production enrollment path deliberately requires a separate pre-authentication database role. Its exact grants and deployment isolation cannot be proven by source tests and must be reviewed in the real environment.
 - Current terminal identity is a short-lived server HMAC token. It proves API contract binding, not device-held private-key possession or certificate attestation.
 - Controlled upload after revocation lasts only while an already-issued token remains valid; post-expiry recovery must follow an explicit revocation-reason policy.
 - No secrets, personal data, activation codes, raw pressure frames, or customer report data are stored in this evidence directory.
+
+## 2026-07-31 Aliyun 网络集成环境
+
+已在 `aliyun-agentic` 的公网 TCP 7443 上部署显式标记为 `integration` 的
+HTTPS 环境，并通过真实公网完成 readiness、一次性终端激活和终端心跳。
+部署详情、TLS 指纹、源码哈希、权限检查和全仓 `625 passed` 回归见
+`aliyun-network-integration-20260731.md`；JUnit 为
+`pytest-aliyun-network-deployment-20260731.xml`，SHA-256 为
+`673ce7ccba9df26b9263a1167d2fb334fff2c93d2e9fad250af121f5d67804ba`。
+
+该环境仍使用进程内存仓储和对象存储、自签名证书及用户 crontab。它强化已
+勾选的激活/心跳证据，但没有新增完成启动静默登录、License 安全缓存与轮换、
+网络恢复自动解锁或真实采集连续性，所以 Linear 保持 `6/10`、`In Review`。

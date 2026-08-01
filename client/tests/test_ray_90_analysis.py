@@ -106,7 +106,7 @@ def test_invalid_quality_or_missing_prerequisite_emits_no_customer_number() -> N
     )
 
 
-def test_local_basic_definitions_align_with_independent_cloud_reference_within_tolerance() -> None:
+def test_local_basic_definitions_match_hand_calculated_reference_within_tolerance() -> None:
     frames, fixture = _fixture()
     result = analyze_local(frames, _context(fixture))
 

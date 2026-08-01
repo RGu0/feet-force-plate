@@ -15,6 +15,7 @@ from client.security.key_envelope import (
     ServerKeyset,
     generate_test_keypair,
 )
+from client.local_analysis.models import LocalAnalysisResult
 from client.workflow.consent import ConsentReceipt
 from client.workflow.participant import SubjectResolution, SubjectResolutionStatus, SubjectSummary
 from client.app.ui_models import DashboardSnapshot, ScreeningRecordRow, SupportSnapshot
@@ -45,12 +46,58 @@ class LocalReplayStore:
         self.db = sqlite3.connect(self.root / "local-replay.sqlite3")
         self._query_index_key = query_index_key or _load_local_query_index_key()
         self._migrate_subject_index()
-        self.db.execute("CREATE TABLE IF NOT EXISTS consents (subject_id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
+        self._migrate_consent_store()
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS subject_audit_events ("
+            "event_id TEXT PRIMARY KEY, tenant TEXT NOT NULL, "
+            "subject_id TEXT NOT NULL, event_type TEXT NOT NULL, "
+            "created_at TEXT NOT NULL, payload BLOB NOT NULL, "
+            "FOREIGN KEY(subject_id) REFERENCES subjects(subject_id))"
+        )
         self.db.execute("CREATE TABLE IF NOT EXISTS replay_sessions (session_id TEXT PRIMARY KEY, subject_id TEXT, fixture_sha TEXT, status TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS replay_session_metadata (session_id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS replay_analysis_results (session_id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS replay_stage_completions (session_id TEXT NOT NULL, stage_id TEXT NOT NULL, completed_at TEXT NOT NULL, PRIMARY KEY(session_id, stage_id))")
         self.db.execute("CREATE TABLE IF NOT EXISTS replay_reports (report_id TEXT, version INTEGER, session_id TEXT, payload BLOB NOT NULL, PRIMARY KEY(report_id,version))")
+        self.db.commit()
+
+    def _migrate_consent_store(self) -> None:
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(consents)")}
+        if columns and "consent_id" not in columns:
+            self.db.execute("ALTER TABLE consents RENAME TO legacy_consents")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS consents ("
+            "consent_id TEXT PRIMARY KEY, tenant TEXT NOT NULL, "
+            "subject_id TEXT NOT NULL, payload BLOB NOT NULL, "
+            "FOREIGN KEY(subject_id) REFERENCES subjects(subject_id))"
+        )
+        if columns and "consent_id" not in columns:
+            migration_failed = False
+            for subject_id, payload in self.db.execute(
+                "SELECT subject_id, payload FROM legacy_consents"
+            ):
+                try:
+                    restored = json.loads(
+                        self.codec.decrypt(payload, context=f"consent:{subject_id}")
+                    )
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO consents VALUES (?,?,?,?)",
+                        (
+                            restored["consent_record_id"],
+                            restored["tenant_id"],
+                            subject_id,
+                            payload,
+                        ),
+                    )
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    migration_failed = True
+                    continue
+            if not migration_failed:
+                self.db.execute("DROP TABLE legacy_consents")
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS consent_subject_scope "
+            "ON consents(tenant, subject_id)"
+        )
         self.db.commit()
     def _migrate_subject_index(self) -> None:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(subjects)")}
@@ -107,13 +154,33 @@ class LocalReplayStore:
                 "government_id": request.identity.government_id,
             },
         }, sort_keys=True, separators=(",", ":")).encode(),context=f"subject:{subject.subject_uuid}")
-        self.db.execute("INSERT INTO subjects VALUES (?,?,?)",(subject.subject_uuid,subject.tenant_id,payload))
-        if request.external_id is not None:
-            self.db.execute(
-                "INSERT INTO subject_identifier_index VALUES (?,?,?,?,?)",
-                (subject.tenant_id, request.external_id.issuer, request.external_id.id_type.value, self._lookup(subject.tenant_id, request.external_id.issuer, request.external_id.id_type, value), subject.subject_uuid),
-            )
-        self.db.commit(); return subject
+        try:
+            with self.db:
+                self.db.execute(
+                    "INSERT INTO subjects VALUES (?,?,?)",
+                    (subject.subject_uuid, subject.tenant_id, payload),
+                )
+                if request.external_id is not None:
+                    self.db.execute(
+                        "INSERT INTO subject_identifier_index VALUES (?,?,?,?,?)",
+                        (
+                            subject.tenant_id,
+                            request.external_id.issuer,
+                            request.external_id.id_type.value,
+                            self._lookup(
+                                subject.tenant_id,
+                                request.external_id.issuer,
+                                request.external_id.id_type,
+                                value,
+                            ),
+                            subject.subject_uuid,
+                        ),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise RuntimeError(
+                "机构编号存在档案冲突，不能自动合并，请由机构人员确认"
+            ) from exc
+        return subject
     def update_profile(self, *, tenant_id, subject_uuid, profile):
         row = self.db.execute(
             "SELECT tenant,payload FROM subjects WHERE subject_id=?", (subject_uuid,)
@@ -128,14 +195,108 @@ class LocalReplayStore:
         )
         self.db.execute("UPDATE subjects SET payload=? WHERE subject_id=?", (encrypted, subject_uuid))
         self.db.commit()
-    def find_valid(self, *, subject_uuid, **kwargs):
-        row=self.db.execute("SELECT payload FROM consents WHERE subject_id=?",(subject_uuid,)).fetchone()
-        if not row:return None
-        value=json.loads(self.codec.decrypt(row[0],context=f"consent:{subject_uuid}")); value["purpose_codes"]=tuple(value["purpose_codes"]); value["data_categories"]=tuple(value["data_categories"]); return ConsentReceipt(**value)
+    def find_valid(self, *, tenant_id, subject_uuid, policy):
+        rows = self.db.execute(
+            "SELECT payload FROM consents "
+            "WHERE tenant=? AND subject_id=? ORDER BY rowid DESC",
+            (tenant_id, subject_uuid),
+        ).fetchall()
+        for row in rows:
+            value = json.loads(
+                self.codec.decrypt(row[0], context=f"consent:{subject_uuid}")
+            )
+            value["purpose_codes"] = tuple(value["purpose_codes"])
+            value["data_categories"] = tuple(value["data_categories"])
+            receipt = ConsentReceipt(**value)
+            if (
+                receipt.policy_version == policy.policy_version
+                and policy.accepts_purpose_codes(receipt.purpose_codes)
+                and receipt.data_categories == policy.data_categories
+            ):
+                return receipt
+        return None
+
     def create_consent(self, request):
+        subject = self.db.execute(
+            "SELECT tenant FROM subjects WHERE subject_id=?",
+            (request.subject_uuid,),
+        ).fetchone()
+        if subject is None or subject[0] != request.tenant_id:
+            raise KeyError("subject is unavailable in this tenant")
         receipt=ConsentReceipt(uuid.uuid4().hex,request.tenant_id,request.subject_uuid,request.policy_version,request.purpose_codes,request.data_categories)
         payload=self.codec.encrypt(json.dumps({"consent_record_id":receipt.consent_record_id,"tenant_id":receipt.tenant_id,"subject_uuid":receipt.subject_uuid,"policy_version":receipt.policy_version,"purpose_codes":receipt.purpose_codes,"data_categories":receipt.data_categories}).encode(),context=f"consent:{receipt.subject_uuid}")
-        self.db.execute("INSERT OR REPLACE INTO consents VALUES (?,?)",(receipt.subject_uuid,payload));self.db.commit();return receipt
+        self.db.execute(
+            "INSERT INTO consents VALUES (?,?,?,?)",
+            (receipt.consent_record_id, receipt.tenant_id, receipt.subject_uuid, payload),
+        )
+        self.db.commit();return receipt
+
+    def record_subject_access(self, *, tenant_id, subject_uuid, purpose):
+        self._record_subject_audit(
+            tenant_id=tenant_id,
+            subject_uuid=subject_uuid,
+            event_type="SUBJECT_ACCESS",
+            details={"purpose": purpose},
+        )
+
+    def record_subject_export(
+        self,
+        *,
+        tenant_id,
+        subject_uuid,
+        report_id,
+        report_version,
+        purpose,
+    ):
+        self._record_subject_audit(
+            tenant_id=tenant_id,
+            subject_uuid=subject_uuid,
+            event_type="SUBJECT_EXPORT",
+            details={
+                "purpose": purpose,
+                "report_id": report_id,
+                "report_version": report_version,
+            },
+        )
+
+    def _record_subject_audit(
+        self,
+        *,
+        tenant_id,
+        subject_uuid,
+        event_type,
+        details,
+    ):
+        subject = self.db.execute(
+            "SELECT tenant FROM subjects WHERE subject_id=?",
+            (subject_uuid,),
+        ).fetchone()
+        if subject is None or subject[0] != tenant_id:
+            raise KeyError("subject is unavailable in this tenant")
+        event_id = uuid.uuid4().hex
+        payload = self.codec.encrypt(
+            json.dumps(
+                {
+                    "schema_version": "subject-audit-event/1",
+                    **details,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode(),
+            context=f"audit:{event_id}",
+        )
+        self.db.execute(
+            "INSERT INTO subject_audit_events VALUES (?,?,?,?,?,?)",
+            (
+                event_id,
+                tenant_id,
+                subject_uuid,
+                event_type,
+                datetime.now().isoformat(),
+                payload,
+            ),
+        )
+        self.db.commit()
     def create_session(self, context, protocol):
         session_id=uuid.uuid4().hex
         fixture_sha = "2495b910bbf7e4fcca0cd0db36dde809f0fd6395bb6060eded44db575acd6f90"
@@ -165,23 +326,21 @@ class LocalReplayStore:
         self.db.commit()
     def finalize(self, session_id):
         self.db.execute("UPDATE replay_sessions SET status='CLOSED' WHERE session_id=?",(session_id,));self.db.commit()
-    def save_analysis_result(self, session_id: str, result) -> None:
+    def save_analysis_result(
+        self,
+        session_id: str,
+        result: LocalAnalysisResult,
+    ) -> None:
+        serialized = asdict(result)
+        serialized.update(
+            {
+                "schema_version": "local-analysis-result/1",
+                "data_completeness": "FOUR_STAGES_COMPLETE",
+            }
+        )
         payload = self.codec.encrypt(
             json.dumps(
-                {
-                    "algorithm_version": "v1-replay-debug/1",
-                    "status": result.status,
-                    "metrics": [
-                        {
-                            "key": metric.key,
-                            "value": metric.value,
-                            "unit": metric.unit,
-                            "definition_version": metric.definition_version,
-                        }
-                        for metric in result.metrics
-                    ],
-                    "data_completeness": "FOUR_STAGES_COMPLETE",
-                },
+                serialized,
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode(),

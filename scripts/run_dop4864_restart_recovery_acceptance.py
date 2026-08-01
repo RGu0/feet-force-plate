@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from client.spool.recovery import RecoveryScanner
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from scripts.run_dop4864_runtime_acceptance import FileAesKeyProvider
 
 
@@ -76,6 +77,13 @@ def _capture_command(args: argparse.Namespace, root: Path) -> list[str]:
 
 
 def run_controlled_restart(args: argparse.Namespace) -> dict[str, object]:
+    specification = DoP4864StandardizationAdapter.observed_compact_8bit().specification
+    if args.baseline_seconds is None:
+        args.baseline_seconds = specification.baseline_min_duration_s
+    if args.baseline_seconds < specification.baseline_min_duration_s:
+        raise ValueError("baseline-seconds must meet the selected device specification")
+    if args.interrupt_after_seconds <= args.baseline_seconds:
+        raise ValueError("interrupt-after-seconds must allow capture time after baseline")
     root = args.output_root.resolve()
     if root.exists() and any(root.iterdir()):
         raise ValueError("output-root must be empty for a controlled restart test")
@@ -107,7 +115,6 @@ def run_controlled_restart(args: argparse.Namespace) -> dict[str, object]:
     return {
         "schema_version": "do-p4864-controlled-restart-recovery/1",
         "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "device": args.device,
         "requested_baseline_seconds": args.baseline_seconds,
         "requested_capture_seconds": args.capture_seconds,
         "requested_interrupt_after_seconds": args.interrupt_after_seconds,
@@ -126,17 +133,13 @@ def main() -> int:
     parser.add_argument("--device", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--key-file", type=Path, required=True)
-    parser.add_argument("--baseline-seconds", type=float, default=5.0)
+    parser.add_argument("--baseline-seconds", type=float)
     parser.add_argument("--capture-seconds", type=float, default=180.0)
     parser.add_argument("--interrupt-after-seconds", type=float, default=25.0)
     parser.add_argument("--summary-output", type=Path)
     args = parser.parse_args()
-    if args.baseline_seconds < 5:
-        parser.error("baseline-seconds must be at least 5")
     if args.capture_seconds <= args.interrupt_after_seconds:
         parser.error("capture-seconds must exceed interrupt-after-seconds")
-    if args.interrupt_after_seconds <= args.baseline_seconds:
-        parser.error("interrupt-after-seconds must allow capture time after baseline")
     result = run_controlled_restart(args)
     summary_path = args.summary_output or args.output_root / "restart-recovery-summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)

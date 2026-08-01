@@ -2,7 +2,7 @@
 
 - Issue: `RAY-111` 检测准备与站位引导（P-05～P-06）
 - Milestone: `P2：一键筛查`
-- Status: `In Review`
+- Status: `Done` on 2026-07-31.
 
 ## Delivered scope
 
@@ -21,3 +21,9 @@ Real baseline/connection inputs and Windows/onsite operation remain separate har
 ## Commit
 
 Implementation and evidence: `aa9162f` — `Add institution access entry UI`.
+
+## 2026-07-31 hardware-independent closeout
+
+- Fresh full client regression: `204 passed in 36.05s`; full project regression: `592 passed, 3 warnings, 9 subtests passed in 40.44s`.
+- Fresh P-05 pass/fail and P-06 captures were generated at 1440×900 and 1280×720. Manual review confirmed plain-language recovery, four-stage provenance, visible position/countdown text and an unobscured guarded start action.
+- Real connection/baseline inputs remain startup/device integration evidence under RAY-114/RAY-115. RAY-111's local UI/state-contract acceptance is complete without treating replay as physical input.

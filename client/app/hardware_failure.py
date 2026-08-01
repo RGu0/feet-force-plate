@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from client.device.session_ui import HardwareUiFailure, HardwareUiFailureCode
+from client.hardware_standardization.ports import HardwareUiFailure, HardwareUiFailureCode
 from client.workflow.models import ClientAction, ClientError
 
 
