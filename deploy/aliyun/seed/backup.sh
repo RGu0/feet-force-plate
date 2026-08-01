@@ -17,7 +17,12 @@ if [[ ! -d "$FEETFORCEPLATE_OBJECT_ROOT" || ! -d "$FEETFORCEPLATE_BACKUP_ROOT" ]
     exit 2
 fi
 
-backup_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C /opt/feetforceplate/app rev-parse --short=12 HEAD)"
+implementation_sha="$(cat /opt/feetforceplate/app/.release-sha)"
+if [[ ! "$implementation_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "installed release SHA is invalid" >&2
+    exit 2
+fi
+backup_id="$(date -u +%Y%m%dT%H%M%SZ)-${implementation_sha:0:12}"
 stage="$FEETFORCEPLATE_BACKUP_ROOT/.staging-$backup_id"
 bundle_stage="$FEETFORCEPLATE_BACKUP_ROOT/.staging-$backup_id.age"
 bundle_final="$FEETFORCEPLATE_BACKUP_ROOT/$backup_id.tar.age"
@@ -39,7 +44,6 @@ pg_dump --format=custom --no-owner --no-privileges \
 ) >"$stage/object-manifest.sha256"
 tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
 
-implementation_sha="$(git -C /opt/feetforceplate/app rev-parse HEAD)"
 schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control"
 printf '{"backup_id":"%s","implementation_sha":"%s","schema_versions":"%s","created_at":"%s"}\n' \
     "$backup_id" "$implementation_sha" "$schema_versions" "$(date -u +%FT%TZ)" \

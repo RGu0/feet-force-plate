@@ -54,6 +54,8 @@ if [[ -e "$release_target" ]]; then
 fi
 cp -a "$release_source" "$release_target"
 chown -R "$service_user:$service_group" "$release_target"
+printf '%s\n' "$release_sha" >"$release_target/.release-sha"
+chown "$service_user:$service_group" "$release_target/.release-sha"
 chmod -R a-w "$release_target"
 ln -sfn "$release_target" "$current_link.next"
 mv -Tf "$current_link.next" "$current_link"
