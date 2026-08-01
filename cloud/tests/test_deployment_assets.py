@@ -64,3 +64,21 @@ def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -
     assert "stat" in checker and "printf" in checker
     assert "source " not in checker and "cat " not in checker
     assert "cut " not in checker and "awk " not in checker
+
+
+def test_host_prerequisites_are_idempotent_and_do_not_cut_over_7443() -> None:
+    text = (ROOT / "host-prerequisites.sh").read_text()
+    for token in (
+        "dnf install -y nginx postgresql-server postgresql-contrib",
+        "/var/lib/pgsql/data/PG_VERSION",
+        "postgresql-setup --initdb",
+        "systemctl enable --now postgresql",
+        "useradd --system --no-create-home",
+        "/var/lib/feetforceplate/runtime",
+        "/usr/local/bin/age-keygen",
+    ):
+        assert token in text
+    assert "systemctl stop" not in text
+    assert "pkill" not in text
+    assert "kill " not in text
+    assert "nginx-feetforceplate-seed.conf" not in text

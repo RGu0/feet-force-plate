@@ -22,6 +22,15 @@ by the cloud security group or host firewall. The migration role applies
 `postgresql-role-grants.sql` using `psql` variables supplied outside shell
 history. No application role is an owner, superuser, or `BYPASSRLS` role.
 
+On a new Alibaba Cloud Linux host, run the reviewed prerequisite script once as
+root. It is idempotent and deliberately does not stop or reconfigure the
+existing 7443 process, so the later cutover remains reversible:
+
+```bash
+sudo bash deploy/aliyun/seed/host-prerequisites.sh \
+  /home/rui/apps/feetforceplate-seed/tools/age-v1.3.1
+```
+
 After reviewing paths and certificate names:
 
 ```bash
