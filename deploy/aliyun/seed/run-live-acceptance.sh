@@ -32,6 +32,8 @@ run_seed_python() {
     runuser -u "$service_user" -- bash -c '
         set -euo pipefail
         cd /opt/feetforceplate/app
+        export FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
+        export XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
         set -a
         source /etc/feetforceplate/seed.env
         set +a
@@ -69,6 +71,8 @@ run_seed_python after-restart
 runuser -u "$service_user" -- bash -c '
     set -euo pipefail
     cd /opt/feetforceplate/app
+    export FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
+    export XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
     set -a
     source /etc/feetforceplate/seed.env
     set +a
@@ -81,6 +85,8 @@ runuser -u "$service_user" -- bash -c '
 ' bash "$junit_file"
 
 runuser -u "$service_user" -- bash -c '
+    export FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
+    export XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
     "$1" python - "$2" <<"PY"
 import json
 from pathlib import Path

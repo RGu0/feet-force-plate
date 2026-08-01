@@ -139,3 +139,9 @@ def test_resume_cutover_requires_persistent_readiness_before_stopping_legacy() -
     assert "\"postgres\":\"ready\"" in text
     assert "\"object_store\":\"ready\"" in text
     assert "systemctl start feetforceplate-backup.service" in text
+
+
+def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
+    text = (ROOT / "run-live-acceptance.sh").read_text()
+    assert text.count("FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv") >= 3
+    assert text.count("XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache") >= 3
