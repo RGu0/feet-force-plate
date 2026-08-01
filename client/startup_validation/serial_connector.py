@@ -13,7 +13,12 @@ from client.device.serial_transport import (
 )
 from client.device.transport import ByteTransport
 
-from .workflow import DeviceBusy, DeviceNotFound, ValidationConnection
+from .workflow import (
+    DeviceBusy,
+    DeviceIdentityMismatch,
+    DeviceNotFound,
+    ValidationConnection,
+)
 
 
 class SerialValidationConnector:
@@ -24,9 +29,11 @@ class SerialValidationConnector:
         *,
         enumerate_ports: Callable[[], Sequence[SerialPortCandidate]] = enumerate_ch340_ports,
         transport_open: Callable[[str], ByteTransport] = SerialByteTransport.open,
+        expected_hardware_identity: str | None = None,
     ) -> None:
         self._enumerate_ports = enumerate_ports
         self._transport_open = transport_open
+        self._expected_hardware_identity = expected_hardware_identity
 
     def connect(self) -> ValidationConnection:
         try:
@@ -44,6 +51,17 @@ class SerialValidationConnector:
             raise DeviceNotFound("supported pressure device was not found")
 
         candidate = available[0]
+        if self._expected_hardware_identity is not None:
+            matching = tuple(
+                item
+                for item in available
+                if stable_hardware_identity(item) == self._expected_hardware_identity
+            )
+            if len(matching) != 1:
+                raise DeviceIdentityMismatch(
+                    "connected pressure device does not match the active License"
+                )
+            candidate = matching[0]
         try:
             transport = self._transport_open(candidate.device)
         except Exception as error:
