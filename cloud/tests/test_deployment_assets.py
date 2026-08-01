@@ -12,6 +12,9 @@ def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
         "User=feetforceplate", "Group=feetforceplate", "NoNewPrivileges=true",
         "PrivateTmp=true", "ProtectSystem=strict", "ProtectHome=true",
         "ReadWritePaths=/var/lib/feetforceplate/objects",
+        "ReadWritePaths=/var/lib/feetforceplate/runtime",
+        "FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv",
+        "XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache",
         "EnvironmentFile=/etc/feetforceplate/seed.env", "Restart=on-failure",
         "FEETFORCEPLATE_BIND_HOST=127.0.0.1", "FEETFORCEPLATE_BIND_PORT=8743",
     ):
@@ -52,6 +55,7 @@ def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -
         "/opt/feetforceplate/releases", "/opt/feetforceplate/app",
         "/etc/feetforceplate/seed.env", "/var/lib/feetforceplate/objects",
         "/var/lib/feetforceplate/backups",
+        "/var/lib/feetforceplate/runtime",
     ):
         assert path in layout
     assert "-user root" in layout
