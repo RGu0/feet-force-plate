@@ -54,6 +54,19 @@ async def tenant_transaction(pool, tenant_id: UUID) -> AsyncIterator[Any]:
             yield connection
 
 
+@asynccontextmanager
+async def pool_transaction(pool) -> AsyncIterator[Any]:
+    """Acquire a role-specific transaction for non-tenant routing tables.
+
+    Tenant-owned rows must continue to use :func:`tenant_transaction` so RLS
+    context is transaction-local and cannot leak through a pooled connection.
+    """
+
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            yield connection
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, str):
         return json.loads(value)
@@ -1285,7 +1298,16 @@ class PostgresPlatformRepository:
     async def status(
         self, context: TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
-        record = await self.session(context, session_id)
+        context.ensure_active()
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2",
+                context.tenant_id,
+                session_id,
+            )
+        if row is None:
+            raise ResourceNotFound("会话不存在", session_id=str(session_id))
+        record = _session_record(row)
         return SessionStatusResponse(
             session_id=session_id,
             validity_status=record.validity_status,

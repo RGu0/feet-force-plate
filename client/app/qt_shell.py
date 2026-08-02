@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
@@ -49,6 +49,11 @@ from .engineering_maintenance import (
 from .session_deletion import (
     CompletedSessionDeletionService,
     SessionDeletionConfirmationRequired,
+)
+from .session_lock import (
+    LockState,
+    SessionActivity,
+    SessionLockController,
 )
 from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
@@ -326,6 +331,92 @@ class _SessionDeletionDialog(QDialog):
         status.setText("已删除该本地会话；未影响其他会话。")
 
 
+class _SessionLockOverlay(QFrame):
+    def __init__(
+        self,
+        controller: SessionLockController,
+        parent: QWidget,
+    ) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self.setObjectName("sessionLockOverlay")
+        self.setStyleSheet(
+            "QFrame#sessionLockOverlay { background: #F8FAFC; border: 0; }"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.addStretch(1)
+        card = QFrame()
+        card.setObjectName("sessionLockCard")
+        card.setFixedWidth(420)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(32, 32, 32, 32)
+        title = QLabel("机构会话已锁定")
+        title.setObjectName("sessionLockTitle")
+        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        card_layout.addWidget(title)
+        note = QLabel("患者、检测与报告内容已隐藏。输入机构账号密码后继续。")
+        note.setWordWrap(True)
+        note.setProperty("secondaryText", True)
+        card_layout.addWidget(note)
+        password = QLineEdit()
+        password.setObjectName("sessionUnlockPassword")
+        password.setEchoMode(QLineEdit.EchoMode.Password)
+        password.setPlaceholderText("机构账号密码")
+        card_layout.addWidget(password)
+        notice = QLabel()
+        notice.setObjectName("sessionUnlockNotice")
+        notice.setStyleSheet("color: #C23B3B;")
+        notice.hide()
+        card_layout.addWidget(notice)
+        unlock = QPushButton("解锁")
+        unlock.setObjectName("UNLOCK_INSTITUTION_SESSION")
+        unlock.setProperty("importance", "primary")
+        unlock.clicked.connect(self._unlock)
+        card_layout.addWidget(unlock)
+        layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
+        self.hide()
+
+    def show_locked(self) -> None:
+        self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.findChild(QLineEdit, "sessionUnlockPassword").setFocus()
+
+    def _unlock(self) -> None:
+        password = self.findChild(QLineEdit, "sessionUnlockPassword")
+        notice = self.findChild(QLabel, "sessionUnlockNotice")
+        if self._controller.unlock(password.text()):
+            password.clear()
+            notice.hide()
+            self.hide()
+            return
+        password.clear()
+        notice.setText("密码未通过验证，请稍后重试。")
+        notice.show()
+
+
+class _SessionActivityFilter(QObject):
+    _ACTIVITY_EVENTS = {
+        QEvent.Type.KeyPress,
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseMove,
+        QEvent.Type.TouchBegin,
+        QEvent.Type.Wheel,
+    }
+
+    def __init__(self, window: QMainWindow, controller: SessionLockController) -> None:
+        super().__init__(window)
+        self._controller = controller
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        del watched
+        if event.type() in self._ACTIVITY_EVENTS:
+            self._controller.record_activity()
+        return False
+
+
 class ScreeningWindow(QMainWindow):
     """Operator desktop shell faithfully composed from the Steady Health kit."""
 
@@ -334,6 +425,8 @@ class ScreeningWindow(QMainWindow):
         *,
         on_action: Callable[[str], None] | None = None,
         physical_grid: PhysicalGridOverlay | None = None,
+        session_lock_controller: SessionLockController | None = None,
+        protected_operation_active: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("screeningWindow")
@@ -342,6 +435,11 @@ class ScreeningWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
         self._on_action = on_action
         self._physical_grid = physical_grid
+        self._session_lock_controller = session_lock_controller
+        self._protected_operation_active = protected_operation_active or (lambda: False)
+        self._session_lock_overlay: _SessionLockOverlay | None = None
+        self._session_activity_filter: _SessionActivityFilter | None = None
+        self._session_lock_timer: QTimer | None = None
         self._stop_confirmation_pending = False
         self._preflight_failed = False
         self._preflight_ready = False
@@ -375,6 +473,22 @@ class ScreeningWindow(QMainWindow):
         root.addWidget(self._error_banner)
         root.addWidget(self._stack, 1)
         self.setCentralWidget(content)
+        if self._session_lock_controller is not None:
+            self._session_lock_overlay = _SessionLockOverlay(
+                self._session_lock_controller,
+                content,
+            )
+            self._session_activity_filter = _SessionActivityFilter(
+                self,
+                self._session_lock_controller,
+            )
+            self.installEventFilter(self._session_activity_filter)
+            for child in self.findChildren(QObject):
+                child.installEventFilter(self._session_activity_filter)
+            self._session_lock_timer = QTimer(self)
+            self._session_lock_timer.setInterval(1_000)
+            self._session_lock_timer.timeout.connect(self.evaluate_session_lock)
+            self._session_lock_timer.start()
         apply_design_system(self)
         self.show_page(PageId.WORKBENCH)
 
@@ -401,6 +515,36 @@ class ScreeningWindow(QMainWindow):
 
     def page_widget(self, page_id: PageId) -> QWidget:
         return self._pages[page_id]
+
+    @property
+    def session_locked(self) -> bool:
+        return bool(
+            self._session_lock_overlay is not None
+            and self._session_lock_overlay.isVisible()
+        )
+
+    def evaluate_session_lock(self) -> None:
+        if self._session_lock_controller is None:
+            return
+        protected = self._protected_operation_active()
+        if (
+            self._session_lock_controller.state is LockState.LOCK_PENDING
+            and not protected
+        ):
+            state = self._session_lock_controller.protected_operation_finished()
+        else:
+            state = self._session_lock_controller.tick(
+                SessionActivity.ACQUIRING
+                if protected
+                else SessionActivity.INTERACTIVE
+            )
+        if state is LockState.LOCKED and self._session_lock_overlay is not None:
+            self._session_lock_overlay.show_locked()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._session_lock_overlay is not None:
+            self._session_lock_overlay.setGeometry(self.centralWidget().rect())
 
     def show_page(self, page_id: PageId) -> None:
         self._stack.setCurrentWidget(self._pages[page_id])

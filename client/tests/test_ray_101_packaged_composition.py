@@ -42,22 +42,18 @@ def _submit_login(window, qtbot, *, account: str, password: str) -> None:
     )
 
 
-def _register_local_test_account(window, qtbot) -> None:
+def _enter_local_test_activation(window, qtbot) -> QPushButton:
     qtbot.mouseClick(
         window.findChild(QPushButton, "OPEN_LICENSE_REGISTRATION"),
         Qt.MouseButton.LeftButton,
     )
     window.findChild(QLineEdit, "licenseCodeInput").setText("FFP-2026-TEST-0001")
-    window.findChild(QLineEdit, "registrationOrganizationInput").setText("本机测试机构")
     window.findChild(QLineEdit, "registrationAccountInput").setText("local-test")
     window.findChild(QLineEdit, "registrationPasswordInput").setText("local-test-password")
     window.findChild(QLineEdit, "registrationPasswordConfirmationInput").setText(
         "local-test-password"
     )
-    qtbot.mouseClick(
-        window.findChild(QPushButton, "REGISTER_INSTITUTION"),
-        Qt.MouseButton.LeftButton,
-    )
+    return window.findChild(QPushButton, "REGISTER_INSTITUTION")
 
 
 def test_authenticated_institution_hands_off_to_the_mandatory_startup_gate(qtbot) -> None:
@@ -129,8 +125,8 @@ def test_rejected_institution_login_keeps_p00_visible_and_never_builds_gate(qtbo
     assert "remote detail" not in notice.text()
 
 
-def test_formal_entry_never_hands_local_test_license_to_production_auth(qtbot) -> None:
-    """Catch a local test account acquiring production startup permissions."""
+def test_formal_entry_disables_local_test_license_activation(qtbot) -> None:
+    """Catch a local test License becoming usable in the formal entry point."""
 
     production_session = AuthenticatedInstitutionSession(
         tenant_id="tenant-production",
@@ -146,21 +142,13 @@ def test_formal_entry_never_hands_local_test_license_to_production_auth(qtbot) -
     )
     qtbot.addWidget(application.access_window)
     application.show()
-    _register_local_test_account(application.access_window, qtbot)
+    activate = _enter_local_test_activation(application.access_window, qtbot)
 
-    _submit_login(
-        application.access_window,
-        qtbot,
-        account="local-test",
-        password="local-test-password",
-    )
-
-    notice = application.access_window.findChild(QLabel, "accessFormNotice")
+    assert not activate.isEnabled()
     assert authenticator.calls == []
     assert created == []
     assert application.startup_gate is None
     assert application.access_window.isVisible()
-    assert notice.text() == "本机测试账户登录成功。该账户仅在本次应用运行期间有效。"
 
 
 def test_startup_gate_failure_returns_to_p00_without_exposing_internal_error(qtbot) -> None:

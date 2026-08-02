@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -18,6 +19,7 @@ from client.device.acquisition import LatestFrameMailbox
 from client.device.serial_transport import (
     PortAvailability,
     SerialByteTransport,
+    SerialPortCandidate,
     enumerate_ch340_ports,
     stable_hardware_identity,
 )
@@ -66,8 +68,16 @@ class HardwareCalibrationMetadata:
 class HardwareRuntime:
     """Single implementation-selection point for the active hardware profile."""
 
-    def __init__(self, adapter: DoP4864StandardizationAdapter | None = None) -> None:
+    def __init__(
+        self,
+        adapter: DoP4864StandardizationAdapter | None = None,
+        *,
+        enumerate_ports: Callable[..., Sequence[SerialPortCandidate]] = enumerate_ch340_ports,
+        transport_open: Callable[..., ByteTransport] = SerialByteTransport.open,
+    ) -> None:
         self._adapter = adapter or DoP4864StandardizationAdapter.observed_compact_8bit()
+        self._enumerate_ports = enumerate_ports
+        self._transport_open = transport_open
 
     @property
     def display_geometry(self) -> HardwareDisplayGeometry:
@@ -143,7 +153,9 @@ class HardwareRuntime:
 
         return LatestFrameMailbox()
 
-    def connect_startup(self) -> HardwareStartupConnection:
+    def connect_startup(
+        self, *, expected_hardware_identity: str | None = None
+    ) -> HardwareStartupConnection:
         specification = self._adapter.specification
         serial_options = {
             "baud_rate": specification.serial_baud_rate,
@@ -152,7 +164,7 @@ class HardwareRuntime:
             "stop_bits": specification.serial_stop_bits,
         }
         try:
-            candidates = tuple(enumerate_ch340_ports(**serial_options))
+            candidates = tuple(self._enumerate_ports(**serial_options))
         except Exception as error:
             raise HardwareConnectionUnavailable("NOT_FOUND", "device discovery failed") from error
         available = tuple(
@@ -164,8 +176,20 @@ class HardwareRuntime:
             code = "BUSY" if candidates else "NOT_FOUND"
             raise HardwareConnectionUnavailable(code, "supported pressure device is unavailable")
         candidate = available[0]
+        if expected_hardware_identity is not None:
+            matching = tuple(
+                item
+                for item in available
+                if stable_hardware_identity(item) == expected_hardware_identity
+            )
+            if len(matching) != 1:
+                raise HardwareConnectionUnavailable(
+                    "IDENTITY_MISMATCH",
+                    "connected pressure device does not match the active License",
+                )
+            candidate = matching[0]
         try:
-            transport = SerialByteTransport.open(candidate.device, **serial_options)
+            transport = self._transport_open(candidate.device, **serial_options)
         except Exception as error:
             raise HardwareConnectionUnavailable("BUSY", "supported pressure device could not be opened") from error
         profile = ProtocolProfile.observed_compact_8bit(

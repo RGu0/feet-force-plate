@@ -117,3 +117,16 @@ E-UPD-xxx  更新和配置
 - 崩溃后下次启动自动上报崩溃证据；
 - 诊断包无身份明文且可验证完整性；
 - 关键告警在目标时间内触发且不重复轰炸。
+
+## Seed MVP access model
+
+Platform IAM 使用独立 `feetforceplate-platform` audience，并区分
+`PLATFORM_OWNER`、`PLATFORM_OPERATIONS`、`PLATFORM_SUPPORT`、
+`PLATFORM_ENGINEER`。跨机构列表只显示脱敏运营摘要；身份内容必须由 support
+或 owner 申请 15 分钟 `SensitiveAccessGrant`，每次使用均审计。
+
+机构数据 API 使用 `feetforceplate-tenant` tenant access token。日志可记录内部
+tenant/account/license/client installation UUID 与关联 ID，但不记录账号明文、
+硬件完整身份、token、激活码、身份内容或 License 签名材料。旧 terminal 字段
+属于 **legacy terminal compatibility**。种子服务只通过 Nginx 7443 提供受限
+联调，正式支持入口仍要求 **domain + public CA + 443**。

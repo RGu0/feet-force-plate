@@ -139,3 +139,16 @@ Because these live persistence, IAM, key-management, UI, hardware, support, and 
 - The bundled HMAC operations token is an integration boundary, not a production SSO issuer. Production must verify external IAM claims and instantiate `OperationsContext` without exposing token minting.
 - The implementation provides authorization decisions and audits, not sensitive-data viewers or public report delivery.
 - No secrets, personal data, activation-code plaintext, raw pressure frames, diagnostic contents, or customer report data are stored in this evidence directory.
+
+## 2026-08-01 approved seed model refresh
+
+The current MVP no longer asks a customer institution administrator to create,
+search or join a tenant. Platform operations provider-provisions the tenant,
+tenant account, `license/2`, physical hardware binding and one-time activation
+code. A tenant can change from 1 to 3 to 2 active account/License/device groups
+without splitting or moving historical data.
+
+`platform-operations-summary.json` maps provisioning, remote License lifecycle,
+audits and dynamic group history to current tests. These are `PROVEN_LOCAL`.
+Live PostgreSQL role persistence and Aliyun operations remain pending, so the
+issue is not yet eligible for an unqualified Done status.

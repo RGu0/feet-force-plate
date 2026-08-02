@@ -69,7 +69,7 @@
 | 用户 | 主要任务 | 能力假设 |
 |---|---|---|
 | 机构操作员 | 建档、引导站位、开始测试、导出/打印报告 | 会使用常规 Windows 软件，不掌握设备协议和算法 |
-| 机构管理员 | 管理机构账号、终端和少量配置 | 能完成基础 IT 操作 |
+| 机构管理角色（后续） | 可由机构配置多个管理员；MVP 不提供客户管理后台 | 能完成基础 IT 操作 |
 | 体育/康复专业人员 | 阅读报告中的专业参数和曲线 | 理解专业指标，但不是系统管理员 |
 | 平台运营/售后 | 查看终端健康、同步、错误和诊断包 | 有受控内部权限 |
 | 算法/研发人员 | 研究原始数据、特征和算法版本 | 默认不接触直接身份字段 |
@@ -725,6 +725,31 @@ flowchart TB
 - 目标打印机、网络代理和 Windows 环境兼容性。
 
 这些项目需要形成验证记录，不能以假设直接转换为对外承诺。
+
+---
+
+## Seed MVP access model
+
+首版采用 **provider-provisioned** 模式：服务商先创建机构数据边界、tenant
+account、License 和一次性激活码，客户不搜索、创建或加入机构，也不承担
+机构后台管理。账号在任意新电脑登录后继续使用，但 `license/2` 始终通过
+hardware binding 绑定一台真实压力设备；client installation 只用于会话、
+刷新令牌和审计，不是 License 所有权边界。
+
+一家机构可按业务变化完成 `1 -> 3 -> 2` 个账号/License/设备组，历史数据
+不搬迁，始终落在同一个 tenant。MVP 不提供客户机构管理员后台；未来可在
+不改变 tenant 数据边界的前提下增加多个机构管理员。
+
+账号 access token 为 **15-minute access token**；刷新会话采用 **30-day idle**
+和 **180-day absolute**；License 支持 **6/12-month License** 周期、续约、暂停、
+恢复和撤销。暂停、过期或撤销只阻止新测试，既有报告和待上传数据继续可用。
+客户端具有 **24-hour offline grace**，但断网期间无法证明跨电脑全局排他，
+这是明确限制而不是已解决能力。
+
+Platform IAM 与机构账号完全分离，角色为 `PLATFORM_OWNER`、
+`PLATFORM_OPERATIONS`、`PLATFORM_SUPPORT`、`PLATFORM_ENGINEER`。患者身份读取
+必须获得 15 分钟 `SensitiveAccessGrant` 并审计。当前 IP:7443 仅为 seed
+pilot/integration；正式商业入口仍要求 domain + public CA + 443。
 
 ---
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QPixmap
@@ -46,9 +45,10 @@ class InstitutionAccessWindow(QMainWindow):
         self,
         *,
         on_login: Callable[[str, str], None] | None = None,
-        on_validate_license: Callable[[str], None] | None = None,
-        on_register: Callable[[dict[str, str]], None] | None = None,
-        allow_local_test_handoff: bool = True,
+        on_activate: Callable[[str, str, str, str, str], None] | None = None,
+        stable_hardware_id: str | None = None,
+        allow_local_test_handoff: bool = False,
+        environment_label: str | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("institutionAccessWindow")
@@ -57,9 +57,10 @@ class InstitutionAccessWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
         self.resize(1440, 900)
         self._on_login = on_login
-        self._on_validate_license = on_validate_license
-        self._on_register = on_register
+        self._on_activate = on_activate
+        self._stable_hardware_id = stable_hardware_id
         self._allow_local_test_handoff = allow_local_test_handoff
+        self._environment_label = environment_label
         self._local_test_accounts: dict[str, str] = {}
         self._stack = QStackedWidget()
         self._stack.setObjectName("institutionAccessStack")
@@ -90,6 +91,13 @@ class InstitutionAccessWindow(QMainWindow):
         title.setStyleSheet("font-size: 32px; font-weight: 600; color: #0F172A;")
         brand_layout.addWidget(title)
         brand_layout.addSpacing(12)
+        if self._environment_label:
+            environment = QLabel(self._environment_label)
+            environment.setObjectName("accessEnvironmentLabel")
+            environment.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            environment.setStyleSheet("color: #B45309; font-weight: 600;")
+            brand_layout.addWidget(environment)
+            brand_layout.addSpacing(8)
         subtitle = QLabel("请使用机构账号登录后开始检测")
         subtitle.setObjectName("accessSubtitle")
         subtitle.setProperty("secondaryText", True)
@@ -195,7 +203,7 @@ class InstitutionAccessWindow(QMainWindow):
         card_layout.addWidget(self._registration_form(), 1)
         page_layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
         page_layout.addSpacing(24)
-        footer = QLabel("License 由天富智柔随设备发放，每个授权码仅可激活一个机构账户")
+        footer = QLabel("License 由天富智柔随设备和机构账号发放，每个激活码仅可使用一次")
         footer.setProperty("mutedText", True)
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         page_layout.addWidget(footer)
@@ -219,16 +227,18 @@ class InstitutionAccessWindow(QMainWindow):
         title.setStyleSheet("font-size: 24px; font-weight: 600; color: #0F172A;")
         layout.addWidget(title)
         layout.addSpacing(12)
-        description = QLabel("输入随设备发放的 License 授权码，激活后即可创建本机构的登录账户。")
+        description = QLabel(
+            "使用服务商随设备提供的机构账号和一次性激活码，连接当前硬件并设置登录密码。"
+        )
         description.setProperty("secondaryText", True)
         description.setWordWrap(True)
         description.setStyleSheet("line-height: 1.7;")
         layout.addWidget(description)
         layout.addStretch(1)
         for number, text in (
-            ("1", "输入 License 授权码并校验"),
-            ("2", "填写机构信息与登录凭据"),
-            ("3", "激活并创建机构账户"),
+            ("1", "连接随 License 发放的硬件"),
+            ("2", "输入机构账号与一次性激活码"),
+            ("3", "设置密码并完成激活"),
         ):
             step = QLabel(f"{number}    {text}")
             step.setObjectName(f"registrationStep{number}")
@@ -242,39 +252,33 @@ class InstitutionAccessWindow(QMainWindow):
         layout = QVBoxLayout(form)
         layout.setContentsMargins(40, 36, 40, 36)
         layout.setSpacing(0)
-        layout.addWidget(self._field_label("License 授权码"))
+        account = self._line_field(
+            layout,
+            "机构账号",
+            "registrationAccountInput",
+            "请输入服务商提供的机构账号",
+        )
+        layout.addSpacing(16)
+        layout.addWidget(self._field_label("一次性激活码 / License 码"))
         layout.addSpacing(8)
-        license_row = QHBoxLayout()
-        license_row.setContentsMargins(0, 0, 0, 0)
-        license_row.setSpacing(12)
         license_code = QLineEdit()
         license_code.setObjectName("licenseCodeInput")
-        license_code.setAccessibleName("License 授权码")
-        license_code.setPlaceholderText("FFP-2026-XXXX-XXXX")
-        license_row.addWidget(license_code, 1)
-        validate = self._button("VALIDATE_LICENSE", "校验")
-        validate.clicked.connect(lambda: self._validate_license(license_code.text()))
-        license_row.addWidget(validate)
-        layout.addLayout(license_row)
+        license_code.setAccessibleName("一次性激活码")
+        license_code.setPlaceholderText("请输入随设备提供的一次性激活码")
+        layout.addWidget(license_code)
         layout.addSpacing(10)
-        layout.addWidget(self._status_pill("licenseValidationStatus", "待联网校验", "neutral"))
-        layout.addSpacing(24)
+        layout.addWidget(
+            self._status_pill(
+                "activationHardwareStatus",
+                self._hardware_status_text(),
+                "success" if self._stable_hardware_id else "warning",
+            )
+        )
+        layout.addSpacing(20)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setStyleSheet("color: #E2E8F0;")
         layout.addWidget(divider)
-        layout.addSpacing(24)
-        organization = self._line_field(
-            layout, "机构名称", "registrationOrganizationInput", "请输入机构名称"
-        )
-        layout.addSpacing(16)
-        account = self._line_field(
-            layout, "设置机构账号", "registrationAccountInput", "登录时使用，创建后不可更改"
-        )
-        account_hint = QLabel("登录时使用，创建后不可更改")
-        account_hint.setProperty("mutedText", True)
-        layout.addSpacing(6)
-        layout.addWidget(account_hint)
         layout.addSpacing(16)
         passwords = QHBoxLayout()
         passwords.setContentsMargins(0, 0, 0, 0)
@@ -298,18 +302,19 @@ class InstitutionAccessWindow(QMainWindow):
         back.clicked.connect(self._show_login)
         actions.addWidget(back)
         actions.addStretch(1)
-        register = self._button("REGISTER_INSTITUTION", "激活并创建账户", primary=True)
+        register = self._button("REGISTER_INSTITUTION", "激活 License", primary=True)
+        register.setEnabled(self._stable_hardware_id is not None)
+        license_code.textChanged.connect(
+            lambda text: self._update_activation_button(register, text)
+        )
         register.clicked.connect(
-            lambda: self._submit_registration(
-                {
-                    "license_code": license_code.text(),
-                    "organization_name": organization.text(),
-                    "account": account.text(),
-                    "password": password.findChild(QLineEdit, "registrationPasswordInput").text(),
-                    "password_confirmation": confirmation.findChild(
-                        QLineEdit, "registrationPasswordConfirmationInput"
-                    ).text(),
-                }
+            lambda: self._submit_activation(
+                account.text(),
+                license_code.text(),
+                password.findChild(QLineEdit, "registrationPasswordInput").text(),
+                confirmation.findChild(
+                    QLineEdit, "registrationPasswordConfirmationInput"
+                ).text(),
             )
         )
         actions.addWidget(register)
@@ -427,7 +432,11 @@ class InstitutionAccessWindow(QMainWindow):
             notice.show()
             return
         notice.hide()
-        self._on_login(account.strip(), password)
+        try:
+            self._on_login(account.strip(), password)
+        except Exception:
+            notice.setText("登录未完成，请检查账号、网络和已连接设备后重试。")
+            notice.show()
 
     def show_login_error(self, message: str) -> None:
         """Show a composition-layer error without exposing adapter details."""
@@ -437,53 +446,89 @@ class InstitutionAccessWindow(QMainWindow):
         notice.setText(message)
         notice.show()
 
-    def _validate_license(self, license_code: str) -> None:
-        normalized = license_code.strip().upper()
-        pill = self.findChild(QFrame, "licenseValidationStatus")
-        label = self.findChild(QLabel, "licenseValidationStatusText")
-        if normalized == LOCAL_UI_TEST_LICENSE:
-            label.setText("本机测试 License 已校验")
-            self._set_pill_tone(pill, "success")
-        elif re.fullmatch(r"FFP-\d{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", normalized):
-            label.setText("授权码格式正确 · 待联网校验")
-            self._set_pill_tone(pill, "info")
-        else:
-            label.setText("请输入有效的 License 授权码格式")
-            self._set_pill_tone(pill, "warning")
-        if self._on_validate_license is not None:
-            self._on_validate_license(normalized)
-
-    def _submit_registration(self, values: dict[str, str]) -> None:
+    def _submit_activation(
+        self,
+        account: str,
+        activation_code: str,
+        password: str,
+        password_confirmation: str,
+    ) -> None:
         notice = self.findChild(QLabel, "registrationFormNotice")
         notice.setStyleSheet("color: #C23B3B; font-size: 14px;")
-        if not all(value.strip() for value in values.values()):
-            notice.setText("请填写 License、机构信息、机构账号和两次密码。")
+        if not all(
+            value.strip()
+            for value in (account, activation_code, password, password_confirmation)
+        ):
+            notice.setText("请填写机构账号、一次性激活码和两次密码。")
             notice.show()
             return
-        if values["password"] != values["password_confirmation"]:
+        if password != password_confirmation:
             notice.setText("两次输入的密码不一致，请重新确认。")
             notice.show()
             return
-        if values["license_code"].strip().upper() == LOCAL_UI_TEST_LICENSE:
-            account = values["account"].strip()
-            if account in self._local_test_accounts:
+        normalized_code = activation_code.strip().upper()
+        normalized_account = account.strip()
+        if normalized_code == LOCAL_UI_TEST_LICENSE:
+            if not self._allow_local_test_handoff:
+                notice.setText("本机测试 License 仅可在显式测试模式下使用。")
+                notice.show()
+                return
+            if normalized_account in self._local_test_accounts:
                 notice.setText("该本机测试机构账号已创建，请返回登录。")
                 notice.show()
                 return
-            self._local_test_accounts[account] = values["password"]
+            self._local_test_accounts[normalized_account] = password
             self._show_login()
-            self.findChild(QLineEdit, "institutionAccountInput").setText(account)
+            self.findChild(QLineEdit, "institutionAccountInput").setText(
+                normalized_account
+            )
             login_notice = self.findChild(QLabel, "accessFormNotice")
             login_notice.setStyleSheet("color: #15803D; font-size: 14px;")
             login_notice.setText("本机测试账户已创建，请使用设置的密码登录。")
             login_notice.show()
             return
-        if self._on_register is None:
+        if self._stable_hardware_id is None:
+            notice.setText("未发现可用于激活的硬件，请连接设备后重试。")
+            notice.show()
+            return
+        if self._on_activate is None:
             notice.setText("当前版本尚未连接 License 服务，无法激活并创建账户。")
             notice.show()
             return
         notice.hide()
-        self._on_register(values)
+        try:
+            self._on_activate(
+                normalized_account,
+                activation_code.strip(),
+                password,
+                password_confirmation,
+                self._stable_hardware_id,
+            )
+        except Exception:
+            notice.setText("激活未完成，请核对账号、激活码、网络和硬件后重试。")
+            notice.show()
+
+    def set_hardware_identity(self, stable_hardware_id: str | None) -> None:
+        self._stable_hardware_id = stable_hardware_id
+        label = self.findChild(QLabel, "activationHardwareStatusText")
+        pill = self.findChild(QFrame, "activationHardwareStatus")
+        label.setText(self._hardware_status_text())
+        self._set_pill_tone(pill, "success" if stable_hardware_id else "warning")
+        button = self.findChild(QPushButton, "REGISTER_INSTITUTION")
+        code = self.findChild(QLineEdit, "licenseCodeInput").text()
+        self._update_activation_button(button, code)
+
+    def _hardware_status_text(self) -> str:
+        if self._stable_hardware_id is None:
+            return "未发现可激活硬件"
+        return f"已连接硬件 · …{self._stable_hardware_id[-6:]}"
+
+    def _update_activation_button(self, button: QPushButton, code: str) -> None:
+        local_test = (
+            self._allow_local_test_handoff
+            and code.strip().upper() == LOCAL_UI_TEST_LICENSE
+        )
+        button.setEnabled(self._stable_hardware_id is not None or local_test)
 
     @staticmethod
     def _set_pill_tone(pill: QFrame, tone: str) -> None:

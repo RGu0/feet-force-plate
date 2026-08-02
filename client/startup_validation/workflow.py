@@ -19,6 +19,10 @@ class DeviceNotFound(ConnectionError):
     """No supported device was available during startup discovery."""
 
 
+class DeviceIdentityMismatch(DeviceNotFound):
+    """The connected physical device is not the License-bound device."""
+
+
 class DeviceBusy(ConnectionError):
     """A supported device exists but another process owns it."""
 

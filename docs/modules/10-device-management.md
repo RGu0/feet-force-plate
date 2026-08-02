@@ -42,11 +42,11 @@ flowchart LR
 
 ## 4. 首次激活
 
-1. 机构管理员生成一次性激活码；
-2. 终端提交激活码、安装实例 ID 和系统摘要；
-3. 云端绑定 `tenant/site/terminal` 并签发终端身份；
-4. 操作员选择或自动识别压力设备；
-5. 云端下发允许的设备型号、配置和 License；
+1. 服务商 Platform operations 预先创建 tenant account、License 和一次性激活码；
+2. 客户端提交账号、激活码、密码、client installation 和稳定硬件身份；
+3. 云端原子激活账号、`license/2` 和 hardware binding；
+4. 客户端只打开 License 绑定的真实压力设备；
+5. 云端下发签名 License、允许的设备型号和配置；
 6. 激活码失效，后续使用终端身份认证。
 
 不得把长期共享密钥写入安装包。
@@ -108,3 +108,20 @@ disk_free / clock_skew / last_error_code
 - 配置切换和数据库迁移失败可以回滚；
 - 心跳不泄露身份和健康数据；
 - 离线门槛与 License、当前会话收尾行为一致。
+
+## Seed MVP access model
+
+License 跟随 tenant account 与 physical hardware，不跟随电脑终端。
+client installation 允许同一账号换电脑登录，用于刷新会话、租约和审计。
+同一机构支持 `1 -> 3 -> 2` 个账号/License/设备组；MVP 全部由
+provider-provisioned，不提供客户机构搜索、新建、加入或管理员后台。
+
+tenant access token audience 是 `feetforceplate-tenant`，有效 15 分钟；刷新
+窗口为 30-day idle / 180-day absolute。License 周期为 6/12 个月，并支持远程
+续约、暂停、恢复和撤销。暂停、过期或撤销阻止新测试，但
+**upload and report access continue**。24-hour offline grace 允许短时现场工作，
+但离线跨电脑排他不是已证明能力。
+
+旧 `terminal_id`、心跳和配置路由属于 **legacy terminal compatibility**；不再
+作为 License 权威绑定。IP:7443 只用于联调，正式入口为
+**domain + public CA + 443**。

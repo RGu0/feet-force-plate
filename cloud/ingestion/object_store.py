@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+from pathlib import Path
 import tempfile
 from dataclasses import dataclass
 from typing import AsyncIterable, Protocol
@@ -113,6 +115,169 @@ class InMemoryObjectStore:
 
     async def read(self, object_key: str) -> bytes:
         return self._objects[object_key]
+
+
+class FileSystemObjectStore:
+    """Private immutable filesystem storage with verified atomic publication."""
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root).resolve()
+        self._staging = self.root / ".staging"
+        self._mkdir_private(self.root)
+        self._mkdir_private(self._staging)
+
+    @staticmethod
+    def _mkdir_private(path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
+
+    def _path(self, object_key: str) -> Path:
+        key_path = Path(object_key)
+        if (
+            not object_key
+            or object_key.startswith(("/", "\\"))
+            or ".." in key_path.parts
+            or "\\" in object_key
+        ):
+            raise ValueError("object key must be relative")
+        candidate = (self.root / key_path).resolve()
+        if not candidate.is_relative_to(self.root) or candidate == self.root:
+            raise ValueError("object key escapes storage root")
+        return candidate
+
+    async def put_segment(
+        self,
+        tenant_id: UUID,
+        session_id: UUID,
+        metadata: SegmentMetadata,
+        chunks: AsyncIterable[bytes],
+    ) -> StoredObject:
+        object_key = (
+            f"tenants/{tenant_id}/sessions/{session_id}/segments/"
+            f"{metadata.segment_index}-{metadata.sha256}.ffps"
+        )
+        return await self._write_stream(
+            object_key,
+            chunks,
+            expected_sha256=metadata.sha256,
+            expected_size=metadata.size_bytes,
+            kind="分段",
+        )
+
+    async def put_manifest(
+        self,
+        tenant_id: UUID,
+        session_id: UUID,
+        manifest: SessionManifest,
+        expected_sha256: str,
+    ) -> StoredObject:
+        payload = canonical_json_bytes(manifest)
+
+        async def chunks():
+            yield payload
+
+        object_key = (
+            f"tenants/{tenant_id}/sessions/{session_id}/manifests/"
+            f"{expected_sha256}.json"
+        )
+        return await self._write_stream(
+            object_key,
+            chunks(),
+            expected_sha256=expected_sha256,
+            expected_size=len(payload),
+            kind="最终清单",
+        )
+
+    async def _write_stream(
+        self,
+        object_key: str,
+        chunks: AsyncIterable[bytes],
+        *,
+        expected_sha256: str,
+        expected_size: int,
+        kind: str,
+    ) -> StoredObject:
+        final_path = self._path(object_key)
+        self._mkdir_private(final_path.parent)
+        staging_path = self._staging / f"{uuid4()}.part"
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            descriptor = os.open(staging_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                async for chunk in chunks:
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            actual_sha256 = digest.hexdigest()
+            if size != expected_size:
+                raise SizeMismatch(
+                    f"{kind}长度与声明不一致",
+                    expected=expected_size,
+                    actual=size,
+                )
+            if actual_sha256 != expected_sha256:
+                raise DigestMismatch(
+                    f"{kind}摘要与声明不一致",
+                    expected=expected_sha256,
+                    actual=actual_sha256,
+                )
+            if final_path.exists():
+                self._verify_existing(
+                    final_path,
+                    expected_sha256=expected_sha256,
+                    expected_size=expected_size,
+                    object_key=object_key,
+                )
+                return StoredObject(object_key, expected_sha256, expected_size)
+            os.replace(staging_path, final_path)
+            final_path.chmod(0o600)
+            directory_fd = os.open(final_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return StoredObject(object_key, expected_sha256, expected_size)
+        finally:
+            try:
+                staging_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _verify_existing(
+        path: Path,
+        *,
+        expected_sha256: str,
+        expected_size: int,
+        object_key: str,
+    ) -> None:
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        if size != expected_size or digest.hexdigest() != expected_sha256:
+            raise SegmentDigestConflict(
+                "不可变对象键已存在不同内容",
+                object_key=object_key,
+            )
+
+    async def delete(self, object_key: str) -> None:
+        path = self._path(object_key)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+    async def read(self, object_key: str) -> bytes:
+        return self._path(object_key).read_bytes()
 
 
 class S3ObjectStore:

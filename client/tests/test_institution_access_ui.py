@@ -44,8 +44,9 @@ def test_p00_login_opens_the_p00b_license_registration_form(qtbot) -> None:
 
     assert window.findChild(QLabel, "registrationTitle").isVisible()
     assert window.findChild(QLineEdit, "licenseCodeInput") is not None
-    assert window.findChild(QLineEdit, "registrationOrganizationInput") is not None
-    assert window.findChild(QPushButton, "VALIDATE_LICENSE").isVisible()
+    assert window.findChild(QLineEdit, "registrationAccountInput") is not None
+    assert window.findChild(QLineEdit, "registrationOrganizationInput") is None
+    assert window.findChild(QLabel, "activationHardwareStatusText") is not None
     assert window.findChild(QPushButton, "RETURN_TO_LOGIN").isVisible()
 
 
@@ -54,7 +55,7 @@ def test_local_test_license_is_presented_as_a_local_only_test_license(
 ) -> None:
     """Catch the documented test code falling through to the unavailable-service state."""
 
-    window = client.app.InstitutionAccessWindow()
+    window = client.app.InstitutionAccessWindow(allow_local_test_handoff=True)
     qtbot.addWidget(window)
     window.show()
     qtbot.mouseClick(
@@ -63,13 +64,8 @@ def test_local_test_license_is_presented_as_a_local_only_test_license(
     )
     window.findChild(QLineEdit, "licenseCodeInput").setText("FFP-2026-TEST-0001")
 
-    qtbot.mouseClick(
-        window.findChild(QPushButton, "VALIDATE_LICENSE"),
-        Qt.MouseButton.LeftButton,
-    )
-
-    status = window.findChild(QLabel, "licenseValidationStatusText")
-    assert status.text() == "本机测试 License 已校验"
+    activate = window.findChild(QPushButton, "REGISTER_INSTITUTION")
+    assert activate.isEnabled()
 
 
 def test_local_test_license_creates_an_account_and_allows_local_login(qtbot) -> None:
@@ -77,7 +73,8 @@ def test_local_test_license_creates_an_account_and_allows_local_login(qtbot) -> 
 
     successful_logins: list[tuple[str, str]] = []
     window = client.app.InstitutionAccessWindow(
-        on_login=lambda account, password: successful_logins.append((account, password))
+        on_login=lambda account, password: successful_logins.append((account, password)),
+        allow_local_test_handoff=True,
     )
     qtbot.addWidget(window)
     window.show()
@@ -86,7 +83,6 @@ def test_local_test_license_creates_an_account_and_allows_local_login(qtbot) -> 
         Qt.MouseButton.LeftButton,
     )
     window.findChild(QLineEdit, "licenseCodeInput").setText("FFP-2026-TEST-0001")
-    window.findChild(QLineEdit, "registrationOrganizationInput").setText("本机测试机构")
     window.findChild(QLineEdit, "registrationAccountInput").setText("local-test")
     window.findChild(QLineEdit, "registrationPasswordInput").setText("local-test-password")
     window.findChild(QLineEdit, "registrationPasswordConfirmationInput").setText(
@@ -148,7 +144,9 @@ def test_login_does_not_claim_success_when_the_license_service_is_unavailable(qt
 def test_registration_requires_complete_values_before_attempting_activation(qtbot) -> None:
     """Catch an activation CTA that crashes or sends an incomplete registration."""
 
-    window = client.app.InstitutionAccessWindow()
+    window = client.app.InstitutionAccessWindow(
+        stable_hardware_id="usb-serial-0123456789abcdef0123"
+    )
     qtbot.addWidget(window)
     window.show()
     qtbot.mouseClick(
@@ -163,4 +161,4 @@ def test_registration_requires_complete_values_before_attempting_activation(qtbo
 
     notice = window.findChild(QLabel, "registrationFormNotice")
     assert notice.isVisible()
-    assert notice.text() == "请填写 License、机构信息、机构账号和两次密码。"
+    assert notice.text() == "请填写机构账号、一次性激活码和两次密码。"

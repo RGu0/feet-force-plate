@@ -1,5 +1,6 @@
 """Versioned, transport-safe FeetForcePlate contracts."""
 
+from .access_control import *  # noqa: F403
 from .client_sync import (
     DigestConflict,
     DurableUploadTask,

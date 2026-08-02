@@ -1040,7 +1040,13 @@ class InMemoryPlatformRepository:
     async def status(
         self, context: TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
-        session = self._session(context, session_id)
+        context.ensure_active()
+        tenant = self._session_tenants.get(session_id)
+        if tenant is not None and tenant != context.tenant_id:
+            raise TenantAccessDenied("会话不属于当前租户", session_id=str(session_id))
+        session = self._sessions.get((context.tenant_id, session_id))
+        if session is None:
+            raise ResourceNotFound("会话不存在", session_id=str(session_id))
         return SessionStatusResponse(
             session_id=session_id,
             validity_status=session.validity_status,

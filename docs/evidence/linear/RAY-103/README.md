@@ -1,4 +1,4 @@
-# RAY-103 证据：可观测性输入边界统一
+# RAY-103 证据：Platform IAM、脱敏运维与敏感访问授权
 
 - Issue: RAY-103 自动故障日志、监控告警与支持诊断
 - URL: https://linear.app/ray-app/issue/RAY-103/自动故障日志监控告警与支持诊断
@@ -20,3 +20,15 @@
 ## 关联 commit
 
 `136a5e1` — Unify standard physical pressure input interface
+
+## 2026-08-01 Platform IAM refresh
+
+当前实现具有多个独立 Platform identity，以及 `PLATFORM_OWNER`、
+`PLATFORM_OPERATIONS`、`PLATFORM_SUPPORT`、`PLATFORM_ENGINEER` 四种可扩展角色。
+跨机构列表仅返回脱敏统计；身份披露要求 support/owner 获得最长 15 分钟的
+`SensitiveAccessGrant`，签发和使用均写入审计。
+
+`platform-iam-summary.json` 与 `cloud/tests/test_platform_iam.py`、
+`cloud/tests/test_platform_api.py` 是 `PROVEN_LOCAL` 证据。真实 PostgreSQL
+持久化仍为 `PENDING_POSTGRES`，正式 SSO/MFA 属于商业扩展，不把它们伪装成
+当前已完成项。

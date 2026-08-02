@@ -1,0 +1,25 @@
+{
+  "archive_sha256": "a8562049b51c8344b76643c12476e9fa6df40d6c43be62c123d50f8d9e276e52",
+  "backup": {
+    "bundle": "20260801T154842Z-0a049890af6e.tar.age",
+    "service_mode": "oneshot",
+    "sha256_sidecar_check": "passed",
+    "timer_active": true
+  },
+  "generated_at": "2026-08-01T15:51:06Z",
+  "health": {
+    "object_store": "ready",
+    "postgres": "ready",
+    "status": "ready"
+  },
+  "network": {
+    "public_https_port": 7443,
+    "postgres_loopback_port": 5432,
+    "service_loopback_port": 8743
+  },
+  "release": "0a049890af6e905ccc05d5e1f40d034e131f366e",
+  "schema_version": "seed-deployment-evidence/1",
+  "secrets_included": false,
+  "ssh_post_quantum_kex_warning_observed": true,
+  "tls_boundary": "self-signed integration certificate on 7443; customer domain, public CA, and 443 remain rollout gates"
+}

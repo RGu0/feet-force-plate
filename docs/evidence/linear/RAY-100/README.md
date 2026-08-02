@@ -187,3 +187,19 @@ HTTPS 环境，并通过真实公网完成 readiness、一次性终端激活和�
 该环境仍使用进程内存仓储和对象存储、自签名证书及用户 crontab。它强化已
 勾选的激活/心跳证据，但没有新增完成启动静默登录、License 安全缓存与轮换、
 网络恢复自动解锁或真实采集连续性，所以 Linear 保持 `6/10`、`In Review`。
+
+## 2026-08-01 account-bound License client refresh
+
+The current client uses provider-provisioned account activation and no customer
+tenant-search/create/admin controls. Login on a replacement computer creates a
+new client installation while keeping the same account-bound `license/2` and
+physical hardware identity. Stable USB serial identity is verified before the
+device opens; computer identity does not own the License.
+
+`pytest-seed-client-access.xml` records 248 passing client tests. Deterministic
+native Qt captures under `seed-access-ui/` show activation, login, session lock
+and suspended-License states. These prove local packaged composition and UI
+behavior. Aliyun now proves the synthetic-hardware HTTPS activation, login,
+lease, heartbeat and upload-metadata lifecycle. A real physical device run,
+customer-domain/public-CA/443 ingress and operator acceptance remain open; the
+issue must not be marked Done for hardware-specific criteria yet.

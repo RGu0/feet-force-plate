@@ -1,0 +1,32 @@
+{
+  "evidence_scope": "simulated-access-ui",
+  "commit_sha": "8834ae6dfce77eb448431f976c9735ca591e7ca3",
+  "network_used": false,
+  "physical_hardware_used": false,
+  "captures": [
+    {
+      "state": "login",
+      "file": "login.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "state": "activation",
+      "file": "activation.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "state": "locked",
+      "file": "locked.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "state": "license-suspended-long-copy",
+      "file": "license-suspended.png",
+      "width": 1280,
+      "height": 720
+    }
+  ]
+}

@@ -13,6 +13,12 @@ from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QWidget
 
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.cloud.runtime import (
+    AccessRuntimeSettings,
+    AuthenticatedInstitutionSession as SeedAuthenticatedInstitutionSession,
+    ClientAccessRuntime,
+    build_client_access_runtime,
+)
 from client.startup_validation.persistence import ValidationAuditTrail
 from client.startup_validation.recovery import FailureEscalationPolicy
 from client.startup_validation.serial_connector import SerialValidationConnector
@@ -23,6 +29,8 @@ from client.startup_validation.workflow import (
 )
 
 from .qt_shell import ScreeningWindow
+from .pages import PageId
+from .session_lock import LockTimeout, SessionLockController
 from .app_icon import application_icon
 from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
@@ -135,13 +143,17 @@ class _ValidationOnlyKeyProvider:
 
 def build_mandatory_startup_gate(
     *,
-    terminal_id: str,
+    audit_actor_id: str | None = None,
+    terminal_id: str | None = None,
     app_version: str,
     connector: ValidationConnector | None = None,
     workbench_factory: Callable[[], QWidget] = ScreeningWindow,
     quit_application: Callable[[], None] | None = None,
     audit_trail: ValidationAuditPort | None = None,
 ) -> MandatoryStartupGate:
+    resolved_audit_actor_id = audit_actor_id or terminal_id
+    if not resolved_audit_actor_id:
+        raise ValueError("audit_actor_id is required")
     resolved_connector = connector or SerialValidationConnector()
 
     def coordinator_factory(on_presentation):
@@ -156,7 +168,7 @@ def build_mandatory_startup_gate(
                 transport=connection.transport,
                 parser=connection.parser,
             ),
-            terminal_id=terminal_id,
+            terminal_id=resolved_audit_actor_id,
             app_version=app_version,
             on_presentation=on_presentation,
             run_policy=policy,
@@ -170,15 +182,47 @@ def build_mandatory_startup_gate(
     )
 
 
-def build_institution_access_screen() -> InstitutionAccessWindow:
-    """Expose P-00 before startup hardware validation begins.
+def build_institution_access_screen(
+    *,
+    runtime: ClientAccessRuntime | None = None,
+    environment_label: str | None = None,
+    on_authenticated: Callable[[SeedAuthenticatedInstitutionSession], None] | None = None,
+) -> InstitutionAccessWindow:
+    """Expose P-00 and wire the production access runtime when configured."""
 
-    The current package does not include the remote License service, so this
-    is intentionally a UI-only access boundary.  A later authentication port
-    will decide when it may hand off to ``build_mandatory_startup_gate``.
-    """
+    if runtime is None:
+        return InstitutionAccessWindow(environment_label=environment_label)
 
-    return InstitutionAccessWindow()
+    def complete(session: SeedAuthenticatedInstitutionSession) -> None:
+        if on_authenticated is not None:
+            on_authenticated(session)
+
+    def login(account: str, password: str) -> None:
+        complete(runtime.login(account, password))
+
+    def activate(
+        account: str,
+        activation_code: str,
+        password: str,
+        confirmation: str,
+        hardware_id: str,
+    ) -> None:
+        complete(
+            runtime.activate(
+                account,
+                activation_code,
+                password,
+                confirmation,
+                hardware_id,
+            )
+        )
+
+    return InstitutionAccessWindow(
+        on_login=login,
+        on_activate=activate,
+        stable_hardware_id=runtime.discover_hardware_identity(),
+        environment_label=environment_label,
+    )
 
 
 def build_institution_application(
@@ -222,8 +266,61 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setWindowIcon(application_icon())
-    institution_application = build_institution_application()
-    institution_application.show()
+    settings = AccessRuntimeSettings.from_environment()
+    runtime = None if settings is None else build_client_access_runtime(settings)
+    references: dict[str, object] = {}
+
+    def authenticated(session: SeedAuthenticatedInstitutionSession) -> None:
+        access.hide()
+        audit_trail, audit_store = _default_validation_audit_trail()
+        timeout_minutes = runtime.lock_timeout_minutes() if runtime is not None else 30
+        timeout = (
+            LockTimeout.NEVER
+            if timeout_minutes is None
+            else LockTimeout(str(timeout_minutes))
+        )
+        lock_controller = SessionLockController(
+            lambda password: bool(runtime and runtime.verify_password(password)),
+            timeout=timeout,
+        )
+        workbench_holder: dict[str, ScreeningWindow] = {}
+
+        def workbench_factory() -> ScreeningWindow:
+            window = ScreeningWindow(
+                session_lock_controller=lock_controller,
+                protected_operation_active=lambda: (
+                    workbench_holder.get("window") is not None
+                    and workbench_holder["window"].current_page_id is PageId.ACQUIRING
+                ),
+            )
+            workbench_holder["window"] = window
+            return window
+
+        gate = build_mandatory_startup_gate(
+            audit_actor_id=session.client_installation_id,
+            app_version=APP_VERSION,
+            connector=SerialValidationConnector(
+                expected_hardware_identity=session.hardware_id
+            ),
+            audit_trail=audit_trail,
+            workbench_factory=workbench_factory,
+        )
+        references.update(
+            gate=gate,
+            audit_store=audit_store,
+            lock_controller=lock_controller,
+            workbench_holder=workbench_holder,
+        )
+        gate.start()
+
+    access = build_institution_access_screen(
+        runtime=runtime,
+        environment_label=None if settings is None else settings.environment_label,
+        on_authenticated=authenticated,
+    )
+    references.update(access=access, runtime=runtime)
+    app.setProperty("seedAccessComposition", references)
+    access.show()
     return app.exec()
 
 
