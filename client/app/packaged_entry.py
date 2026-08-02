@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import sys
 from typing import Protocol
+from uuid import UUID
 
 from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QWidget
@@ -23,6 +24,12 @@ from client.startup_validation.persistence import ValidationAuditTrail
 from client.startup_validation.recovery import FailureEscalationPolicy
 from client.startup_validation.serial_connector import SerialValidationConnector
 from client.startup_validation.service import DeviceValidationService
+from client.startup_validation.telemetry_upload import (
+    AutomaticValidationTelemetryWorker,
+    ValidationTelemetryCloudClient,
+    ValidationTelemetryUploadClient,
+    ValidationTelemetryUploadWorker,
+)
 from client.startup_validation.workflow import (
     StartupValidationCoordinator,
     ValidationConnector,
@@ -43,6 +50,41 @@ class ValidationAuditPort(Protocol):
     def record(self, run): ...
 
     def recent_results(self, device_ref: str, *, limit: int): ...
+
+
+@dataclass(frozen=True, slots=True)
+class DefaultValidationTelemetryRuntime:
+    background: AutomaticValidationTelemetryWorker
+    cloud_client: ValidationTelemetryUploadClient
+
+    def stop(self) -> None:
+        self.background.stop()
+        close = getattr(self.cloud_client, "close", None)
+        if close is not None:
+            close()
+
+
+def start_default_validation_telemetry_upload(
+    *,
+    audit_trail: ValidationAuditTrail,
+    cloud_client: ValidationTelemetryUploadClient,
+    client_installation_id: UUID | str,
+    interval_seconds: float = 30.0,
+) -> DefaultValidationTelemetryRuntime:
+    """Start non-blocking automatic upload after institution authentication."""
+
+    worker = ValidationTelemetryUploadWorker(
+        audit_trail,
+        cloud_client,
+        client_installation_id=UUID(str(client_installation_id)),
+    )
+    background = AutomaticValidationTelemetryWorker(
+        worker,
+        interval_seconds=interval_seconds,
+    )
+    runtime = DefaultValidationTelemetryRuntime(background, cloud_client)
+    background.start()
+    return runtime
 
 
 @dataclass(frozen=True)
@@ -273,6 +315,18 @@ def main() -> int:
     def authenticated(session: SeedAuthenticatedInstitutionSession) -> None:
         access.hide()
         audit_trail, audit_store = _default_validation_audit_trail()
+        telemetry_runtime = None
+        if runtime is not None and settings is not None:
+            telemetry_runtime = start_default_validation_telemetry_upload(
+                audit_trail=audit_trail,
+                cloud_client=ValidationTelemetryCloudClient(
+                    settings.base_url,
+                    verify=settings.verify,
+                    access_token_provider=runtime.current_access_token,
+                ),
+                client_installation_id=session.client_installation_id,
+            )
+            app.aboutToQuit.connect(telemetry_runtime.stop)
         timeout_minutes = runtime.lock_timeout_minutes() if runtime is not None else 30
         timeout = (
             LockTimeout.NEVER
@@ -308,6 +362,7 @@ def main() -> int:
         references.update(
             gate=gate,
             audit_store=audit_store,
+            telemetry_runtime=telemetry_runtime,
             lock_controller=lock_controller,
             workbench_holder=workbench_holder,
         )

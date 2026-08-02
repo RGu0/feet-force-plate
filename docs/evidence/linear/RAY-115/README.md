@@ -273,4 +273,18 @@ Therefore RAY-115 may move to **In Review**, not Done.
 - Evidence 完整性：本文件包含命令、JUnit、日志字段审计、七态截图、真机环境与 SHA、结果、失败历史、限制和实现 commit。
 - Linear 回填：本轮在 RAY-115 和父 issue RAY-101 同步 evidence 路径、完成项和剩余边界。
 
-仍不勾选两项：真实 telemetry worker/server 的认证、退避与服务端确认尚未端到端接入；Windows 高 DPI、键盘、提示文字和退出路径仍需目标机人工验收。因此 RAY-115 保持 `In Review`，不能标 `Done`。
+截至 2026-07-31 仍不勾选两项：真实 telemetry worker/server 的认证、退避与服务端确认尚未端到端接入；Windows 高 DPI、键盘、提示文字和退出路径仍需目标机人工验收。因此当时 RAY-115 保持 `In Review`，不能标 `Done`。
+
+## 2026-08-02 自动脱敏故障日志补传收口
+
+本轮补齐了之前明确缺失的软件链路，未使用或模拟新的硬件证据：
+
+- 机构登录成功后，正式 packaged entry 自动启动独立后台 worker；启动校验和进入工作台均不等待网络。
+- 每次出站前重新按 `extra=forbid` 的版本化契约校验，只允许不透明 UUID/设备引用、版本、稳定结果/原因/错误码、时间、状态迁移和有界聚合统计。含 `institution_record_number` 等额外字段的历史污染事件会在发请求前进入 `QUARANTINED`。
+- 客户端使用当前机构 Bearer token；服务端把 token 中的 tenant、client installation 和上传权限与批次绑定，不接受跨安装实例补传。
+- 离线/服务错误只把事件重排为 `PENDING`，不修改不可变本地校验审计；后台按 30 秒起步、最高 300 秒的有界指数退避重试，进程重启会恢复中断的 `UPLOADING` 事件。
+- seed API 仅在私有不可变文件持久化成功后返回严格 event acknowledgement；相同事件在重新打开 repository 后仍幂等。持久化文件权限为 `0600`，自动测试同时检查未出现姓名或机构档案字段名。
+
+可复核 evidence：`telemetry-closeout-20260802.json`。聚焦矩阵为 **88 passed**，JUnit `pytest-telemetry-closeout-20260802.xml`，SHA-256 `073ae8e9f5224e586c8d2feb3f121dded81caba2e7ad41584bee1812ea1217d3`。全仓回归为 **778 passed、1 skipped、3 个既有 collection warnings、21 subtests passed**，JUnit `pytest-full-telemetry-closeout-20260802.xml`，SHA-256 `72dd4a8924420ff2bf837b0efb684d6c902e38db4cf5cd86cd5326a3055899a5`。Ruff、Mypy、compileall 与 `git diff --check` 均通过。
+
+由此可勾选“故障日志默认自动补传，但不包含姓名、机构档案号或未脱敏客户数据”。证据仅证明本机软件实现、认证 ASGI 集成、私有持久化与重启幂等；不声称真实部署网络可用性、Windows 人工验收、机构操作员验收、生产授权或临床验证。RAY-115 仍须保持 `In Review`，唯一未完成项为 Windows 高 DPI、键盘、提示文字和退出路径人工验收。

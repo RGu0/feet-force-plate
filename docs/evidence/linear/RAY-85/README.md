@@ -5,7 +5,7 @@
 - 初次抓取时间：2026-07-20T08:54:41Z
 - 开始实现时间：2026-07-20T10:20:16Z
 - 初次抓取状态：Backlog
-- 当前工作流状态：In Review（2026-07-20T10:26:19Z 写入并重新读取确认）
+- 当前工作流状态：Done（2026-08-02T13:02:59Z 写入并重新读取确认）
 - 里程碑：P2：一键筛查
 - 优先级：High
 - 关系：related issue `RAY-90`、`RAY-91`；无阻塞/被阻塞关系
@@ -13,11 +13,11 @@
 ## 验收条目快照
 
 - [x] 从 CLOSED/VALID SQLite 记录和加密派生物理工件直接进入本地分析，不依赖上传；硬件原始矩阵仍按 RAY-117 边界保持私有
-- [ ] 当前正式物理链已生成四阶段 COP 等内部特征，但尚未输出经客户验证的热力图、压力分布和受试者左右负重
-- [ ] 物理源已要求 CLOSED/VALID，协议/阶段时长由正式特征实现校验；本地尚未完整执行云端采样率、标定版本、缺帧和发布能力门控
-- [x] 输出版本化、不可变 `LocalAnalysisResult`；物理特征全部为 internal/withheld，客户指标为空
-- [ ] 旧 raw-count fixture 路径可生成 BASIC_READY；当前正式物理链尚未生成客户 BASIC_READY 报告
-- [ ] 本地结果可形成非权威上传快照 DTO，但尚未接入同步交接与云端物理会话重算
+- [x] 正式物理链生成归一化相对热图和受试者方向的左右相对负重；COP 等正式物理特征已计算但保持 internal/withheld
+- [x] 发布路径执行采样率、阶段有效时长和最大时间戳间隔门控；绝对力在标定发布未验证时以 `CALIBRATION_NOT_VERIFIED` 扣留
+- [x] 输出版本化、不可变 `LocalAnalysisResult`；客户白名单与内部/扣留指标严格分离
+- [x] 有效正式物理结果生成非诊断性 BASIC_READY；任何发布质量门失败均不生成客户报告
+- [x] 本地结果加密附着到会话同步交接，固定为 `SUPPORTING_NON_AUTHORITATIVE`；云端忽略本地特征值并从独立加载的原始会话重算
 - [x] 去标识化真机四阶段工件在拒绝所有 socket 构造时五次完成；结果哈希一致，并记录每次耗时
 - [x] 同一 `estimated-force-session/1.0` 输入逐项对齐正式 `PhysicalAnalysisOrchestrator` 的四阶段特征结果
 
@@ -151,11 +151,51 @@ QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest -q \
 
 据此仅勾选验收 1、4、7、8。验收 2、3、5、6 仍分别缺少正式物理热力图/受试者左右语义、完整本地能力门控、正式物理 BASIC_READY 报告、同步上传与云端原始重算，所以 issue 保持 `In Review`。
 
+### 2026-08-02 正式物理本地链补齐
+
+本次以测试优先方式补齐上一节列出的 2、3、5、6 四项软件缺口：
+
+- `client/local_analysis/physical.py` 在正式 `estimated-force-session/1.0` 路径上生成规则网格的归一化相对热图，并使用协议阶段的受试者方向计算左右相对负重；不把板面列直接冒充受试者左右。
+- 发布路径逐阶段检查最低 10 Hz、至少 10 秒实际观测时长和不超过 2 个名义间隔的最大时间戳缺口。门控失败返回 `DEGRADED`、无客户指标且无报告。
+- BASIC_READY 仅映射客户白名单中的左右相对百分比和相对热图；报告文案明确不展示绝对力、COP、稳定性评分、疾病判断或风险预测。
+- SQLite schema v6 为 `sync_handoffs` 增加加密的辅助本地结果；升级测试实际模拟 v5 数据库并验证列迁移。交接固定为 `SUPPORTING_NON_AUTHORITATIVE` 和 `cloud_recompute_from_raw=true`。
+- 云端 `handle_handoff()` 验证 schema、session identity、权威级别和重算标志后，仍调用独立 session loader。测试篡改本地辅助特征为 `-999`，云端结果不受影响；声称权威或禁用原始重算的交接被拒绝。
+
+四阶段真机去标识化工件仍只证明离线相对工程回放，不被升级成标定物理或临床证据。正式报告/同步软件链使用公开物理合同的合成、去标识化四阶段输入做集成验证；两类证据的边界记录在 [physical-local-closeout-20260802.json](physical-local-closeout-20260802.json)。
+
+最终聚焦验证：
+
+```bash
+QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest -q \
+  client/tests/test_ray_85_physical_local.py \
+  client/tests/test_ray_85_offline_evidence.py \
+  client/tests/test_ray_85_service.py \
+  client/tests/test_ray_85_reporting.py \
+  client/tests/test_report_copy.py \
+  client/tests/test_ray_90_analysis.py \
+  client/tests/test_ray_90_four_stage_evidence.py \
+  tests/spool/test_state_store.py \
+  tests/spool/test_valid_session_commit.py \
+  tests/hardware_standardization/test_public_export.py \
+  tests/cloud/analysis/test_physical_features.py \
+  tests/cloud/analysis/test_physical_orchestrator.py \
+  tests/cloud/analysis/test_physical_gates.py \
+  tests/architecture/test_hardware_boundary.py \
+  --junitxml=docs/evidence/linear/RAY-85/pytest-local-closeout-20260802.xml
+```
+
+结果：`65 passed in 2.06s`；JUnit SHA-256 `6eaad4b24bdd39067ef3b6b3ba6c16f9c6d6d1537d1c13c10d041be3bb413dd7`。
+
+最终全项目回归：`769 passed, 1 skipped, 3 warnings, 21 subtests passed in 58.49s`；JUnit SHA-256 `81dbf52422ad3624deddde8eb7ee8142ebf7e35698da62fb4f48a7d92f42ebd1`。唯一 skip 是未配置三角色 PostgreSQL DSN；3 个 warning 仍为既有 `TestProtocol` collection warning。Mypy（11 个 source files）、针对变更文件的 Ruff、compileall 和 `git diff --check` 均通过。
+
+Linear 关闭回读：8/8 验收项均为 `[X]`，2026-08-02 证据评论存在，状态为 `Done`，`completedAt=2026-08-02T13:02:59.847Z`。关闭后 P2 里程碑为 18 项中的 14 `Done`、4 `In Review`；剩余项仅为 RAY-96、RAY-101、RAY-114、RAY-115。
+
 ## 失败或限制
 
-- 旧 `LocalAnalysisProcessor` 仍服务 raw-count BASIC fixture；正式物理链使用独立 `analyze_committed_physical_session`，尚未接入报告/同步编排。
+- 旧 `LocalAnalysisProcessor` 仍服务 raw-count BASIC fixture；正式物理链已通过 `process_committed_physical_session` 接入报告和加密同步交接，但尚未做当次在线真机 UI 全流程。
 - `sample-basic-report-summary.json` 为 evidence 摘要，不是完整导出的交付 PDF；PDF/打印由后续 reporting/packaging 工作继续验证。
-- BASIC_READY 只包含非诊断性相对指标；缺少真实验证的 COP 不会因产品文案要求而绕过 RAY-90 门控。
+- BASIC_READY 只包含非诊断性相对指标；绝对力、COP、稳定性或风险输出不会因本次软件完成而绕过各自的标定/发布门控。
+- 本次不构成 Windows/安装包、非技术操作员、机构现场、生产授权或临床验证证据；这些边界仍由 RAY-96、RAY-101、RAY-114 和 RAY-115 管理。
 
 ## 关联提交
 

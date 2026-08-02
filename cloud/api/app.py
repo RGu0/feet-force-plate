@@ -65,6 +65,9 @@ from shared.contracts.operations import (
     UpgradePolicyRequest,
     UpgradePolicyStatusRequest,
 )
+from shared.contracts.validation_telemetry import (
+    DeviceValidationTelemetryBatchRequest,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,7 @@ class ServiceContainer:
     platform_sensitive: object | None = None
     platform_reports: object | None = None
     platform_subjects: object | None = None
+    validation_telemetry: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -206,8 +210,6 @@ def create_app(container: ServiceContainer) -> FastAPI:
                 terminal_id=str(terminal_header_id),
             )
         return context
-
-    TerminalDependency = Annotated[TerminalContext, Depends(terminal_context)]
 
     def heartbeat_context(
         authorization: Annotated[str, Header(alias="Authorization")],
@@ -341,6 +343,17 @@ def create_app(container: ServiceContainer) -> FastAPI:
         ):
             result = await container.tenant_access.current_license(context)
             return _data_response(request, result)
+
+    if container.validation_telemetry is not None and container.tenant_tokens is not None:
+
+        @app.post("/v1/telemetry/device-validation")
+        async def upload_device_validation_telemetry(
+            request: Request,
+            body: DeviceValidationTelemetryBatchRequest,
+            context: TenantAccessDependency,
+        ):
+            result = container.validation_telemetry.ingest(context, body)
+            return _data_response(request, result, 202)
 
     if container.hardware_leases is not None and container.tenant_tokens is not None:
 

@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -247,6 +247,11 @@ ON session_artifacts(session_id, kind);
 """
 
 
+_MIGRATION_6 = """
+ALTER TABLE sync_handoffs ADD COLUMN supporting_local_analysis BLOB;
+"""
+
+
 class StateStore:
     """Thread-safe SQLite repository with explicit transaction boundaries."""
 
@@ -322,6 +327,9 @@ class StateStore:
                 self._connection.execute("PRAGMA user_version=4")
             if version < 5:
                 self._connection.execute("PRAGMA user_version=5")
+            if version < 6:
+                self._connection.executescript(_MIGRATION_6)
+                self._connection.execute("PRAGMA user_version=6")
 
     def record_validation_audit(
         self,
@@ -457,6 +465,16 @@ class StateStore:
             ).rowcount
         if not updated:
             raise KeyError(event_id)
+
+    def telemetry_event_state(self, event_id: str) -> tuple[str, int]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT state, attempt_count FROM telemetry_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(event_id)
+        return str(row[0]), int(row[1])
 
     def put_subject_ref(self, subject_uuid: str, plaintext: bytes) -> None:
         encrypted = self._codec.encrypt(
@@ -631,6 +649,40 @@ class StateStore:
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
+
+    def attach_supporting_local_analysis(
+        self,
+        session_id: str,
+        plaintext: bytes,
+    ) -> None:
+        """Attach a non-authoritative local result to an existing upload handoff."""
+
+        encrypted = self._codec.encrypt(
+            plaintext,
+            context=f"supporting_local_analysis:{session_id}",
+        )
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs SET supporting_local_analysis=?
+                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING')""",
+                (encrypted, session_id),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
+
+    def supporting_local_analysis(self, session_id: str) -> bytes:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT supporting_local_analysis FROM sync_handoffs
+                WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            raise KeyError(session_id)
+        return self._codec.decrypt(
+            bytes(row[0]),
+            context=f"supporting_local_analysis:{session_id}",
+        )
 
     def session_artifacts(self, session_id: str) -> list[ValidArtifactRecord]:
         with self._lock:

@@ -33,6 +33,10 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.observability.validation_telemetry import (
+    FileSystemValidationTelemetryRepository,
+    ValidationTelemetryService,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -241,6 +245,11 @@ async def build_seed_app(
             platform_access=platform_access,
             platform_tokens=platform_tokens,
             platform_sensitive=SensitiveAccessService(access_repository),
+            validation_telemetry=ValidationTelemetryService(
+                FileSystemValidationTelemetryRepository(
+                    Path(settings.object_root) / "validation-telemetry"
+                )
+            ),
         )
     )
     app.state.seed_settings = settings

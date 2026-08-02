@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import UTC, datetime
+import json
 from pathlib import Path
 
 import numpy as np
@@ -22,12 +24,18 @@ from client.hardware_standardization.public_export import (
     PhysicalPressureSession,
 )
 from client.local_analysis.models import LocalAnalysisResult, LocalQualityStatus
+from client.local_analysis import service as local_analysis_service
 from client.local_analysis.physical import (
     analyze_committed_physical_session,
     analyze_physical_session,
 )
+from client.reporting.models import ReportStatus
 from client.spool.session_commit import ValidSessionStager
-from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.spool.state_store import (
+    SensitiveBlobCodec,
+    StateStore,
+    ValidSegmentRecord,
+)
 from cloud.analysis.feature_parameters import FeatureParameters
 from cloud.analysis.features import StageFeatureSet, extract_features
 from cloud.analysis.models import ValidationStatus
@@ -227,7 +235,7 @@ def _private_session(public: PhysicalPressureSession) -> PhysicalArraySession:
     )
 
 
-def test_public_physical_session_generates_versioned_internal_local_result() -> None:
+def test_public_physical_session_releases_only_relative_basic_projection() -> None:
     session = _physical_session()
     parameters = FeatureParameters(
         version="physical-features/ray-85-local-test",
@@ -245,11 +253,29 @@ def test_public_physical_session_generates_versioned_internal_local_result() -> 
     assert result.source_frame_count == 1_601
     assert result.quality_status is LocalQualityStatus.VALID
     assert result.raw_count_heatmap is None
-    assert result.customer_metrics == ()
+    assert set(result.customer_metric_map) == {
+        "left_load_percent",
+        "right_load_percent",
+    }
+    assert result.customer_metric_map["left_load_percent"].value == pytest.approx(
+        49.0025
+    )
+    assert result.customer_metric_map["right_load_percent"].value == pytest.approx(
+        50.9975
+    )
+    assert np.asarray(result.relative_heatmap) == pytest.approx(
+        np.asarray(
+            (
+                (0.9608804353154571, 1.0),
+                (0.9608804353154571, 1.0),
+            )
+        )
+    )
     assert len(result.internal_metrics) == 4 * len(_SCALAR_STAGE_FIELDS)
-    assert len(result.withheld_metrics) == len(result.internal_metrics)
+    assert len(result.withheld_metrics) == len(result.internal_metrics) + 1
     assert set(result.withheld_reason_map.values()) == {
-        "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED"
+        "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED",
+        "CALIBRATION_NOT_VERIFIED",
     }
 
 
@@ -274,6 +300,212 @@ def test_local_metrics_are_the_exact_features_used_by_cloud_physical_pipeline() 
             metric = local.internal_metric_map[f"{stage.stage_id.value}:{field_name}"]
             assert metric.value == pytest.approx(float(getattr(stage, field_name)), abs=1e-12)
             assert metric.definition_version.endswith(cloud_features.parameters_sha256)
+
+
+def test_relative_basic_projection_fails_closed_below_required_sample_rate() -> None:
+    source = _physical_session()
+    low_rate = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=(*source.frames[::3], source.frames[-1]),
+    )
+
+    result = analyze_physical_session(
+        low_rate,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-low-rate-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.DEGRADED
+    assert result.relative_heatmap is None
+    assert result.customer_metrics == ()
+    assert result.withheld_reason_map["left_load_percent"] == "SAMPLE_RATE_TOO_LOW"
+    assert result.withheld_reason_map["right_load_percent"] == "SAMPLE_RATE_TOO_LOW"
+
+
+def test_relative_basic_projection_fails_closed_when_stage_duration_is_short() -> None:
+    source = _physical_session()
+    short_frames = tuple(
+        frame
+        for frame in source.frames
+        if frame.timestamp_s < 80.0 and frame.timestamp_s % 20.0 < 9.0
+    ) + (
+        PhysicalPressureFrame(
+            timestamp_s=80.0,
+            estimated_force_n=(0.0, 0.0, 0.0, 0.0),
+        ),
+    )
+    short_session = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=short_frames,
+    )
+
+    result = analyze_physical_session(
+        short_session,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-short-duration-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.DEGRADED
+    assert result.relative_heatmap is None
+    assert result.customer_metrics == ()
+    assert result.withheld_reason_map["left_load_percent"] == "DURATION_TOO_SHORT"
+
+
+def test_relative_basic_projection_fails_closed_on_large_timestamp_gap() -> None:
+    source = _physical_session()
+    gapped_session = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=tuple(
+            frame
+            for frame in source.frames
+            if not 5.0 <= frame.timestamp_s <= 7.0
+        ),
+    )
+
+    result = analyze_physical_session(
+        gapped_session,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-gap-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.DEGRADED
+    assert result.relative_heatmap is None
+    assert result.customer_metrics == ()
+    assert result.withheld_reason_map["left_load_percent"] == "GAP_TOO_LARGE"
+
+
+def test_valid_physical_result_builds_nondiagnostic_basic_ready_report() -> None:
+    result = analyze_physical_session(
+        _physical_session(),
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-report-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    report = local_analysis_service.build_basic_report_document(
+        result,
+        report_id="report-ray-85",
+        version=1,
+        session_id="ray-85-physical",
+        analysis_result_id="analysis-ray-85",
+        subject_display_id="受试者 **0085",
+        captured_at=datetime(2026, 7, 23, 10, 0, tzinfo=UTC),
+        generated_at=datetime(2026, 8, 2, 10, 0, tzinfo=UTC),
+    )
+
+    assert report.status is ReportStatus.BASIC_READY
+    assert report.kind == "BASIC"
+    assert {metric.key for metric in report.metrics} == {
+        "left_load_percent",
+        "right_load_percent",
+    }
+    assert report.relative_heatmap == result.relative_heatmap
+    assert all("cop" not in metric.key.lower() for metric in report.metrics)
+    assert "总相对载荷" not in report.summary
+    assert "左右相对负重" in report.summary
+    assert "不作疾病诊断" in report.disclaimer
+
+
+def test_degraded_physical_result_never_builds_customer_report() -> None:
+    source = _physical_session()
+    degraded = analyze_physical_session(
+        PhysicalPressureSession(
+            session_id=source.session_id,
+            points=source.points,
+            frames=(*source.frames[::3], source.frames[-1]),
+        ),
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-report-gate-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="VALID local analysis"):
+        local_analysis_service.build_basic_report_document(
+            degraded,
+            report_id="report-ray-85",
+            version=1,
+            session_id="ray-85-physical",
+            analysis_result_id="analysis-ray-85",
+            subject_display_id="受试者 **0085",
+            captured_at=datetime(2026, 7, 23, 10, 0, tzinfo=UTC),
+            generated_at=datetime(2026, 8, 2, 10, 0, tzinfo=UTC),
+        )
+
+
+def test_physical_local_result_is_queued_as_non_authoritative_session_support(
+    tmp_path: Path,
+) -> None:
+    result = analyze_physical_session(
+        _physical_session(),
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/ray-85-sync-test",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+    key_provider = _KeyProvider()
+    store = StateStore(
+        tmp_path / "state.sqlite3",
+        SensitiveBlobCodec(key_provider),
+    )
+    store.put_subject_ref("subject-ray-85", b"opaque")
+    store.commit_valid_session(
+        "ray-85-physical",
+        subject_uuid="subject-ray-85",
+        consent_id=None,
+        versions_json=b'{"protocol":"static-balance/1"}',
+        started_at_ns=1,
+        ended_at_ns=2,
+        manifest_sha256="a" * 64,
+        segments=(
+            ValidSegmentRecord(
+                segment_id="segment-ray-85",
+                relative_path="sessions/ray-85-physical/segment.ffps",
+                byte_count=128,
+                sealed_at_ns=2,
+            ),
+        ),
+    )
+    try:
+        snapshot = local_analysis_service.queue_supporting_local_analysis(
+            store,
+            session_id="ray-85-physical",
+            analysis_result_id="analysis-ray-85",
+            version=1,
+            result=result,
+        )
+        payload = json.loads(store.supporting_local_analysis("ray-85-physical"))
+    finally:
+        store.close()
+
+    assert snapshot.authority == "SUPPORTING_NON_AUTHORITATIVE"
+    assert snapshot.cloud_recompute_from_raw is True
+    assert payload["session_id"] == "ray-85-physical"
+    assert payload["authority"] == "SUPPORTING_NON_AUTHORITATIVE"
+    assert payload["cloud_recompute_from_raw"] is True
+    assert payload["result"]["raw_count_heatmap"] is None
 
 
 def test_local_result_aligns_with_same_input_cloud_orchestrator_run() -> None:
@@ -339,10 +571,36 @@ def test_local_result_aligns_with_same_input_cloud_orchestrator_run() -> None:
     )
 
     local = analyze_physical_session(local_session, protocol, parameters)
-    cloud_run = orchestrator.handle(event)
+    supporting = json.loads(
+        local_analysis_service.LocalAnalysisUploadSnapshot(
+            session_id=local_session.session_id,
+            analysis_result_id="analysis-ray-85",
+            version=1,
+            algorithm_version=local.algorithm_version,
+            authority="SUPPORTING_NON_AUTHORITATIVE",
+            cloud_recompute_from_raw=True,
+            result=local,
+        ).to_json()
+    )
+    supporting_metrics = supporting["result"]["internal_metrics"]
+    assert isinstance(supporting_metrics, list)
+    supporting_metrics[0]["value"] = -999.0
+
+    cloud_run = orchestrator.handle_handoff(event, supporting)
 
     assert cloud_run.status is PhysicalRunStatus.SUCCEEDED
     assert cloud_run.feature_set is not None
+    assert cloud_run.feature_set.stages[0].completion_time_s != -999.0
+    with pytest.raises(ValueError, match="cannot claim cloud authority"):
+        orchestrator.handle_handoff(
+            event,
+            {**supporting, "authority": "AUTHORITATIVE"},
+        )
+    with pytest.raises(ValueError, match="recomputation"):
+        orchestrator.handle_handoff(
+            event,
+            {**supporting, "cloud_recompute_from_raw": False},
+        )
     for stage in cloud_run.feature_set.stages:
         for field_name in _SCALAR_STAGE_FIELDS:
             assert local.internal_metric_map[
@@ -446,7 +704,7 @@ def test_closed_valid_encrypted_artifact_runs_through_local_physical_analysis(
     stager.commit_valid(ended_at_ns=81_000_000_000)
 
     try:
-        result = analyze_committed_physical_session(
+        outcome = local_analysis_service.process_committed_physical_session(
             tmp_path / "data",
             session_id=public.session_id,
             store=store,
@@ -457,11 +715,26 @@ def test_closed_valid_encrypted_artifact_runs_through_local_physical_analysis(
                 despike_window_samples=1,
                 lowpass_cutoff_hz=0.0,
             ),
+            report_id="report-ray-85",
+            report_version=1,
+            analysis_result_id="analysis-ray-85",
+            subject_display_id="受试者 **0085",
+            captured_at=datetime(2026, 7, 23, 10, 0, tzinfo=UTC),
+            generated_at=datetime(2026, 8, 2, 10, 0, tzinfo=UTC),
         )
+        handoff = json.loads(store.supporting_local_analysis(public.session_id))
     finally:
         store.close()
 
+    result = outcome.result
     assert result.source_frame_count == 1_601
     assert result.quality_status is LocalQualityStatus.VALID
     assert len(result.internal_metrics) == 56
-    assert result.customer_metrics == ()
+    assert set(result.customer_metric_map) == {
+        "left_load_percent",
+        "right_load_percent",
+    }
+    assert outcome.report.status is ReportStatus.BASIC_READY
+    assert outcome.snapshot.authority == "SUPPORTING_NON_AUTHORITATIVE"
+    assert handoff["analysis_result_id"] == "analysis-ray-85"
+    assert handoff["cloud_recompute_from_raw"] is True

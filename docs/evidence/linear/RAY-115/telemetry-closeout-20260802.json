@@ -1,0 +1,39 @@
+{
+  "schema_version": "linear-evidence/1",
+  "issue": "RAY-115",
+  "criterion": "故障日志默认自动补传，但不包含姓名、机构档案号或未脱敏客户数据",
+  "verified_at": "2026-08-02",
+  "source_head": "d59d7f41717ecccf955e477c35a531d9f2606a24",
+  "worktree_state": "uncommitted scoped implementation",
+  "implementation_evidence": {
+    "automatic_start": "Authenticated packaged login starts a non-blocking daemon uploader and stops it on application exit.",
+    "privacy_boundary": "A strict extra-forbid wire contract accepts only opaque IDs, versions, stable codes, bounded aggregate statistics, transitions, and timestamps; polluted legacy rows are quarantined before any request.",
+    "authentication": "The client sends the current tenant Bearer token; the API binds every batch to the token's tenant and client installation and requires upload capability.",
+    "offline_recovery": "Failures requeue durable events without changing the local validation audit; retry intervals back off from 30 seconds to a 300-second cap and restart recovery requeues interrupted uploads.",
+    "server_acknowledgement": "The seed API returns strict event acknowledgements only after immutable private persistence; duplicate events remain idempotent across repository reopen.",
+    "storage_privacy": "Persisted telemetry files use mode 0600 and tests assert the absence of customer identity field names."
+  },
+  "verification": {
+    "focused": {
+      "result": "88 passed",
+      "junit": "pytest-telemetry-closeout-20260802.xml",
+      "sha256": "073ae8e9f5224e586c8d2feb3f121dded81caba2e7ad41584bee1812ea1217d3"
+    },
+    "full_repository": {
+      "result": "778 passed, 1 skipped, 3 existing collection warnings, 21 subtests passed",
+      "junit": "pytest-full-telemetry-closeout-20260802.xml",
+      "sha256": "72dd4a8924420ff2bf837b0efb684d6c902e38db4cf5cd86cd5326a3055899a5"
+    },
+    "static": [
+      "Ruff passed",
+      "Mypy passed for configured 13 source files",
+      "compileall passed",
+      "git diff --check passed"
+    ]
+  },
+  "boundary": {
+    "proven": "Local software implementation, authenticated in-process API integration, private durable receipt, restart idempotency, retry behavior, and privacy contract.",
+    "not_proven": "Live deployed-network availability, Windows high-DPI/keyboard/safe-exit acceptance, institution-operator acceptance, production authorization, or clinical validation.",
+    "linear_status": "Keep RAY-115 In Review because the Windows/manual criterion remains open."
+  }
+}

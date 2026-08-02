@@ -95,6 +95,9 @@ class ValidationAuditTrail:
     def mark_uploaded(self, event_id: str) -> None:
         self._store.set_telemetry_event_state(event_id, state="ACKNOWLEDGED")
 
+    def mark_quarantined(self, event_id: str) -> None:
+        self._store.set_telemetry_event_state(event_id, state="QUARANTINED")
+
     @staticmethod
     def _validate_opaque_ref(value: str, field: str) -> None:
         if not _OPAQUE_REF.fullmatch(value):

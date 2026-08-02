@@ -1,11 +1,13 @@
+import sqlite3
 import tempfile
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from client.spool.state_store import (
     GateReason,
     SensitiveBlobCodec,
     StateStore,
+    ValidSegmentRecord,
 )
 
 
@@ -34,7 +36,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 5)
+        self.assertEqual(self.store.schema_version, 6)
         expected = {
             "subject_refs",
             "consent_records",
@@ -92,6 +94,63 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_subject_ref("subject-uuid"), b"new-ref")
         self.assertEqual(self.store.get_consent_record("consent-1"), b"new-consent")
         self.assertEqual(self.store.session_status("session-1")[0], "CLOSED")
+
+    def test_ready_session_handoff_encrypts_supporting_local_analysis(self) -> None:
+        self.store.put_subject_ref("subject-uuid", b"opaque")
+        self.store.commit_valid_session(
+            "session-1",
+            subject_uuid="subject-uuid",
+            consent_id=None,
+            versions_json=b'{"protocol":"static-balance/1"}',
+            started_at_ns=10,
+            ended_at_ns=20,
+            manifest_sha256="a" * 64,
+            segments=(
+                ValidSegmentRecord(
+                    segment_id="segment-1",
+                    relative_path="sessions/session-1/segment-1.ffps",
+                    byte_count=128,
+                    sealed_at_ns=20,
+                ),
+            ),
+        )
+        payload = (
+            b'{"authority":"SUPPORTING_NON_AUTHORITATIVE",'
+            b'"cloud_recompute_from_raw":true}'
+        )
+
+        self.store.attach_supporting_local_analysis("session-1", payload)
+
+        self.assertEqual(self.store.sync_handoff_state("session-1"), "READY_FOR_NETWORK")
+        self.assertEqual(self.store.supporting_local_analysis("session-1"), payload)
+        self.assertNotIn(payload, self.db_path.read_bytes())
+
+    def test_schema_five_database_upgrades_to_encrypted_analysis_handoff(self) -> None:
+        self.store.close()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(sync_handoffs)")
+            }
+            if "supporting_local_analysis" in columns:
+                connection.execute(
+                    "ALTER TABLE sync_handoffs DROP COLUMN supporting_local_analysis"
+                )
+            connection.execute("PRAGMA user_version=5")
+            connection.commit()
+        finally:
+            connection.close()
+
+        self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
+
+        self.assertEqual(self.store.schema_version, 6)
+        with sqlite3.connect(self.db_path) as verification:
+            columns = {
+                row[1]
+                for row in verification.execute("PRAGMA table_info(sync_handoffs)")
+            }
+        self.assertIn("supporting_local_analysis", columns)
 
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")

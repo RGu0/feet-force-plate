@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from statistics import median
@@ -188,6 +189,29 @@ class PhysicalAnalysisOrchestrator:
             protocol_version=event.test_protocol_version,
             rule_set_version=event.rule_set_version,
         )
+
+    def handle_handoff(
+        self,
+        event: CompleteSessionEvent,
+        supporting_local_analysis: Mapping[str, object],
+    ) -> PhysicalAnalysisRun:
+        """Accept supporting metadata but recompute only from the session loader."""
+
+        if (
+            supporting_local_analysis.get("schema_version")
+            != "local-analysis-upload-snapshot/1"
+        ):
+            raise ValueError("unsupported local analysis handoff schema")
+        if supporting_local_analysis.get("session_id") != event.session_id:
+            raise ValueError("local analysis handoff session identity mismatch")
+        if (
+            supporting_local_analysis.get("authority")
+            != "SUPPORTING_NON_AUTHORITATIVE"
+        ):
+            raise ValueError("local analysis handoff cannot claim cloud authority")
+        if supporting_local_analysis.get("cloud_recompute_from_raw") is not True:
+            raise ValueError("cloud recomputation from the session is required")
+        return self.handle(event)
 
     def handle(self, event: CompleteSessionEvent) -> PhysicalAnalysisRun:
         if event.event_type != "INGESTED_COMPLETE":
