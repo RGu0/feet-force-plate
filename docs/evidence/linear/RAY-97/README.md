@@ -81,3 +81,22 @@ Linear uses `INGESTED_COMPLETE` in one acceptance sentence, while the approved c
 
 No status change to Done is justified until live PostgreSQL, clean restore and
 Aliyun seed evidence pass.
+
+## 2026-08-03 Aliyun OSS least-privilege data-plane probe
+
+- `PROVEN_ALIYUN_SEED`: the `aliyun-agentic` ECS instance obtained the expected
+  RAM role through IMDSv2. No long-lived AccessKey was read, written, or used.
+- `PROVEN_ALIYUN_SEED`: the role listed only the permitted `_staging/` prefix
+  through the Beijing internal OSS endpoint. Listing the bucket root was denied.
+- `PROVEN_ALIYUN_SEED`: a non-sensitive temporary object forced through the
+  multipart upload path, copied from `_staging/` to `tenants/`, downloaded with
+  a matching SHA-256, and deleted from both paths. The local probe file was also
+  removed.
+- `NOT_VERIFIED`: the operational role intentionally cannot read bucket
+  encryption configuration; object metadata did not expose a KMS field to this
+  probe. The administrator-configured SSE-KMS setting still needs independent
+  configuration evidence.
+- `NOT_VERIFIED`: `feetforceplate-seed` still composes `FileSystemObjectStore`.
+  An OSS-adapter release, service restart/recovery, manifest ingestion, object
+  lifecycle/retention, and region-specific privacy/compliance evidence remain
+  required before this issue can leave `In Review`.
