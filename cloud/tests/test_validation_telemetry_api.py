@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -200,7 +201,8 @@ class ValidationTelemetryApiTests(unittest.IsolatedAsyncioTestCase):
                     "*.json"
                 )
             )
-            self.assertEqual(persisted.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(persisted.stat().st_mode & 0o777, 0o600)
             persisted_text = persisted.read_text()
             self.assertNotIn("institution_record_number", persisted_text)
             self.assertNotIn("name", persisted_text.lower())

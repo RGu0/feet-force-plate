@@ -104,6 +104,16 @@ class FileSystemValidationTelemetryRepository:
         ).hexdigest()
 
     @staticmethod
+    def _set_private_file_mode(path: Path, descriptor: int) -> None:
+        """Apply private permissions on POSIX and Windows Python versions."""
+
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(descriptor, 0o600)
+        else:
+            os.chmod(path, 0o600)
+
+    @staticmethod
     def _decode(path: Path) -> StoredValidationTelemetryEvent:
         document = json.loads(path.read_bytes())
         if document.get("schema_version") != "validation-telemetry-store/1":
@@ -147,7 +157,7 @@ class FileSystemValidationTelemetryRepository:
         )
         staging_path = Path(staging_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            self._set_private_file_mode(staging_path, descriptor)
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(payload)
                 handle.flush()

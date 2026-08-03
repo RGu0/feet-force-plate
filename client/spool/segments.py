@@ -62,6 +62,20 @@ def _canonical_json(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a renamed entry where the platform exposes directory handles."""
+
+    # Windows does not allow Python to open a directory with ``os.open``.
+    # The renamed file itself has already been flushed before this point.
+    if os.name == "nt":
+        return
+    directory_fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 class ImmutableSegmentWriter:
     """Collects one 5-10 second raw segment and closes it atomically."""
 
@@ -189,11 +203,7 @@ class ImmutableSegmentWriter:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, final)
-        directory_fd = os.open(session_dir, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_directory(session_dir)
         frames = self._frames
         self._frames = []
         sealed = SealedSegment(

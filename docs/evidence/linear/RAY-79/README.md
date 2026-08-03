@@ -96,6 +96,42 @@ Those target-environment checks remain the reason for the Linear state **In
 Review**. This evidence makes no hardware, calibration, clinical, or production
 deployment claim.
 
+## Windows acceptance update (2026-08-03)
+
+The foundation gate was re-run on Windows with the project wrapper and CPython
+3.11.15. The recovery path exposed POSIX-only directory `fsync` calls, and the
+file-system telemetry repository exposed an unconditional `os.fchmod` call;
+both prevent the declared Windows delivery target from exercising the
+foundation workflow. The implementation now preserves the flushed-file and
+atomic-rename behavior on Windows, where Python cannot open a directory for
+`fsync`, and falls back to `chmod` when `fchmod` is unavailable.
+
+Fresh verification completed successfully:
+
+```text
+powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 ruff check .
+# All checks passed!
+
+powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 mypy shared/contracts cloud/observability
+# Success: no issues found in 13 source files
+
+powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 python -m pytest ...
+# 66 passed, 1 existing TestProtocol collection warning
+
+powershell -ExecutionPolicy Bypass -File .\scripts\local-env.ps1 uv lock --check
+git diff --check
+# both passed
+```
+
+The pytest selection contains the configured RAY-79 protocol, recovery, sync,
+ingestion, analysis, and safe-telemetry regressions, plus the persistent
+validation-telemetry API regression that exercises the Windows fallback.
+POSIX mode-bit assertions are intentionally limited to POSIX: Windows `chmod`
+does not model a private DACL. Terminal key material remains outside this store
+and uses the system keyring/envelope boundary. Windows ACL hardening for
+non-key diagnostic files is a separate security follow-up, not a claim of this
+foundation acceptance.
+
 ## Commit
 
 Recorded with the RAY-79 infrastructure commit history.

@@ -21,16 +21,14 @@ from .derived_artifact import (
     read_derived_observation,
     write_derived_observation,
 )
-from .segments import ImmutableSegmentWriter, SealedSegment, read_segment, write_session_manifest
+from .segments import (
+    ImmutableSegmentWriter,
+    SealedSegment,
+    _fsync_directory,
+    read_segment,
+    write_session_manifest,
+)
 from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _write_atomic_json(path: Path, payload: dict[str, object]) -> None:

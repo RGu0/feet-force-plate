@@ -11,6 +11,7 @@ from .segments import (
     ImmutableSegmentWriter,
     SealedSegment,
     SegmentIntegrityError,
+    _fsync_directory,
     read_segment,
 )
 from .state_store import KeyProvider, StateStore
@@ -47,14 +48,6 @@ def _register_path(
         byte_count=path.stat().st_size,
         sealed_at_ns=restored.frames[-1].host_wall_time_ns,
     )
-
-
-def _fsync_directory(path: Path) -> None:
-    directory_fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
 
 
 def _quarantine(path: Path) -> None:
