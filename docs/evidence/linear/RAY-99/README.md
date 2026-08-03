@@ -117,3 +117,29 @@ These missing items require client-owned code and/or an integration environment.
   denial are captured in `RAY-116/seed-access-summary.json`.
 - `PENDING_POSTGRES` / `PENDING_ALIYUN`: real process restart, live role DSNs,
   lossy public network and server restart durability remain open.
+
+## 2026-08-03 persistent client queue integration
+
+- `client/sync/persistent_upload.py` now consumes the durable
+  `sync_handoffs` record created only for valid local sessions.  It creates the
+  server session idempotently, queries received segment digests, uploads only
+  missing immutable files, submits a fresh server manifest, and records
+  `CLOUD_CONFIRMED` only after `INGESTED`.
+- SQLite schema 7 gives each handoff an atomic `UPLOADING` lease, attempt
+  counter and retry timestamp.  A process restart moves interrupted or waiting
+  handoffs back to `READY_FOR_NETWORK`; a digest conflict becomes `CONFLICT`
+  and is never retried as an overwrite.
+- Server confirmation does not delete a local segment.  The worker verifies
+  every local path, file length, session/index continuity and SHA-256 before a
+  request.  The HTTP adapter supplies the credential-bound `X-Terminal-ID` on
+  every ingestion request.
+- Targeted JUnit: `p3-persistent-upload-20260803.xml` — 3 passed, 0 failures;
+  SHA-256 `523685b93b1fafe6336a78d021ca1519ad6297c1490c9d60acfc019236c56c29`.
+- Broader P3 regression after this change: 95 passed, 1 skipped (local
+  PostgreSQL three-role DSNs not configured); Ruff and Mypy pass.
+
+This is deterministic client/SQLite plus controlled HTTP-boundary evidence.
+It does not replace a lossy public-network endurance run, target-client
+background scheduler observation, or production deployment monitoring.  RAY-99
+therefore remains `In Review` until those external acceptance activities are
+recorded.

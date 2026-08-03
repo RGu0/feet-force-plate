@@ -13,7 +13,7 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -78,6 +78,7 @@ class RecoveryResult:
     sessions_marked_incomplete: int
     uploads_requeued: int
     telemetry_requeued: int = 0
+    sync_handoffs_requeued: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,26 @@ class ValidLocalStorageSnapshot:
     stored_bytes: int
     pending_handoff_count: int
     last_cloud_confirmed_at_ns: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SyncHandoff:
+    """One durably leased valid-session upload handoff."""
+
+    session_id: str
+    subject_uuid: str
+    consent_id: str | None
+    started_at_ns: int
+    ended_at_ns: int
+    manifest_sha256: str
+    attempt_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SyncHandoffSegment:
+    segment_id: str
+    relative_path: str
+    byte_count: int
 
 
 _MIGRATION_1 = """
@@ -330,6 +351,24 @@ class StateStore:
             if version < 6:
                 self._connection.executescript(_MIGRATION_6)
                 self._connection.execute("PRAGMA user_version=6")
+            if version < 7:
+                columns = {
+                    str(row[1])
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    ).fetchall()
+                }
+                if "attempt_count" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs "
+                        "ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "next_attempt_at_ns" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs "
+                        "ADD COLUMN next_attempt_at_ns INTEGER"
+                    )
+                self._connection.execute("PRAGMA user_version=7")
 
     def record_validation_audit(
         self,
@@ -710,9 +749,86 @@ class StateStore:
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs
-                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING')""",
+                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?, next_attempt_at_ns=NULL
+                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING', 'RETRY_WAIT')""",
                 (confirmed_at_ns, session_id),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
+
+    def lease_sync_handoff(self, *, now_ns: int) -> SyncHandoff | None:
+        """Lease the earliest retryable handoff without depending on process memory."""
+
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """SELECT handoff.session_id, session.subject_uuid, session.consent_id,
+                    session.started_at_ns, session.ended_at_ns, handoff.manifest_sha256,
+                    handoff.attempt_count
+                FROM sync_handoffs AS handoff
+                JOIN sessions AS session USING(session_id)
+                WHERE handoff.state='READY_FOR_NETWORK'
+                   OR (handoff.state='RETRY_WAIT'
+                       AND (handoff.next_attempt_at_ns IS NULL
+                            OR handoff.next_attempt_at_ns <= ?))
+                ORDER BY handoff.created_at_ns, handoff.session_id
+                LIMIT 1""",
+                (now_ns,),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs
+                SET state='UPLOADING', attempt_count=attempt_count+1, next_attempt_at_ns=NULL
+                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'RETRY_WAIT')""",
+                (row[0],),
+            ).rowcount
+            if not changed:
+                return None
+        return SyncHandoff(
+            session_id=str(row[0]),
+            subject_uuid=str(row[1]),
+            consent_id=str(row[2]) if row[2] is not None else None,
+            started_at_ns=int(row[3]),
+            ended_at_ns=int(row[4]),
+            manifest_sha256=str(row[5]),
+            attempt_count=int(row[6]) + 1,
+        )
+
+    def sync_handoff_segments(self, session_id: str) -> tuple[SyncHandoffSegment, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT segment_id, relative_path, byte_count FROM segments
+                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'SEALED', 'PENDING_UPLOAD')
+                ORDER BY relative_path, segment_id""",
+                (session_id,),
+            ).fetchall()
+        if not rows:
+            raise KeyError(session_id)
+        return tuple(
+            SyncHandoffSegment(str(row[0]), str(row[1]), int(row[2]))
+            for row in rows
+        )
+
+    def defer_sync_handoff(self, session_id: str, *, next_attempt_at_ns: int) -> None:
+        if next_attempt_at_ns < 0:
+            raise ValueError("next_attempt_at_ns must be non-negative")
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs SET state='RETRY_WAIT', next_attempt_at_ns=?
+                WHERE session_id=? AND state='UPLOADING'""",
+                (next_attempt_at_ns, session_id),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
+
+    def mark_sync_handoff_conflict(self, session_id: str) -> None:
+        """Stop automatic retries when a remote immutable digest conflicts."""
+
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs SET state='CONFLICT', next_attempt_at_ns=NULL
+                WHERE session_id=? AND state='UPLOADING'""",
+                (session_id,),
             ).rowcount
         if not changed:
             raise KeyError(session_id)
@@ -880,7 +996,12 @@ class StateStore:
                 SET state='PENDING', attempt_count=attempt_count+1
                 WHERE state='UPLOADING'"""
             ).rowcount
-        return RecoveryResult(sessions, uploads, telemetry)
+            handoffs = self._connection.execute(
+                """UPDATE sync_handoffs
+                SET state='READY_FOR_NETWORK', next_attempt_at_ns=NULL
+                WHERE state IN ('UPLOADING', 'RETRY_WAIT')"""
+            ).rowcount
+        return RecoveryResult(sessions, uploads, telemetry, handoffs)
 
     def quarantine_segment_path(self, relative_path: str) -> int:
         """Make a verified-bad on-disk segment permanently ineligible for upload."""
