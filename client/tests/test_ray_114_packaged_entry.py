@@ -3,7 +3,11 @@ from __future__ import annotations
 from PySide6.QtWidgets import QWidget
 
 from client.app import packaged_entry
-from client.app.packaged_entry import build_mandatory_startup_gate
+from client.app.packaged_entry import (
+    DefaultValidationTelemetryRuntime,
+    PackagedShutdown,
+    build_mandatory_startup_gate,
+)
 from client.cloud.runtime import AuthenticatedInstitutionSession
 from client.startup_validation.workflow import DeviceNotFound
 
@@ -111,3 +115,59 @@ def test_configured_access_screen_hands_authenticated_session_forward(qtbot) -> 
     assert runtime.logins == [("seed-clinic", "correct-horse-battery-staple")]
     assert len(sessions) == 1
     assert window.findChild(QWidget, "accessEnvironmentLabel").isVisible()
+
+
+def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> None:
+    """Reordering telemetry/audit/access shutdown or double-recording exit must fail."""
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.events = []
+
+        def record(self, name, outcome, **kwargs) -> bool:
+            self.events.append((name, outcome, kwargs))
+            return True
+
+    order: list[str] = []
+
+    class _Background:
+        def stop(self) -> None:
+            order.append("telemetry-stop-join")
+
+    class _Cloud:
+        def close(self) -> None:
+            order.append("telemetry-cloud-close")
+
+    class _AuditStore:
+        def close(self) -> None:
+            order.append("audit-store-close")
+
+    class _AccessRuntime:
+        def close(self) -> None:
+            order.append("access-cloud-close-store-close")
+
+    recorder = _Recorder()
+    telemetry = DefaultValidationTelemetryRuntime(_Background(), _Cloud())
+    shutdown = PackagedShutdown(
+        recorder=recorder,
+        telemetry_runtime=telemetry,
+        audit_store=_AuditStore(),
+        access_runtime=_AccessRuntime(),
+    )
+
+    shutdown.close()
+    shutdown.close()
+
+    assert recorder.events == [
+        (
+            packaged_entry.SafeClientEventName.APPLICATION_EXITED,
+            packaged_entry.SafeClientEventOutcome.OK,
+            {},
+        )
+    ]
+    assert order == [
+        "telemetry-stop-join",
+        "telemetry-cloud-close",
+        "audit-store-close",
+        "access-cloud-close-store-close",
+    ]

@@ -93,3 +93,38 @@ git diff --check
 
 - 实现 commit：`c04430984cbd460e0aa8f30f6e2c0e9ef8604235`
 - evidence SHA 回填 commit：`7bd7ebeb4cfea80909e6fb34e80c9da2df1056c2`
+
+## 2026-08-02 诊断隐私软件证据（RAY-96 单项）
+
+本节是指定 RAY-96 工作树上的软件级自动化证据；它不是安装、真机、运维或临床验证。本次修复后重新执行前 HEAD 为 `fbb8ee71e1f90956a84c7fba42d0da77cca85e2f`，分支为 `codex/ray-96-diagnostic-privacy`，工作树无未提交实现改动。执行仅覆盖本节所列两份 JUnit 输出、本 README 和 JSON 摘要；未修改实现、计划或其他证据。
+
+### 已运行的命令和精确结果
+
+```bash
+./scripts/local-env.sh python -m pytest -q client/tests/test_ray_96_diagnostic_privacy.py client/tests/test_ray_96_access_diagnostic_events.py client/tests/test_ray_96_deployment.py client/tests/test_ray_96_packaged_diagnostics.py client/tests/test_ray_114_packaged_entry.py client/tests/test_ray_115_packaged_telemetry.py --junitxml=docs/evidence/linear/RAY-96/pytest-diagnostic-privacy-closeout-20260802.xml
+./scripts/local-env.sh python -m pytest -q --junitxml=docs/evidence/linear/RAY-96/pytest-full-diagnostic-privacy-closeout-20260802.xml
+./scripts/local-env.sh python -m ruff check client
+./scripts/local-env.sh python -m mypy
+./scripts/local-env.sh python -m compileall -q client cloud shared tests
+git diff --check
+```
+
+- 聚焦矩阵：`60 passed in 1.28s`；JUnit `tests=60, failures=0, errors=0, skipped=0`，SHA-256 `3e99de0a35053ddcf1a40df69df37e333851e7ef9d4f69e0a5d8bb84e2a3ae03`。
+- 全量 pytest：`828 passed, 1 skipped, 3 warnings, 21 subtests passed in 118.44s`。JUnit 根汇总为 `tests=850, failures=0, errors=0, skipped=1`（其中 829 个 testcase 元素与 21 个 subtest 相加）。跳过原因：未配置三个 PostgreSQL role DSN。3 条既有警告均为 `TestProtocol` 因自定义构造函数不能被 pytest 收集的 `PytestCollectionWarning`。JUnit SHA-256 `14f7327007d97c71e45219a2fcce852a35bbb62540d96bad90ee0efc7ad17624`。
+- Ruff：`All checks passed!`；Mypy：`Success: no issues found in 13 source files`；compileall：通过；`git diff --check`：通过。
+
+JUnit 在 pytest 生成后以确定性 XML 解析/写回步骤脱敏：所有 `hostname` 属性固定为 `local-test-host`，当前工作树根目录前缀从属性与文本中移除，因而跳过信息中的测试位置为仓库相对路径。写回后重新解析两份 XML，确认 tests、testcase、推导 subtests、failures、errors 和 skipped 均未改变；四份本轮 Task 5 证据均已扫描，不含用户路径、Windows 用户路径、用户名、机器主机名、canary 值、私钥块或 bearer 凭据。
+
+### 聚焦矩阵实际证明的范围
+
+- 严格事件合同拒绝任意自由文本及凭据/身份字段；针对密码、一次性激活码、刷新令牌、访问令牌、License 签名材料、私钥材料、患者标识、病历号与联系人等**标签**执行了缺失检查，本文及 JSON 不存储其测试值。
+- 私有 JSONL 事件存储以 `0600` 权限写入并校验哈希链；保留三代轮换；只恢复末尾不完整行，拒绝内部损坏；存储失败返回失败而不写回退文件。
+- 解密后的固定归档仅有 `manifest.json`、`safe-events.jsonl`、`integrity.json`；归档条目及最终加密诊断文件均断言为 `0600`，归档内容和加密载荷均断言不含上述敏感标签的测试值。
+- 资源不合法、记录多字段、哈希链损坏、目标目录无效、原子替换中断和最终替换失败均在测试中失败关闭并清理临时产物；替换失败时已存在目标的字节和权限保持不变。
+- P-11 打包工作台只接入诊断导出动作；只读公开收件人资源受到形状/权限检查，缺失或无效资源仅禁用导出且不产生归档；入口组合复用运行时安装标识并记录受限生命周期事件。
+
+实现提交链（最早到当前）为：`f942ff40c019b678c30fecd1ef7ac4ff6cc8d170`、`419d489a240147890d1f8543240ead36ac9b9a0d`、`8e16051ec42059a113d7da9c42a58b6c915b0143`、`71b011570ea21332b2268e47d3ca011a4f2c093c`、`659209bb805c296b128a6dfe2abded4be9853036`、`8093448ea22fe71d1cd280f0a7e686d3eb8d5b75`、`4464d2cb8031fb40a847372d2f115a2beeef2683`、`326108d188f0c75384f2b7a537d08ddea0e7d20b`、修复提交 `f45f546`、回归加固提交 `fbb8ee7`。
+
+### 明确不作的声明
+
+本节先前由 `991b0c0` 记录的运行因启动恢复焦点测试失败而受阻；该结果没有被表述为通过，现由上述修复后新鲜聚焦与全量结果取代。此次证据不证明 Windows 安装器或 CH340 实装/驱动检查，不包含实际安装器或升级日志；不证明已部署支持方密钥的托管、轮换或访问控制；不证明真实硬件、非技术操作员流程、生产环境或网络服务；也不构成临床有效性、安全性、诊断或个体风险结论。

@@ -14,5 +14,10 @@
   },
   "persistent_data_policy": "preserve-on-uninstall-and-rollback",
   "upgrade_policy": "idle-only-signed-digest-verified-with-database-rollback",
+  "support_recipient": {
+    "build_input": "optional-public-x25519-resource",
+    "packaged_resource": "support-recipient.json",
+    "missing_resource_behavior": "diagnostic-export-disabled-fail-closed"
+  },
   "embedded_credentials": false
 }

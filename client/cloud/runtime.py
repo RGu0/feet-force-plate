@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import time
 import threading
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -31,6 +31,12 @@ from .hardware_identity import (
     ActivationHardwareStatus,
 )
 from .policy import AccountHardwareLicenseVerifier
+from client.support import (
+    SafeClientCounters,
+    SafeClientEventName,
+    SafeClientEventOutcome,
+)
+from shared.contracts.validation_telemetry import ErrorCode
 
 
 class AccessClientPort(Protocol):
@@ -47,6 +53,17 @@ class AccessClientPort(Protocol):
 
 class HardwareIdentityPort(Protocol):
     def discover(self): ...
+
+
+class SafeClientEventRecorderPort(Protocol):
+    def record(
+        self,
+        name: SafeClientEventName,
+        outcome: SafeClientEventOutcome,
+        *,
+        error_code: ErrorCode | None = None,
+        counters: SafeClientCounters | None = None,
+    ) -> bool: ...
 
 
 class ClientAccessRuntimeError(RuntimeError):
@@ -139,6 +156,7 @@ class ClientAccessRuntime:
         client_installation_id: UUID | None = None,
         now=None,
         monotonic_ns=None,
+        events: SafeClientEventRecorderPort | None = None,
     ) -> None:
         self._client = client
         self._store = store
@@ -151,10 +169,12 @@ class ClientAccessRuntime:
         )
         self._now = now or (lambda: datetime.now(UTC))
         self._monotonic_ns = monotonic_ns or time.monotonic_ns
+        self._events = events
         self._session: AuthenticatedInstitutionSession | None = None
         self._access_expires_at: datetime | None = None
         self._account_name: str | None = None
         self._token_lock = threading.RLock()
+        self._closed = False
 
     def discover_hardware_identity(self) -> str | None:
         result = self._hardware.discover()
@@ -170,21 +190,33 @@ class ClientAccessRuntime:
         password_confirmation: str,
         hardware_id: str,
     ) -> AuthenticatedInstitutionSession:
-        observed = self._require_hardware()
-        if observed != hardware_id:
-            raise LicenseHardwareMismatch("连接的硬件与激活页面不一致")
-        response = self._client.activate(
-            ActivateAccountRequest(
-                account_name=account_name,
-                activation_code=activation_code,
-                password=password,
-                password_confirmation=password_confirmation,
-                hardware_id=hardware_id,
-                client_installation_id=self.client_installation_id,
+        try:
+            observed = self._require_hardware()
+            if observed != hardware_id:
+                raise LicenseHardwareMismatch("连接的硬件与激活页面不一致")
+            response = self._client.activate(
+                ActivateAccountRequest(
+                    account_name=account_name,
+                    activation_code=activation_code,
+                    password=password,
+                    password_confirmation=password_confirmation,
+                    hardware_id=hardware_id,
+                    client_installation_id=self.client_installation_id,
+                )
             )
-        )
-        session = self._accept_session(response, expected_hardware_id=observed)
+            session = self._accept_session(response, expected_hardware_id=observed)
+        except (AccessAuthenticationFailed, ClientAccessRuntimeError):
+            self._record_event(
+                SafeClientEventName.AUTH_ACTIVATION_REJECTED,
+                SafeClientEventOutcome.REJECTED,
+                error_code="E-AUT-001",
+            )
+            raise
         self._account_name = account_name
+        self._record_event(
+            SafeClientEventName.AUTH_ACTIVATION_ACCEPTED,
+            SafeClientEventOutcome.OK,
+        )
         return session
 
     def login(
@@ -192,16 +224,28 @@ class ClientAccessRuntime:
         account_name: str,
         password: str,
     ) -> AuthenticatedInstitutionSession:
-        observed = self._require_hardware()
-        response = self._client.login(
-            LoginRequest(
-                account_name=account_name,
-                password=password,
-                client_installation_id=self.client_installation_id,
+        try:
+            observed = self._require_hardware()
+            response = self._client.login(
+                LoginRequest(
+                    account_name=account_name,
+                    password=password,
+                    client_installation_id=self.client_installation_id,
+                )
             )
-        )
-        session = self._accept_session(response, expected_hardware_id=observed)
+            session = self._accept_session(response, expected_hardware_id=observed)
+        except (AccessAuthenticationFailed, ClientAccessRuntimeError):
+            self._record_event(
+                SafeClientEventName.AUTH_LOGIN_REJECTED,
+                SafeClientEventOutcome.REJECTED,
+                error_code="E-AUT-001",
+            )
+            raise
         self._account_name = account_name
+        self._record_event(
+            SafeClientEventName.AUTH_LOGIN_ACCEPTED,
+            SafeClientEventOutcome.OK,
+        )
         return session
 
     def verify_password(self, password: str) -> bool:
@@ -228,22 +272,39 @@ class ClientAccessRuntime:
 
     def refresh(self) -> AuthenticatedInstitutionSession:
         with self._token_lock:
-            refresh_token = self._store.refresh_token()
-            if refresh_token is None:
-                raise StoredCredentialUnavailable("登录凭据已失效，请重新登录")
             try:
+                refresh_token = self._store.refresh_token()
+                if refresh_token is None:
+                    raise StoredCredentialUnavailable("登录凭据已失效，请重新登录")
                 response = self._client.refresh(
                     RefreshRequest(
                         refresh_token=refresh_token,
                         client_installation_id=self.client_installation_id,
                     )
                 )
+                session = self._accept_session(response)
             except AccessAuthenticationFailed:
                 self._store.clear_credentials()
                 self._session = None
                 self._access_expires_at = None
+                self._record_event(
+                    SafeClientEventName.AUTH_REFRESH_REJECTED,
+                    SafeClientEventOutcome.REJECTED,
+                    error_code="E-AUT-001",
+                )
                 raise
-            return self._accept_session(response)
+            except ClientAccessRuntimeError:
+                self._record_event(
+                    SafeClientEventName.AUTH_REFRESH_REJECTED,
+                    SafeClientEventOutcome.REJECTED,
+                    error_code="E-AUT-001",
+                )
+                raise
+            self._record_event(
+                SafeClientEventName.AUTH_REFRESH_ACCEPTED,
+                SafeClientEventOutcome.OK,
+            )
+            return session
 
     def logout(self) -> None:
         refresh_token = self._store.refresh_token()
@@ -256,6 +317,19 @@ class ClientAccessRuntime:
         self._access_expires_at = None
         self._account_name = None
 
+    def close(self) -> None:
+        """Release the packaged access database owned by this runtime."""
+        with self._token_lock:
+            if self._closed:
+                return
+            self._closed = True
+            close = getattr(self._client, "close", None)
+            try:
+                if close is not None:
+                    close()
+            finally:
+                self._store.close()
+
     def _require_hardware(self) -> str:
         result = self._hardware.discover()
         if (
@@ -264,6 +338,25 @@ class ClientAccessRuntime:
         ):
             raise StableHardwareRequired("未发现具有稳定身份的压力设备")
         return result.hardware_id
+
+    def _record_event(
+        self,
+        name: SafeClientEventName,
+        outcome: SafeClientEventOutcome,
+        *,
+        error_code: ErrorCode | None = None,
+    ) -> None:
+        if self._events is None:
+            return
+        try:
+            self._events.record(
+                name,
+                outcome,
+                error_code=error_code,
+                counters=SafeClientCounters(attempt_count=1),
+            )
+        except Exception:
+            pass
 
     def _accept_session(
         self,
@@ -319,6 +412,7 @@ def build_client_access_runtime(
     settings: AccessRuntimeSettings,
     *,
     data_root: Path | None = None,
+    event_recorder_factory: Callable[[UUID], SafeClientEventRecorderPort] | None = None,
 ) -> ClientAccessRuntime:
     root = data_root or Path(
         user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True)
@@ -336,6 +430,15 @@ def build_client_access_runtime(
             raise ValueError("License public key file is invalid") from exc
     if len(raw_public_key) != 32:
         raise ValueError("License public key must contain 32 raw bytes")
+    stored = store.load()
+    client_installation_id = (
+        stored.client_installation_id if stored is not None else uuid4()
+    )
+    events = (
+        None
+        if event_recorder_factory is None
+        else event_recorder_factory(client_installation_id)
+    )
     return ClientAccessRuntime(
         client,
         store,
@@ -343,6 +446,8 @@ def build_client_access_runtime(
         license_verifier=AccountHardwareLicenseVerifier(
             {settings.license_key_id: raw_public_key}
         ),
+        client_installation_id=client_installation_id,
+        events=events,
     )
 
 

@@ -245,12 +245,8 @@ class StartupValidationWindow(QMainWindow):
 
     def _focus_primary_action(self) -> None:
         if self._primary_action.isVisible() and self._primary_action.isEnabled():
+            self.raise_()
             self.activateWindow()
-            self._primary_action.setFocus(Qt.FocusReason.OtherFocusReason)
-            QTimer.singleShot(0, self._focus_primary_action)
-
-    def _focus_primary_action(self) -> None:
-        if self._primary_action.isVisible() and self._primary_action.isEnabled():
             self._primary_action.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def set_attempt_running(self, running: bool) -> None:

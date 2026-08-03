@@ -1,0 +1,72 @@
+{
+  "evidence_version": "ray-96-diagnostic-privacy-closeout/2026-08-02",
+  "scope": "software-only automated evidence in the designated RAY-96 worktree",
+  "starting_revision": "fbb8ee71e1f90956a84c7fba42d0da77cca85e2f",
+  "branch": "codex/ray-96-diagnostic-privacy",
+  "starting_worktree_boundary": "no uncommitted implementation changes; this refresh overwrites only two generated JUnit files, this README, and this JSON summary",
+  "focused_matrix": {
+    "result": "passed",
+    "console_summary": "60 passed in 1.28s",
+    "junit": {
+      "file": "pytest-diagnostic-privacy-closeout-20260802.xml",
+      "sha256": "3e99de0a35053ddcf1a40df69df37e333851e7ef9d4f69e0a5d8bb84e2a3ae03",
+      "tests": 60,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "full_matrix": {
+    "result": "passed",
+    "console_summary": "828 passed, 1 skipped, 3 warnings, 21 subtests passed in 118.44s",
+    "junit": {
+      "file": "pytest-full-diagnostic-privacy-closeout-20260802.xml",
+      "sha256": "14f7327007d97c71e45219a2fcce852a35bbb62540d96bad90ee0efc7ad17624",
+      "tests_attribute": 850,
+      "testcase_elements": 829,
+      "subtests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "skip_reason": "three PostgreSQL role DSNs are not configured",
+    "existing_warnings": "3 PytestCollectionWarning instances: TestProtocol has a custom constructor and is not collected"
+  },
+  "static_verification": {
+    "ruff": "passed: All checks passed!",
+    "mypy": "passed: Success: no issues found in 13 source files",
+    "compileall": "passed for client, cloud, shared, tests",
+    "git_diff_check": "passed"
+  },
+  "focused_software_proof": {
+    "event_contract": "rejects free text plus credential and identity field categories; labeled canary absence checks passed without recording test values",
+    "private_store": "0600 records, hash-chain verification, three-generation rotation, final-line-only recovery, interior-corruption rejection, no fallback file on store failure",
+    "encrypted_export": "decrypted fixed entry list is manifest.json, safe-events.jsonl, integrity.json; archive entries and final output asserted 0600",
+    "fail_closed": "invalid resource, extra record fields, broken digest, invalid recipient, missing destination, interrupted replacement, and failed replacement are covered without publishing plaintext or temporary artifacts",
+    "packaged_wiring": "P-11 diagnostic export is wired into the packaged workbench; invalid or missing public recipient disables only export; runtime installation identity is reused in export metadata"
+  },
+  "implementation_commits": [
+    "f942ff40c019b678c30fecd1ef7ac4ff6cc8d170",
+    "419d489a240147890d1f8543240ead36ac9b9a0d",
+    "8e16051ec42059a113d7da9c42a58b6c915b0143",
+    "71b011570ea21332b2268e47d3ca011a4f2c093c",
+    "659209bb805c296b128a6dfe2abded4be9853036",
+    "8093448ea22fe71d1cd280f0a7e686d3eb8d5b75",
+    "4464d2cb8031fb40a847372d2f115a2beeef2683",
+    "326108d188f0c75384f2b7a537d08ddea0e7d20b",
+    "f45f546",
+    "fbb8ee7"
+  ],
+  "supersession": "The earlier 991b0c0 evidence run was blocked by a reproducible startup-focus timeout and was not a passing closeout. This fresh run after f45f546 and fbb8ee7 supersedes its test counts and JUnit hashes.",
+  "junit_sanitization": {
+    "method": "deterministic XML parse and rewrite after pytest generation",
+    "hostname": "every hostname attribute is normalized to local-test-host",
+    "paths": "the current repository-root prefix is removed from XML attributes and text so test locations are repository-relative",
+    "postcondition": "both XML files reparse with unchanged tests, testcase elements, inferred subtests, failures, errors, and skips; all four Task 5 artifacts pass a scan for user paths, Windows user paths, username, machine hostname, canary values, private-key blocks, and bearer credentials"
+  },
+  "nonclaims": [
+    "No Windows installer, CH340 driver, actual installer log, or target-machine evidence.",
+    "No deployed support-key custody, rotation, or access-control evidence.",
+    "No hardware, operator, production service, or clinical validation."
+  ]
+}

@@ -7,6 +7,13 @@ from enum import StrEnum
 from pathlib import PurePath
 from typing import Protocol
 
+from client.support import (
+    SafeClientCounters,
+    SafeClientEventName,
+    SafeClientEventOutcome,
+)
+from shared.contracts.validation_telemetry import ErrorCode
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimePaths:
@@ -52,10 +59,23 @@ class BuildManifest:
     git_commit: str
     target: str
     created_at: datetime
+    support_recipient_key_id: str | None = None
+    support_recipient_resource: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.support_recipient_key_id is None) != (
+            self.support_recipient_resource is None
+        ):
+            raise ValueError("support recipient key ID and resource must be configured together")
+        if self.support_recipient_resource is not None and (
+            not self.support_recipient_resource
+            or PurePath(self.support_recipient_resource).name
+            != self.support_recipient_resource
+        ):
+            raise ValueError("support recipient resource must be a packaged basename")
 
     def to_json(self) -> str:
-        return json.dumps(
-            {
+        payload = {
                 "app_version": self.app_version,
                 "protocol_version": self.protocol_version,
                 "report_schema_version": self.report_schema_version,
@@ -64,7 +84,12 @@ class BuildManifest:
                 "git_commit": self.git_commit,
                 "target": self.target,
                 "created_at": self.created_at.isoformat(),
-            },
+            }
+        if self.support_recipient_key_id is not None:
+            payload["support_recipient_key_id"] = self.support_recipient_key_id
+            payload["support_recipient_resource"] = self.support_recipient_resource
+        return json.dumps(
+            payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -193,6 +218,17 @@ class MigrationPort(Protocol):
     def restore_database(self, snapshot: str) -> None: ...
 
 
+class SafeClientEventRecorderPort(Protocol):
+    def record(
+        self,
+        name: SafeClientEventName,
+        outcome: SafeClientEventOutcome,
+        *,
+        error_code: ErrorCode | None = None,
+        counters: SafeClientCounters | None = None,
+    ) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class UpgradeResult:
     succeeded: bool
@@ -205,9 +241,11 @@ class UpgradeCoordinator:
         *,
         installer: InstallerPort,
         migration: MigrationPort,
+        events: SafeClientEventRecorderPort | None = None,
     ) -> None:
         self._installer = installer
         self._migration = migration
+        self._events = events
 
     def apply(self, candidate: CandidatePackage) -> UpgradeResult:
         database_snapshot: str | None = None
@@ -220,8 +258,33 @@ class UpgradeCoordinator:
             self._installer.rollback_application()
             if database_snapshot is not None:
                 self._migration.restore_database(database_snapshot)
+            self._record_event(
+                SafeClientEventName.UPGRADE_ROLLED_BACK,
+                SafeClientEventOutcome.FAILED,
+                error_code="E-UPD-001",
+            )
             return UpgradeResult(False, "E-UPD-001")
+        self._record_event(SafeClientEventName.UPGRADE_APPLIED, SafeClientEventOutcome.OK)
         return UpgradeResult(True)
+
+    def _record_event(
+        self,
+        name: SafeClientEventName,
+        outcome: SafeClientEventOutcome,
+        *,
+        error_code: ErrorCode | None = None,
+    ) -> None:
+        if self._events is None:
+            return
+        try:
+            self._events.record(
+                name,
+                outcome,
+                error_code=error_code,
+                counters=SafeClientCounters(attempt_count=1),
+            )
+        except Exception:
+            pass
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:

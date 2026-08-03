@@ -27,6 +27,24 @@ than bundling the complete Qt development toolchain.
 
 Signing certificates, notarization credentials, activation credentials, and other secrets must be supplied only by the protected CI keychain or secret store. They must never be embedded in the repository or package metadata.
 
+## Optional diagnostic-support recipient
+
+Build tooling may set `FEETFORCEPLATE_SUPPORT_RECIPIENT_FILE` to one
+non-group/world-writable JSON resource containing the support-owned X25519
+**public** key, its technical key ID, and schema
+`feetforceplate-support-recipient/1`. The spec stages the resource as the fixed
+packaged name `support-recipient.json` (Unix mode `0644`, which the loader
+accepts) before collection; it does not place its source path or environment
+value in application metadata.
+The corresponding private key remains support-owned and must never be
+packaged, committed, or provided to the application.
+
+Omitting the resource, or a malformed/group-or-world-writable resource, does not stop the
+packaged application from starting. It disables P-11 diagnostic export
+fail-closed with customer-safe error `E-SUP-001`. Tests generate temporary
+keys/resources only; they do not establish deployed key custody, a Windows
+package, or target-OS packaging acceptance.
+
 ## Platform requirements
 
 - Windows: produce a signed outer installer; check CH340 driver readiness before device use and present a plain-language remediation path. Do not silently install a driver without operator or administrator confirmation.

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
+import inspect
 from pathlib import Path
+import textwrap
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
@@ -19,6 +22,95 @@ def _primary_buttons(window: StartupValidationWindow) -> list[QPushButton]:
         for button in window.findChildren(QPushButton)
         if button.isVisible() and button.property("importance") == "primary"
     ]
+
+
+def _startup_window_functions() -> dict[str, list[ast.FunctionDef]]:
+    source = textwrap.dedent(inspect.getsource(StartupValidationWindow))
+    module = ast.parse(source)
+    window_class = next(
+        node for node in module.body if isinstance(node, ast.ClassDef)
+    )
+    functions: dict[str, list[ast.FunctionDef]] = {}
+    for node in window_class.body:
+        if isinstance(node, ast.FunctionDef):
+            functions.setdefault(node.name, []).append(node)
+    return functions
+
+
+def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_self_method(call: ast.Call, name: str) -> bool:
+    return (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == name
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+    )
+
+
+def _is_primary_action_focus(call: ast.Call) -> bool:
+    return (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "setFocus"
+        and isinstance(call.func.value, ast.Attribute)
+        and call.func.value.attr == "_primary_action"
+        and isinstance(call.func.value.value, ast.Name)
+        and call.func.value.value.id == "self"
+    )
+
+
+def _is_deferred_primary_focus(call: ast.Call) -> bool:
+    return (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "singleShot"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "QTimer"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Attribute)
+        and isinstance(call.args[1].value, ast.Name)
+        and call.args[1].value.id == "self"
+        and call.args[1].attr == "_focus_primary_action"
+    )
+
+
+def _assert_startup_focus_helper_structure() -> None:
+    functions = _startup_window_functions()
+    focus_helpers = functions.get("_focus_primary_action", [])
+    assert len(focus_helpers) == 1
+    helper = focus_helpers[0]
+
+    assert not any(
+        _call_name(call) == "singleShot"
+        for call in ast.walk(helper)
+        if isinstance(call, ast.Call)
+    )
+
+    guard = helper.body[0]
+    assert isinstance(guard, ast.If)
+    calls = [
+        statement.value
+        for statement in guard.body
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)
+    ]
+    assert len(calls) == 3
+    assert _is_self_method(calls[0], "raise_")
+    assert _is_self_method(calls[1], "activateWindow")
+    assert _is_primary_action_focus(calls[2])
+
+    present_functions = functions.get("present", [])
+    assert len(present_functions) == 1
+    present = present_functions[0]
+    deferred_focus_calls = [
+        call
+        for call in ast.walk(present)
+        if isinstance(call, ast.Call)
+        and _is_deferred_primary_focus(call)
+    ]
+    assert len(deferred_focus_calls) == 1
 
 
 def test_connecting_is_indeterminate_and_collecting_is_monotonic_determinate(qtbot) -> None:
@@ -68,13 +160,17 @@ def test_failure_has_plain_copy_one_primary_recovery_and_safe_exit(qtbot) -> Non
     assert window.findChild(QLabel, "startupErrorCode").text() == "诊断编号 E-DEV-102"
     all_copy = " ".join(label.text() for label in window.findChildren(QLabel))
     assert all(term not in all_copy for term in ("CheckSum", "checksum", "阈值", "坏点", "堆栈", "串口"))
-    qtbot.waitUntil(lambda: primary[0].hasFocus(), timeout=1_000)
-    assert primary[0].hasFocus()
+    qtbot.waitUntil(lambda: window.focusWidget() is primary[0], timeout=1_000)
+    assert window.focusWidget() is primary[0]
 
     qtbot.mouseClick(primary[0], Qt.MouseButton.LeftButton)
     qtbot.mouseClick(exit_button, Qt.MouseButton.LeftButton)
     assert retried == [True]
     assert exited == [True]
+
+
+def test_startup_focus_helper_has_one_deferred_activation_aware_implementation() -> None:
+    _assert_startup_focus_helper_structure()
 
 
 def test_passed_state_uses_existing_success_asset_and_has_no_skip_action(qtbot) -> None:
