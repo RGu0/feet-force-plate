@@ -178,3 +178,14 @@ QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest -q \
 - 重新目视检查 `ui/connecting-1440x900.png`、`ui/collecting-1440x900.png`、`ui/failure-1440x900.png` 与 `ui-hidpi/long-copy-1280x720.png`：连接页为不确定进度；采集页显示真实 50% 与 3 秒倒计时，并明确“设备表面请勿站人、请勿放置物品”；失败页只有一个主要恢复动作、稳定编号及安全退出；2×长文案没有裁切。
 - 结合真实 `MandatoryStartupGate` 通过路径（summary SHA-256 `c1dc6d81d94dfc56020af28f46844d1274267ea52adf2a6074af3fb91c1d9efa`），当前可在 Linear 勾选 18/20 条。
 - 仍不勾选：`Windows 高 DPI、键盘焦点和屏幕缩放下可用`、`养老院或体检机构操作员无需技术账号或协议知识即可恢复常见错误`。这两条需要真实目标 Windows 与现场操作员人工验收，RAY-114 保持 `In Review`。
+
+## 2026-08-03 真机空载复验
+
+操作员已确认设备空载、无受试者后，在 macOS 上对已连接设备重跑正式启动门和受控采集。归档的脱敏摘要为 [`startup-gate-hardware-20260803.json`](startup-gate-hardware-20260803.json)（SHA-256 `9eae71774e742d30b941c433c57b8c563a57dd190f8e1bdaf7fb65093ba1b9a5`）和 [`hardware-runtime-20260803.json`](hardware-runtime-20260803.json)（SHA-256 `9123313b422fbed07aaa13e06ae110b32d289b25f964bd33101a269589cf76a6`）。
+
+- 实际启动门状态为 `BOOTSTRAPPING → WAITING_FOR_EMPTY → COLLECTING_BASELINE → PASSED`，`workbench_created=true`、`timed_out=false`。
+- 空载基线为 111 帧、5.157 秒，单元中位数最大原始计数 4.0；短时采集为 208 帧，`COMPLETED`、`VALID`、`committed=true`。
+- 新进程等价恢复扫描的临时恢复、隔离、孤儿注册、补传重排和中断暂存丢弃均为 0；提交会话为 `CLOSED`/`VALID` 并有 1 个派生产物。
+- 校验和失配继续按既定 `OBSERVE_ONLY` 边界审计，不以此推断厂商语义或标定/临床结论。
+
+摘要不包含原始矩阵、设备路径、密钥、受试者、凭据、报告或异常文本。此次复验再次支持真机完整空载校验通过后才创建工作台；Windows 与现场非技术操作员两项仍未验收，RAY-114 保持 `In Review`。

@@ -1,0 +1,16 @@
+{
+  "schema_version": "startup-gate-hardware-acceptance/1",
+  "captured_at_utc": "2026-08-03T06:00:50Z",
+  "terminal_id": "hardware-acceptance-terminal",
+  "observed_states": [
+    "BOOTSTRAPPING",
+    "WAITING_FOR_EMPTY",
+    "COLLECTING_BASELINE",
+    "PASSED"
+  ],
+  "final_state": "PASSED",
+  "workbench_created": true,
+  "timed_out": false,
+  "fault_injection": null,
+  "boundary": "Startup-gate-only validation; no participant, screening session, raw frame, serial path, credential, report, or telemetry upload is recorded."
+}

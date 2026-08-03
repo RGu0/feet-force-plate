@@ -1,0 +1,14 @@
+{
+  "schema_version": "startup-gate-hardware-acceptance/1",
+  "captured_at_utc": "2026-08-03T06:03:33Z",
+  "terminal_id": "hardware-acceptance-terminal",
+  "observed_states": [
+    "BOOTSTRAPPING",
+    "DEVICE_BUSY"
+  ],
+  "final_state": "DEVICE_BUSY",
+  "workbench_created": false,
+  "timed_out": false,
+  "fault_injection": "PORT_HELD_OPEN",
+  "boundary": "Startup-gate-only validation; no participant, screening session, raw frame, serial path, credential, report, or telemetry upload is recorded."
+}

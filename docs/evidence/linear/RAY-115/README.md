@@ -288,3 +288,13 @@ Therefore RAY-115 may move to **In Review**, not Done.
 可复核 evidence：`telemetry-closeout-20260802.json`。聚焦矩阵为 **88 passed**，JUnit `pytest-telemetry-closeout-20260802.xml`，SHA-256 `073ae8e9f5224e586c8d2feb3f121dded81caba2e7ad41584bee1812ea1217d3`。全仓回归为 **778 passed、1 skipped、3 个既有 collection warnings、21 subtests passed**，JUnit `pytest-full-telemetry-closeout-20260802.xml`，SHA-256 `72dd4a8924420ff2bf837b0efb684d6c902e38db4cf5cd86cd5326a3055899a5`。Ruff、Mypy、compileall 与 `git diff --check` 均通过。
 
 由此可勾选“故障日志默认自动补传，但不包含姓名、机构档案号或未脱敏客户数据”。证据仅证明本机软件实现、认证 ASGI 集成、私有持久化与重启幂等；不声称真实部署网络可用性、Windows 人工验收、机构操作员验收、生产授权或临床验证。RAY-115 仍须保持 `In Review`，唯一未完成项为 Windows 高 DPI、键盘、提示文字和退出路径人工验收。
+
+## 2026-08-03 真机端口占用复验
+
+在操作员确认空载后，短暂占用已连接设备的串口，再启动实际 `MandatoryStartupGate`。脱敏摘要 [`device-busy-hardware-20260803.json`](device-busy-hardware-20260803.json) 的 SHA-256 为 `fd7563bed8e26c15e800a10139acd93caf50398d686c3d98cbcd9a775436575b`。
+
+- 实际状态为 `BOOTSTRAPPING → DEVICE_BUSY`，`workbench_created=false`、`timed_out=false`。
+- 故障注入仅为 `PORT_HELD_OPEN`；该验收不读取压力帧，也不建立筛查会话。
+- 摘要不含设备路径、原始帧、受试者、凭据、报告、遥测上传或异常文本。
+
+本次复验支持“设备忙时安全失败且不进入工作台”的真机路径，不替代已排除的 Windows 高 DPI、键盘、提示文字与退出路径人工验收；RAY-115 保持 `In Review`，直到该豁免在 Linear 中获得明确记录或完成目标机验收。

@@ -1,0 +1,72 @@
+{
+  "schema_version": "do-p4864-runtime-acceptance-result/1",
+  "captured_at_utc": "2026-08-03T06:02:14Z",
+  "requested_baseline_seconds": 5.0,
+  "requested_capture_seconds": 10.0,
+  "baseline": {
+    "frames": 111,
+    "duration_seconds": 5.157078542,
+    "maximum_cell_median_count": 4.0,
+    "source_sha256": "c7fc53e025eae500e688b09313ac54a929af8dce966d1659c813850e359553f5",
+    "parser": {
+      "decoded_frames": 111,
+      "checksum_observations": 111,
+      "checksum_mismatches": 111,
+      "invalid_frames": 0,
+      "resynchronizations": 1
+    }
+  },
+  "runtime": {
+    "outcome": "COMPLETED",
+    "frames_stored": 208,
+    "reason_code": null,
+    "validity": "VALID",
+    "committed": true,
+    "communication_integrity": {
+      "policy_version": "do-p4864-valid-signal-continuity/1",
+      "maximum_no_valid_signal_ns": 5000000000,
+      "reconstructed_frame_count": 0,
+      "events": [
+        {
+          "event_index": 0,
+          "failure_kind": "NOISE_OR_RESYNCHRONIZATION",
+          "invalid_frame_count": 0,
+          "discarded_bytes": 489,
+          "preceding_source_index": null,
+          "following_source_index": 0,
+          "valid_signal_gap_ns": null,
+          "reconstructed_frame_count": 0,
+          "resolution": "NO_PRECEDING_VALID_FRAME"
+        }
+      ]
+    },
+    "parser": {
+      "valid_frames": 208,
+      "invalid_frames": 0,
+      "resynchronizations": 1,
+      "length_failures": 0,
+      "function_failures": 0,
+      "tail_failures": 0,
+      "checksum_mismatches": 208
+    }
+  },
+  "post_restart": {
+    "session_status": [
+      "CLOSED",
+      "VALID",
+      1785736934225368000
+    ],
+    "derived_artifact_count": 1,
+    "recovery": {
+      "temporary_recovered": 0,
+      "temporary_quarantined": 0,
+      "sealed_quarantined": 0,
+      "orphan_segments_registered": 0,
+      "sessions_marked_incomplete": 0,
+      "uploads_requeued": 0,
+      "promoted_sessions_recovered": 0,
+      "interrupted_staging_discarded": 0
+    }
+  },
+  "local_only_boundary": "Raw and derived encrypted data remain under output-root; this summary contains no raw matrices, device paths, AES key material, or runtime exception text."
+}
