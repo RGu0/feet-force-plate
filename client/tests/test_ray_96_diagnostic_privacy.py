@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import json
+import multiprocessing
+import sys
+import types
 from io import BytesIO
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 from uuid import UUID, uuid5
 from zipfile import ZipFile
 
@@ -48,6 +53,14 @@ ALL_SENSITIVE_CANARIES = (
     "PATIENT-CANARY-96",
     "MRN-CANARY-96",
 )
+
+
+class _StartSignal(Protocol):
+    def wait(self) -> bool: ...
+
+
+class _ResultSink(Protocol):
+    def put(self, item: bool) -> None: ...
 
 
 def safe_event_payload() -> dict[str, object]:
@@ -150,6 +163,24 @@ def canonical_authenticated_envelope(private_key: X25519PrivateKey, recipient_ke
     )
 
 
+def _append_safe_event_in_process(
+    root_text: str,
+    start: _StartSignal,
+    results: _ResultSink,
+    process_index: int,
+) -> None:
+    """Append one distinct event after every worker has opened the same store."""
+    store = SafeClientEventStore(root_text)
+    recorder = make_recorder(
+        store,
+        iter((uuid5(EVENT_1, f"concurrent-event-{process_index}"),)).__next__,
+    )
+    start.wait()
+    results.put(
+        recorder.record(SafeClientEventName.APPLICATION_STARTED, SafeClientEventOutcome.OK)
+    )
+
+
 def test_safe_event_contract_rejects_credential_identity_and_free_text_fields() -> None:
     """Adding an unapproved payload field must reject the event instead of storing it."""
     base = safe_event_payload()
@@ -182,6 +213,87 @@ def test_private_store_writes_hash_chained_mode_0600_records(tmp_path: Path) -> 
     assert records[1].previous_sha256 == records[0].sha256
     assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
     assert (tmp_path / "safe-support-events").stat().st_mode & 0o777 == 0o700
+
+
+def test_private_store_falls_back_to_path_permissions_without_fchmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows Python versions without fchmod must still create a private store."""
+    def unavailable_fchmod(*_args: object) -> None:
+        raise AttributeError("fchmod is unavailable")
+
+    monkeypatch.setattr(safe_events.os, "fchmod", unavailable_fchmod)
+    store = SafeClientEventStore(tmp_path / "safe-support-events")
+    recorder = make_recorder(store, iter((EVENT_1,)).__next__)
+
+    assert recorder.record(SafeClientEventName.APPLICATION_STARTED, SafeClientEventOutcome.OK)
+    assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
+
+
+def test_windows_process_lock_retries_transient_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contended Windows lock must wait rather than silently dropping an event."""
+    calls: list[int] = []
+    outcomes: list[OSError | None] = [
+        OSError(errno.EACCES, "busy"),
+        OSError(errno.EACCES, "busy"),
+        None,
+        None,
+    ]
+
+    def locking(_descriptor: int, mode: int, _size: int) -> None:
+        calls.append(mode)
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    fake_msvcrt = types.SimpleNamespace(LK_NBLCK=7, LK_UNLCK=8, locking=locking)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(safe_events.time, "sleep", lambda _seconds: None)
+
+    unlock = safe_events._acquire_windows_lock(42)
+    unlock()
+
+    assert calls == [7, 7, 7, 8]
+
+
+def test_private_store_serializes_concurrent_process_appends(tmp_path: Path) -> None:
+    """Independent client processes must leave one continuous, complete hash chain."""
+    context = multiprocessing.get_context("spawn")
+    root = tmp_path / "safe-support-events"
+    worker_count = 12
+    start = context.Barrier(worker_count + 1)
+    results = context.Queue()
+    workers = [
+        context.Process(
+            target=_append_safe_event_in_process,
+            args=(str(root), start, results, index),
+        )
+        for index in range(worker_count)
+    ]
+    for worker in workers:
+        worker.start()
+    try:
+        start.wait()
+        for worker in workers:
+            worker.join(timeout=15)
+            assert worker.exitcode == 0
+
+        assert [results.get(timeout=2) for _ in workers] == [True] * worker_count
+        records = SafeClientEventStore(root).verified_records()
+        assert len(records) == worker_count
+        assert all(
+            current.previous_sha256 == previous.sha256
+            for previous, current in zip(records, records[1:])
+        )
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+            worker.join(timeout=2)
+        results.close()
+        results.join_thread()
 
 
 def test_event_contract_bounds_counters_and_accepts_only_technical_versions() -> None:
