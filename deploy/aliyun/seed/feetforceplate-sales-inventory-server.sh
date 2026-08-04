@@ -12,9 +12,23 @@ if [[ "$#" -ne 1 ]]; then
 fi
 
 platform_login="$1"
-release_sha="cff04f698bdb3ad8f5abbde50da26c258b3bab68"
-archive_sha="5f1b092af4f3bf0ea4c207a483c2f7d45191e755b68347a0702acff501729350"
-archive="/home/rui/feetforceplate-sales-inventory-cff04f6.tar.gz"
+release_manifest="/home/rui/feetforceplate-sales-inventory-release.env"
+if [[ ! -r "$release_manifest" ]]; then
+    echo "release manifest is missing or unreadable: $release_manifest" >&2
+    exit 1
+fi
+source "$release_manifest"
+release_sha="${RELEASE_SHA:?missing RELEASE_SHA}"
+archive_sha="${ARCHIVE_SHA256:?missing ARCHIVE_SHA256}"
+archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"
+if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$archive_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "release manifest contains an invalid checksum or release identifier" >&2
+    exit 1
+fi
+if [[ "$archive" != /home/rui/* ]]; then
+    echo "release archive must be located under /home/rui" >&2
+    exit 1
+fi
 work_root="/tmp/feetforceplate-sales-inventory-$release_sha"
 delivery_root="/var/lib/feetforceplate/delivery"
 database_name="feetforceplate_seed"
@@ -35,6 +49,7 @@ install -m 0644 /etc/feetforceplate/tls/seed.crt "$work_root/seed.crt"
 install -m 0600 /etc/feetforceplate/tls/seed.key "$work_root/seed.key"
 
 source /etc/feetforceplate/seed.env
+cd /
 bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
     "$archive" "$release_sha" "$archive_sha" \
     "$work_root/seed.crt" \

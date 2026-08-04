@@ -126,6 +126,15 @@ def test_backup_metadata_includes_sales_inventory_schema_version() -> None:
     assert "0005_sales_inventory_activation" in text
 
 
+def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
+    text = (ROOT / "feetforceplate-sales-inventory-server.sh").read_text()
+    assert 'release_manifest="/home/rui/feetforceplate-sales-inventory-release.env"' in text
+    assert 'source "$release_manifest"' in text
+    assert 'release_sha="${RELEASE_SHA:?missing RELEASE_SHA}"' in text
+    assert 'archive_sha="${ARCHIVE_SHA256:?missing ARCHIVE_SHA256}"' in text
+    assert 'archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"' in text
+
+
 def test_systemd_entry_scripts_are_executable() -> None:
     for relative in (
         "cloud/api/run-seed.sh",
