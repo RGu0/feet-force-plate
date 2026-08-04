@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import stat
 
 
 ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
+
+
+def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
+    repository = ROOT.parents[2]
+    project = (repository / "pyproject.toml").read_text()
+    lock = (repository / "uv.lock").read_text()
+    for package in ("alibabacloud-oss-v2", "alibabacloud-credentials"):
+        assert package in project
+        assert package in lock
 
 
 def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
@@ -13,6 +23,7 @@ def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
         "User=feetforceplate", "Group=feetforceplate", "NoNewPrivileges=true",
         "PrivateTmp=true", "ProtectSystem=strict", "ProtectHome=true",
         "ReadWritePaths=/var/lib/feetforceplate/objects",
+        "ReadWritePaths=/var/lib/feetforceplate/validation-telemetry",
         "ReadWritePaths=/var/lib/feetforceplate/runtime",
         "FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv",
         "XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache",
@@ -73,6 +84,7 @@ def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -
         "/opt/feetforceplate/releases", "/opt/feetforceplate/app",
         "/etc/feetforceplate/seed.env", "/var/lib/feetforceplate/objects",
         "/var/lib/feetforceplate/backups",
+        "/var/lib/feetforceplate/validation-telemetry",
         "/var/lib/feetforceplate/runtime",
     ):
         assert path in layout
@@ -114,9 +126,32 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("https://127.0.0.1:17443/health/ready") < text.index("kill -TERM")
     assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
     assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
-    assert path.stat().st_mode & stat.S_IXUSR
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
     assert "0004_allow_unsigned_revoked_license.sql" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
+    assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
+
+
+def test_oss_configuration_uses_ecs_role_without_long_lived_access_keys() -> None:
+    path = ROOT / "configure-oss.sh"
+    text = path.read_text()
+    for token in (
+        "FEETFORCEPLATE_OBJECT_BACKEND=aliyun-oss",
+        "FEETFORCEPLATE_OSS_REGION",
+        "FEETFORCEPLATE_OSS_BUCKET",
+        "FEETFORCEPLATE_OSS_ENDPOINT",
+        "FEETFORCEPLATE_OSS_SERVER_SIDE_ENCRYPTION",
+        "FEETFORCEPLATE_OSS_ECS_RAM_ROLE",
+        "FEETFORCEPLATE_VALIDATION_TELEMETRY_ROOT",
+        "oss_configuration=updated",
+        "values=not-printed",
+    ):
+        assert token in text
+    assert "ACCESS_KEY" not in text
+    assert "source " not in text
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
 
 
 def test_systemd_entry_scripts_are_executable() -> None:
@@ -128,10 +163,12 @@ def test_systemd_entry_scripts_are_executable() -> None:
         "deploy/aliyun/seed/restore-verify.sh",
         "deploy/aliyun/seed/run-restore-drill.sh",
         "deploy/aliyun/seed/run-live-acceptance.sh",
+        "deploy/aliyun/seed/configure-oss.sh",
         "deploy/aliyun/seed/resume-seed-cutover.sh",
     ):
         path = ROOT.parents[2] / relative
-        assert path.stat().st_mode & stat.S_IXUSR
+        if os.name != "nt":
+            assert path.stat().st_mode & stat.S_IXUSR
 
 
 def test_resume_cutover_requires_persistent_readiness_before_stopping_legacy() -> None:
@@ -149,3 +186,5 @@ def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
     assert text.count("FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv") >= 3
     assert text.count("XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache") >= 3
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in text
+    assert "scripts/verify_aliyun_oss_live.py" in text
+    assert "aliyun-oss-summary.json" in text

@@ -202,6 +202,16 @@ def test_long_public_copy_wraps_inside_reading_width(qtbot) -> None:
     assert window.findChild(QPushButton, "startupPrimaryAction").accessibleName()
 
 
+def test_startup_public_chinese_copy_has_a_renderable_font(qtbot) -> None:
+    window = StartupValidationWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.present(presentation_for(StartupValidationState.DEVICE_NOT_FOUND))
+
+    assert window.findChild(QLabel, "startupTitle").fontMetrics().inFont("启")
+    assert window.findChild(QLabel, "startupMessage").fontMetrics().inFont("请")
+
+
 def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -> None:
     assets = Path(__file__).parents[1] / "app" / "assets"
     packaging_spec = (
@@ -214,6 +224,11 @@ def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -
     assert (assets / "app-icon.png").is_file()
     assert (assets / "FeetForcePlate.icns").is_file()
     assert 'datas = [(str(assets), "client/app/assets")]' in packaging_spec
+    qt_shell = (Path(__file__).parents[1] / "app" / "qt_shell.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'with_name("assets") / "logo-horizontal-trimmed.png"' in qt_shell
+    assert "docs" not in qt_shell[qt_shell.index("def _brand_logo"):qt_shell.index("def _build_page")]
     assert 'icon = assets / "FeetForcePlate.icns"' in packaging_spec
 
 

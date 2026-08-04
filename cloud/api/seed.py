@@ -8,7 +8,7 @@ import binascii
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -79,12 +79,21 @@ class SeedSettings:
     object_root: Path | str
     public_base_url: str
     trusted_proxies: tuple[str, ...]
+    object_backend: Literal["filesystem", "aliyun-oss"] = "filesystem"
+    validation_telemetry_root: Path | str | None = None
+    oss_region: str | None = None
+    oss_bucket: str | None = None
+    oss_endpoint: str | None = None
+    oss_server_side_encryption: Literal["KMS", "AES256"] = "KMS"
+    oss_ecs_ram_role: str | None = None
     secret_file: Path | str | None = None
     tenant_token_key_id: str = "tenant/1"
     platform_token_key_id: str = "platform/1"
     identity_key_version: str = "identity/1"
 
     def __post_init__(self) -> None:
+        if self.object_backend not in {"filesystem", "aliyun-oss"}:
+            raise ValueError("object backend must be filesystem or aliyun-oss")
         dsns = (self.migration_dsn, self.tenant_dsn, self.activation_dsn, self.platform_dsn)
         if any(urlparse(dsn).scheme not in {"postgres", "postgresql"} for dsn in dsns):
             raise ValueError("all seed database DSNs must use PostgreSQL")
@@ -111,6 +120,40 @@ class SeedSettings:
         if root == REPOSITORY_ROOT or root.is_relative_to(REPOSITORY_ROOT):
             raise ValueError("object root must stay outside the repository")
         object.__setattr__(self, "object_root", root)
+        telemetry_root = Path(
+            self.validation_telemetry_root or root.parent / "validation-telemetry"
+        ).expanduser().resolve()
+        if (
+            telemetry_root == REPOSITORY_ROOT
+            or telemetry_root.is_relative_to(REPOSITORY_ROOT)
+            or telemetry_root == root
+            or telemetry_root.is_relative_to(root)
+        ):
+            raise ValueError("validation telemetry must use a separate external security domain")
+        object.__setattr__(self, "validation_telemetry_root", telemetry_root)
+        if self.object_backend == "aliyun-oss":
+            if not self.oss_region or not self.oss_region.strip():
+                raise ValueError("OSS region is required")
+            if not self.oss_bucket or not self.oss_bucket.strip():
+                raise ValueError("OSS bucket is required")
+            endpoint = urlparse(self.oss_endpoint or "")
+            if endpoint.scheme != "https" or not endpoint.netloc:
+                raise ValueError("OSS endpoint must be absolute HTTPS")
+            if (
+                endpoint.hostname is None
+                or endpoint.hostname
+                != f"oss-{self.oss_region.strip()}-internal.aliyuncs.com"
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.port is not None
+                or endpoint.path not in {"", "/"}
+                or endpoint.params
+                or endpoint.query
+                or endpoint.fragment
+            ):
+                raise ValueError("OSS endpoint must be an internal HTTPS origin")
+            if self.oss_server_side_encryption not in {"KMS", "AES256"}:
+                raise ValueError("OSS server-side encryption must be KMS or AES256")
         if not self.trusted_proxies:
             raise ValueError("at least one trusted reverse proxy is required")
         if self.secret_file is not None:
@@ -154,6 +197,17 @@ class SeedSettings:
                 item.strip() for item in required("FEETFORCEPLATE_TRUSTED_PROXIES").split(",")
                 if item.strip()
             ),
+            object_backend=values.get("FEETFORCEPLATE_OBJECT_BACKEND", "filesystem"),
+            validation_telemetry_root=(
+                values.get("FEETFORCEPLATE_VALIDATION_TELEMETRY_ROOT") or None
+            ),
+            oss_region=values.get("FEETFORCEPLATE_OSS_REGION") or None,
+            oss_bucket=values.get("FEETFORCEPLATE_OSS_BUCKET") or None,
+            oss_endpoint=values.get("FEETFORCEPLATE_OSS_ENDPOINT") or None,
+            oss_server_side_encryption=values.get(
+                "FEETFORCEPLATE_OSS_SERVER_SIDE_ENCRYPTION", "KMS"
+            ),
+            oss_ecs_ram_role=values.get("FEETFORCEPLATE_OSS_ECS_RAM_ROLE") or None,
             secret_file=values.get("FEETFORCEPLATE_SEED_ENV_FILE") or None,
             tenant_token_key_id=values.get("FEETFORCEPLATE_TENANT_TOKEN_KEY_ID", "tenant/1"),
             platform_token_key_id=values.get("FEETFORCEPLATE_PLATFORM_TOKEN_KEY_ID", "platform/1"),
@@ -170,6 +224,7 @@ async def build_seed_app(
     settings: SeedSettings,
     *,
     pool_factory: Callable[..., Any] | None = None,
+    object_store_factory: Callable[[SeedSettings], Any] | None = None,
 ) -> FastAPI:
     if pool_factory is None:
         import asyncpg
@@ -183,7 +238,14 @@ async def build_seed_app(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
     data_repository = PostgresPlatformRepository(tenant_pool)
-    objects = FileSystemObjectStore(settings.object_root)
+    if object_store_factory is not None:
+        objects = object_store_factory(settings)
+    elif settings.object_backend == "aliyun-oss":
+        from cloud.ingestion.aliyun_oss import build_aliyun_oss_object_store
+
+        objects = build_aliyun_oss_object_store(settings)
+    else:
+        objects = FileSystemObjectStore(settings.object_root)
     private_key = settings.license_private_key()
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     license_signer = LicenseDocumentSigner(
@@ -247,7 +309,7 @@ async def build_seed_app(
             platform_sensitive=SensitiveAccessService(access_repository),
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
-                    Path(settings.object_root) / "validation-telemetry"
+                    Path(settings.validation_telemetry_root)
                 )
             ),
         )
@@ -269,9 +331,12 @@ async def build_seed_app(
                     if await connection.fetchval("SELECT 1") != 1:
                         raise RuntimeError("database readiness failed")
             dependencies["postgres"] = "ready"
-            root = Path(settings.object_root)
-            if not root.is_dir() or not os.access(root, os.W_OK | os.X_OK):
-                raise RuntimeError("object storage readiness failed")
+            if settings.object_backend == "aliyun-oss":
+                await objects.check_ready()
+            else:
+                root = Path(settings.object_root)
+                if not root.is_dir() or not os.access(root, os.W_OK | os.X_OK):
+                    raise RuntimeError("object storage readiness failed")
             dependencies["object_store"] = "ready"
         except Exception:
             return JSONResponse(

@@ -9,7 +9,11 @@ import tomllib
 project_root = Path(SPECPATH).resolve().parents[2]
 entry_point = project_root / "main.py"
 assets = project_root / "client" / "app" / "assets"
+device_specifications = project_root / "docs" / "hardware" / "device-specifications"
 icon = assets / "FeetForcePlate.icns"
+required_design_font = assets / "fonts" / "NotoSansSC-VF.ttf"
+if not required_design_font.is_file():
+    raise SystemExit(f"Required design font is missing: {required_design_font}")
 with (project_root / "pyproject.toml").open("rb") as project_file:
     app_version = tomllib.load(project_file)["project"]["version"]
 
@@ -17,6 +21,7 @@ with (project_root / "pyproject.toml").open("rb") as project_file:
 # collecting every PySide6 submodule would also bundle development tools.
 hiddenimports = []
 datas = [(str(assets), "client/app/assets")]
+datas.append((str(device_specifications), "docs/hardware/device-specifications"))
 
 # This optional build input is a public X25519 recipient resource.  Its source
 # path stays in the build process; only its fixed packaged basename is copied.

@@ -150,6 +150,7 @@ class StartupValidationWindow(QMainWindow):
         self._progress_text.setProperty("mutedText", True)
         self._countdown = QLabel()
         self._countdown.setObjectName("startupCountdown")
+        self._countdown.setProperty("numericText", True)
         self._countdown.setProperty("secondaryText", True)
         self._countdown.setStyleSheet("font-weight: 600;")
         progress_row.addWidget(self._progress_text)

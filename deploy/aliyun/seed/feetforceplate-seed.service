@@ -37,6 +37,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 ReadOnlyPaths=/opt/feetforceplate/app /etc/feetforceplate/seed.env
 ReadWritePaths=/var/lib/feetforceplate/objects
+ReadWritePaths=/var/lib/feetforceplate/validation-telemetry
 ReadWritePaths=/var/lib/feetforceplate/runtime
 
 [Install]

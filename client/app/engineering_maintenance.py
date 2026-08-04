@@ -1,10 +1,10 @@
 """Privileged, read-only projection of the dynamic hardware defect mask.
 
-This is an engineering boundary, not an operator or algorithm feature.  It
-requires an externally supplied confirmation verifier and an already-bound
-stable physical device ID.  The projection deliberately contains only mask
-markers and health status: never pressure frames, evidence counts, session
-identifiers, protocol details, or repair controls.
+This is an engineering boundary, not an operator or algorithm feature. It
+requires an externally supplied confirmation verifier and an engineer-selected
+asset ID. The projection deliberately contains only mask markers and health
+status: never pressure frames, evidence counts, session identifiers, protocol
+details, or repair controls.
 """
 
 from __future__ import annotations
@@ -28,92 +28,83 @@ class EngineeringMaintenanceAccessDenied(PermissionError):
 
 
 class EngineeringMaintenanceDeviceUnbound(LookupError):
-    """No stable physical-device binding is available for maintenance."""
+    """No engineering-selected device ID is available for maintenance."""
 
 
 class EngineeringMaintenanceConnectionUnavailable(LookupError):
-    """The deployment cannot currently prove a stable connected-device identity."""
-
-
-@dataclass(frozen=True, slots=True)
-class EngineeringDeviceBinding:
-    """A selected asset ID bound to an opaque, stable hardware identity.
-
-    ``connection_id`` is supplied by the hardware/deployment layer (for example,
-    a USB serial-number fingerprint).  It is deliberately not a serial path and
-    is never projected to the ordinary operator UI.
-    """
-
-    device_id: str
-    connection_id: str
+    """The deployment has not configured an engineering device-ID registry."""
 
 
 class EngineeringDeviceBindingStore:
-    """Small, local, atomic registry for engineering-selected device bindings.
+    """Small, local, atomic registry for engineering-selected asset IDs.
 
-    This registry contains no raw frames, participant data, mask content or
-    credentials.  A connection without a hardware-provided stable identifier
-    cannot be bound: a changing serial path is not a physical device identity.
+    This registry contains no raw frames, participant data, mask content,
+    credentials, port paths, USB descriptors, or hardware fingerprints.
     """
 
-    _SCHEMA = "engineering-device-binding/1"
+    _SCHEMA = "engineering-device-registry/1"
+    _LEGACY_SCHEMA = "engineering-device-binding/1"
 
     def __init__(self, data_root: str | Path) -> None:
         self._path = Path(data_root) / "hardware" / "engineering-device-bindings.json"
 
     @property
     def selected_device_id(self) -> str | None:
-        return self._read().get("selected_device_id")
+        selected = self._read().get("selected_device_id")
+        return selected if isinstance(selected, str) else None
 
     def device_ids(self) -> tuple[str, ...]:
-        bindings = self._read().get("bindings", {})
-        return tuple(sorted(bindings))
+        device_ids = self._read().get("device_ids")
+        assert isinstance(device_ids, list)
+        return tuple(device_ids)
 
-    def bind_current_connection(self, *, device_id: str, connection_id: str) -> None:
+    def register_device_id(self, device_id: str) -> None:
         device_id = device_id.strip()
-        connection_id = connection_id.strip()
         if not device_id:
             raise ValueError("device_id is required")
-        if not connection_id:
-            raise EngineeringMaintenanceConnectionUnavailable(
-                "no stable hardware identity is available for binding"
-            )
-        payload = self._read()
-        bindings = dict(payload["bindings"])
-        bindings[device_id] = {"connection_id": connection_id}
+        device_ids = self.device_ids()
         self._atomic_write(
             {
                 "schema_version": self._SCHEMA,
                 "selected_device_id": device_id,
-                "bindings": bindings,
+                "device_ids": sorted({*device_ids, device_id}),
             }
         )
 
-    def binding_for_selected_device(self) -> EngineeringDeviceBinding | None:
-        payload = self._read()
-        device_id = payload.get("selected_device_id")
-        binding = payload.get("bindings", {}).get(device_id)
-        if not isinstance(device_id, str) or not isinstance(binding, dict):
-            return None
-        connection_id = binding.get("connection_id")
-        if not isinstance(connection_id, str) or not connection_id:
-            return None
-        return EngineeringDeviceBinding(device_id=device_id, connection_id=connection_id)
-
     def _read(self) -> dict[str, object]:
         if not self._path.exists():
-            return {"schema_version": self._SCHEMA, "selected_device_id": None, "bindings": {}}
+            return {"schema_version": self._SCHEMA, "selected_device_id": None, "device_ids": []}
         try:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError("engineering device binding registry is unreadable") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("engineering device binding registry is invalid")
+        if payload.get("schema_version") == self._LEGACY_SCHEMA:
+            bindings = payload.get("bindings")
+            selected = payload.get("selected_device_id")
+            if not isinstance(bindings, dict):
+                raise ValueError("engineering device binding registry is invalid")
+            device_ids = sorted(device_id for device_id in bindings if isinstance(device_id, str))
+            return {
+                "schema_version": self._SCHEMA,
+                "selected_device_id": selected if selected in device_ids else None,
+                "device_ids": device_ids,
+            }
+        device_ids = payload.get("device_ids")
+        selected = payload.get("selected_device_id")
         if (
-            not isinstance(payload, dict)
-            or payload.get("schema_version") != self._SCHEMA
-            or not isinstance(payload.get("bindings"), dict)
+            payload.get("schema_version") != self._SCHEMA
+            or not isinstance(device_ids, list)
+            or not all(isinstance(device_id, str) and device_id for device_id in device_ids)
+            or selected is not None and (not isinstance(selected, str) or selected not in device_ids)
         ):
             raise ValueError("engineering device binding registry is invalid")
-        return payload
+        return {
+            "schema_version": self._SCHEMA,
+            "selected_device_id": selected,
+            "device_ids": sorted(set(device_ids)),
+        }
 
     def _atomic_write(self, payload: dict[str, object]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +144,7 @@ class EngineeringMaintenanceSnapshot:
 
 
 class EngineeringMaintenanceService:
-    """Gate and project one already-bound physical device's saved mask.
+    """Gate and project one engineer-selected device's saved mask.
 
     ``confirmation_verifier`` belongs to the deployment/authentication layer;
     this module neither stores nor compares a shared secret.  It is therefore
@@ -165,15 +156,16 @@ class EngineeringMaintenanceService:
         *,
         bound_device_id: str | None = None,
         mask_store_for_device: Callable[[str], DynamicDefectMaskStore | None],
-        confirmation_verifier: Callable[[str], bool],
+        confirmation_verifier: Callable[[str], bool] | None = None,
         binding_store: EngineeringDeviceBindingStore | None = None,
         connected_device_identity: Callable[[], str | None] | None = None,
+        authorization_verifier: Callable[[], bool] | None = None,
     ) -> None:
         self._bound_device_id = bound_device_id.strip() if bound_device_id else None
         self._mask_store_for_device = mask_store_for_device
         self._confirmation_verifier = confirmation_verifier
         self._binding_store = binding_store
-        self._connected_device_identity = connected_device_identity
+        self._authorization_verifier = authorization_verifier
 
     def device_ids(self) -> tuple[str, ...]:
         """Return only registered asset IDs, never physical connection details."""
@@ -187,38 +179,41 @@ class EngineeringMaintenanceService:
             return self._bound_device_id
         return self._binding_store.selected_device_id
 
-    def bind_current_device(self, confirmation: str, device_id: str) -> None:
-        """Explicitly bind an engineer-entered asset ID to the current hardware.
+    def bind_current_device(
+        self, confirmation_or_device_id: str, device_id: str | None = None
+    ) -> None:
+        """Explicitly register and select an engineer-entered asset ID.
 
-        This is intentionally an engineering-only confirmation path.  It cannot
-        synthesize an identity from a port name, and it does not touch a mask.
+        This is intentionally an engineering-only confirmation path. It does
+        not derive an ID from a USB device and does not touch a mask.
         """
 
-        if not self._confirmation_verifier(confirmation):
-            raise EngineeringMaintenanceAccessDenied("engineering confirmation denied")
-        if self._binding_store is None or self._connected_device_identity is None:
+        if device_id is None:
+            self._require_authorization()
+            device_id = confirmation_or_device_id
+        else:
+            self._require_authorization(confirmation_or_device_id)
+        if self._binding_store is None:
             raise EngineeringMaintenanceConnectionUnavailable(
-                "device binding is not configured by this deployment"
+                "device registry is not configured by this deployment"
             )
-        connection_id = self._connected_device_identity()
-        self._binding_store.bind_current_connection(
-            device_id=device_id, connection_id=connection_id or ""
-        )
+        self._binding_store.register_device_id(device_id)
 
-    def read_distribution(self, confirmation: str) -> EngineeringMaintenanceSnapshot:
+    def read_distribution(
+        self, confirmation: str | None = None
+    ) -> EngineeringMaintenanceSnapshot:
         """Return the saved mask only after authorization; never mutate it."""
 
-        if not self._confirmation_verifier(confirmation):
-            raise EngineeringMaintenanceAccessDenied("engineering confirmation denied")
+        self._require_authorization(confirmation)
         bound_device_id = self._selected_bound_device_id()
         if not bound_device_id:
             raise EngineeringMaintenanceDeviceUnbound(
-                "no stable physical device is bound to this terminal"
+                "no engineering device ID is selected for this terminal"
             )
         store = self._mask_store_for_device(bound_device_id)
         if store is None or store.device_id != bound_device_id:
             raise EngineeringMaintenanceDeviceUnbound(
-                "the selected device has no verified maintenance binding"
+                "the selected device has no matching maintenance mask store"
             )
         mask = store.load_for_session()
         counts = {
@@ -246,10 +241,14 @@ class EngineeringMaintenanceService:
     def _selected_bound_device_id(self) -> str | None:
         if self._binding_store is None:
             return self._bound_device_id
-        binding = self._binding_store.binding_for_selected_device()
-        if binding is None or self._connected_device_identity is None:
-            return None
-        current_identity = self._connected_device_identity()
-        if not current_identity or current_identity != binding.connection_id:
-            return None
-        return binding.device_id
+        return self._binding_store.selected_device_id
+
+    def _require_authorization(self, confirmation: str | None = None) -> None:
+        if self._authorization_verifier is not None:
+            if not self._authorization_verifier():
+                raise EngineeringMaintenanceAccessDenied("engineering authorization denied")
+            return
+        if self._confirmation_verifier is None or confirmation is None:
+            raise EngineeringMaintenanceAccessDenied("engineering authorization denied")
+        if not self._confirmation_verifier(confirmation):
+            raise EngineeringMaintenanceAccessDenied("engineering confirmation denied")

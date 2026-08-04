@@ -34,6 +34,8 @@ from client.cloud.runtime import (
     ClientAccessRuntime,
     build_client_access_runtime,
 )
+from client.cloud.access_client import CloudAccessClient, CloudAccessError
+from client.hardware_standardization.dynamic_defect_mask import DynamicDefectMaskStore
 from client.startup_validation.persistence import ValidationAuditTrail
 from client.startup_validation.recovery import FailureEscalationPolicy
 from client.startup_validation.serial_connector import SerialValidationConnector
@@ -50,6 +52,15 @@ from client.startup_validation.workflow import (
 )
 
 from .qt_shell import ScreeningWindow
+from .engineering_access import (
+    EngineeringAuthorizationDenied,
+    PlatformEngineerAuthorizer,
+    PlatformEngineerLoginPort,
+)
+from .engineering_maintenance import (
+    EngineeringDeviceBindingStore,
+    EngineeringMaintenanceService,
+)
 from .pages import PageId
 from .session_lock import LockTimeout, SessionLockController
 from .app_icon import application_icon
@@ -159,8 +170,8 @@ def load_packaged_support_recipient(path: Path) -> SupportRecipient:
     resource = Path(path)
     try:
         status = resource.lstat()
-        if not stat.S_ISREG(status.st_mode) or status.st_mode & (
-            stat.S_IWGRP | stat.S_IWOTH
+        if not stat.S_ISREG(status.st_mode) or (
+            os.name != "nt" and status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
         ):
             raise ValueError("invalid support recipient resource")
         payload = json.loads(
@@ -204,6 +215,38 @@ def _reject_duplicate_recipient_keys(
     return result
 
 
+def build_packaged_engineering_login(
+    *,
+    data_root: Path,
+    client_factory: Callable[[], PlatformEngineerLoginPort],
+) -> Callable[[str, str], EngineeringMaintenanceService | None]:
+    """Build an independent, memory-only Platform IAM maintenance login."""
+
+    binding_store = EngineeringDeviceBindingStore(data_root)
+
+    def mask_store_for_device(device_id: str) -> DynamicDefectMaskStore:
+        return DynamicDefectMaskStore(data_root, device_id, shape=(48, 64))
+
+    def login(login_name: str, password: str) -> EngineeringMaintenanceService | None:
+        client = client_factory()
+        authorizer = PlatformEngineerAuthorizer(client)
+        try:
+            authorizer.login(login_name, password)
+        except (CloudAccessError, EngineeringAuthorizationDenied, ValueError):
+            return None
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+        return EngineeringMaintenanceService(
+            authorization_verifier=authorizer.is_authorized,
+            binding_store=binding_store,
+            mask_store_for_device=mask_store_for_device,
+        )
+
+    return login
+
+
 def build_packaged_workbench_factory(
     *,
     diagnostic_support: PackagedDiagnosticSupport | None = None,
@@ -211,8 +254,10 @@ def build_packaged_workbench_factory(
     | None = None,
     session_lock_controller: SessionLockController | None = None,
     protected_operation_active: Callable[[], bool] | None = None,
+    engineering_login: Callable[[str, str], EngineeringMaintenanceService | None]
+    | None = None,
 ) -> Callable[[], ScreeningWindow]:
-    """Compose the workbench's sole packaged action: P-11 diagnostic export."""
+    """Compose packaged support and independently authorized maintenance actions."""
     if diagnostic_support is not None and diagnostic_support_factory is not None:
         raise ValueError("configure one packaged diagnostic support source")
 
@@ -222,6 +267,8 @@ def build_packaged_workbench_factory(
         def on_action(action: str) -> None:
             if action == "EXPORT_DIAGNOSTIC" and support is not None:
                 support.export_diagnostic_bundle()
+            if action == "OPEN_ENGINEERING_MAINTENANCE" and engineering_login is not None:
+                window.show_engineering_login(engineering_login)
 
         window = ScreeningWindow(
             on_action=on_action,
@@ -230,6 +277,7 @@ def build_packaged_workbench_factory(
         )
         if diagnostic_support_factory is not None:
             support = diagnostic_support_factory(window.show_form_error)
+        window.set_engineering_maintenance_available(engineering_login is not None)
         return window
 
     return workbench_factory
@@ -344,6 +392,8 @@ class PackagedEntryComposition:
         *,
         session_lock_controller: SessionLockController | None = None,
         protected_operation_active: Callable[[], bool] | None = None,
+        engineering_login: Callable[[str, str], EngineeringMaintenanceService | None]
+        | None = None,
     ) -> Callable[[], ScreeningWindow]:
         if (
             self.event_store is None
@@ -361,6 +411,7 @@ class PackagedEntryComposition:
             ),
             session_lock_controller=session_lock_controller,
             protected_operation_active=protected_operation_active,
+            engineering_login=engineering_login,
         )
 
     def attach_authenticated_resources(
@@ -768,6 +819,16 @@ def main() -> int:
             timeout=timeout,
         )
         workbench_holder: dict[str, ScreeningWindow] = {}
+        engineering_login = (
+            None
+            if settings is None
+            else build_packaged_engineering_login(
+                data_root=data_root,
+                client_factory=lambda: CloudAccessClient(
+                    settings.base_url, verify=settings.verify
+                ),
+            )
+        )
 
         base_workbench_factory = composition.workbench_factory(
             session_lock_controller=lock_controller,
@@ -775,6 +836,7 @@ def main() -> int:
                 workbench_holder.get("window") is not None
                 and workbench_holder["window"].current_page_id is PageId.ACQUIRING
             ),
+            engineering_login=engineering_login,
         )
 
         def workbench_factory() -> ScreeningWindow:

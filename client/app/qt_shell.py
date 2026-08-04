@@ -130,8 +130,64 @@ class _DefectDistributionWidget(QWidget):
             )
 
 
+class _EngineeringPlatformLoginDialog(QDialog):
+    """Collect an in-memory Platform IAM login before opening maintenance."""
+
+    def __init__(
+        self,
+        login: Callable[[str, str], EngineeringMaintenanceService | None],
+        parent: "ScreeningWindow",
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("engineeringPlatformLoginDialog")
+        self.setWindowTitle("工程访问登录")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+        self._login = login
+        self._maintenance_parent = parent
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("工程访问登录")
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+        instruction = QLabel("使用 Platform IAM 工程人员账户登录后，才能查看已保存的坏点分布。")
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+        self._login_name = QLineEdit()
+        self._login_name.setObjectName("engineeringLoginName")
+        self._login_name.setPlaceholderText("工程人员登录名")
+        layout.addWidget(self._login_name)
+        self._password = QLineEdit()
+        self._password.setObjectName("engineeringLoginPassword")
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._password.setPlaceholderText("密码")
+        layout.addWidget(self._password)
+        confirm = QPushButton("确认登录")
+        confirm.setObjectName("CONFIRM_ENGINEERING_LOGIN")
+        confirm.clicked.connect(self._submit)
+        layout.addWidget(confirm, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._status = QLabel("登录信息仅用于本次工程访问，不会保存在本机。")
+        self._status.setObjectName("engineeringLoginStatus")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+    def _submit(self) -> None:
+        try:
+            service = self._login(self._login_name.text(), self._password.text())
+        except Exception:
+            service = None
+        finally:
+            self._password.clear()
+        if service is None:
+            self._status.setText("工程访问不可用，请核对工程人员权限后重试。")
+            return
+        self.accept()
+        self._maintenance_parent.show_engineering_maintenance(service)
+
+
 class _EngineeringMaintenanceDialog(QDialog):
-    """One-time confirmation dialog for a deployed engineering service."""
+    """Read-only maintenance projection for an authorized engineer session."""
 
     def __init__(self, service: EngineeringMaintenanceService, parent: QWidget) -> None:
         super().__init__(parent)
@@ -147,9 +203,7 @@ class _EngineeringMaintenanceDialog(QDialog):
         title.setObjectName("engineeringMaintenanceTitle")
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
         layout.addWidget(title)
-        instruction = QLabel(
-            "仅限已授权工程人员。输入由部署层校验的确认信息后，读取当前已绑定设备的保存掩码。"
-        )
+        instruction = QLabel("仅限已授权工程人员。读取当前已绑定设备的保存掩码。")
         instruction.setWordWrap(True)
         layout.addWidget(instruction)
         selector = QComboBox()
@@ -162,13 +216,7 @@ class _EngineeringMaintenanceDialog(QDialog):
         device_id.setPlaceholderText("添加或重新绑定的设备资产编号")
         device_id.setAccessibleName("工程设备资产编号")
         layout.addWidget(device_id)
-        confirmation = QLineEdit()
-        confirmation.setObjectName("engineeringMaintenanceConfirmation")
-        confirmation.setEchoMode(QLineEdit.EchoMode.Password)
-        confirmation.setPlaceholderText("输入工程确认信息")
-        confirmation.setAccessibleName("工程确认信息")
-        layout.addWidget(confirmation)
-        bind = QPushButton("确认并绑定当前连接设备")
+        bind = QPushButton("确认并保存设备资产编号")
         bind.setObjectName("BIND_ENGINEERING_DEVICE")
         bind.clicked.connect(self._bind_current_device)
         layout.addWidget(bind, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -202,50 +250,44 @@ class _EngineeringMaintenanceDialog(QDialog):
             selector.setCurrentIndex(selector.findData(selected))
 
     def _bind_current_device(self) -> None:
-        confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
         device_id = self.findChild(QLineEdit, "engineeringMaintenanceDeviceId")
         selector = self.findChild(QComboBox, "engineeringMaintenanceDeviceSelector")
         status = self.findChild(QLabel, "engineeringMaintenanceStatus")
-        assert confirmation is not None
         assert device_id is not None
         assert selector is not None
         assert status is not None
         candidate = device_id.text().strip() or str(selector.currentData() or "")
         try:
-            self._service.bind_current_device(confirmation.text(), candidate)
+            self._service.bind_current_device(candidate)
         except EngineeringMaintenanceAccessDenied:
-            status.setText("工程确认未通过，未绑定设备。")
+            status.setText("工程访问已失效，未保存设备资产编号。")
             return
         except EngineeringMaintenanceDeviceUnbound:
-            status.setText("设备绑定信息无效，未读取掩码。")
+            status.setText("设备资产编号无效，未读取掩码。")
             return
         except ValueError:
             status.setText("请输入有效的设备资产编号。")
             return
         except EngineeringMaintenanceConnectionUnavailable:
-            status.setText("当前连接缺少可验证的设备身份，未绑定设备。")
+            status.setText("工程设备资产编号服务未配置，未保存设备编号。")
             return
-        finally:
-            confirmation.clear()
         device_id.clear()
         self._refresh_device_selector(selector)
-        status.setText("已绑定当前连接设备；可确认后查看该设备的坏点分布。")
+        status.setText("已保存并选择设备资产编号；可确认后查看该设备的坏点分布。")
 
     def _load_distribution(self) -> None:
-        confirmation = self.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
         status = self.findChild(QLabel, "engineeringMaintenanceStatus")
         distribution = self.findChild(
             _DefectDistributionWidget, "engineeringDefectDistribution"
         )
         summary = self.findChild(QLabel, "engineeringMaintenanceSummary")
-        assert confirmation is not None
         assert status is not None
         assert distribution is not None
         assert summary is not None
         try:
-            snapshot = self._service.read_distribution(confirmation.text())
+            snapshot = self._service.read_distribution()
         except EngineeringMaintenanceAccessDenied:
-            status.setText("工程确认未通过，未读取设备掩码。")
+            status.setText("工程访问已失效，未读取设备掩码。")
             return
         except EngineeringMaintenanceDeviceUnbound:
             status.setText("当前连接与所选设备不匹配，无法查看分布。")
@@ -253,8 +295,6 @@ class _EngineeringMaintenanceDialog(QDialog):
         except ValueError:
             status.setText("已绑定设备的掩码不可读取，请按工程流程处理。")
             return
-        finally:
-            confirmation.clear()
         distribution.set_snapshot(snapshot)
         summary.setText(
             f"黄色 SUSPECT {snapshot.status_counts[DynamicDefectStatus.SUSPECT]}"
@@ -800,6 +840,17 @@ class ScreeningWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
+    def show_engineering_login(
+        self, login: Callable[[str, str], EngineeringMaintenanceService | None]
+    ) -> None:
+        """Require a short-lived Platform IAM login before maintenance opens."""
+
+        dialog = _EngineeringPlatformLoginDialog(login, self)
+        self._engineering_platform_login_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def show_session_deletion(self, service: CompletedSessionDeletionService) -> None:
         dialog = _SessionDeletionDialog(service, self)
         self._session_deletion_dialog = dialog
@@ -1055,7 +1106,7 @@ class ScreeningWindow(QMainWindow):
         logo = QLabel()
         logo.setObjectName("brandLogo")
         logo.setAccessibleName("天富智柔 TechFlex")
-        path = Path(__file__).resolve().parents[2] / "docs" / "ui-desgin" / "assets" / "logo-horizontal-trimmed.png"
+        path = Path(__file__).with_name("assets") / "logo-horizontal-trimmed.png"
         pixmap = QPixmap(str(path))
         if not pixmap.isNull():
             logo.setPixmap(pixmap.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation))
@@ -1457,6 +1508,7 @@ class ScreeningWindow(QMainWindow):
             self._label("请等待站位稳定", "positionState")
         )
         countdown = self._label("", "countdownLabel")
+        countdown.setProperty("numericText", True)
         countdown.setStyleSheet("font-size: 48px; font-weight: 700; color: #2569BC;")
         count_line.addWidget(countdown)
         count_line.addStretch(1)
@@ -1495,6 +1547,7 @@ class ScreeningWindow(QMainWindow):
         remaining_label.hide()
         header_layout.addWidget(remaining_label)
         time = self._label("剩余 00:--", "remainingTime")
+        time.setProperty("numericText", True)
         time.setStyleSheet("font-size: 20px; font-weight: 600; margin-left: 8px;")
         header_layout.addWidget(time)
         layout.addWidget(header)
@@ -1526,6 +1579,7 @@ class ScreeningWindow(QMainWindow):
         instruction = self._label("请保持自然站立，\n不要说话或大幅移动。", "acquisitionInstruction")
         instruction.setStyleSheet("font-size: 24px; font-weight: 600; line-height: 1.5;")
         seconds = self._label("--", "remainingSeconds")
+        seconds.setProperty("numericText", True)
         seconds.setStyleSheet("font-size: 96px; font-weight: 700; color: #2569BC;")
         seconds_caption = self._label("剩余采集时间（秒）", "secondsCaption")
         seconds_caption.setProperty("secondaryText", True)

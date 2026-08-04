@@ -43,6 +43,20 @@ class DeviceHealthEventType(StrEnum):
     RECOVERY_CANDIDATE = "RECOVERY_CANDIDATE"
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a renamed entry where the platform exposes directory handles."""
+
+    # Windows does not allow Python to open a directory with ``os.open``.
+    # The renamed file itself has already been flushed before this point.
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 @dataclass(frozen=True, slots=True)
 class DynamicDefectPolicy:
     """Versioned thresholds for evidence, promotion and device availability."""
@@ -476,11 +490,7 @@ class DynamicDefectMaskStore:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, self.path)
-        directory_fd = os.open(self.path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_directory(self.path.parent)
 
 
 @dataclass(frozen=True, slots=True)

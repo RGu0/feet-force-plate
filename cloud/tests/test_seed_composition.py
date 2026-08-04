@@ -43,10 +43,77 @@ def _values(root: Path) -> dict[str, str]:
 
 
 def test_settings_accept_separate_roles_and_private_external_object_root() -> None:
-    with TemporaryDirectory(dir="/private/tmp") as directory:
+    with TemporaryDirectory() as directory:
         settings = SeedSettings(**_values(Path(directory)))
         assert settings.public_base_url.startswith("https://")
         assert settings.tenant_dsn != settings.platform_dsn
+
+
+def test_settings_accept_private_aliyun_oss_with_separate_telemetry_domain() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        values = _values(root / "legacy-objects")
+        values.update(
+            object_backend="aliyun-oss",
+            oss_region="us-west-1",
+            oss_bucket="private-raw",
+            oss_endpoint="https://oss-us-west-1-internal.aliyuncs.com",
+            oss_server_side_encryption="KMS",
+            validation_telemetry_root=str(root / "validation-telemetry"),
+        )
+
+        settings = SeedSettings(**values)
+
+        assert settings.object_backend == "aliyun-oss"
+        assert settings.oss_endpoint.startswith("https://")
+        assert settings.validation_telemetry_root != settings.object_root
+
+
+def test_settings_reject_unknown_object_backend() -> None:
+    with TemporaryDirectory() as directory:
+        values = _values(Path(directory) / "objects")
+        values["object_backend"] = "unknown"
+
+        with pytest.raises(ValueError, match="object backend"):
+            SeedSettings(**values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("oss_bucket", "", "bucket"),
+        ("oss_endpoint", "http://oss.example.test", "HTTPS"),
+        (
+            "oss_endpoint",
+            "https://oss-us-west-1.aliyuncs.com",
+            "internal",
+        ),
+        (
+            "oss_endpoint",
+            "https://evil-internal.example.test",
+            "internal",
+        ),
+        ("oss_server_side_encryption", "none", "KMS or AES256"),
+    ],
+)
+def test_settings_reject_unsafe_aliyun_oss_values(
+    field: str, value: str, message: str
+) -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        values = _values(root / "legacy-objects")
+        values.update(
+            object_backend="aliyun-oss",
+            oss_region="us-west-1",
+            oss_bucket="private-raw",
+            oss_endpoint="https://oss-us-west-1-internal.aliyuncs.com",
+            oss_server_side_encryption="KMS",
+            validation_telemetry_root=str(root / "validation-telemetry"),
+        )
+        values[field] = value
+
+        with pytest.raises(ValueError, match=message):
+            SeedSettings(**values)
 
 
 @pytest.mark.parametrize(
@@ -58,7 +125,7 @@ def test_settings_accept_separate_roles_and_private_external_object_root() -> No
     ],
 )
 def test_settings_reject_unsafe_values(field: str, value: str, message: str) -> None:
-    with TemporaryDirectory(dir="/private/tmp") as directory:
+    with TemporaryDirectory() as directory:
         values = _values(Path(directory))
         values[field] = value
         with pytest.raises(ValueError, match=message):
@@ -66,7 +133,7 @@ def test_settings_reject_unsafe_values(field: str, value: str, message: str) -> 
 
 
 def test_settings_reject_shared_tenant_platform_secrets() -> None:
-    with TemporaryDirectory(dir="/private/tmp") as directory:
+    with TemporaryDirectory() as directory:
         values = _values(Path(directory))
         values["platform_token_secret"] = values["tenant_token_secret"]
         with pytest.raises(ValueError, match="distinct"):
@@ -79,8 +146,9 @@ def test_settings_reject_object_root_inside_repository() -> None:
         SeedSettings(**_values(repository_root / "tmp-objects"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX 0600 modes")
 def test_settings_reject_secret_file_broader_than_0600() -> None:
-    with TemporaryDirectory(dir="/private/tmp") as directory:
+    with TemporaryDirectory() as directory:
         root = Path(directory)
         secret_file = root / "seed.env"
         secret_file.write_text("FEETFORCEPLATE_TEST=redacted\n")
@@ -118,9 +186,17 @@ class _ReadyPool:
         return None
 
 
+class _ReadyObjectStore:
+    def __init__(self) -> None:
+        self.ready_checks = 0
+
+    async def check_ready(self) -> None:
+        self.ready_checks += 1
+
+
 def test_build_composes_only_seed_identity_and_data_plane_services() -> None:
     async def exercise() -> None:
-        with TemporaryDirectory(dir="/private/tmp") as directory:
+        with TemporaryDirectory() as directory:
             settings = SeedSettings(**_values(Path(directory) / "objects"))
 
             async def pool_factory(**_kwargs):
@@ -143,7 +219,7 @@ def test_build_composes_only_seed_identity_and_data_plane_services() -> None:
 
 def test_server_and_postgres_pools_share_one_event_loop() -> None:
     async def exercise() -> None:
-        with TemporaryDirectory(dir="/private/tmp") as directory:
+        with TemporaryDirectory() as directory:
             settings = SeedSettings(**_values(Path(directory) / "objects"))
 
             async def pool_factory(**_kwargs):
@@ -170,5 +246,40 @@ def test_server_and_postgres_pools_share_one_event_loop() -> None:
                 pool_factory=pool_factory,
                 server_factory=InspectingServer,
             )
+
+    asyncio.run(exercise())
+
+
+def test_aliyun_oss_readiness_uses_the_remote_bucket_not_local_directory() -> None:
+    async def exercise() -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = _values(root / "legacy-objects")
+            values.update(
+                object_backend="aliyun-oss",
+                oss_region="us-west-1",
+                oss_bucket="private-raw",
+                oss_endpoint="https://oss-us-west-1-internal.aliyuncs.com",
+                oss_server_side_encryption="KMS",
+                validation_telemetry_root=str(root / "validation-telemetry"),
+            )
+            settings = SeedSettings(**values)
+            objects = _ReadyObjectStore()
+
+            async def pool_factory(**_kwargs):
+                return _ReadyPool()
+
+            app = await build_seed_app(
+                settings,
+                pool_factory=pool_factory,
+                object_store_factory=lambda _settings: objects,
+            )
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://seed.test"
+            ) as client:
+                response = await client.get("/health/ready")
+
+            assert response.status_code == 200
+            assert objects.ready_checks == 1
 
     asyncio.run(exercise())

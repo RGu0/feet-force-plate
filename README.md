@@ -14,6 +14,8 @@
 
 当前仓库处于设计与硬件基线验证阶段；构建、测试通过不代表真机、标定或专业指标已经完成验证。
 
+面向机构的首个 Windows 交付格式为受控的签名便携 ZIP。发布负责人必须完成[便携版发布放行清单](docs/release/windows-portable-release-gate.md)，操作员按[便携版使用说明](docs/release/windows-portable-user-guide.md)安装和启动。未签名开发包、未完成 License/云端配置或未完成真机验收的包不得交付。
+
 ## 本机开发环境
 
 不要在 OneDrive 中共享或复用 `.venv`。虚拟环境包含创建它的电脑的绝对解释器路径，跨用户目录、操作系统或 CPU 架构都会失效；应同步 `pyproject.toml`、`uv.lock` 和 `.python-version`，在每台电脑本机重建环境。

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from scripts.verify_seed_live import AcceptanceState, Api, _after
 
 
 ROOT = Path(__file__).resolve().parents[2]
+requires_bash = pytest.mark.skipif(
+    shutil.which("bash") is None,
+    reason="live seed acceptance shell helpers require bash",
+)
 
 
 def test_acceptance_evidence_excludes_all_replayable_credentials() -> None:
@@ -79,6 +85,7 @@ def test_api_waits_for_auth_rate_limit_and_retries_the_request() -> None:
     assert delays == [13.0]
 
 
+@requires_bash
 def test_acceptance_cleanup_preserves_failed_state_and_removes_successful_state(
     tmp_path: Path,
 ) -> None:
@@ -125,6 +132,7 @@ def test_acceptance_cleanup_preserves_failed_state_and_removes_successful_state(
     assert not restart_marker.exists()
 
 
+@requires_bash
 def test_acceptance_resume_phase_is_derived_from_private_state(tmp_path: Path) -> None:
     script = ROOT / "deploy/aliyun/seed/run-live-acceptance.sh"
     state = tmp_path / "private-state.json"
@@ -154,6 +162,7 @@ def test_acceptance_resume_phase_is_derived_from_private_state(tmp_path: Path) -
     assert phase() == "after-restart"
 
 
+@requires_bash
 def test_acceptance_public_junit_path_is_next_to_redacted_json(tmp_path: Path) -> None:
     script = ROOT / "deploy/aliyun/seed/run-live-acceptance.sh"
     evidence = tmp_path / "aliyun-seed-summary.json"

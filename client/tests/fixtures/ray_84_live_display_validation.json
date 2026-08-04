@@ -1,0 +1,18 @@
+{
+  "schema_version": "do-p4864-live-display-validation/1",
+  "validated_at_utc": "2026-07-23T08:00:00Z",
+  "requested_duration_seconds": 10,
+  "frames_observed": 201,
+  "last_source_index": 200,
+  "reader_error": null,
+  "reader_stopped": true,
+  "screenshot_saved_outside_repository": true,
+  "checks": {
+    "real_ch340_to_hardware_latest_mailbox": true,
+    "latest_raw_frame_to_display_projection": true,
+    "p07_qt_frame_rendered": true,
+    "p07_countdown_advanced": true
+  },
+  "privacy_boundary": "The raw frames and screenshot remain outside the repository and are not included in this test fixture.",
+  "scope_boundary": "This fixture exercises the live-summary ingestion contract only. It does not establish current hardware, operator, production, calibrated-pressure, or clinical acceptance."
+}

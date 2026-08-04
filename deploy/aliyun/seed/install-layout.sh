@@ -8,6 +8,7 @@ current_link="/opt/feetforceplate/app"
 secret_file="/etc/feetforceplate/seed.env"
 objects_root="/var/lib/feetforceplate/objects"
 backups_root="/var/lib/feetforceplate/backups"
+validation_telemetry_root="/var/lib/feetforceplate/validation-telemetry"
 runtime_root="/var/lib/feetforceplate/runtime"
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -47,7 +48,8 @@ if [[ "$secret_mode" != "600" ]]; then
 fi
 
 install -d -o "$service_user" -g "$service_group" -m 0755 "$releases_root"
-install -d -o "$service_user" -g "$service_group" -m 0700 "$objects_root" "$backups_root"
+install -d -o "$service_user" -g "$service_group" -m 0700 \
+    "$objects_root" "$backups_root" "$validation_telemetry_root"
 install -d -o "$service_user" -g "$service_group" -m 0700 "$runtime_root"
 release_target="$releases_root/$release_sha"
 if [[ -e "$release_target" ]]; then

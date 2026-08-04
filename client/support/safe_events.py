@@ -232,9 +232,14 @@ class SafeClientEventStore:
 
 def _set_private_file_mode(path: Path, descriptor: int) -> None:
     """Apply private permissions on POSIX and Windows Python versions."""
-    try:
-        os.fchmod(descriptor, 0o600)
-    except AttributeError:
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is not None:
+        try:
+            fchmod(descriptor, 0o600)
+            return
+        except AttributeError:
+            pass
+    if fchmod is None or os.name == "nt":
         os.chmod(path, 0o600)
 
 

@@ -145,11 +145,14 @@ class StateStoreTests(unittest.TestCase):
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
         self.assertEqual(self.store.schema_version, 6)
-        with sqlite3.connect(self.db_path) as verification:
+        verification = sqlite3.connect(self.db_path)
+        try:
             columns = {
                 row[1]
                 for row in verification.execute("PRAGMA table_info(sync_handoffs)")
             }
+        finally:
+            verification.close()
         self.assertIn("supporting_local_analysis", columns)
 
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:

@@ -65,3 +65,24 @@ Gatekeeper acceptance, universal2 output, install/upgrade/uninstall and
 data-retention smoke tests remain external-pilot or target-OS acceptance work.
 Windows signing/builds, CH340 installation, real activation, and printer smoke
 tests also remain target-OS/manual acceptance work.
+
+## Windows portable ZIP release
+
+The first institution delivery format is a signed Windows x86_64 portable ZIP.
+It is built only on a controlled Windows release machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-portable-release.ps1 `
+  -OutputRoot C:\release\feetforceplate-0.1.0
+```
+
+The command requires `FEETFORCEPLATE_SIGN_CERT_THUMBPRINT` and a working
+`signtool.exe` (or `FEETFORCEPLATE_SIGNTOOL`). It writes the ZIP, its SHA-256,
+and `release-manifest.json` beneath `<OutputRoot>\release`, then verifies the
+manifest, archive contents, and Authenticode signature. A build without a
+certificate requires the explicit `-UnsignedDevelopment` switch and is marked
+`unsigned-development`; it is for internal testing only and must never be sent
+to a customer.
+
+Before release, complete [the Windows portable release gate](../../../docs/release/windows-portable-release-gate.md).
+Customer operators receive [the Windows portable user guide](../../../docs/release/windows-portable-user-guide.md), not build credentials or secret configuration.

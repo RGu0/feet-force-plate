@@ -1,14 +1,65 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QPushButton, QWidget
 
 
 # Mirrors docs/ui-desgin/_ds/.../tokens.  Keep this QSS deliberately flat: the
 # Steady Health system relies on whitespace and borders rather than decoration.
+_ASSETS_DIRECTORY = Path(__file__).with_name("assets")
+_BUNDLED_UI_FONT = _ASSETS_DIRECTORY / "fonts" / "NotoSansSC-VF.ttf"
+_BUNDLED_NUMERIC_FONT = _BUNDLED_UI_FONT
+_REGISTERED_FONT_FAMILIES: tuple[str, str] | None = None
+_WEIGHT_AXIS = QFont.Tag.fromString("wght")
+
+
+def bundled_font_paths() -> tuple[Path, Path]:
+    """Return the font resources that must travel with every desktop build."""
+
+    return _BUNDLED_UI_FONT, _BUNDLED_NUMERIC_FONT
+
+
+def _register_bundled_fonts() -> tuple[str, str]:
+    """Register shipped fonts instead of relying on a Windows font fallback."""
+
+    global _REGISTERED_FONT_FAMILIES
+    if _REGISTERED_FONT_FAMILIES is not None:
+        return _REGISTERED_FONT_FAMILIES
+
+    registered: list[str] = []
+    for font_path in dict.fromkeys(bundled_font_paths()):
+        if not font_path.is_file():
+            raise RuntimeError(f"Required application font is missing: {font_path.name}")
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if font_id < 0 or not families:
+            raise RuntimeError(f"Could not register application font: {font_path.name}")
+        registered.append(families[0])
+
+    _REGISTERED_FONT_FAMILIES = (registered[0], registered[-1])
+    return _REGISTERED_FONT_FAMILIES
+
+
+def _font(family: str) -> QFont:
+    font = QFont(family)
+    return _configure_variable_font(font)
+
+
+def _configure_variable_font(font: QFont) -> QFont:
+    """Apply Qt's resolved CSS weight to the variable font's ``wght`` axis."""
+
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    font.setVariableAxis(_WEIGHT_AXIS, float(font.weight()))
+    return font
+
+
 STEADY_HEALTH_STYLESHEET = """
 QWidget {
     color: #0F172A;
-    font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    font-family: "Noto Sans SC";
     font-size: 16px;
 }
 QMainWindow, QWidget#appSurface, QWidget#pageCanvas {
@@ -226,14 +277,22 @@ QFrame[wizardFooter="true"] { background: #FFFFFF; border-top: 1px solid #E2E8F0
 QFrame#reportPaper { background: #FFFFFF; border: 0; border-radius: 0; }
 QLabel#reportDocumentTitle { color: #0F172A; font-size: 18px; font-weight: 600; }
 QLabel[reportSection="true"] { color: #2569BC; font-size: 14px; font-weight: 600; }
+QLabel[numericText="true"] { font-family: "Noto Sans SC"; }
 QFrame[reportPlaceholder="true"] { background: #F1F5F9; border: 0; border-radius: 4px; }
 """
 
 
 def apply_design_system(root: QWidget) -> None:
     """Apply the source Steady Health desktop token system to a Qt widget tree."""
+    ui_family, numeric_family = _register_bundled_fonts()
     root.setProperty("uiTheme", "steady-health")
+    root.setFont(_font(ui_family))
     root.setStyleSheet(STEADY_HEALTH_STYLESHEET)
+    for widget in (root, *root.findChildren(QWidget)):
+        font = widget.font()
+        if widget.property("numericText"):
+            font.setFamily(numeric_family)
+        widget.setFont(_configure_variable_font(font))
     for button in root.findChildren(QPushButton):
         if not button.accessibleName():
             button.setAccessibleName(button.text())

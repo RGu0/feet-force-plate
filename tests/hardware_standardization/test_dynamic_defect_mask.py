@@ -291,7 +291,7 @@ def test_hardware_mask_file_is_loaded_at_session_start_and_atomically_updated_af
     )
     second_frozen = store.load_for_session()
 
-    assert "hardware/do-p4864" in str(store.path)
+    assert store.path.is_relative_to(tmp_path / "hardware" / "do-p4864")
     assert first_frozen.mask_version == 0
     assert first.updated_mask.mask_version == 1
     assert second_frozen == first.updated_mask

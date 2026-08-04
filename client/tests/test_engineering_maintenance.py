@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,17 @@ def test_engineering_maintenance_requires_authorized_confirmation_before_reading
     }
 
 
+def test_unauthorized_session_cannot_register_manual_asset_id(tmp_path: Path) -> None:
+    service = EngineeringMaintenanceService(
+        authorization_verifier=lambda: False,
+        binding_store=EngineeringDeviceBindingStore(tmp_path),
+        mask_store_for_device=lambda _device_id: _store(tmp_path),
+    )
+
+    with pytest.raises(EngineeringMaintenanceAccessDenied):
+        service.bind_current_device("physical-device-7")
+
+
 def test_engineering_maintenance_rejects_an_unbound_device_and_never_guesses_identity(
     tmp_path: Path,
 ) -> None:
@@ -107,18 +119,16 @@ def test_engineering_maintenance_rejects_an_unbound_device_and_never_guesses_ide
         service.read_distribution("approved")
 
 
-def test_engineering_binding_restores_selected_asset_only_for_same_connection(
+def test_engineering_binding_restores_manual_asset_id_without_usb_identity(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
     _write_mask(store)
     binding_store = EngineeringDeviceBindingStore(tmp_path)
-    current_connection = "usb-serial-fingerprint-7"
     service = EngineeringMaintenanceService(
         mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
         confirmation_verifier=lambda confirmation: confirmation == "approved",
         binding_store=binding_store,
-        connected_device_identity=lambda: current_connection,
     )
 
     service.bind_current_device("approved", store.device_id)
@@ -131,18 +141,34 @@ def test_engineering_binding_restores_selected_asset_only_for_same_connection(
         mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
         confirmation_verifier=lambda _confirmation: True,
         binding_store=EngineeringDeviceBindingStore(tmp_path),
-        connected_device_identity=lambda: current_connection,
+        connected_device_identity=lambda: "usb-serial-reconnected-device",
     )
     assert restored.read_distribution("approved").device_id == store.device_id
 
-    mismatched = EngineeringMaintenanceService(
-        mask_store_for_device=lambda _device_id: store,
-        confirmation_verifier=lambda _confirmation: True,
-        binding_store=EngineeringDeviceBindingStore(tmp_path),
-        connected_device_identity=lambda: "usb-serial-other-device",
+    assert restored.selected_device_id() == store.device_id
+
+
+def test_engineering_device_registry_restores_legacy_selected_asset_id(tmp_path: Path) -> None:
+    path = tmp_path / "hardware" / "engineering-device-bindings.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "engineering-device-binding/1",
+                "selected_device_id": "physical-device-7",
+                "bindings": {
+                    "physical-device-7": {"connection_id": "obsolete-usb-fingerprint"},
+                    "physical-device-8": {"connection_id": "obsolete-usb-fingerprint-2"},
+                },
+            }
+        ),
+        encoding="utf-8",
     )
-    with pytest.raises(EngineeringMaintenanceDeviceUnbound):
-        mismatched.read_distribution("approved")
+
+    registry = EngineeringDeviceBindingStore(tmp_path)
+
+    assert registry.selected_device_id == "physical-device-7"
+    assert registry.device_ids() == ("physical-device-7", "physical-device-8")
 
 
 def test_engineering_distribution_is_read_only_and_excludes_frame_evidence(tmp_path: Path) -> None:
@@ -178,7 +204,7 @@ def test_support_page_exposes_engineering_distribution_only_when_configured(
     service = EngineeringMaintenanceService(
         bound_device_id=store.device_id,
         mask_store_for_device=lambda _device_id: store,
-        confirmation_verifier=lambda confirmation: confirmation == "approved",
+        authorization_verifier=lambda: True,
     )
     window = ScreeningWindow()
     qtbot.addWidget(window)
@@ -194,8 +220,6 @@ def test_support_page_exposes_engineering_distribution_only_when_configured(
     window.show_engineering_maintenance(service)
     dialog = window.findChild(QDialog, "engineeringMaintenanceDialog")
     assert dialog is not None
-    confirmation = dialog.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
-    qtbot.keyClicks(confirmation, "approved")
     qtbot.mouseClick(
         dialog.findChild(QPushButton, "CONFIRM_ENGINEERING_MAINTENANCE"),
         Qt.MouseButton.LeftButton,
@@ -211,9 +235,8 @@ def test_engineering_dialog_binds_current_device_before_reading(tmp_path: Path, 
     _write_mask(store)
     service = EngineeringMaintenanceService(
         mask_store_for_device=lambda device_id: store if device_id == store.device_id else None,
-        confirmation_verifier=lambda confirmation: confirmation == "approved",
+        authorization_verifier=lambda: True,
         binding_store=EngineeringDeviceBindingStore(tmp_path),
-        connected_device_identity=lambda: "usb-serial-fingerprint-7",
     )
     window = ScreeningWindow()
     qtbot.addWidget(window)
@@ -221,24 +244,51 @@ def test_engineering_dialog_binds_current_device_before_reading(tmp_path: Path, 
     window.show_engineering_maintenance(service)
     dialog = window.findChild(QDialog, "engineeringMaintenanceDialog")
     assert dialog is not None
-    confirmation = dialog.findChild(QLineEdit, "engineeringMaintenanceConfirmation")
     device_id = dialog.findChild(QLineEdit, "engineeringMaintenanceDeviceId")
-    qtbot.keyClicks(confirmation, "approved")
     qtbot.keyClicks(device_id, store.device_id)
     qtbot.mouseClick(
         dialog.findChild(QPushButton, "BIND_ENGINEERING_DEVICE"),
         Qt.MouseButton.LeftButton,
     )
 
-    assert "已绑定当前连接设备" in dialog.findChild(
+    assert "已保存并选择设备资产编号" in dialog.findChild(
         QLabel, "engineeringMaintenanceStatus"
     ).text()
-    qtbot.keyClicks(confirmation, "approved")
     qtbot.mouseClick(
         dialog.findChild(QPushButton, "CONFIRM_ENGINEERING_MAINTENANCE"),
         Qt.MouseButton.LeftButton,
     )
     assert "SUSPECT 1" in dialog.findChild(QLabel, "engineeringMaintenanceSummary").text()
+
+
+def test_maintenance_opens_only_after_engineer_login(qtbot, tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _write_mask(store)
+    service = EngineeringMaintenanceService(
+        bound_device_id=store.device_id,
+        mask_store_for_device=lambda _device_id: store,
+        authorization_verifier=lambda: True,
+    )
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    window.show_engineering_login(
+        lambda name, password: service
+        if (name, password) == ("engineer", "secret")
+        else None
+    )
+
+    login = window.findChild(QDialog, "engineeringPlatformLoginDialog")
+    assert login is not None
+    qtbot.keyClicks(login.findChild(QLineEdit, "engineeringLoginName"), "engineer")
+    qtbot.keyClicks(login.findChild(QLineEdit, "engineeringLoginPassword"), "secret")
+    qtbot.mouseClick(
+        login.findChild(QPushButton, "CONFIRM_ENGINEERING_LOGIN"),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert window.findChild(QDialog, "engineeringMaintenanceDialog") is not None
 
 
 def test_controller_wires_the_engineering_maintenance_entry(qtbot, tmp_path: Path) -> None:

@@ -58,7 +58,12 @@ class FileAesKeyProvider:
             self._key_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
         )
         try:
-            os.write(descriptor, key)
+            written = 0
+            while written < len(key):
+                count = os.write(descriptor, key[written:])
+                if count <= 0:
+                    raise OSError("could not completely write acceptance AES key")
+                written += count
             os.fsync(descriptor)
         finally:
             os.close(descriptor)

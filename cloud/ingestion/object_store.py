@@ -237,11 +237,12 @@ class FileSystemObjectStore:
                 return StoredObject(object_key, expected_sha256, expected_size)
             os.replace(staging_path, final_path)
             final_path.chmod(0o600)
-            directory_fd = os.open(final_path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if os.name != "nt":
+                directory_fd = os.open(final_path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
             return StoredObject(object_key, expected_sha256, expected_size)
         finally:
             try:

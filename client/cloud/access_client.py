@@ -17,6 +17,8 @@ from shared.contracts.access_control import (
     LoginRequest,
     LoginResponse,
     LogoutRequest,
+    PlatformLoginRequest,
+    PlatformLoginResponse,
     RefreshRequest,
     RefreshResponse,
     SignedLicenseV2,
@@ -92,6 +94,16 @@ class CloudAccessClient:
             "POST",
             "/v1/access/login",
             LoginResponse,
+            json=request.model_dump(mode="json"),
+        )
+
+    def platform_login(self, request: PlatformLoginRequest) -> PlatformLoginResponse:
+        """Authenticate a short-lived Platform IAM engineering session."""
+
+        return self._model_request(
+            "POST",
+            "/v1/platform/login",
+            PlatformLoginResponse,
             json=request.model_dump(mode="json"),
         )
 

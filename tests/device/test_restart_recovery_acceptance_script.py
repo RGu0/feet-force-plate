@@ -1,10 +1,14 @@
 from importlib.util import module_from_spec, spec_from_file_location
+import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from client.spool.session_commit import ValidSessionStager
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from scripts import run_dop4864_runtime_acceptance as runtime_acceptance
 from tests.spool.test_segments import _frame
 
 
@@ -21,6 +25,30 @@ def _load_script_module():
 
 
 class RestartRecoveryAcceptanceScriptTests(unittest.TestCase):
+    def test_key_provider_persists_a_complete_key_after_short_write(self) -> None:
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            key_file = Path(temporary) / "acceptance.aes256"
+            short_writing_os = SimpleNamespace(
+                O_CREAT=os.O_CREAT,
+                O_EXCL=os.O_EXCL,
+                O_WRONLY=os.O_WRONLY,
+                close=os.close,
+                fsync=os.fsync,
+                open=os.open,
+                urandom=os.urandom,
+                write=lambda descriptor, data: os.write(descriptor, data[:7]),
+            )
+
+            with patch.object(
+                runtime_acceptance, "os", short_writing_os
+            ):
+                created_key = module.FileAesKeyProvider(key_file).get_key()
+
+            self.assertEqual(
+                module.FileAesKeyProvider(key_file).get_key(), created_key
+            )
+
     def test_recovery_summary_discards_interrupted_staging_without_formal_session(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file())
         module = _load_script_module()

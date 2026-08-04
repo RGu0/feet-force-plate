@@ -30,6 +30,11 @@ acceptance_public_junit_path() {
     printf '%s-postgres.xml\n' "${redacted_output%.json}"
 }
 
+acceptance_public_oss_path() {
+    local redacted_output="$1"
+    printf '%s-oss.json\n' "${redacted_output%.json}"
+}
+
 main() {
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "run-live-acceptance.sh must run as root" >&2
@@ -43,6 +48,7 @@ fi
 ca_cert="$1"
 redacted_output="$2"
 public_junit_file="$(acceptance_public_junit_path "$redacted_output")"
+public_oss_file="$(acceptance_public_oss_path "$redacted_output")"
 service_user="feetforceplate"
 app_root="/opt/feetforceplate/app"
 acceptance_root="/var/lib/feetforceplate/acceptance"
@@ -50,6 +56,7 @@ state_file="$acceptance_root/private-state.json"
 restart_marker="$acceptance_root/restart-complete"
 evidence_file="$acceptance_root/aliyun-seed-summary.json"
 junit_file="$acceptance_root/postgres-role-parity.xml"
+oss_evidence_file="$acceptance_root/aliyun-oss-summary.json"
 env_file="/etc/feetforceplate/seed.env"
 
 install -d -o "$service_user" -g "$service_user" -m 0700 "$acceptance_root"
@@ -114,6 +121,17 @@ runuser -u "$service_user" -- bash -c '
     set -a
     source /etc/feetforceplate/seed.env
     set +a
+    exec ./scripts/local-env.sh python scripts/verify_aliyun_oss_live.py \
+        --output "$1"
+' bash "$oss_evidence_file"
+runuser -u "$service_user" -- bash -c '
+    set -euo pipefail
+    cd /opt/feetforceplate/app
+    export FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
+    export XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
+    set -a
+    source /etc/feetforceplate/seed.env
+    set +a
     export FEETFORCEPLATE_TEST_TENANT_DSN="$FEETFORCEPLATE_TENANT_DSN"
     export FEETFORCEPLATE_TEST_ACTIVATION_DSN="$FEETFORCEPLATE_ACTIVATION_DSN"
     export FEETFORCEPLATE_TEST_PLATFORM_DSN="$FEETFORCEPLATE_PLATFORM_DSN"
@@ -141,8 +159,10 @@ install -D -o "${SUDO_USER:-root}" -g "${SUDO_USER:-root}" -m 0644 \
     "$evidence_file" "$redacted_output"
 install -D -o "${SUDO_USER:-root}" -g "${SUDO_USER:-root}" -m 0644 \
     "$junit_file" "$public_junit_file"
-printf 'live_acceptance=passed evidence=%s postgres_junit=%s secrets=not-printed\n' \
-    "$redacted_output" "$public_junit_file"
+install -D -o "${SUDO_USER:-root}" -g "${SUDO_USER:-root}" -m 0644 \
+    "$oss_evidence_file" "$public_oss_file"
+printf 'live_acceptance=passed evidence=%s postgres_junit=%s oss_evidence=%s secrets=not-printed\n' \
+    "$redacted_output" "$public_junit_file" "$public_oss_file"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -224,7 +224,12 @@ class SessionRuntimeTests(unittest.TestCase):
                     (48, 64), 10 + index * 10, dtype=np.uint8
                 ),
             ),
-            parser=DaoOneP4864Parser(_profile(), allow_unverified=True),
+            parser=DaoOneP4864Parser(
+                _profile(),
+                allow_unverified=True,
+                monotonic_ns=iter(range(10_000, 100_000, 100)).__next__,
+                wall_time_ns=lambda: 2_000,
+            ),
             connection=_ready(),
             mailbox=LatestFrameMailbox(),
             stager=stager,

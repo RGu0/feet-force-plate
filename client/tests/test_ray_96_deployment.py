@@ -323,3 +323,23 @@ def test_pyinstaller_spec_and_build_config_are_present_without_embedded_credenti
     assert "macos-universal2-pilot" in config
     assert "private_key" not in (spec + config).lower()
     assert "activation_code" not in (spec + config).lower()
+
+
+def test_pyinstaller_build_refuses_to_omit_the_required_design_font() -> None:
+    root = Path(__file__).parents[1]
+    spec = (root / "app" / "packaging" / "FeetForcePlate.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "NotoSansSC-VF.ttf" in spec
+    assert "Required design font is missing" in spec
+
+
+def test_pyinstaller_spec_collects_every_repository_runtime_resource() -> None:
+    root = Path(__file__).parents[1]
+    spec = (root / "app" / "packaging" / "FeetForcePlate.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"docs/hardware/device-specifications"' in spec
+    assert '"docs/ui-desgin/assets"' not in spec

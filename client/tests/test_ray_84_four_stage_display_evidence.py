@@ -5,8 +5,15 @@ from pathlib import Path
 from scripts.run_ray84_four_stage_display_evidence import collect_evidence
 
 
-def test_real_capture_and_four_stage_replay_prove_p07_display_contract() -> None:
-    evidence = collect_evidence(repository_root=Path(__file__).resolve().parents[2])
+def test_sanitized_live_summary_and_four_stage_replay_prove_p07_display_contract() -> None:
+    evidence = collect_evidence(
+        repository_root=Path(__file__).resolve().parents[2],
+        live_evidence_path=(
+            Path(__file__).parent
+            / "fixtures"
+            / "ray_84_live_display_validation.json"
+        ),
+    )
 
     assert evidence["status"] == "PASSED"
     assert evidence["real_live_run"] == {

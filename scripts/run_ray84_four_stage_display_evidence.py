@@ -83,7 +83,11 @@ def _stage_display_summary(
     )
 
 
-def collect_evidence(*, repository_root: Path) -> dict[str, object]:
+def collect_evidence(
+    *,
+    repository_root: Path,
+    live_evidence_path: Path | None = None,
+) -> dict[str, object]:
     fixture_directory = (
         repository_root
         / "tests"
@@ -98,13 +102,9 @@ def collect_evidence(*, repository_root: Path) -> dict[str, object]:
     if source.fixture_sha256 != _FIXTURE_SHA256:
         raise ValueError("RAY-84 evidence requires the approved four-stage fixture")
 
-    live_path = (
+    live_path = live_evidence_path or (
         repository_root
-        / "docs"
-        / "evidence"
-        / "linear"
-        / "RAY-84"
-        / "live-display-validation-success-20260723.json"
+        / "docs/evidence/linear/RAY-84/live-display-validation-success-20260723.json"
     )
     live = json.loads(live_path.read_text(encoding="utf-8"))
     checks = live["checks"]
