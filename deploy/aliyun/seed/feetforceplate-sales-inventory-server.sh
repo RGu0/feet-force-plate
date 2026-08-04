@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "run as root: sudo bash /home/rui/feetforceplate-sales-inventory-server.sh PLATFORM_LOGIN" >&2
+    exit 2
+fi
+if [[ "$#" -ne 1 ]]; then
+    echo "usage: $0 PLATFORM_LOGIN" >&2
+    exit 2
+fi
+
+platform_login="$1"
+release_sha="cff04f698bdb3ad8f5abbde50da26c258b3bab68"
+archive_sha="5f1b092af4f3bf0ea4c207a483c2f7d45191e755b68347a0702acff501729350"
+archive="/home/rui/feetforceplate-sales-inventory-cff04f6.tar.gz"
+work_root="/tmp/feetforceplate-sales-inventory-$release_sha"
+delivery_root="/var/lib/feetforceplate/delivery"
+database_name="feetforceplate_seed"
+
+if [[ ! -f "$archive" ]]; then
+    echo "release archive is missing: $archive" >&2
+    exit 1
+fi
+if [[ "$(sha256sum "$archive" | awk '{print $1}')" != "$archive_sha" ]]; then
+    echo "release archive checksum mismatch" >&2
+    exit 1
+fi
+rm -rf -- "$work_root"
+install -d -m 0700 "$work_root"
+trap 'rm -rf -- "$work_root"' EXIT
+tar -xzf "$archive" -C "$work_root"
+
+source /etc/feetforceplate/seed.env
+bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
+    "$archive" "$release_sha" "$archive_sha" \
+    /etc/feetforceplate/tls/seed.crt \
+    /etc/feetforceplate/tls/seed.key \
+    "$FEETFORCEPLATE_PUBLIC_BASE_URL" \
+    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT"
+
+install -d -o feetforceplate -g feetforceplate -m 0700 "$delivery_root"
+delivery_file="$delivery_root/sales-inventory-$(date -u +%Y%m%dT%H%M%SZ).json"
+runuser -u feetforceplate -- bash -c '
+    set -euo pipefail
+    cd /opt/feetforceplate/app
+    export FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
+    export XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
+    set -a
+    source /etc/feetforceplate/seed.env
+    set +a
+    exec ./scripts/local-env.sh python -m cloud.access_control.cli create-sales-inventory \
+        --platform-login "$1" --quantity 10 --output "$2"
+' bash "$platform_login" "$delivery_file"
+
+batch_id="$(runuser -u postgres -- psql -d "$database_name" -Atqc \
+    "SELECT inventory_batch_id FROM sales.inventory_batches ORDER BY created_at DESC LIMIT 1")"
+if [[ ! "$batch_id" =~ ^[0-9a-f-]{36}$ ]]; then
+    echo "unable to resolve generated inventory batch" >&2
+    exit 1
+fi
+runuser -u postgres -- psql -d "$database_name" -Atqc \
+    "SELECT 'batch_id=' || '$batch_id'
+       UNION ALL SELECT 'asset_in_stock=' || count(*) FROM sales.device_inventory
+        WHERE inventory_batch_id='$batch_id' AND status='IN_STOCK'
+       UNION ALL SELECT 'license_unused=' || count(*) FROM sales.license_inventory
+        WHERE inventory_batch_id='$batch_id' AND status='UNUSED'
+       UNION ALL SELECT 'license_period_months=' || license_period_months
+        FROM sales.inventory_batches WHERE inventory_batch_id='$batch_id'
+       UNION ALL SELECT 'prebound_pairs=' || count(*) FROM sales.inventory_activations
+        WHERE device_inventory_id IN (
+          SELECT device_inventory_id FROM sales.device_inventory
+          WHERE inventory_batch_id='$batch_id'
+        )"
+printf 'delivery_file=written owner=feetforceplate mode=%s codes=not-printed\n' \
+    "$(stat -c '%a' "$delivery_file")"
