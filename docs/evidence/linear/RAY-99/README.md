@@ -143,3 +143,17 @@ It does not replace a lossy public-network endurance run, target-client
 background scheduler observation, or production deployment monitoring.  RAY-99
 therefore remains `In Review` until those external acceptance activities are
 recorded.
+
+## 2026-08-04 background retry scheduling
+
+- `PROVEN_LOCAL`: `BackgroundAccessScheduler` repeatedly invokes the
+  lock-independent access worker. A temporary upload-network failure schedules
+  a retry and the next automatic cycle completes the upload without any UI or
+  user action (`client/tests/test_background_access_continuity.py`).
+- Targeted regression: `4 passed` for the background access continuity tests;
+  Ruff and Mypy both passed for the changed scheduler and tests.
+- `NOT_VERIFIED`: the packaged client has not yet composed a real
+  `PersistentUploadQueue` with a production session/consent context, and no
+  target-client process has observed this scheduler over a real lossy network.
+  This code-level recovery proof therefore does not close the live acceptance
+  criteria by itself.

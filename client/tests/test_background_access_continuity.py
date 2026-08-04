@@ -4,7 +4,11 @@ import threading
 import unittest
 
 from client.app.session_lock import SessionLockController
-from client.sync.worker import BackgroundAccessWorker, BackgroundHeartbeat
+from client.sync.worker import (
+    BackgroundAccessScheduler,
+    BackgroundAccessWorker,
+    BackgroundHeartbeat,
+)
 
 
 class TokenProvider:
@@ -38,7 +42,7 @@ class UploadQueue:
 
 class Heartbeats:
     def __init__(self) -> None:
-        self.sent = []
+        self.sent: list[tuple[str, BackgroundHeartbeat]] = []
 
     def send(self, access_token: str, heartbeat: BackgroundHeartbeat) -> None:
         self.sent.append((access_token, heartbeat))
@@ -97,6 +101,48 @@ class BackgroundAccessContinuityTests(unittest.TestCase):
         self.assertFalse(hasattr(heartbeat, "account_id"))
         self.assertFalse(hasattr(heartbeat, "hardware_id"))
         self.assertFalse(hasattr(heartbeat, "client_installation_id"))
+
+
+class BackgroundAccessSchedulerTests(unittest.TestCase):
+    def test_scheduler_retries_upload_after_temporary_network_failure(self) -> None:
+        class TemporaryNetworkQueue(UploadQueue):
+            def __init__(self) -> None:
+                super().__init__()
+                self.attempts = 0
+                self.recovered = threading.Event()
+
+            def upload_next(self, access_token: str) -> bool:
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError("temporary network outage")
+                self.uploaded_with.append(access_token)
+                self.recovered.set()
+                return True
+
+        uploads = TemporaryNetworkQueue()
+        worker = BackgroundAccessWorker(TokenProvider(), uploads, Heartbeats())
+        status = BackgroundHeartbeat(
+            app_version="0.1.0",
+            license_active=True,
+            hardware_present=True,
+            installation_active=True,
+            pending_sessions=1,
+            pending_bytes=1024,
+        )
+        scheduler = BackgroundAccessScheduler(
+            worker,
+            lambda: status,
+            retry_interval_seconds=0.01,
+        )
+
+        scheduler.start()
+        try:
+            self.assertTrue(uploads.recovered.wait(timeout=1.0))
+        finally:
+            scheduler.stop()
+
+        self.assertGreaterEqual(uploads.attempts, 2)
+        self.assertEqual(uploads.retry_count, 1)
 
 
 if __name__ == "__main__":
