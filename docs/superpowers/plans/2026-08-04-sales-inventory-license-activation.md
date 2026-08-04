@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 使用 ./scripts/local-env.sh；不得创建或使用仓库内 .venv。
-- 销售资产序列号与 usb-serial-<20 hex> 硬件身份分离；不得把端口、VID/PID 或 USB 位置当成销售资产身份。
+- 销售资产序列号是首次激活后的逻辑 hardware_id；USB 枚举仅用于连接诊断，不得把端口、VID/PID 或 USB 位置当成激活硬性条件。
 - 库存 License 固定 12 个月，但库存阶段没有 tenant、账号、签名 License 或有效期。
 - 数据库存储 License 激活码的 HMAC；明文只写入一次受控的 0600 交付文件，不能出现在日志、API 响应、测试或证据中。
 - 保留现有 /v1/platform/tenants 和 /v1/access/activate；销售激活是新增路径。
@@ -29,7 +29,7 @@
 - Modify: deploy/aliyun/seed/postgresql-role-grants.sql
 
 **Interfaces:**
-- 新增 AssetSerial，格式 FFP-DP4864- 加六位数字。
+- 新增 AssetSerial，格式 FFP-DP4864- 加六位数字；扩展 HardwareIdentity 以接收 AssetSerial 或既有 usb-serial-<20 hex>。
 - 新增 InventoryBatchCreateRequest(quantity, model=DO-P4864, license_period_months=12)。
 - 新增 InventoryActivationRequest(tenant_name, account_name, password, password_confirmation, asset_serial, activation_code, client_installation_id)。
 - 新增 POST /v1/platform/sales-inventory/batches 和 POST /v1/access/inventory-activate 所用响应模型。
@@ -58,7 +58,7 @@ Expected: 因缺少库存契约类型而失败。
 
 - [ ] **Step 3: 实现最小契约和迁移**
 
-定义上述 Pydantic 模型；激活请求必须验证两次密码一致。迁移创建以下四个表：
+定义上述 Pydantic 模型；激活请求必须验证两次密码一致。HardwareIdentity 的正则必须接受 AssetSerial 或既有 USB identity。迁移创建以下四个表：
 
     sales.inventory_batches(
         inventory_batch_id uuid primary key,
@@ -138,7 +138,7 @@ Expected: 因仓储方法不存在而失败。
 
 - [ ] **Step 3: 实现内存和 PostgreSQL 仓储**
 
-内存实现要保持全局资产序列号和 License HMAC 唯一。PostgreSQL 实现在 activation pool 的一个事务内对销售资产和 License 行执行 SELECT ... FOR UPDATE；状态检查通过后复用现有 tenant/account/hardware/entitlement 写入模式，设置 valid_from=activated_at 与 valid_until=add_months(activated_at, 12)，再更新两项库存并插入 inventory_activations。SQLSTATE 23505 映射为 AccessRepositoryConflict；不得返回或保存明文激活码。
+内存实现要保持全局资产序列号和 License HMAC 唯一。PostgreSQL 实现在 activation pool 的一个事务内对销售资产和 License 行执行 SELECT ... FOR UPDATE；状态检查通过后复用现有 tenant/account/hardware/entitlement 写入模式，并以资产序列号写入 logical hardware identity，设置 valid_from=activated_at 与 valid_until=add_months(activated_at, 12)，再更新两项库存并插入 inventory_activations。SQLSTATE 23505 映射为 AccessRepositoryConflict；不得返回或保存明文激活码。
 
 - [ ] **Step 4: 验证为绿**
 
@@ -240,7 +240,7 @@ Expected: 缺少客户端方法和字段。
 
 - [ ] **Step 3: 实现最小客户端变化**
 
-新增 typed client 请求；注册页新增标签 设备资产序列号，样例 FFP-DP4864-000001。该字段取自设备标签，不从串口自动探测；提交校验通过后调用注入的 inventory 激活回调。
+新增 typed client 请求；注册页新增标签 设备资产序列号，样例 FFP-DP4864-000001。该字段取自设备标签，并在成功激活后成为 License 的逻辑 hardware_id；不从串口自动探测，USB 检测失败不能阻止注册。
 
 - [ ] **Step 4: 验证为绿**
 
