@@ -49,6 +49,7 @@ def test_postgres_roles_are_non_privileged_and_network_is_loopback_only() -> Non
     assert "0.0.0.0" not in text
     assert text.count("NOBYPASSRLS") >= 3
     assert "ffp_seed_backup" in text and "BYPASSRLS" in text
+    assert "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sales TO ffp_seed_backup;" in text
     assert "SET password_encryption = 'scram-sha-256'" in text
 
 
@@ -116,7 +117,13 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
     assert path.stat().st_mode & stat.S_IXUSR
     assert "0004_allow_unsigned_revoked_license.sql" in text
+    assert "0005_sales_inventory_activation.sql" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
+
+
+def test_backup_metadata_includes_sales_inventory_schema_version() -> None:
+    text = (ROOT / "backup.sh").read_text()
+    assert "0005_sales_inventory_activation" in text
 
 
 def test_systemd_entry_scripts_are_executable() -> None:

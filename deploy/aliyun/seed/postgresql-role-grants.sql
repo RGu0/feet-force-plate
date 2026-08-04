@@ -33,6 +33,7 @@ GRANT CONNECT ON DATABASE :"database_name"
     TO ffp_seed_tenant, ffp_seed_activation, ffp_seed_platform, ffp_seed_backup;
 GRANT USAGE ON SCHEMA iam, device, subject, screening, ops, sales TO ffp_seed_backup;
 GRANT SELECT ON ALL TABLES IN SCHEMA iam, device, subject, screening, ops, sales TO ffp_seed_backup;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sales TO ffp_seed_backup;
 
 GRANT USAGE ON SCHEMA sales TO ffp_platform_app, ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA sales TO ffp_platform_app, ffp_activation_app;
