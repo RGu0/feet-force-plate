@@ -16,8 +16,18 @@ wheels/
 # mistaken for versioned product assets or subject data.
 /replay-debug-report.pdf
 /tmp/
-/Screenshot 2026-07-21 at 7.57.45 PM.png
+/Screenshot 2026-07-21 at 7.57.45 PM.png
 
 # Validation output may contain an encrypted local SQLite working store.  Only
 # the declared screenshots, report and sanitized summary are evidence assets.
 docs/evidence/**/local-state/
+
+# Machine-local plans and acceptance evidence may contain device identifiers,
+# operator artifacts, local paths, or environment metadata. Keep all of it out
+# of Git; publish only separately reviewed, explicitly sanitized deliverables.
+/.planning/
+/docs/superpowers/plans/
+/docs/evidence/
+
+# Claude Code machine-local state (permissions, agent sessions, etc.)
+.claude/

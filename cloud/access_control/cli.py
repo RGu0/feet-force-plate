@@ -74,7 +74,7 @@ async def _provision_tenant(args: argparse.Namespace, app: Any) -> None:
     login = await app.state.services.platform_identities.login(
         PlatformLoginRequest(login_name=platform_login, password=platform_password)
     )
-    context = app.state.services.platform_identities.verify_access_token(login.access_token)
+    context = await app.state.services.platform_identities.verify_access_token(login.access_token)
     response = await app.state.services.platform_access.provision_tenant(context, request)
     # The activation code is intentionally emitted exactly once in this response.
     _safe_print(response.model_dump(mode="json"))
@@ -90,7 +90,7 @@ async def _rotate_platform_role(args: argparse.Namespace, app: Any) -> None:
     owner_login = await app.state.services.platform_identities.login(
         PlatformLoginRequest(login_name=str(payload["platform_login"]), password=password)
     )
-    owner = app.state.services.platform_identities.verify_access_token(owner_login.access_token)
+    owner = await app.state.services.platform_identities.verify_access_token(owner_login.access_token)
     if PlatformRole.OWNER not in owner.roles:
         raise PermissionError("only Platform owner can rotate roles")
     roles = tuple(PlatformRole(value) for value in payload["roles"])
@@ -124,6 +124,10 @@ async def _rotate_platform_role(args: argparse.Namespace, app: Any) -> None:
                        FROM iam.platform_roles WHERE role_name=$2""",
                     target_id, role.value,
                 )
+            await connection.execute(
+                "UPDATE iam.platform_identities SET token_version=token_version+1, "
+                "updated_at=now() WHERE platform_identity_id=$1", target_id,
+            )
     _safe_print(
         {"platform_identity_id": str(target_id), "roles": [role.value for role in roles],
          "status": "rotated"}

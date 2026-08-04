@@ -286,22 +286,28 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     DataDependency = Annotated[IngestionPrincipal, Depends(data_context)]
 
-    def platform_context(
+    async def platform_context(
         authorization: Annotated[str, Header(alias="Authorization")],
     ) -> PlatformAccessContext:
-        if container.platform_tokens is None:
+        if (
+            container.platform_identities is None
+            or container.platform_tokens is None
+        ):
             raise RepositoryUnavailable("平台身份服务暂不可用")
         scheme, separator, token = authorization.partition(" ")
         if separator != " " or scheme.lower() != "bearer" or not token:
             raise AuthenticationError("缺少有效平台 Bearer 凭据")
-        return container.platform_tokens.verify(token)
+        return await container.platform_identities.verify_access_token(token)
 
     PlatformAccessDependency = Annotated[PlatformAccessContext, Depends(platform_context)]
 
     def source_fingerprint(request: Request) -> bytes:
         host = request.client.host if request.client is not None else "unknown"
-        user_agent = request.headers.get("User-Agent", "")[:256]
-        return hashlib.sha256(f"{host}|{user_agent}".encode("utf-8")).digest()
+        return hashlib.sha256(f"tenant|{host}".encode("utf-8")).digest()
+
+    def _platform_source_fingerprint(request: Request) -> bytes:
+        host = request.client.host if request.client is not None else "unknown"
+        return hashlib.sha256(f"platform|{host}".encode("utf-8")).digest()
 
     def operations_service():
         if container.operations is None:
@@ -388,7 +394,10 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
         @app.post("/v1/platform/login")
         async def platform_login(request: Request, body: PlatformLoginRequest):
-            result = await container.platform_identities.login(body)
+            result = await container.platform_identities.login(
+                body,
+                source_fingerprint=_platform_source_fingerprint(request),
+            )
             return _data_response(request, result)
 
     if container.platform_access is not None and container.platform_tokens is not None:

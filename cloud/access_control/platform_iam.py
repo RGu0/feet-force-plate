@@ -30,6 +30,7 @@ from .repository import (
     AccessRepositoryConflict,
     AuditEventRecord,
     AccessRepository,
+    AuthenticationAttemptRecord,
     PlatformIdentityRecord,
     PlatformRoleBindingRecord,
     SensitiveAccessGrantRecord,
@@ -46,6 +47,8 @@ class PlatformPermissionDenied(PlatformError):
 
 class PlatformIdentityService:
     _ACCESS_TTL = timedelta(minutes=15)
+    _FAILED_WINDOW = timedelta(minutes=15)
+    _FAILED_LIMIT = 5
 
     def __init__(
         self,
@@ -70,6 +73,35 @@ class PlatformIdentityService:
             normalize_login_name(login_name).encode("utf-8"),
             hashlib.sha256,
         ).digest()
+
+    async def _ensure_not_rate_limited(
+        self, *, login_name_hmac: bytes, now: datetime
+    ) -> None:
+        failures = await self._repository.failed_authentication_attempts_for_login(
+            login_name_hmac=login_name_hmac,
+            since=now - self._FAILED_WINDOW,
+        )
+        if failures >= self._FAILED_LIMIT:
+            raise PlatformPermissionDenied("Platform login is temporarily unavailable")
+
+    async def _record_attempt(
+        self,
+        *,
+        login_name_hmac: bytes,
+        source_fingerprint: bytes,
+        succeeded: bool,
+        attempted_at: datetime,
+    ) -> None:
+        await self._repository.record_authentication_attempt(
+            AuthenticationAttemptRecord(
+                authentication_attempt_id=uuid4(),
+                login_name_hmac=login_name_hmac,
+                source_fingerprint=source_fingerprint,
+                attempt_kind="PLATFORM_LOGIN",
+                succeeded=succeeded,
+                attempted_at=attempted_at,
+            )
+        )
 
     async def bootstrap_owner(
         self,
@@ -155,24 +187,43 @@ class PlatformIdentityService:
             )
         return self._login_response(identity, roles, now=now)
 
-    async def login(self, request: PlatformLoginRequest) -> PlatformLoginResponse:
+    async def login(
+        self,
+        request: PlatformLoginRequest,
+        *,
+        source_fingerprint: bytes = b"",
+    ) -> PlatformLoginResponse:
         now = self._now()
-        identity = await self._repository.platform_identity_by_login_hmac(
-            self._login_digest(request.login_name)
-        )
-        if (
-            identity is None
-            or identity.status != "ACTIVE"
-            or not verify_password(request.password, identity.password_hash)
-        ):
-            raise PlatformPermissionDenied("Platform credentials were rejected")
-        roles = await self._repository.platform_roles(
-            identity.platform_identity_id,
-            at=now,
-        )
-        if not roles:
-            raise PlatformPermissionDenied("Platform identity has no active role")
-        return self._login_response(identity, roles, now=now)
+        login_digest = self._login_digest(request.login_name)
+        await self._ensure_not_rate_limited(login_name_hmac=login_digest, now=now)
+        succeeded = False
+        try:
+            identity = await self._repository.platform_identity_by_login_hmac(
+                login_digest
+            )
+            if (
+                identity is None
+                or identity.status != "ACTIVE"
+                or not verify_password(request.password, identity.password_hash)
+            ):
+                raise PlatformPermissionDenied("Platform credentials were rejected")
+            roles = await self._repository.platform_roles(
+                identity.platform_identity_id,
+                at=now,
+            )
+            if not roles:
+                raise PlatformPermissionDenied("Platform identity has no active role")
+            succeeded = True
+            return self._login_response(identity, roles, now=now)
+        except PlatformPermissionDenied:
+            raise
+        finally:
+            await self._record_attempt(
+                login_name_hmac=login_digest,
+                source_fingerprint=source_fingerprint,
+                succeeded=succeeded,
+                attempted_at=now,
+            )
 
     def _login_response(
         self,
@@ -196,8 +247,26 @@ class PlatformIdentityService:
             refresh_token=refresh.raw_token,
         )
 
-    def verify_access_token(self, token: str) -> PlatformAccessContext:
-        return self._token_issuer.verify(token, now=self._now())
+    async def verify_access_token(self, token: str) -> PlatformAccessContext:
+        token_context = self._token_issuer.verify(token, now=self._now())
+        identity = await self._repository.platform_identity_by_id(
+            token_context.platform_identity_id
+        )
+        if identity is None or identity.status != "ACTIVE":
+            raise PlatformPermissionDenied("Platform identity is not active")
+        if identity.token_version != token_context.token_version:
+            raise PlatformPermissionDenied("Platform access token is stale")
+        roles = await self._repository.platform_roles(
+            identity.platform_identity_id, at=self._now()
+        )
+        if not roles:
+            raise PlatformPermissionDenied("Platform identity has no active role")
+        return PlatformAccessContext(
+            platform_identity_id=identity.platform_identity_id,
+            roles=frozenset(roles),
+            token_version=identity.token_version,
+            expires_at=token_context.expires_at,
+        )
 
     def _require_active_context(self, context: PlatformAccessContext) -> None:
         if context.expires_at <= self._now():
@@ -240,8 +309,29 @@ class SensitiveAccessService:
         context: PlatformAccessContext,
         request: SensitiveAccessGrantRequest,
     ) -> SensitiveAccessGrantResponse:
-        self._require_context(context)
+        if context.expires_at <= self._now() or not context.roles:
+            await self._append_denial(
+                context=context,
+                tenant_id=request.tenant_id,
+                resource_id=None,
+                reason="context_inactive",
+                details=(
+                    ("purpose_code", request.purpose_code),
+                    ("ticket_reference", request.ticket_reference),
+                ),
+            )
+            raise PlatformPermissionDenied("Platform context is not active")
         if not context.roles.intersection(self._DISCLOSE_ROLES):
+            await self._append_denial(
+                context=context,
+                tenant_id=request.tenant_id,
+                resource_id=None,
+                reason="role_unauthorized",
+                details=(
+                    ("purpose_code", request.purpose_code),
+                    ("ticket_reference", request.ticket_reference),
+                ),
+            )
             raise PlatformPermissionDenied("Platform role cannot disclose sensitive identity")
         now = self._now()
         record = SensitiveAccessGrantRecord(
@@ -286,8 +376,23 @@ class SensitiveAccessService:
         subject_id: UUID,
         identity_loader: Callable[[], tuple[str | None, str | None]],
     ) -> SensitiveIdentityResponse:
-        self._require_context(context)
+        if context.expires_at <= self._now() or not context.roles:
+            await self._append_denial(
+                context=context,
+                tenant_id=tenant_id,
+                resource_id=subject_id,
+                reason="context_inactive",
+                details=(("grant_id", str(grant_id)),),
+            )
+            raise PlatformPermissionDenied("Platform context is not active")
         if not context.roles.intersection(self._DISCLOSE_ROLES):
+            await self._append_denial(
+                context=context,
+                tenant_id=tenant_id,
+                resource_id=subject_id,
+                reason="role_unauthorized",
+                details=(("grant_id", str(grant_id)),),
+            )
             raise PlatformPermissionDenied("Platform role cannot disclose sensitive identity")
         now = self._now()
         try:
@@ -298,6 +403,13 @@ class SensitiveAccessService:
                 used_at=now,
             )
         except AccessRepositoryConflict as exc:
+            await self._append_denial(
+                context=context,
+                tenant_id=tenant_id,
+                resource_id=grant_id,
+                reason="grant_invalid",
+                details=(("grant_id", str(grant_id)),),
+            )
             raise PlatformPermissionDenied("sensitive access grant is invalid") from exc
         display_name, contact = identity_loader()
         response = SensitiveIdentityResponse(
@@ -324,6 +436,27 @@ class SensitiveAccessService:
             )
         )
         return response
+
+    async def _append_denial(
+        self,
+        *,
+        context: PlatformAccessContext,
+        tenant_id: UUID | None,
+        resource_id: UUID | None,
+        reason: str,
+        details: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        await self._repository.append_audit(
+            AuditEventRecord(
+                event_id=uuid4(),
+                actor_id=context.platform_identity_id,
+                action="sensitive-access.deny",
+                tenant_id=tenant_id,
+                resource_id=resource_id,
+                occurred_at=self._now(),
+                details=(("reason", reason), *details),
+            )
+        )
 
 
 __all__ = [
