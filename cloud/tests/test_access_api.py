@@ -148,6 +148,34 @@ class TenantAccessApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertNotIn(token, response.text)
 
+    async def test_tenant_login_lockout_survives_user_agent_rotation(self) -> None:
+        activated = await self.client.post("/v1/access/activate", json=self.activation_body())
+        self.assertEqual(activated.status_code, 201, activated.text)
+        bad_body = {
+            "account_name": self.provisioned.account_name,
+            "password": "definitely-wrong-password",
+            "client_installation_id": str(uuid4()),
+        }
+        for index in range(5):
+            response = await self.client.post(
+                "/v1/access/login",
+                json=bad_body,
+                headers={"User-Agent": f"rotating-agent-{index}"},
+            )
+            self.assertEqual(response.status_code, 401, response.text)
+
+        locked = await self.client.post(
+            "/v1/access/login",
+            json={
+                "account_name": self.provisioned.account_name,
+                "password": "correct-horse-battery-staple",
+                "client_installation_id": str(uuid4()),
+            },
+            headers={"User-Agent": "rotating-agent-999"},
+        )
+        self.assertEqual(locked.status_code, 401, locked.text)
+        self.assertIn("temporarily unavailable", locked.text)
+
     async def test_local_ui_test_license_never_reaches_cloud_activation(self) -> None:
         body = self.activation_body()
         body["activation_code"] = "FFP-2026-TEST-0001"

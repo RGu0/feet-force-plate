@@ -1298,6 +1298,10 @@ class PostgresPlatformRepository:
     async def status(
         self, context: TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
+        # Authorization rule (commit f7fb6a4): session status is shared within a
+        # tenant so a replacement installation can recover a workflow started on
+        # a retired terminal. Tenant scope is enforced; terminal ownership is
+        # intentionally not checked here, unlike session/segment read methods.
         context.ensure_active()
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
             row = await connection.fetchrow(
