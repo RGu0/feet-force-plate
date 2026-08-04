@@ -31,12 +31,14 @@ rm -rf -- "$work_root"
 install -d -m 0700 "$work_root"
 trap 'rm -rf -- "$work_root"' EXIT
 tar -xzf "$archive" -C "$work_root"
+install -m 0644 /etc/feetforceplate/tls/seed.crt "$work_root/seed.crt"
+install -m 0600 /etc/feetforceplate/tls/seed.key "$work_root/seed.key"
 
 source /etc/feetforceplate/seed.env
 bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
     "$archive" "$release_sha" "$archive_sha" \
-    /etc/feetforceplate/tls/seed.crt \
-    /etc/feetforceplate/tls/seed.key \
+    "$work_root/seed.crt" \
+    "$work_root/seed.key" \
     "$FEETFORCEPLATE_PUBLIC_BASE_URL" \
     "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT"
 
