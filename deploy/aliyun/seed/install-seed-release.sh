@@ -149,6 +149,7 @@ apply_migration iam.users "$release_source/cloud/migrations/0002_p5_device_opera
 apply_migration iam.tenant_accounts "$release_source/cloud/migrations/0003_seed_mvp_access_control.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0004_allow_unsigned_revoked_license.sql"
+apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
 
 role_wrapper="$install_root/roles.sql"
 {

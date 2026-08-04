@@ -26,7 +26,15 @@ AccountName = Annotated[
 TenantName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
 HardwareIdentity = Annotated[
     str,
-    StringConstraints(pattern=r"^usb-serial-[0-9a-f]{20}$", min_length=31, max_length=31),
+    StringConstraints(
+        pattern=r"^(?:usb-serial-[0-9a-f]{20}|FFP-DP4864-[0-9]{6})$",
+        min_length=17,
+        max_length=31,
+    ),
+]
+AssetSerial = Annotated[
+    str,
+    StringConstraints(pattern=r"^FFP-DP4864-[0-9]{6}$", min_length=17, max_length=17),
 ]
 SecretValue = Annotated[str, StringConstraints(min_length=20, max_length=8192)]
 PasswordValue = Annotated[str, StringConstraints(min_length=12, max_length=256)]
@@ -96,6 +104,28 @@ class ProvisionTenantResponse(ContractModel):
     activation_code: SecretValue
     activation_expires_at: datetime
     license_period_months: Literal[6, 12]
+
+
+class InventoryBatchCreateRequest(ContractModel):
+    quantity: Annotated[int, Field(ge=1, le=100)]
+    model: Literal["DO-P4864"] = "DO-P4864"
+    license_period_months: Literal[12] = 12
+
+
+class InventoryActivationRequest(ContractModel):
+    tenant_name: TenantName
+    account_name: AccountName
+    password: PasswordValue
+    password_confirmation: PasswordValue
+    asset_serial: AssetSerial
+    activation_code: SecretValue
+    client_installation_id: UUID
+
+    @model_validator(mode="after")
+    def require_password_confirmation(self) -> InventoryActivationRequest:
+        if self.password != self.password_confirmation:
+            raise ValueError("password confirmation does not match")
+        return self
 
 
 class ActivateAccountRequest(ContractModel):
@@ -321,6 +351,7 @@ __all__ = [
     "AccountState",
     "ActivateAccountRequest",
     "ActivateAccountResponse",
+    "AssetSerial",
     "HardwareIdentity",
     "HardwareLeaseRequest",
     "HardwareLeaseResponse",
@@ -329,6 +360,8 @@ __all__ = [
     "LicenseControlResponse",
     "LicenseDocumentV2",
     "LicenseState",
+    "InventoryActivationRequest",
+    "InventoryBatchCreateRequest",
     "LoginRequest",
     "LoginResponse",
     "LogoutRequest",

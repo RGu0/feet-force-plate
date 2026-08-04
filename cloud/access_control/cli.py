@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import UTC, datetime
 import getpass
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
+import secrets
 import sys
 from typing import Any
+from uuid import uuid4
 
 from cloud.api.seed import SeedSettings, build_seed_app
-from shared.contracts.access_control import PlatformLoginRequest, PlatformRole, ProvisionTenantRequest
+from shared.contracts.access_control import (
+    InventoryBatchCreateRequest,
+    PlatformLoginRequest,
+    PlatformRole,
+    ProvisionTenantRequest,
+)
 
 from .platform_service import normalize_login_name
 
@@ -144,6 +153,75 @@ async def _inspect_license(args: argparse.Namespace, app: Any) -> None:
     )
 
 
+async def _create_sales_inventory(args: argparse.Namespace, app: Any) -> None:
+    request = InventoryBatchCreateRequest(quantity=args.quantity)
+    password = getpass.getpass("Platform Operations password: ")
+    login = await app.state.services.platform_identities.login(
+        PlatformLoginRequest(login_name=args.platform_login, password=password)
+    )
+    context = app.state.services.platform_identities.verify_access_token(login.access_token)
+    if not {PlatformRole.OWNER, PlatformRole.OPERATIONS}.intersection(context.roles):
+        raise PermissionError("Platform role cannot create sales inventory")
+
+    output = Path(args.output).expanduser().resolve()
+    if output.exists():
+        raise FileExistsError("delivery output already exists")
+    output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    batch_id = uuid4()
+    codes = [secrets.token_urlsafe(32) for _ in range(request.quantity)]
+    hmac_key = app.state.seed_settings.activation_hmac_key.encode("utf-8")
+    output_created = False
+    try:
+        async with app.state.seed_pools[2].acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """INSERT INTO sales.inventory_batches
+                       (inventory_batch_id,model,license_period_months,quantity,created_at)
+                       VALUES ($1,$2,$3,$4,$5)""",
+                    batch_id, request.model, request.license_period_months, request.quantity, now,
+                )
+                asset_serials: list[str] = []
+                for code in codes:
+                    sequence = await connection.fetchval(
+                        "SELECT nextval('sales.device_asset_serial_sequence')"
+                    )
+                    asset_serial = f"FFP-DP4864-{int(sequence):06d}"
+                    asset_serials.append(asset_serial)
+                    await connection.execute(
+                        """INSERT INTO sales.device_inventory
+                           (device_inventory_id,inventory_batch_id,asset_serial,status)
+                           VALUES ($1,$2,$3,'IN_STOCK')""",
+                        uuid4(), batch_id, asset_serial,
+                    )
+                    digest = hmac.new(hmac_key, code.encode("utf-8"), hashlib.sha256).digest()
+                    await connection.execute(
+                        """INSERT INTO sales.license_inventory
+                           (license_inventory_id,inventory_batch_id,activation_code_hmac,status)
+                           VALUES ($1,$2,$3,'UNUSED')""",
+                        uuid4(), batch_id, digest,
+                    )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        descriptor = os.open(output, flags, 0o600)
+        output_created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"batch_id": str(batch_id), "asset_serials": asset_serials, "license_codes": codes},
+                handle, ensure_ascii=False, separators=(",", ":"),
+            )
+            handle.write("\n")
+        output.chmod(0o600)
+    except Exception:
+        if output_created:
+            output.unlink()
+        raise
+    _safe_print({
+        "batch_id": str(batch_id), "quantity": request.quantity,
+        "license_period_months": request.license_period_months,
+        "delivery_file": "written", "codes_printed": False,
+    })
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FeetForcePlate seed access administration")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -167,6 +245,10 @@ def _parser() -> argparse.ArgumentParser:
 
     inspect = commands.add_parser("inspect-license")
     inspect.add_argument("--license-id", required=True)
+    inventory = commands.add_parser("create-sales-inventory")
+    inventory.add_argument("--platform-login", required=True)
+    inventory.add_argument("--quantity", type=int, required=True)
+    inventory.add_argument("--output", required=True)
     return parser
 
 
@@ -179,6 +261,8 @@ async def _run(args: argparse.Namespace) -> None:
             await _provision_tenant(args, app)
         elif args.command == "rotate-platform-role":
             await _rotate_platform_role(args, app)
+        elif args.command == "create-sales-inventory":
+            await _create_sales_inventory(args, app)
         else:
             await _inspect_license(args, app)
     finally:

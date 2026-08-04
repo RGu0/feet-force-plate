@@ -31,8 +31,12 @@ GRANT ffp_activation_app TO ffp_seed_activation;
 GRANT ffp_platform_app TO ffp_seed_platform;
 GRANT CONNECT ON DATABASE :"database_name"
     TO ffp_seed_tenant, ffp_seed_activation, ffp_seed_platform, ffp_seed_backup;
-GRANT USAGE ON SCHEMA iam, device, subject, screening, ops TO ffp_seed_backup;
-GRANT SELECT ON ALL TABLES IN SCHEMA iam, device, subject, screening, ops TO ffp_seed_backup;
+GRANT USAGE ON SCHEMA iam, device, subject, screening, ops, sales TO ffp_seed_backup;
+GRANT SELECT ON ALL TABLES IN SCHEMA iam, device, subject, screening, ops, sales TO ffp_seed_backup;
+
+GRANT USAGE ON SCHEMA sales TO ffp_platform_app, ffp_activation_app;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA sales TO ffp_platform_app, ffp_activation_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sales TO ffp_platform_app;
 
 -- The seed License activation role materializes compatibility rows consumed by
 -- the existing ingestion schema. It still has no subject, screening, report,
