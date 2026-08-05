@@ -308,6 +308,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.assertTrue(settings.integration_mode)
         self.assertEqual(settings.environment_label, "联调环境")
         self.assertEqual(settings.verify, str(ca_path))
+        self.assertEqual(settings.license_key_id, "license/1")
         with self.assertRaises(ValueError):
             AccessRuntimeSettings.from_environment(
                 {

@@ -140,7 +140,7 @@ class AccessRuntimeSettings:
         if ca_bundle and not Path(ca_bundle).is_file():
             raise ValueError("configured CA bundle does not exist")
         license_key_id = env.get(
-            "FEETFORCEPLATE_LICENSE_KEY_ID", "license/2-key-1"
+            "FEETFORCEPLATE_LICENSE_KEY_ID", "license/1"
         ).strip()
         public_key_file = Path(
             env.get("FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE", "").strip()
