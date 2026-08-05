@@ -10,6 +10,7 @@ import shutil
 import uuid
 
 from client.device.protocol import RawFrame
+from client.device.stage_windows import CapturedStageWindow
 from client.hardware_standardization.models import PhysicalArraySession
 from client.hardware_standardization.public_export import (
     PhysicalPressureSession,
@@ -29,6 +30,10 @@ from .segments import (
     write_session_manifest,
 )
 from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
+from client.workflow.protocol import default_standard_protocol
+
+
+_STAGE_WINDOW_POLICY_VERSION = "operator-started-stage-window/1"
 
 
 def _write_atomic_json(path: Path, payload: dict[str, object]) -> None:
@@ -98,6 +103,7 @@ class ValidSessionStager:
         versions: dict[str, str],
         started_at_ns: int,
         segment_duration_seconds: float = 5.0,
+        expected_stage_ids: tuple[str, ...] | None = None,
     ) -> None:
         if not session_id or not subject_uuid or not versions:
             raise ValueError("session identity and versions are required")
@@ -111,6 +117,15 @@ class ValidSessionStager:
         self._consent_id = consent_id
         self._versions = dict(versions)
         self._started_at_ns = started_at_ns
+        self._expected_stage_ids = (
+            expected_stage_ids
+            if expected_stage_ids is not None
+            else tuple(stage.stage_id for stage in default_standard_protocol().stages)
+        )
+        if not self._expected_stage_ids or any(
+            not stage_id for stage_id in self._expected_stage_ids
+        ):
+            raise ValueError("expected stage ids are required")
         self._writer = ImmutableSegmentWriter(
             self._staging_root,
             session_id=session_id,
@@ -120,12 +135,17 @@ class ValidSessionStager:
         )
         self._sealed: list[SealedSegment] = []
         self._artifacts: list[DerivedArtifact] = []
+        self._stage_windows: list[CapturedStageWindow] = []
         self._has_open_frames = False
         self._finished = False
 
     @property
     def staging_directory(self) -> Path:
         return self._staging_root / self._session_id
+
+    @property
+    def stage_windows(self) -> tuple[CapturedStageWindow, ...]:
+        return tuple(self._stage_windows)
 
     def append(self, frame: RawFrame) -> None:
         if self._finished:
@@ -134,6 +154,33 @@ class ValidSessionStager:
         self._has_open_frames = sealed is None
         if sealed is not None:
             self._sealed.append(sealed)
+
+    def append_verified_stage(
+        self,
+        stage_id: str,
+        frames: tuple[RawFrame, ...],
+        window: CapturedStageWindow,
+    ) -> None:
+        """Merge one sealed stage attempt in the configured protocol order."""
+
+        if self._finished:
+            raise RuntimeError("session staging is already finished")
+        if stage_id != window.stage_id:
+            raise ValueError("stage identity must match its captured window")
+        if stage_id in {captured.stage_id for captured in self._stage_windows}:
+            raise ValueError("duplicate stage cannot be merged")
+        if len(self._stage_windows) >= len(self._expected_stage_ids) or (
+            stage_id != self._expected_stage_ids[len(self._stage_windows)]
+        ):
+            raise ValueError("stage order does not match the configured protocol")
+        if not frames or len(frames) != window.frame_count:
+            raise ValueError("verified stage frames must match its captured window")
+        self.freeze_versions(
+            {"stage_window_policy": _STAGE_WINDOW_POLICY_VERSION}
+        )
+        for frame in frames:
+            self.append(frame)
+        self._stage_windows.append(window)
 
     def freeze_versions(self, additional_versions: dict[str, str]) -> None:
         """Bind acquisition policies before the first raw frame is accepted."""
@@ -189,11 +236,22 @@ class ValidSessionStager:
             raise RuntimeError("session staging is already finished")
         if observation.session_id != self._session_id:
             raise ValueError("derived observation must match the staged session id")
+        metadata = dict(processing_metadata or {})
+        if self._stage_windows:
+            metadata["stage_windows"] = [
+                {
+                    "stage_id": window.stage_id,
+                    "start_s": window.start_s,
+                    "end_s": window.end_s,
+                    "frame_count": window.frame_count,
+                }
+                for window in self._stage_windows
+            ]
         artifact = write_derived_observation(
             self._staging_root,
             session=observation,
             key_provider=self._key_provider,
-            processing_metadata=processing_metadata,
+            processing_metadata=metadata,
         )
         self._artifacts.append(artifact)
         return artifact
