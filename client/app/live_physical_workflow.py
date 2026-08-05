@@ -17,6 +17,10 @@ from client.app.live_hardware_demo import (
     operator_attestations_from_completion_flags,
     static_balance_stage_plan,
 )
+from client.device.stage_windows import (
+    CapturedStageWindow,
+    validate_captured_stage_windows,
+)
 from client.device.acquisition import ConnectionStateMachine
 from client.device.session_runtime import HardwareSessionRuntime
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
@@ -36,6 +40,12 @@ class LiveSessionMetadata:
     subject_uuid: str
     consent_record_id: str
     captured_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class LiveAnalysisInputs:
+    completed: tuple[bool, ...]
+    captured_windows: tuple[CapturedStageWindow, ...]
 
 
 class InstitutionLiveSessions:
@@ -158,22 +168,50 @@ class LivePhysicalProcessor:
         self._spool_root = spool_root
         self._reports = reports
         self._stage_seconds = stage_seconds
-        self._attestations: dict[str, tuple[bool, ...]] = {}
+        self._attestations: dict[str, LiveAnalysisInputs] = {}
 
-    def record_attestations(self, session_id: str, completed: tuple[bool, ...]) -> None:
+    def record_attestations(
+        self,
+        session_id: str,
+        completed: tuple[bool, ...],
+        *,
+        captured_windows: tuple[CapturedStageWindow, ...] = (),
+    ) -> None:
         if len(completed) != 4:
             raise ValueError("all four live stages require an operator attestation")
-        self._attestations[session_id] = completed
+        plan = static_balance_stage_plan(stage_seconds=self._stage_seconds)
+        if captured_windows:
+            captured_windows = validate_captured_stage_windows(
+                captured_windows,
+                expected_stage_ids=tuple(stage.stage_id.value for stage in plan),
+                minimum_duration_s=self._stage_seconds,
+            )
+        self._attestations[session_id] = LiveAnalysisInputs(completed, captured_windows)
 
     def process(self, session_id: str) -> ProcessingOutcome:
-        completed = self._attestations.get(session_id)
-        if completed is None:
+        inputs = self._attestations.get(session_id)
+        if (
+            inputs is None
+            or len(inputs.completed) != 4
+            or len(inputs.captured_windows) != 4
+        ):
             return ProcessingOutcome(ProcessingStatus.RETRY_REQUIRED, None, None)
         plan = static_balance_stage_plan(stage_seconds=self._stage_seconds)
+        try:
+            captured_windows = validate_captured_stage_windows(
+                inputs.captured_windows,
+                expected_stage_ids=tuple(stage.stage_id.value for stage in plan),
+                minimum_duration_s=self._stage_seconds,
+            )
+        except ValueError:
+            return ProcessingOutcome(ProcessingStatus.RETRY_REQUIRED, None, None)
         context = build_operator_attested_protocol(
             session_id=session_id,
             stage_seconds=self._stage_seconds,
-            attestations=operator_attestations_from_completion_flags(plan, completed),
+            attestations=operator_attestations_from_completion_flags(
+                plan, inputs.completed
+            ),
+            captured_windows=captured_windows,
         )
         if not is_basic_report_eligible(context):
             return ProcessingOutcome(ProcessingStatus.RETRY_REQUIRED, None, None)

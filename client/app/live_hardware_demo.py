@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from client.device.stage_windows import (
+    CapturedStageWindow,
+    validate_captured_stage_windows,
+)
 from cloud.analysis.protocol_context import (
     CompletionStatus,
     ForwardFoot,
@@ -84,6 +88,7 @@ def build_operator_attested_protocol(
     session_id: str,
     stage_seconds: float,
     attestations: tuple[OperatorStageAttestation, ...],
+    captured_windows: tuple[CapturedStageWindow, ...] | None = None,
 ) -> StaticBalanceProtocolContext:
     """Build context only from four explicit supervisor attestations."""
 
@@ -95,11 +100,21 @@ def build_operator_attested_protocol(
         for attestation, stage in zip(attestations, plan)
     ):
         raise ValueError("attestations must use the canonical four-stage order")
+    if captured_windows is not None:
+        captured_windows = validate_captured_stage_windows(
+            captured_windows,
+            expected_stage_ids=tuple(stage.stage_id.value for stage in plan),
+            minimum_duration_s=stage_seconds,
+        )
     stages = tuple(
         StageWindow(
             stage_id=stage.stage_id,
-            start_s=stage.start_s,
-            end_s=stage.end_s,
+            start_s=(
+                captured_window.start_s if captured_window is not None else stage.start_s
+            ),
+            end_s=(
+                captured_window.end_s if captured_window is not None else stage.end_s
+            ),
             completion_status=attestation.completion_status,
             actual_completion_s=(
                 stage_seconds
@@ -116,7 +131,11 @@ def build_operator_attested_protocol(
             eyes_opened_early=attestation.eyes_opened_early,
             stop_reason=attestation.stop_reason,
         )
-        for stage, attestation in zip(plan, attestations)
+        for stage, attestation, captured_window in zip(
+            plan,
+            attestations,
+            captured_windows if captured_windows is not None else (None,) * len(plan),
+        )
     )
     return StaticBalanceProtocolContext(
         session_id=session_id,

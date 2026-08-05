@@ -9,6 +9,7 @@ from client.app.live_hardware_demo import (
     operator_attestations_from_completion_flags,
     static_balance_stage_plan,
 )
+from client.device.stage_windows import CapturedStageWindow
 from cloud.analysis.protocol_context import (
     CompletionStatus,
     StageId,
@@ -77,6 +78,30 @@ def test_operator_attested_protocol_rejects_missing_or_wrong_stage_attestation()
             stage_seconds=20.0,
             attestations=(),
         )
+
+
+def test_operator_context_uses_real_non_contiguous_stage_boundaries() -> None:
+    plan = static_balance_stage_plan(stage_seconds=20.0)
+    context = build_operator_attested_protocol(
+        session_id="session-1",
+        stage_seconds=20.0,
+        attestations=operator_attestations_from_completion_flags(
+            plan, (True, True, True, True)
+        ),
+        captured_windows=(
+            CapturedStageWindow("BILATERAL_EYES_OPEN", 0.0, 20.0, 600),
+            CapturedStageWindow("BILATERAL_EYES_CLOSED", 34.5, 54.5, 601),
+            CapturedStageWindow("SEMI_TANDEM_LEFT_FORWARD", 70.0, 90.0, 599),
+            CapturedStageWindow("SEMI_TANDEM_RIGHT_FORWARD", 105.0, 125.0, 602),
+        ),
+    )
+
+    assert [(stage.start_s, stage.end_s) for stage in context.stages] == [
+        (0.0, 20.0),
+        (34.5, 54.5),
+        (70.0, 90.0),
+        (105.0, 125.0),
+    ]
 
 
 def test_completion_flags_never_turn_a_failed_stage_into_a_report_eligible_one() -> None:
