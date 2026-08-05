@@ -479,6 +479,13 @@ class PostgresAccessRepository:
             raise AccessActivationRejected("activation credentials do not match")
         try:
             async with self._plain_transaction(self._activation_pool) as connection:
+                # The activation role is subject to installation-table RLS. Set
+                # the newly allocated tenant before any such lookup, otherwise
+                # ``ops.current_tenant_id()`` attempts to cast an empty context.
+                await connection.execute(
+                    "SELECT set_config('app.tenant_id', $1, true)",
+                    str(seed.tenant.tenant_id),
+                )
                 device_inventory = await connection.fetchrow(
                     """SELECT device_inventory_id FROM sales.device_inventory
                        WHERE asset_serial=$1 AND status='IN_STOCK' FOR UPDATE""",
@@ -497,10 +504,6 @@ class PostgresAccessRepository:
                 )
                 if duplicate:
                     raise AccessActivationRejected("activation credentials do not match")
-                await connection.execute(
-                    "SELECT set_config('app.tenant_id', $1, true)",
-                    str(seed.tenant.tenant_id),
-                )
                 await connection.execute(
                     "INSERT INTO iam.tenants (tenant_id,name,status,created_at,updated_at) "
                     "VALUES ($1,$2,'ACTIVE',$3,$3)",
