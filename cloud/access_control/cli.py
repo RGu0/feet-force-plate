@@ -198,10 +198,9 @@ async def _create_sales_inventory(args: argparse.Namespace, app: Any) -> None:
                     digest = hmac.new(hmac_key, code.encode("utf-8"), hashlib.sha256).digest()
                     await connection.execute(
                         """INSERT INTO sales.license_inventory
-                           (license_inventory_id,inventory_batch_id,device_inventory_id,
-                            activation_code_hmac,status)
-                           VALUES ($1,$2,$3,$4,'UNUSED')""",
-                        uuid4(), batch_id, device_inventory_id, digest,
+                           (license_inventory_id,inventory_batch_id,activation_code_hmac,status)
+                           VALUES ($1,$2,$3,'UNUSED')""",
+                        uuid4(), batch_id, digest,
                     )
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         descriptor = os.open(output, flags, 0o600)

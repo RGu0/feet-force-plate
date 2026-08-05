@@ -465,7 +465,7 @@ class PostgresAccessRepository:
         license_document_json: str,
         license_signature: str,
     ) -> ActivatedAccess:
-        """Atomically bind one sales asset/code pair to its first tenant."""
+        """Bind one independently stocked asset and License at first activation."""
 
         if (
             not password_hash
@@ -479,18 +479,17 @@ class PostgresAccessRepository:
             raise AccessActivationRejected("activation credentials do not match")
         try:
             async with self._plain_transaction(self._activation_pool) as connection:
-                inventory = await connection.fetchrow(
-                    """SELECT d.device_inventory_id,l.license_inventory_id
-                       FROM sales.device_inventory d
-                       JOIN sales.license_inventory l
-                         ON l.device_inventory_id=d.device_inventory_id
-                       WHERE d.asset_serial=$1 AND l.activation_code_hmac=$2
-                         AND d.status='IN_STOCK' AND l.status='UNUSED'
-                       FOR UPDATE OF d,l""",
+                device_inventory = await connection.fetchrow(
+                    """SELECT device_inventory_id FROM sales.device_inventory
+                       WHERE asset_serial=$1 AND status='IN_STOCK' FOR UPDATE""",
                     seed.asset_serial,
+                )
+                license_inventory = await connection.fetchrow(
+                    """SELECT license_inventory_id FROM sales.license_inventory
+                       WHERE activation_code_hmac=$1 AND status='UNUSED' FOR UPDATE""",
                     activation_code_hash,
                 )
-                if inventory is None:
+                if device_inventory is None or license_inventory is None:
                     raise AccessActivationRejected("activation credentials do not match")
                 duplicate = await connection.fetchval(
                     "SELECT EXISTS (SELECT 1 FROM device.client_installations "
@@ -573,7 +572,7 @@ class PostgresAccessRepository:
                     """UPDATE sales.device_inventory
                        SET status='ACTIVATED',activated_at=$2,tenant_id=$3,hardware_id=$4
                        WHERE device_inventory_id=$1""",
-                    inventory["device_inventory_id"],
+                    device_inventory["device_inventory_id"],
                     activated_at,
                     seed.tenant.tenant_id,
                     seed.group.hardware_id,
@@ -582,7 +581,7 @@ class PostgresAccessRepository:
                     """UPDATE sales.license_inventory
                        SET status='ACTIVATED',activated_at=$2,tenant_id=$3,license_id=$4
                        WHERE license_inventory_id=$1""",
-                    inventory["license_inventory_id"],
+                    license_inventory["license_inventory_id"],
                     activated_at,
                     seed.tenant.tenant_id,
                     seed.group.license_id,
@@ -593,8 +592,8 @@ class PostgresAccessRepository:
                         tenant_id,account_id,hardware_id,license_id,activated_at)
                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
                     uuid4(),
-                    inventory["device_inventory_id"],
-                    inventory["license_inventory_id"],
+                    device_inventory["device_inventory_id"],
+                    license_inventory["license_inventory_id"],
                     seed.tenant.tenant_id,
                     seed.group.account_id,
                     seed.group.hardware_id,

@@ -119,7 +119,7 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "0004_allow_unsigned_revoked_license.sql" in text
     assert "0005_sales_inventory_activation.sql" in text
     assert "0006_inventory_activation_pairing.sql" in text
-    assert "apply_migration_if_column_missing sales license_inventory device_inventory_id" in text
+    assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
 
 

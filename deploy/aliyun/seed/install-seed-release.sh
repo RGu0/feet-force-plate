@@ -159,7 +159,7 @@ apply_migration iam.tenant_accounts "$release_source/cloud/migrations/0003_seed_
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0004_allow_unsigned_revoked_license.sql"
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
-apply_migration_if_column_missing sales license_inventory device_inventory_id "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
+apply_migration_if_column_missing sales inventory_batches activation_binding_mode "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
 
 role_wrapper="$install_root/roles.sql"
 {

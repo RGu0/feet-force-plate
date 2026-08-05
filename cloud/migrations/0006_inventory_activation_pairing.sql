@@ -1,25 +1,12 @@
 BEGIN;
 
--- A License must be delivered with one specific labelled device.  The initial
--- inventory migration stored both lists per batch but did not preserve that
--- pairing, which would otherwise permit a code from the same batch to bind a
--- different device label.
-ALTER TABLE sales.license_inventory
-    ADD COLUMN device_inventory_id uuid REFERENCES sales.device_inventory(device_inventory_id);
-
-DO $existing_inventory$
-BEGIN
-    IF EXISTS (SELECT 1 FROM sales.license_inventory) THEN
-        RAISE EXCEPTION
-            'existing sales inventory requires an audited device-to-code import before migration 0006';
-    END IF;
-END
-$existing_inventory$;
-
-ALTER TABLE sales.license_inventory
-    ALTER COLUMN device_inventory_id SET NOT NULL;
-ALTER TABLE sales.license_inventory
-    ADD CONSTRAINT license_inventory_device_inventory_id_key UNIQUE (device_inventory_id);
+-- Device assets and License codes are deliberately independent sales
+-- inventories.  At first activation the submitted asset serial and the
+-- submitted one-time code are locked, then recorded together in
+-- inventory_activations.  Never infer or pre-bind a device-to-code pair.
+ALTER TABLE sales.inventory_batches
+    ADD COLUMN activation_binding_mode text NOT NULL DEFAULT 'AT_FIRST_ACTIVATION'
+    CHECK (activation_binding_mode = 'AT_FIRST_ACTIVATION');
 
 GRANT USAGE ON SCHEMA sales TO ffp_activation_app;
 GRANT SELECT, UPDATE ON sales.device_inventory, sales.license_inventory TO ffp_activation_app;
