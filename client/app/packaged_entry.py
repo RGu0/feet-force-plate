@@ -560,6 +560,19 @@ def build_mandatory_startup_gate(
     )
 
 
+def build_asset_serial_startup_connector(*, runtime=None) -> SerialValidationConnector:
+    """Require a live board without mistaking its USB metadata for its asset ID.
+
+    The authenticated session's ``hardware_id`` is the scanned sales asset
+    serial.  A serial-less CH340 cannot attest that label, so matching it via
+    ``stable_hardware_identity`` would reject a valid connected board.  The
+    backend binding and later lease own the label; this startup gate owns only
+    physical connection and unloaded-board validation.
+    """
+
+    return SerialValidationConnector(runtime=runtime)
+
+
 def build_institution_access_screen(
     *,
     runtime: ClientAccessRuntime | None = None,
@@ -786,9 +799,7 @@ def main() -> int:
         gate = build_mandatory_startup_gate(
             audit_actor_id=session.client_installation_id,
             app_version=APP_VERSION,
-            connector=SerialValidationConnector(
-                expected_hardware_identity=session.hardware_id
-            ),
+            connector=build_asset_serial_startup_connector(),
             audit_trail=audit_trail,
             workbench_factory=workbench_factory,
         )

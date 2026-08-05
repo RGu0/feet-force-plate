@@ -170,6 +170,46 @@ JUnit 位于 `../RAY-96/pytest-full-local-closeout-20260731.xml`，SHA-256
 
 ## Failures and limitations
 
+## 2026-08-05 实机演示入口与资产编号启动门
+
+本轮将已通过的 DO-P4864 实机基础能力组合为显式的本地演示入口：
+
+- `python main.py --live-demo ...` 仅接受已连接的压力板；它先做空载基线、
+  实机采集、硬件质量门和加密本地提交，再由现场看护人员逐段确认四段站立动作。
+- 任一段未确认、发生扶持/失衡/提前睁眼，或非交互运行时，程序保留本地采集但
+  **不生成报告**。只有四段均由现场人员明确确认且实机质量门已通过时，才生成
+  一份匿名、仅含左右相对负重和相对热图的本地基础 PDF；不会上传，也不输出诊断、
+  风险评分、COP 或绝对力。
+- 当前资产编号会话进入启动门时不再以 `session.hardware_id` 去匹配 USB 元数据。
+  已连接的 CH340 板没有 USB serial；资产编号由首次激活/后续 Lease 绑定，启动门
+  只验证物理连接和空载状态，避免把端口/USB 元数据误作设备业务身份。
+
+已连接的实际设备 `/dev/cu.usbserial-130` 在 2026-08-05 通过启动门，观察到
+`BOOTSTRAPPING → WAITING_FOR_EMPTY → COLLECTING_BASELINE → PASSED`；随后 P-07
+实机显示运行 15 秒，读取 305 帧（20.7 Hz）、窗口截图成功保存且读线程正常关闭。
+上述运行没有受试者、持久会话、报告或上传，不能替代本轮新增入口所需的受监督
+80 秒四段实际采集。
+
+本机回归：
+
+```text
+QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python main.py --live-demo --help
+  exit 0
+
+QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest \
+  client/tests/test_live_hardware_demo.py \
+  client/tests/test_live_hardware_demo_script.py \
+  client/tests/test_ray_84_live_display_harness.py \
+  client/tests/test_ray_114_packaged_entry.py \
+  client/tests/test_seed_hardware_identity.py \
+  client/tests/test_seed_access_runtime.py -q
+20 passed in 1.87s
+```
+
+本次尚未启动四段受监督采集：闭眼和半串联站立具有现场安全风险，必须待现场人员
+确认已看护、受试者准备好且可随时中止后运行。此前的 15 秒空载显示证据不能冒充
+这一步；RAY-100 继续保持 `In Review`。
+
 ## 2026-08-04 资产编号首次激活替换（本机自动化证据）
 
 本次依据实机观察更新绑定口径：已连接的 CH340 DO-P4864 在 macOS 上可用，

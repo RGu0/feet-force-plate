@@ -9,6 +9,7 @@ from client.app.packaged_entry import (
     build_mandatory_startup_gate,
 )
 from client.cloud.runtime import AuthenticatedInstitutionSession
+from client.hardware_standardization.runtime import HardwareStartupConnection
 from client.startup_validation.workflow import DeviceNotFound
 
 
@@ -63,6 +64,35 @@ def test_formal_entry_starts_with_the_p00_institution_access_screen(qtbot) -> No
 
     assert window.objectName() == "institutionAccessWindow"
     assert window.findChild(QWidget, "institutionLoginPage").isVisible()
+
+
+def test_asset_serial_session_starts_hardware_gate_without_usb_identity_matching() -> None:
+    """Regression: passing an FFP label to the USB matcher rejects serial-less CH340."""
+
+    class _Transport:
+        def close(self) -> None: ...
+
+    class _Hardware:
+        def __init__(self) -> None:
+            self.expected_identity = "not called"
+
+        def connect_startup(self, *, expected_hardware_identity):
+            self.expected_identity = expected_hardware_identity
+            return HardwareStartupConnection(
+                device_ref="hardware-opaque",
+                transport=_Transport(),
+                parser=object(),
+                hardware_identity=None,
+            )
+
+    hardware = _Hardware()
+
+    connection = packaged_entry.build_asset_serial_startup_connector(
+        runtime=hardware
+    ).connect()
+
+    assert hardware.expected_identity is None
+    assert connection.hardware_identity is None
 
 
 class _AccessRuntime:

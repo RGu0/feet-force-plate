@@ -34,6 +34,7 @@ from client.hardware_standardization.live_processing import (
 )
 from client.hardware_standardization.models import BaselineReference
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
+from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.workflow.models import WorkflowState
 from client.workflow.state_machine import ScreeningStep
@@ -98,6 +99,16 @@ def _processing_profile(path: Path) -> DoP4864LiveProcessingProfile:
     )
 
 
+def live_physical_grid() -> PhysicalGridOverlay:
+    """Resolve the P-07 overlay from the active hardware facade."""
+
+    hardware = active_hardware_runtime()
+    return PhysicalGridOverlay.from_hardware_geometry(
+        hardware.display_geometry,
+        specification_id=hardware.specification_id,
+    )
+
+
 def validate(
     *,
     device: str,
@@ -124,7 +135,7 @@ def validate(
             maximum_refresh_hz=specification.observed_frame_rate_hz,
         ),
         live_display=bridge,
-        physical_grid=PhysicalGridOverlay.from_device_specification(specification),
+        physical_grid=live_physical_grid(),
     )
     controller.window.resize(1280, 800)
     controller.window.show()
