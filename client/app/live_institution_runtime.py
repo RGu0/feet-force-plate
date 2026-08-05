@@ -117,7 +117,7 @@ def build_live_institution_runtime(
     consent = ConsentWorkflow(
         tenant_id=session.tenant_id,
         terminal_id=session.client_installation_id,
-        consents=institution,
+        consents=institution.consent_port(),
     )
     runtime = build_connected_ui(
         preflight=preflight,

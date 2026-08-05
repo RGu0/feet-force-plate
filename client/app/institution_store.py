@@ -99,6 +99,9 @@ class InstitutionLocalStore:
     def close(self) -> None:
         self.db.close()
 
+    def consent_port(self) -> _InstitutionConsentPort:
+        return _InstitutionConsentPort(self)
+
     def _create_schema(self) -> None:
         self.db.executescript(
             """
@@ -361,6 +364,27 @@ class InstitutionLocalStore:
         ).fetchone()
         if row is None or row[0] != tenant_id:
             raise KeyError("subject is unavailable in this tenant")
+
+
+class _InstitutionConsentPort:
+    def __init__(self, store: InstitutionLocalStore) -> None:
+        self._store = store
+
+    def find_valid(
+        self,
+        *,
+        tenant_id: str,
+        subject_uuid: str,
+        policy: ConsentPolicy,
+    ) -> ConsentReceipt | None:
+        return self._store.find_valid(
+            tenant_id=tenant_id,
+            subject_uuid=subject_uuid,
+            policy=policy,
+        )
+
+    def create(self, request: ConsentRequest) -> ConsentReceipt:
+        return self._store.create_consent(request)
 
 
 def _load_query_index_key() -> bytes:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from client.app.institution_store import InstitutionLocalStore
 from client.reporting.models import BasicReportDocument, ReportStatus
-from client.workflow.consent import ConsentRequest
+from client.workflow.consent import ConsentPolicy, ConsentRequest, ConsentWorkflow
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
 from client.workflow.models import ScreeningParticipantContext
@@ -37,6 +37,29 @@ def test_institution_store_keeps_subject_consent_session_and_report_out_of_repla
         "institution_stage_completions", "institution_subject_audit", "institution_subjects",
     }
     assert store.session_status(session_id) == "CLOSED"
+
+
+def test_institution_consent_port_routes_workflow_creation_to_consent_storage(tmp_path) -> None:
+    store = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    subject = store.create(
+        CreateSubjectRequest(tenant_id="tenant-1", analysis_profile=AnalysisProfile.unknown())
+    )
+    workflow = ConsentWorkflow(
+        tenant_id="tenant-1",
+        terminal_id="terminal-1",
+        consents=store.consent_port(),
+    )
+    policy = ConsentPolicy("consent/1", ("SCREENING",), ("SCREENING",))
+
+    workflow.resolve(subject.subject_uuid, policy)
+    receipt = workflow.confirm(necessary_accepted=True, research_accepted=False)
+
+    assert receipt.subject_uuid == subject.subject_uuid
+    assert store.find_valid(
+        tenant_id="tenant-1",
+        subject_uuid=subject.subject_uuid,
+        policy=policy,
+    ) == receipt
 
 
 def test_institution_report_round_trip_is_encrypted(tmp_path) -> None:
