@@ -17,6 +17,34 @@ from client.startup_validation.models import DeviceValidationRun, ValidationOutc
 from client.workflow.models import PreflightCheck, PreflightSummary
 
 
+class HardwareLeasePreflightPort(Protocol):
+    """The server lease is a precondition for beginning a new live session."""
+
+    def acquire_for_new_session(self) -> PreflightCheck: ...
+
+
+class HardwareLeasePreflight:
+    """Translate the lease lifecycle into one typed, operator-visible P-05 check."""
+
+    def __init__(self, lifecycle) -> None:
+        self._lifecycle = lifecycle
+
+    def acquire_for_new_session(self) -> PreflightCheck:
+        try:
+            self._lifecycle.acquire()
+        except Exception:
+            return PreflightCheck(
+                "hardware_lease", False, "E-LIC-201",
+                "未取得设备使用授权，请确认登录、设备编号和网络后重试",
+            )
+        if not self._lifecycle.allows_new_session:
+            return PreflightCheck(
+                "hardware_lease", False, "E-LIC-201",
+                "设备使用授权不可用，请重新登录后重试",
+            )
+        return PreflightCheck("hardware_lease", True, operator_message="设备使用授权已取得")
+
+
 class NewTestGatePort(Protocol):
     def evaluate_new_test(
         self,
@@ -42,6 +70,7 @@ class ProductionPreflightService:
         free_disk_bytes: Callable[[], int],
         estimated_test_bytes: int,
         reserve_bytes: int,
+        hardware_lease: HardwareLeasePreflightPort | None = None,
     ) -> None:
         if estimated_test_bytes <= 0 or reserve_bytes < 0:
             raise ValueError("preflight storage thresholds are invalid")
@@ -53,6 +82,7 @@ class ProductionPreflightService:
         self._free_disk_bytes = free_disk_bytes
         self._estimated_test_bytes = estimated_test_bytes
         self._reserve_bytes = reserve_bytes
+        self._hardware_lease = hardware_lease
 
     def run_preflight(self) -> PreflightSummary:
         startup_ready = (
@@ -75,8 +105,7 @@ class ProductionPreflightService:
             self._calibration_validation == "VALIDATED"
             or self._calibration_validation.startswith("MVP_SCREENING_ESTIMATED")
         )
-        return PreflightSummary(
-            (
+        checks = [
                 PreflightCheck(
                     "device_connected",
                     startup_ready,
@@ -127,8 +156,10 @@ class ProductionPreflightService:
                         else "设备空载检查未通过，请清空设备并重新启动"
                     ),
                 ),
-            )
-        )
+        ]
+        if self._hardware_lease is not None:
+            checks.append(self._hardware_lease.acquire_for_new_session())
+        return PreflightSummary(tuple(checks))
 
 
 def build_production_preflight(
@@ -141,6 +172,7 @@ def build_production_preflight(
     free_disk_bytes: Callable[[], int] | None = None,
     estimated_test_bytes: int = 64 * 1024**2,
     reserve_bytes: int = 512 * 1024**2,
+    hardware_lease: HardwareLeasePreflightPort | None = None,
 ) -> ProductionPreflightService:
     """Compose P-05 from the active device specification and local state store."""
 
@@ -158,4 +190,5 @@ def build_production_preflight(
         free_disk_bytes=resolved_free_disk_bytes,
         estimated_test_bytes=estimated_test_bytes,
         reserve_bytes=reserve_bytes,
+        hardware_lease=hardware_lease,
     )
