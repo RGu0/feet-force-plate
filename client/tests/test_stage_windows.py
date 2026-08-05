@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from client.device.protocol import RawFrame
 from client.device.stage_windows import (
     CapturedStageWindow,
+    StageRecordingGate,
     validate_captured_stage_windows,
 )
 from client.workflow.protocol import default_standard_protocol
@@ -11,6 +14,71 @@ from client.workflow.protocol import default_standard_protocol
 
 def _expected_stage_ids() -> tuple[str, ...]:
     return tuple(stage.stage_id for stage in default_standard_protocol().stages)
+
+
+def _frame_at(seconds: float, *, source_index: int = 0) -> RawFrame:
+    values = np.zeros((48, 64), dtype=np.uint8)
+    values.setflags(write=False)
+    timestamp_ns = round(seconds * 1_000_000_000)
+    return RawFrame(
+        values=values,
+        host_monotonic_ns=timestamp_ns,
+        host_wall_time_ns=timestamp_ns,
+        source_index=source_index,
+        device_frame_seq=None,
+        device_timestamp_ns=None,
+        quality_flags=frozenset(),
+    )
+
+
+def test_gate_discards_preparation_frames_and_closes_each_manual_window() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one", "two"))
+
+    assert not gate.observe(_frame_at(1.0)).record
+    gate.open_stage("one", duration_seconds=20)
+    assert gate.observe(_frame_at(10.0, source_index=1)).record
+    end = gate.observe(_frame_at(30.0, source_index=2))
+
+    assert end.record and end.stage_complete and not end.session_complete
+    assert end.window == CapturedStageWindow("one", 0.0, 20.0, 2)
+    assert not gate.observe(_frame_at(35.0, source_index=3)).record
+
+    gate.open_stage("two", duration_seconds=20)
+    assert gate.observe(_frame_at(60.0, source_index=4)).record
+    final = gate.observe(_frame_at(80.0, source_index=5))
+
+    assert final.record and final.stage_complete and final.session_complete
+    assert gate.snapshot().completed_windows == (
+        CapturedStageWindow("one", 0.0, 20.0, 2),
+        CapturedStageWindow("two", 50.0, 70.0, 2),
+    )
+
+
+def test_gate_rejects_active_out_of_order_or_cross_session_stage_changes() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one", "two"))
+    gate.bind_session("session-1")
+
+    with pytest.raises(ValueError, match="stage order"):
+        gate.open_stage("two", duration_seconds=20)
+
+    gate.open_stage("one", duration_seconds=20)
+    with pytest.raises(RuntimeError, match="already active"):
+        gate.open_stage("one", duration_seconds=20)
+    with pytest.raises(RuntimeError, match="cannot span sessions"):
+        gate.bind_session("session-2")
+
+
+def test_cancelled_gate_can_retry_only_the_same_unfinished_stage() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one", "two"))
+    gate.open_stage("one", duration_seconds=20)
+    assert gate.observe(_frame_at(10.0)).record
+
+    gate.cancel_current_stage()
+
+    assert gate.snapshot().cancelled
+    gate.open_stage("one", duration_seconds=20)
+    assert not gate.snapshot().cancelled
+    assert gate.observe(_frame_at(40.0, source_index=1)).record
 
 
 def test_captured_windows_allow_preparation_gaps_but_require_protocol_order() -> None:
