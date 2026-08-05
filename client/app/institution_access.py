@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -24,6 +25,7 @@ from .design_system import apply_design_system
 
 
 LOCAL_UI_TEST_LICENSE = "FFP-2026-TEST-0001"
+_LOGGER = logging.getLogger(__name__)
 
 
 def scaled_brand_logo_for_display(
@@ -455,7 +457,12 @@ class InstitutionAccessWindow(QMainWindow):
         notice.hide()
         try:
             self._on_login(account.strip(), password)
-        except Exception:
+        except Exception as error:
+            _LOGGER.error(
+                "institution login handoff failed: %s",
+                type(error).__name__,
+            )
+            self.show()
             notice.setText("登录未完成，请检查账号、网络和已连接设备后重试。")
             notice.show()
 

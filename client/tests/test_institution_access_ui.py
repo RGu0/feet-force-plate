@@ -141,6 +141,29 @@ def test_login_does_not_claim_success_when_the_license_service_is_unavailable(qt
     assert notice.text() == "当前版本尚未连接 License 服务，暂不能登录。"
 
 
+def test_login_handoff_failure_restores_the_access_window(qtbot) -> None:
+    window = client.app.InstitutionAccessWindow()
+
+    def fail_after_hiding(_account: str, _password: str) -> None:
+        window.hide()
+        raise RuntimeError("private adapter detail")
+
+    window._on_login = fail_after_hiding
+    qtbot.addWidget(window)
+    window.show()
+    window.findChild(QLineEdit, "institutionAccountInput").setText("clinic-account")
+    window.findChild(QLineEdit, "institutionPasswordInput").setText("valid-password")
+
+    qtbot.mouseClick(
+        window.findChild(QPushButton, "LOGIN_INSTITUTION"), Qt.MouseButton.LeftButton
+    )
+
+    notice = window.findChild(QLabel, "accessFormNotice")
+    assert window.isVisible()
+    assert notice.isVisible()
+    assert "private adapter detail" not in notice.text()
+
+
 def test_registration_requires_complete_values_before_attempting_activation(qtbot) -> None:
     """Catch an activation CTA that crashes or sends an incomplete registration."""
 

@@ -5,6 +5,7 @@ import time
 
 from client.app.packaged_entry import start_default_validation_telemetry_upload
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.startup_validation.telemetry_upload import ValidationTelemetryCloudClient
 from client.startup_validation.models import (
     DeviceValidationRun,
     ValidationOutcome,
@@ -27,6 +28,17 @@ class _CloudClient:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_validation_telemetry_client_ignores_ambient_socks_proxy(monkeypatch) -> None:
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
+
+    client = ValidationTelemetryCloudClient(
+        "https://seed.invalid",
+        access_token_provider=lambda: "unused-token",
+    )
+
+    client.close()
 
 
 def test_packaged_authenticated_composition_starts_and_stops_background_upload(

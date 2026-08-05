@@ -49,6 +49,7 @@ class ValidationTelemetryCloudClient:
             base_url=base_url.rstrip("/"),
             verify=verify,
             transport=transport,
+            trust_env=False,
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0),
         )
 
