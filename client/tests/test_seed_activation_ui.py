@@ -85,6 +85,27 @@ def test_activation_callback_receives_asset_serial(qtbot) -> None:
     ]
 
 
+def test_activation_explains_password_minimum_before_request(qtbot) -> None:
+    calls: list[tuple[str, ...]] = []
+    window = InstitutionAccessWindow(
+        hardware_connected=True,
+        on_activate=lambda *values: calls.append(values),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    open_activation(window, qtbot)
+    window.findChild(QLineEdit, "registrationAccountInput").setText("seed-clinic")
+    window.findChild(QLineEdit, "assetSerialInput").setText(ASSET_SERIAL)
+    window.findChild(QLineEdit, "licenseCodeInput").setText("provider-activation-code-at-least-20")
+    window.findChild(QLineEdit, "registrationPasswordInput").setText("ten-chars")
+    window.findChild(QLineEdit, "registrationPasswordConfirmationInput").setText("ten-chars")
+
+    qtbot.mouseClick(window.findChild(QPushButton, "REGISTER_INSTITUTION"), Qt.MouseButton.LeftButton)
+
+    assert calls == []
+    assert window.findChild(QLabel, "registrationFormNotice").text() == "登录密码至少需要 12 个字符，请重新设置。"
+
+
 def test_local_test_license_does_not_call_production_activation(qtbot) -> None:
     calls: list[tuple[str, ...]] = []
     window = InstitutionAccessWindow(on_activate=lambda *values: calls.append(values), allow_local_test_handoff=True)

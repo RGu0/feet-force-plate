@@ -364,7 +364,7 @@ class InstitutionAccessWindow(QMainWindow):
         field.setObjectName(object_name)
         field.setAccessibleName(label)
         field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setPlaceholderText("请输入密码")
+        field.setPlaceholderText("至少 12 个字符")
         layout.addWidget(field)
         return group
 
@@ -487,6 +487,10 @@ class InstitutionAccessWindow(QMainWindow):
             return
         if password != password_confirmation:
             notice.setText("两次输入的密码不一致，请重新确认。")
+            notice.show()
+            return
+        if len(password) < 12:
+            notice.setText("登录密码至少需要 12 个字符，请重新设置。")
             notice.show()
             return
         normalized_code = activation_code.strip().upper()
