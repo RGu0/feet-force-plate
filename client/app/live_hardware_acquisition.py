@@ -7,7 +7,7 @@ import threading
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from client.device.stage_windows import StageRecordingGate
+from client.device.stage_windows import StageGateSnapshot, StageRecordingGate
 from client.workflow.protocol import default_standard_protocol
 
 
@@ -135,18 +135,7 @@ class QtLiveHardwareAcquisition(QObject):
                 self._last_elapsed = elapsed
                 self._on_progress(elapsed)
             return
-        if self._stage_completion_delivered:
-            return
-
-        self._stage_completion_delivered = True
-        self._completed_stages += 1
-        self._ui_stages_completed = self._completed_stages == len(
-            self._expected_stage_ids
-        )
-        self._last_elapsed = self._stage_duration_seconds
-        self._timer.stop()
-        self._on_progress(self._stage_duration_seconds)
-        self._maybe_deliver_complete()
+        self._deliver_durable_stage_completion(snapshot)
 
     def _deliver_complete(self, result: object) -> None:
         self._capture_result = result
@@ -155,7 +144,26 @@ class QtLiveHardwareAcquisition(QObject):
     def _deliver_failure(self, message: str) -> None:
         self._timer.stop()
         self._capture_result = None
+        snapshot = self._gate.snapshot()
+        durable_stage_completed = self._deliver_durable_stage_completion(snapshot)
+        if durable_stage_completed and not snapshot.session_complete:
+            return
         self._on_failure(message)
+
+    def _deliver_durable_stage_completion(self, snapshot: StageGateSnapshot) -> bool:
+        if snapshot.stage_id != self._stage_id or not snapshot.stage_complete:
+            return False
+        if self._stage_completion_delivered:
+            return True
+
+        self._stage_completion_delivered = True
+        self._completed_stages = len(snapshot.completed_windows)
+        self._ui_stages_completed = snapshot.session_complete
+        self._last_elapsed = self._stage_duration_seconds
+        self._timer.stop()
+        self._on_progress(self._stage_duration_seconds)
+        self._maybe_deliver_complete()
+        return True
 
     def _maybe_deliver_complete(self) -> None:
         result = self._capture_result

@@ -282,7 +282,10 @@ class ApplicationController:
         )
 
     def on_live_hardware_capture_failed(self, technical_detail: str) -> None:
-        if technical_detail.partition(":")[0] == "FinalSessionStorageError":
+        if (
+            self._coordinator.state.step is ScreeningStep.FINALIZING
+            or technical_detail.partition(":")[0] == "FinalSessionStorageError"
+        ):
             self._coordinator.handle_hardware_failure(
                 error=ClientError(
                     code="E-DAT-101",

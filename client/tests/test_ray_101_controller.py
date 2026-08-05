@@ -233,7 +233,7 @@ def test_retryable_live_stage_worker_error_returns_to_stage_guidance(qtbot) -> N
 def test_final_session_storage_error_remains_fail_closed(qtbot) -> None:
     coordinator = _Coordinator()
     coordinator._state = WorkflowState(
-        step=ScreeningStep.FINALIZING,
+        step=ScreeningStep.ACQUIRING,
         session_id="physical-session-1",
     )
     controller = ApplicationController(coordinator)
@@ -242,6 +242,23 @@ def test_final_session_storage_error_remains_fail_closed(qtbot) -> None:
     controller.on_live_hardware_capture_failed(
         "FinalSessionStorageError: final stager is poisoned"
     )
+
+    assert coordinator.stage_capture_failures == []
+    assert len(coordinator.hardware_failures) == 1
+    assert coordinator.hardware_failures[0].code == "E-DAT-101"
+    assert coordinator.state.step is ScreeningStep.INCOMPLETE
+
+
+def test_worker_error_after_final_stage_completion_remains_fail_closed(qtbot) -> None:
+    coordinator = _Coordinator()
+    coordinator._state = WorkflowState(
+        step=ScreeningStep.FINALIZING,
+        session_id="physical-session-1",
+    )
+    controller = ApplicationController(coordinator)
+    qtbot.addWidget(controller.window)
+
+    controller.on_live_hardware_capture_failed("RuntimeError: disconnected after commit")
 
     assert coordinator.stage_capture_failures == []
     assert len(coordinator.hardware_failures) == 1
