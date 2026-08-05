@@ -17,7 +17,7 @@ from client.hardware_standardization.models import (
 from client.spool.derived_artifact import read_derived_observation
 from client.spool.segments import read_segment
 from client.spool.session_commit import ValidSessionStager
-from client.spool.stage_attempt import StageAttemptSpool
+from client.spool.stage_attempt import SealedStageAttempt, StageAttemptSpool
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
 
@@ -44,10 +44,12 @@ def _window(stage_id: str, start_s: float, end_s: float) -> CapturedStageWindow:
     return CapturedStageWindow(stage_id, start_s, end_s, 1)
 
 
-def _attempt(tmp_path, stage_id: str) -> StageAttemptSpool:
+def _attempt(
+    tmp_path, stage_id: str, *, session_id: str = "session-1"
+) -> StageAttemptSpool:
     return StageAttemptSpool(
         tmp_path,
-        session_id="session-1",
+        session_id=session_id,
         stage_id=stage_id,
         key_provider=_KeyProvider(),
         versions={"protocol": "test/1"},
@@ -67,7 +69,7 @@ def _valid_session_stager(tmp_path) -> ValidSessionStager:
         consent_id=None,
         versions={"protocol": "test/1"},
         started_at_ns=1,
-        expected_stage_ids=("stage-1", "stage-2", "stage-3"),
+        expected_stage_ids=("stage-1", "stage-2", "stage-3", "stage-4"),
     )
 
 
@@ -111,7 +113,7 @@ def _physical_session() -> PhysicalArraySession:
 def test_failed_stage_attempt_is_deleted_without_touching_previous_stage(tmp_path):
     first = _attempt(tmp_path, "stage-1")
     first.append(_frame(0))
-    assert len(first.seal()) == 1
+    assert len(first.seal().frames) == 1
     second = _attempt(tmp_path, "stage-2")
     second.append(_frame(1))
     second.discard(reason="operator retry")
@@ -128,24 +130,37 @@ def test_stage_attempt_seals_verified_encrypted_frames_in_a_unique_directory(tmp
 
     assert first.staging_directory != second.staging_directory
     assert first.staging_directory.parent.name == "stage-1"
-    assert [frame.source_index for frame in sealed] == [0]
+    assert [frame.source_index for frame in sealed.frames] == [0]
     assert len(tuple(first.staging_directory.rglob("*.ffps"))) == 1
 
 
-def test_final_stager_accepts_only_sealed_stage_frames_in_order(tmp_path):
+def test_final_stager_merges_four_sealed_attempts_in_stage_order(tmp_path):
     stager = _valid_session_stager(tmp_path)
-    stager.append_verified_stage("stage-1", (_frame(0),), _window("stage-1", 0, 20))
-    with pytest.raises(ValueError, match="stage order"):
-        stager.append_verified_stage("stage-3", (_frame(2),), _window("stage-3", 40, 60))
+    windows = tuple(
+        _window(f"stage-{index + 1}", index * 20, (index + 1) * 20)
+        for index in range(4)
+    )
+
+    for index, window in enumerate(windows):
+        attempt = _attempt(tmp_path, window.stage_id)
+        attempt.append(_frame(index))
+        stager.append_verified_stage(attempt.seal(), window)
+
+    assert stager.stage_windows == windows
+    assert [frame.source_index for frame in stager.staged_frames()] == [0, 1, 2, 3]
 
 
 def test_final_stager_rejects_duplicate_stage_and_retains_immutable_windows(tmp_path):
     stager = _valid_session_stager(tmp_path)
     first = _window("stage-1", 0, 20)
-    stager.append_verified_stage("stage-1", (_frame(0),), first)
+    first_attempt = _attempt(tmp_path, "stage-1")
+    first_attempt.append(_frame(0))
+    stager.append_verified_stage(first_attempt.seal(), first)
 
+    duplicate = _attempt(tmp_path, "stage-1")
+    duplicate.append(_frame(1))
     with pytest.raises(ValueError, match="duplicate stage"):
-        stager.append_verified_stage("stage-1", (_frame(1),), _window("stage-1", 20, 40))
+        stager.append_verified_stage(duplicate.seal(), _window("stage-1", 20, 40))
 
     assert stager.stage_windows == (first,)
 
@@ -153,7 +168,9 @@ def test_final_stager_rejects_duplicate_stage_and_retains_immutable_windows(tmp_
 def test_derived_observation_includes_stage_windows_and_frozen_policy_version(tmp_path):
     stager = _valid_session_stager(tmp_path)
     window = _window("stage-1", 0, 20)
-    stager.append_verified_stage("stage-1", (_frame(0),), window)
+    attempt = _attempt(tmp_path, "stage-1")
+    attempt.append(_frame(0))
+    stager.append_verified_stage(attempt.seal(), window)
 
     artifact = stager.stage_derived_observation(_physical_session())
     derived = read_derived_observation(artifact.path, key_provider=_KeyProvider())
@@ -168,3 +185,30 @@ def test_derived_observation_includes_stage_windows_and_frozen_policy_version(tm
     ]
     assert "subject-1" not in str(derived["hardware_processing"])
     assert segment.versions["stage_window_policy"] == "operator-started-stage-window/1"
+
+
+def test_final_stager_rejects_unsealed_tuples_and_mismatched_attempt_identity(tmp_path):
+    stager = _valid_session_stager(tmp_path)
+
+    with pytest.raises(TypeError, match="sealed stage attempt"):
+        stager.append_verified_stage((_frame(0),), _window("stage-1", 0, 20))
+
+    wrong_session = _attempt(tmp_path, "stage-1", session_id="session-2")
+    wrong_session.append(_frame(0))
+    with pytest.raises(ValueError, match="session identity"):
+        stager.append_verified_stage(wrong_session.seal(), _window("stage-1", 0, 20))
+
+    wrong_stage = _attempt(tmp_path, "stage-1")
+    wrong_stage.append(_frame(0))
+    with pytest.raises(ValueError, match="stage identity"):
+        stager.append_verified_stage(wrong_stage.seal(), _window("stage-2", 20, 40))
+
+
+def test_sealed_stage_attempt_cannot_be_constructed_without_verified_provenance():
+    with pytest.raises(TypeError, match="only StageAttemptSpool.seal"):
+        SealedStageAttempt(
+            session_id="session-1",
+            stage_id="stage-1",
+            attempt_id="not-a-real-attempt",
+            frames=(_frame(0),),
+        )

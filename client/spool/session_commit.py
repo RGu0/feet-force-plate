@@ -16,6 +16,7 @@ from client.hardware_standardization.public_export import (
     PhysicalPressureSession,
     restore_committed_physical_pressure_session,
 )
+from client.workflow.protocol import default_standard_protocol
 
 from .derived_artifact import (
     DerivedArtifact,
@@ -29,8 +30,8 @@ from .segments import (
     read_segment,
     write_session_manifest,
 )
+from .stage_attempt import SealedStageAttempt
 from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
-from client.workflow.protocol import default_standard_protocol
 
 
 _STAGE_WINDOW_POLICY_VERSION = "operator-started-stage-window/1"
@@ -157,28 +158,37 @@ class ValidSessionStager:
 
     def append_verified_stage(
         self,
-        stage_id: str,
-        frames: tuple[RawFrame, ...],
+        attempt: SealedStageAttempt,
         window: CapturedStageWindow,
     ) -> None:
         """Merge one sealed stage attempt in the configured protocol order."""
 
         if self._finished:
             raise RuntimeError("session staging is already finished")
-        if stage_id != window.stage_id:
+        if not isinstance(attempt, SealedStageAttempt) or not (
+            attempt._has_verified_provenance()
+        ):
+            raise TypeError("a sealed stage attempt with verified provenance is required")
+        if attempt.session_id != self._session_id:
+            raise ValueError(
+                "stage attempt session identity does not match the final session"
+            )
+        if attempt.stage_id != window.stage_id:
             raise ValueError("stage identity must match its captured window")
-        if stage_id in {captured.stage_id for captured in self._stage_windows}:
+        if attempt.stage_id in {captured.stage_id for captured in self._stage_windows}:
             raise ValueError("duplicate stage cannot be merged")
         if len(self._stage_windows) >= len(self._expected_stage_ids) or (
-            stage_id != self._expected_stage_ids[len(self._stage_windows)]
+            attempt.stage_id != self._expected_stage_ids[len(self._stage_windows)]
         ):
             raise ValueError("stage order does not match the configured protocol")
-        if not frames or len(frames) != window.frame_count:
+        if not attempt.frames or len(attempt.frames) != window.frame_count:
             raise ValueError("verified stage frames must match its captured window")
-        self.freeze_versions(
-            {"stage_window_policy": _STAGE_WINDOW_POLICY_VERSION}
-        )
-        for frame in frames:
+        policy = self._versions.get("stage_window_policy")
+        if policy is None:
+            self.freeze_versions({"stage_window_policy": _STAGE_WINDOW_POLICY_VERSION})
+        elif policy != _STAGE_WINDOW_POLICY_VERSION:
+            raise ValueError("stage window policy is frozen differently")
+        for frame in attempt.frames:
             self.append(frame)
         self._stage_windows.append(window)
 
