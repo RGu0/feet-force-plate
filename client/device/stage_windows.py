@@ -65,6 +65,9 @@ class StageRecordingGate:
         self._elapsed_seconds = 0.0
         self._completed_windows: list[CapturedStageWindow] = []
         self._pending_window: CapturedStageWindow | None = None
+        self._commit_in_progress = False
+        self._cancel_requested = False
+        self._session_failed = False
         self._stage_complete = False
         self._session_complete = False
         self._cancelled = False
@@ -86,6 +89,8 @@ class StageRecordingGate:
         if duration_seconds <= 0:
             raise ValueError("stage duration must be positive")
         with self._lock:
+            if self._session_failed:
+                raise RuntimeError("recording session has failed")
             if self._session_complete:
                 raise RuntimeError("all expected stages are already complete")
             if self._pending_window is not None:
@@ -105,10 +110,18 @@ class StageRecordingGate:
             self._elapsed_seconds = 0.0
             self._stage_complete = False
             self._cancelled = False
+            self._cancel_requested = False
 
     def observe(self, frame: RawFrame) -> StageGateDecision:
         with self._lock:
             stage_id = self._active_stage_id
+            if self._cancel_requested:
+                return StageGateDecision(
+                    False,
+                    self._display_stage_id,
+                    False,
+                    self._session_complete,
+                )
             if stage_id is None:
                 return StageGateDecision(
                     False,
@@ -148,38 +161,88 @@ class StageRecordingGate:
                 window,
             )
 
-    def acknowledge_stage(self, window: CapturedStageWindow) -> None:
-        """Publish a boundary only after its final encrypted merge is durable."""
+    def request_cancellation(self) -> bool:
+        """Record a UI cancellation unless the worker already owns commit."""
 
         with self._lock:
+            if self._commit_in_progress:
+                return False
+            if self._active_stage_id is None and self._pending_window is None:
+                return False
+            self._cancel_requested = True
+            self._cancelled = True
+            return True
+
+    def begin_stage_commit(self, window: CapturedStageWindow) -> bool:
+        """Let the worker atomically accept cancellation or own merge-and-ack."""
+
+        with self._lock:
+            if self._commit_in_progress:
+                raise RuntimeError("a stage commit is already in progress")
             if self._pending_window is None:
-                raise RuntimeError("no stage boundary is awaiting acknowledgement")
+                raise RuntimeError("no stage boundary is awaiting commit")
             if window != self._pending_window:
-                raise ValueError("acknowledged stage window does not match the boundary")
+                raise ValueError("committed stage window does not match the boundary")
+            if self._cancel_requested:
+                self._reject_current_stage_locked()
+                return False
+            self._commit_in_progress = True
+            return True
+
+    def complete_stage_commit(self, window: CapturedStageWindow) -> None:
+        """Publish the durable window while UI cancellation cannot split it."""
+
+        with self._lock:
+            if not self._commit_in_progress or self._pending_window is None:
+                raise RuntimeError("no stage commit is in progress")
+            if window != self._pending_window:
+                raise ValueError("committed stage window does not match the boundary")
             self._completed_windows.append(window)
             self._pending_window = None
+            self._commit_in_progress = False
+            self._cancel_requested = False
             self._stage_complete = True
             self._session_complete = len(self._completed_windows) == len(
                 self._expected_stage_ids
             )
 
     def cancel_current_stage(self) -> None:
+        """Worker-only rejection after cancellation or failed durable merge."""
+
         with self._lock:
-            stage_id = self._active_stage_id
-            if stage_id is None and self._pending_window is not None:
-                stage_id = self._pending_window.stage_id
-                self._pending_window = None
-            if stage_id is None:
-                return
-            self._display_stage_id = stage_id
+            self._reject_current_stage_locked()
+
+    def fail_session(self) -> None:
+        """Permanently block stage retry after non-recoverable local storage loss."""
+
+        with self._lock:
+            self._session_failed = True
             self._active_stage_id = None
-            self._first_frame_ns = None
-            self._frame_count = 0
-            self._elapsed_seconds = 0.0
+            self._pending_window = None
+            self._commit_in_progress = False
+            self._cancel_requested = False
             self._stage_complete = False
+            self._session_complete = False
             self._cancelled = True
-            if not self._completed_windows:
-                self._session_origin_ns = None
+
+    def _reject_current_stage_locked(self) -> None:
+        stage_id = self._active_stage_id
+        if stage_id is None and self._pending_window is not None:
+            stage_id = self._pending_window.stage_id
+        if stage_id is None:
+            return
+        self._display_stage_id = stage_id
+        self._active_stage_id = None
+        self._pending_window = None
+        self._commit_in_progress = False
+        self._cancel_requested = False
+        self._first_frame_ns = None
+        self._frame_count = 0
+        self._elapsed_seconds = 0.0
+        self._stage_complete = False
+        self._cancelled = True
+        if not self._completed_windows:
+            self._session_origin_ns = None
 
     def snapshot(self) -> StageGateSnapshot:
         with self._lock:

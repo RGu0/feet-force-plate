@@ -25,7 +25,8 @@ from client.hardware_standardization.models import BaselineReference
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.spool.derived_artifact import read_derived_observation
 from client.spool.segments import read_segment
-from client.spool.session_commit import ValidSessionStager
+from client.spool.stage_attempt import StageAttemptSpool
+from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
 
@@ -427,6 +428,158 @@ def test_close_failure_cannot_override_stage_error_or_keep_worker_claimed(tmp_pa
 
     assert not isinstance(second_outcome, BaseException)
     assert second_outcome.committed
+
+
+def test_cancel_before_merge_discards_pending_stage_and_allows_retry(
+    tmp_path, monkeypatch
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    seal_blocked = threading.Event()
+    release_seal = threading.Event()
+    original_seal = StageAttemptSpool.seal
+    blocked_once = False
+
+    def _blocking_first_seal(attempt):
+        nonlocal blocked_once
+        sealed = original_seal(attempt)
+        if not blocked_once:
+            blocked_once = True
+            seal_blocked.set()
+            assert release_seal.wait(timeout=2)
+        return sealed
+
+    monkeypatch.setattr(StageAttemptSpool, "seal", _blocking_first_seal)
+    gate.open_stage("one", duration_seconds=20)
+    first_thread, first_results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 1)
+    _push_stage(
+        hardware.connections[0],
+        start_s=10,
+        first_value=10,
+        first_source_index=0,
+    )
+    _wait_until(seal_blocked.is_set)
+
+    try:
+        cancellation_accepted = gate.request_cancellation()
+    finally:
+        release_seal.set()
+    assert cancellation_accepted
+
+    first_outcome = first_results.get(timeout=3)
+    first_thread.join(timeout=1)
+    assert isinstance(first_outcome, RetryableStageCaptureError)
+    assert capture._states["session-1"].stager.stage_windows == ()
+    assert not tuple(
+        (tmp_path / "spool" / ".staging" / "session-1").glob("segment-*.ffps")
+    )
+
+    gate.open_stage("one", duration_seconds=20)
+    second_thread, second_results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 2)
+    _push_stage(
+        hardware.connections[1],
+        start_s=40,
+        first_value=20,
+        first_source_index=0,
+    )
+    second_outcome = second_results.get(timeout=3)
+    second_thread.join(timeout=1)
+
+    assert not isinstance(second_outcome, BaseException)
+    assert second_outcome.committed
+
+
+def test_cancel_after_merge_cannot_split_final_stager_from_gate_acknowledgement(
+    tmp_path, monkeypatch
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    merge_succeeded = threading.Event()
+    release_merge = threading.Event()
+    original_merge = ValidSessionStager.append_verified_stage
+
+    def _merge_then_block(stager, attempt, window):
+        original_merge(stager, attempt, window)
+        merge_succeeded.set()
+        assert release_merge.wait(timeout=2)
+
+    monkeypatch.setattr(
+        ValidSessionStager, "append_verified_stage", _merge_then_block
+    )
+    gate.open_stage("one", duration_seconds=20)
+    thread, results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 1)
+    _push_stage(
+        hardware.connections[0],
+        start_s=10,
+        first_value=10,
+        first_source_index=0,
+    )
+    _wait_until(merge_succeeded.is_set)
+
+    assert [
+        window.stage_id
+        for window in capture._states["session-1"].stager.stage_windows
+    ] == ["one"]
+    assert gate.snapshot().completed_windows == ()
+    try:
+        assert not gate.request_cancellation()
+    finally:
+        release_merge.set()
+
+    outcome = results.get(timeout=3)
+    thread.join(timeout=1)
+    assert not isinstance(outcome, BaseException)
+    assert outcome.committed
+    assert gate.snapshot().session_complete
+    assert [window.stage_id for window in gate.snapshot().completed_windows] == [
+        "one"
+    ]
+
+
+def test_rollback_cleanup_failure_fails_closed_and_blocks_stage_retry(
+    tmp_path, monkeypatch
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+    thread, results = _start_capture(capture, gate)
+    _wait_until(
+        lambda: len(hardware.connections) == 1 and "session-1" in capture._states
+    )
+    stager = capture._states["session-1"].stager
+    original_close = stager._writer.close
+
+    def _write_then_fail():
+        original_close()
+        raise OSError("controlled final-writer failure")
+
+    monkeypatch.setattr(stager._writer, "close", _write_then_fail)
+    monkeypatch.setattr(
+        stager,
+        "_remove_transaction_paths",
+        lambda _existing: (_ for _ in ()).throw(
+            OSError("controlled rollback cleanup failure")
+        ),
+    )
+    _push_stage(
+        hardware.connections[0],
+        start_s=10,
+        first_value=10,
+        first_source_index=0,
+    )
+
+    outcome = results.get(timeout=3)
+    thread.join(timeout=1)
+
+    assert isinstance(outcome, FinalSessionStorageError)
+    assert "session-1" not in capture._states
+    assert gate.snapshot().cancelled
+    with pytest.raises(RuntimeError, match="recording session has failed"):
+        gate.open_stage("one", duration_seconds=20)
+    assert not (tmp_path / "spool" / ".staging" / "session-1").exists()
 
 
 @pytest.mark.parametrize("failure_point", ("staged_frames", "quality", "commit"))

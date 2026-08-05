@@ -43,7 +43,8 @@ def test_gate_discards_preparation_frames_and_closes_each_manual_window() -> Non
     assert end.window == CapturedStageWindow("one", 0.0, 20.0, 2)
     assert not gate.snapshot().stage_complete
     assert gate.snapshot().completed_windows == ()
-    gate.acknowledge_stage(end.window)
+    assert gate.begin_stage_commit(end.window)
+    gate.complete_stage_commit(end.window)
     assert gate.snapshot().stage_complete
     assert not gate.observe(_frame_at(35.0, source_index=3)).record
 
@@ -54,7 +55,8 @@ def test_gate_discards_preparation_frames_and_closes_each_manual_window() -> Non
     assert final.record and final.stage_complete and final.session_complete
     assert not gate.snapshot().session_complete
     assert final.window is not None
-    gate.acknowledge_stage(final.window)
+    assert gate.begin_stage_commit(final.window)
+    gate.complete_stage_commit(final.window)
     assert gate.snapshot().completed_windows == (
         CapturedStageWindow("one", 0.0, 20.0, 2),
         CapturedStageWindow("two", 50.0, 70.0, 2),
@@ -79,6 +81,40 @@ def test_boundary_waits_for_durable_ack_and_can_cancel_pending_stage() -> None:
     gate.cancel_current_stage()
     gate.open_stage("one", duration_seconds=20)
     assert not gate.snapshot().cancelled
+
+
+def test_worker_rejects_ui_cancellation_requested_before_stage_commit() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+    gate.observe(_frame_at(10.0))
+    boundary = gate.observe(_frame_at(30.0, source_index=1))
+    assert boundary.window is not None
+
+    assert gate.request_cancellation()
+    assert gate.snapshot().cancelled
+    assert not gate.begin_stage_commit(boundary.window)
+
+    assert gate.snapshot().completed_windows == ()
+    gate.open_stage("one", duration_seconds=20)
+    assert not gate.snapshot().cancelled
+
+
+def test_ui_cancellation_cannot_split_worker_commit_and_acknowledgement() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+    gate.observe(_frame_at(10.0))
+    boundary = gate.observe(_frame_at(30.0, source_index=1))
+    assert boundary.window is not None
+
+    assert gate.begin_stage_commit(boundary.window)
+    assert not gate.request_cancellation()
+    gate.complete_stage_commit(boundary.window)
+
+    snapshot = gate.snapshot()
+    assert snapshot.stage_complete
+    assert snapshot.session_complete
+    assert not snapshot.cancelled
+    assert snapshot.completed_windows == (boundary.window,)
 
 
 def test_gate_rejects_active_out_of_order_or_cross_session_stage_changes() -> None:

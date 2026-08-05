@@ -55,6 +55,10 @@ class CommittedValidSession:
     session_directory: Path
 
 
+class FinalSessionStorageError(RuntimeError):
+    """The final stager cannot prove rollback cleanup and must not be retried."""
+
+
 def read_committed_physical_session(
     root: str | Path,
     *,
@@ -139,6 +143,7 @@ class ValidSessionStager:
         self._stage_windows: list[CapturedStageWindow] = []
         self._has_open_frames = False
         self._finished = False
+        self._poisoned_reason: str | None = None
 
     @property
     def staging_directory(self) -> Path:
@@ -149,8 +154,7 @@ class ValidSessionStager:
         return tuple(self._stage_windows)
 
     def append(self, frame: RawFrame) -> None:
-        if self._finished:
-            raise RuntimeError("session staging is already finished")
+        self._ensure_active()
         sealed = self._writer.append(frame)
         self._has_open_frames = sealed is None
         if sealed is not None:
@@ -163,8 +167,7 @@ class ValidSessionStager:
     ) -> None:
         """Atomically merge one sealed stage in the configured protocol order."""
 
-        if self._finished:
-            raise RuntimeError("session staging is already finished")
+        self._ensure_active()
         if not isinstance(attempt, SealedStageAttempt) or not (
             attempt._has_verified_provenance()
         ):
@@ -208,13 +211,26 @@ class ValidSessionStager:
                 self._sealed.append(self._writer.close())
                 self._has_open_frames = False
             self._stage_windows.append(window)
-        except BaseException:
+        except BaseException as merge_failure:
             self._sealed[sealed_count:] = []
             self._stage_windows[window_count:] = []
             self._writer.restore(writer_checkpoint)
             self._has_open_frames = had_open_frames
             self._versions = versions
-            self._remove_transaction_paths(existing_paths)
+            try:
+                self._remove_transaction_paths(existing_paths)
+            except BaseException as cleanup_failure:
+                reason = (
+                    "final session staging is poisoned after rollback cleanup "
+                    f"failed: {type(cleanup_failure).__name__}"
+                )
+                self._poisoned_reason = reason
+                self._finished = True
+                error = FinalSessionStorageError(reason)
+                error.add_note(
+                    f"stage merge first failed with {type(merge_failure).__name__}"
+                )
+                raise error from cleanup_failure
             raise
 
     def _remove_transaction_paths(self, existing_paths: frozenset[Path]) -> None:
@@ -238,7 +254,8 @@ class ValidSessionStager:
     def freeze_versions(self, additional_versions: dict[str, str]) -> None:
         """Bind acquisition policies before the first raw frame is accepted."""
 
-        if self._finished or self._sealed or self._has_open_frames:
+        self._ensure_active()
+        if self._sealed or self._has_open_frames:
             raise RuntimeError("valid-session versions must be frozen before acquisition")
         self._writer.freeze_versions(additional_versions)
         self._versions.update(additional_versions)
@@ -253,7 +270,7 @@ class ValidSessionStager:
         self.append(frame)
 
     def discard(self, *, reason: str) -> None:
-        if self._finished:
+        if self._finished and self._poisoned_reason is None:
             raise RuntimeError("session staging is already finished")
         if not reason:
             raise ValueError("discard reason is required")
@@ -265,8 +282,7 @@ class ValidSessionStager:
     def staged_frames(self) -> tuple[RawFrame, ...]:
         """Seal any buffered data and return verified temporary frames for gating."""
 
-        if self._finished:
-            raise RuntimeError("session staging is already finished")
+        self._ensure_active()
         if self._has_open_frames:
             self._sealed.append(self._writer.close())
             self._has_open_frames = False
@@ -285,8 +301,7 @@ class ValidSessionStager:
     ) -> DerivedArtifact:
         """Encrypt a derived observation while the session is still discardable."""
 
-        if self._finished:
-            raise RuntimeError("session staging is already finished")
+        self._ensure_active()
         if observation.session_id != self._session_id:
             raise ValueError("derived observation must match the staged session id")
         metadata = dict(processing_metadata or {})
@@ -310,8 +325,7 @@ class ValidSessionStager:
         return artifact
 
     def commit_valid(self, *, ended_at_ns: int) -> CommittedValidSession:
-        if self._finished:
-            raise RuntimeError("session staging is already finished")
+        self._ensure_active()
         self.staged_frames()
         if not self._sealed:
             raise ValueError("cannot commit a session without frames")
@@ -419,6 +433,12 @@ class ValidSessionStager:
             manifest_sha256=str(manifest["manifest_sha256"]),
             session_directory=final,
         )
+
+    def _ensure_active(self) -> None:
+        if self._poisoned_reason is not None:
+            raise FinalSessionStorageError(self._poisoned_reason)
+        if self._finished:
+            raise RuntimeError("session staging is already finished")
 
     @classmethod
     def discard_interrupted_staging(cls, root: str | Path) -> int:

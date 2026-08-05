@@ -44,7 +44,7 @@ from client.local_analysis.service import (
     ProcessingStatus,
     process_committed_physical_session,
 )
-from client.spool.session_commit import ValidSessionStager
+from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
 from client.workflow.models import ScreeningParticipantContext
@@ -413,14 +413,18 @@ class LivePhysicalCapture:
                     if decision.window is None:
                         raise RuntimeError("completed stage is missing its captured window")
                     sealed_attempt = attempt.seal()
+                    if not gate.begin_stage_commit(decision.window):
+                        raise RetryableStageCaptureError(
+                            "current stage was cancelled before durable merge"
+                        )
                     attempt.discard(reason="sealed for final session merge")
                     attempt = None
                     state.stager.append_verified_stage(
                         sealed_attempt, decision.window
                     )
+                    gate.complete_stage_commit(decision.window)
                     state.integrity_events.extend(stage_integrity_events)
                     state.reconstructed_frames.extend(stage_reconstructed_frames)
-                    gate.acknowledge_stage(decision.window)
                     stage_integrity_events = []
                     stage_reconstructed_frames = []
                     current_stage_id = None
@@ -443,6 +447,24 @@ class LivePhysicalCapture:
                 current_stage_id=current_stage_id,
                 reason=str(exc),
             )
+            raise
+        except FinalSessionStorageError as exc:
+            reason = f"non-retryable final-session storage failure: {exc}"
+            if attempt is not None:
+                try:
+                    attempt.discard(reason=reason)
+                except RuntimeError:
+                    pass
+            gate.fail_session()
+            try:
+                state.stager.discard(reason=reason)
+            except Exception as cleanup_error:
+                exc.add_note(
+                    "final-session cleanup also failed with "
+                    f"{type(cleanup_error).__name__}"
+                )
+            with self._state_lock:
+                self._states.pop(session_id, None)
             raise
         except Exception as exc:
             reason = f"stage capture failed: {type(exc).__name__}: {exc}"

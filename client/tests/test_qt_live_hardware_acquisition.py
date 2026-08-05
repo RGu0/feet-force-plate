@@ -48,7 +48,8 @@ def test_bridge_opens_each_stage_manually_without_restarting_capture(qtbot) -> N
                 source_index += 1
                 decision = gate.observe(_frame_at(end, source_index))
                 source_index += 1
-                gate.acknowledge_stage(decision.window)
+                assert gate.begin_stage_commit(decision.window)
+                gate.complete_stage_commit(decision.window)
             else:
                 time.sleep(0.001)
         return SimpleNamespace(committed=True, stage_windows=gate.snapshot().completed_windows)
@@ -93,7 +94,8 @@ def test_bridge_reports_failure_and_can_retry_same_stage_with_new_worker(qtbot) 
             raise RuntimeError("serial disconnected")
         gate.observe(_frame_at(10, 0))
         decision = gate.observe(_frame_at(30, 1))
-        gate.acknowledge_stage(decision.window)
+        assert gate.begin_stage_commit(decision.window)
+        gate.complete_stage_commit(decision.window)
         return SimpleNamespace(committed=True, stage_windows=gate.snapshot().completed_windows)
 
     acquisition = QtLiveHardwareAcquisition(_capture, expected_stage_ids=("one",))
@@ -132,7 +134,8 @@ def test_bridge_waits_for_durable_merge_before_terminal_progress_and_count(qtbot
             assert release_failure.wait(timeout=2)
             gate.cancel_current_stage()
             raise RuntimeError("durable merge failed")
-        gate.acknowledge_stage(decision.window)
+        assert gate.begin_stage_commit(decision.window)
+        gate.complete_stage_commit(decision.window)
         return SimpleNamespace(
             committed=True,
             stage_windows=gate.snapshot().completed_windows,
@@ -160,6 +163,45 @@ def test_bridge_waits_for_durable_merge_before_terminal_progress_and_count(qtbot
     assert failed == ["RuntimeError: durable merge failed"]
     assert progress.count(20) == 1
     assert capture_calls == 2
+    assert [window.stage_id for window in completed[0].stage_windows] == ["one"]
+
+
+def test_stop_during_worker_commit_keeps_durable_completion_consistent(qtbot) -> None:
+    commit_started = threading.Event()
+    release_commit = threading.Event()
+    completed: list[object] = []
+    failed: list[str] = []
+    progress: list[int] = []
+
+    def _capture(_session_id: str, gate):
+        gate.observe(_frame_at(10, 0))
+        decision = gate.observe(_frame_at(30, 1))
+        assert decision.window is not None
+        assert gate.begin_stage_commit(decision.window)
+        commit_started.set()
+        assert release_commit.wait(timeout=2)
+        gate.complete_stage_commit(decision.window)
+        return SimpleNamespace(
+            committed=True,
+            stage_windows=gate.snapshot().completed_windows,
+        )
+
+    acquisition = QtLiveHardwareAcquisition(_capture, expected_stage_ids=("one",))
+    acquisition.set_callbacks(
+        on_progress=progress.append,
+        on_complete=completed.append,
+        on_failure=failed.append,
+    )
+    acquisition.start_stage("session-1", _stage("one"))
+    qtbot.waitUntil(commit_started.is_set)
+
+    acquisition.stop("session-1")
+    release_commit.set()
+    qtbot.waitUntil(lambda: bool(completed) or bool(failed))
+
+    assert failed == []
+    assert progress.count(20) == 1
+    assert completed[0].committed
     assert [window.stage_id for window in completed[0].stage_windows] == ["one"]
 
 

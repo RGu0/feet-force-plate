@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -16,7 +18,8 @@ from client.hardware_standardization.models import (
 )
 from client.spool.derived_artifact import read_derived_observation
 from client.spool.segments import read_segment
-from client.spool.session_commit import ValidSessionStager
+from client.spool import session_commit
+from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import SealedStageAttempt, StageAttemptSpool
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
@@ -207,6 +210,68 @@ def test_verified_stage_merge_rolls_back_a_segment_written_before_failure(
         "stage-1",
         "stage-2",
     ]
+
+
+@pytest.mark.parametrize("cleanup_failure", ("unlink", "rmtree", "fsync"))
+def test_failed_rollback_cleanup_poisoned_stager_rejects_append_and_commit(
+    tmp_path, monkeypatch, cleanup_failure: str
+) -> None:
+    stager = _valid_session_stager(tmp_path)
+    first = _attempt(tmp_path, "stage-1")
+    first.append(_frame(0, seconds=0))
+    stager.append_verified_stage(first.seal(), _window("stage-1", 0, 20))
+    existing_paths = frozenset(stager.staging_directory.iterdir())
+
+    failed = _attempt(tmp_path, "stage-2")
+    failed.append(_frame(1, seconds=30))
+    failed.append(_frame(2, seconds=36))
+    sealed_failed = failed.seal()
+    original_close = stager._writer.close
+
+    def _write_then_fail():
+        original_close()
+        if cleanup_failure == "rmtree":
+            (stager.staging_directory / "rollback-new-directory").mkdir()
+        raise OSError("controlled final-writer failure")
+
+    monkeypatch.setattr(stager._writer, "close", _write_then_fail)
+    if cleanup_failure == "unlink":
+        original_unlink = Path.unlink
+
+        def _fail_new_segment_unlink(path, *args, **kwargs):
+            if path.parent == stager.staging_directory and path not in existing_paths:
+                raise OSError("controlled unlink failure")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _fail_new_segment_unlink)
+    elif cleanup_failure == "rmtree":
+        original_rmtree = session_commit.shutil.rmtree
+
+        def _fail_new_directory_rmtree(path, *args, **kwargs):
+            if Path(path).name == "rollback-new-directory":
+                raise OSError("controlled rmtree failure")
+            return original_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(
+            session_commit.shutil, "rmtree", _fail_new_directory_rmtree
+        )
+    else:
+        monkeypatch.setattr(
+            session_commit,
+            "_fsync_directory",
+            lambda _path: (_ for _ in ()).throw(OSError("controlled fsync failure")),
+        )
+
+    with pytest.raises(FinalSessionStorageError):
+        stager.append_verified_stage(
+            sealed_failed,
+            _window("stage-2", 30, 50, frame_count=2),
+        )
+
+    with pytest.raises(FinalSessionStorageError, match="poisoned"):
+        stager.append(_frame(3, seconds=60))
+    with pytest.raises(FinalSessionStorageError, match="poisoned"):
+        stager.commit_valid(ended_at_ns=100)
 
 
 def test_final_stager_rejects_duplicate_stage_and_retains_immutable_windows(tmp_path):

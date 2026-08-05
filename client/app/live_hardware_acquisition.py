@@ -104,8 +104,8 @@ class QtLiveHardwareAcquisition(QObject):
         """Cancel only the active attempt; the worker closes its owned transport."""
 
         if session_id == self._session_id:
-            self._gate.cancel_current_stage()
-            self._timer.stop()
+            if self._gate.request_cancellation():
+                self._timer.stop()
 
     def _capture(self, session_id: str) -> None:
         try:
