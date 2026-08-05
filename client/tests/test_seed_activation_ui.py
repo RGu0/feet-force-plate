@@ -46,6 +46,24 @@ def test_production_activation_requires_connected_board_and_asset_serial(qtbot) 
     assert activate.isEnabled()
 
 
+def test_activation_refreshes_hardware_state_when_registration_opens(qtbot) -> None:
+    checks = iter((False, True))
+    window = InstitutionAccessWindow(
+        hardware_connection_ready=lambda: next(checks),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    open_activation(window, qtbot)
+
+    assert window.findChild(QLabel, "activationHardwareStatusText").text() == "未发现可激活硬件"
+    qtbot.mouseClick(
+        window.findChild(QPushButton, "RECHECK_ACTIVATION_HARDWARE"),
+        Qt.MouseButton.LeftButton,
+    )
+    assert window.findChild(QLabel, "activationHardwareStatusText").text() == "已连接可用压力设备"
+
+
 def test_activation_callback_receives_asset_serial(qtbot) -> None:
     calls: list[tuple[str, str, str, str, str]] = []
     window = InstitutionAccessWindow(

@@ -613,6 +613,7 @@ def build_institution_access_screen(
         on_login=login,
         on_activate=activate,
         hardware_connected=runtime.hardware_connection_ready(),
+        hardware_connection_ready=runtime.hardware_connection_ready,
         environment_label=environment_label,
     )
 

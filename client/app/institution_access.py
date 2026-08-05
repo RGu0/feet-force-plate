@@ -47,6 +47,7 @@ class InstitutionAccessWindow(QMainWindow):
         on_login: Callable[[str, str], None] | None = None,
         on_activate: Callable[[str, str, str, str, str], None] | None = None,
         hardware_connected: bool = False,
+        hardware_connection_ready: Callable[[], bool] | None = None,
         allow_local_test_handoff: bool = False,
         environment_label: str | None = None,
     ) -> None:
@@ -59,6 +60,7 @@ class InstitutionAccessWindow(QMainWindow):
         self._on_login = on_login
         self._on_activate = on_activate
         self._hardware_connected = hardware_connected
+        self._hardware_connection_ready = hardware_connection_ready
         self._allow_local_test_handoff = allow_local_test_handoff
         self._environment_label = environment_label
         self._local_test_accounts: dict[str, str] = {}
@@ -274,13 +276,22 @@ class InstitutionAccessWindow(QMainWindow):
         license_code.setPlaceholderText("请输入随设备提供的一次性激活码")
         layout.addWidget(license_code)
         layout.addSpacing(10)
-        layout.addWidget(
+        hardware_status = QHBoxLayout()
+        hardware_status.setContentsMargins(0, 0, 0, 0)
+        hardware_status.addWidget(
             self._status_pill(
                 "activationHardwareStatus",
                 self._hardware_status_text(),
                 "success" if self._hardware_connected else "warning",
             )
         )
+        hardware_status.addStretch(1)
+        recheck_hardware = self._button(
+            "RECHECK_ACTIVATION_HARDWARE", "重新检查硬件", ghost=True
+        )
+        recheck_hardware.clicked.connect(self._refresh_hardware_connection)
+        hardware_status.addWidget(recheck_hardware)
+        layout.addLayout(hardware_status)
         layout.addSpacing(20)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -412,6 +423,7 @@ class InstitutionAccessWindow(QMainWindow):
         return logo
 
     def _show_registration(self) -> None:
+        self._refresh_hardware_connection()
         self._stack.setCurrentWidget(self._registration_page)
 
     def _show_login(self) -> None:
@@ -498,6 +510,7 @@ class InstitutionAccessWindow(QMainWindow):
             login_notice.setText("本机测试账户已创建，请使用设置的密码登录。")
             login_notice.show()
             return
+        self._refresh_hardware_connection()
         if not self._hardware_connected:
             notice.setText("未发现可用于激活的硬件，请连接设备后重试。")
             notice.show()
@@ -518,6 +531,18 @@ class InstitutionAccessWindow(QMainWindow):
         except Exception:
             notice.setText("激活未完成，请核对账号、激活码、网络和硬件后重试。")
             notice.show()
+
+    def _refresh_hardware_connection(self) -> bool:
+        """Refresh the activation gate instead of relying on startup-time USB state."""
+
+        if self._hardware_connection_ready is None:
+            return self._hardware_connected
+        try:
+            connected = bool(self._hardware_connection_ready())
+        except Exception:
+            connected = False
+        self.set_hardware_connection(connected)
+        return connected
 
     def set_hardware_connection(self, connected: bool) -> None:
         self._hardware_connected = connected
