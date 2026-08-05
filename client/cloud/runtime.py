@@ -19,6 +19,7 @@ from platformdirs import user_data_path
 from shared.contracts.access_control import (
     AccessSession,
     ActivateAccountRequest,
+    InventoryActivationRequest,
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
@@ -43,6 +44,8 @@ class AccessClientPort(Protocol):
     last_server_time: datetime | None
 
     def activate(self, request: ActivateAccountRequest): ...
+
+    def activate_inventory(self, request: InventoryActivationRequest): ...
 
     def login(self, request: LoginRequest): ...
 
@@ -176,11 +179,10 @@ class ClientAccessRuntime:
         self._token_lock = threading.RLock()
         self._closed = False
 
-    def discover_hardware_identity(self) -> str | None:
-        result = self._hardware.discover()
-        if result.status is ActivationHardwareStatus.READY:
-            return result.hardware_id
-        return None
+    def hardware_connection_ready(self) -> bool:
+        """A physical board must be present, but it is not its License identity."""
+
+        return self._hardware.discover().status is ActivationHardwareStatus.READY
 
     def activate(
         self,
@@ -191,9 +193,7 @@ class ClientAccessRuntime:
         hardware_id: str,
     ) -> AuthenticatedInstitutionSession:
         try:
-            observed = self._require_hardware()
-            if observed != hardware_id:
-                raise LicenseHardwareMismatch("连接的硬件与激活页面不一致")
+            self._require_hardware_connection()
             response = self._client.activate(
                 ActivateAccountRequest(
                     account_name=account_name,
@@ -204,7 +204,46 @@ class ClientAccessRuntime:
                     client_installation_id=self.client_installation_id,
                 )
             )
-            session = self._accept_session(response, expected_hardware_id=observed)
+            session = self._accept_session(response, expected_hardware_id=hardware_id)
+        except (AccessAuthenticationFailed, ClientAccessRuntimeError):
+            self._record_event(
+                SafeClientEventName.AUTH_ACTIVATION_REJECTED,
+                SafeClientEventOutcome.REJECTED,
+                error_code="E-AUT-001",
+            )
+            raise
+        self._account_name = account_name
+        self._record_event(
+            SafeClientEventName.AUTH_ACTIVATION_ACCEPTED,
+            SafeClientEventOutcome.OK,
+        )
+        return session
+
+    def activate_inventory(
+        self,
+        tenant_name: str,
+        account_name: str,
+        asset_serial: str,
+        activation_code: str,
+        password: str,
+        password_confirmation: str,
+    ) -> AuthenticatedInstitutionSession:
+        try:
+            self._require_hardware_connection()
+            response = self._client.activate_inventory(
+                InventoryActivationRequest(
+                    tenant_name=tenant_name,
+                    account_name=account_name,
+                    asset_serial=asset_serial,
+                    activation_code=activation_code,
+                    password=password,
+                    password_confirmation=password_confirmation,
+                    client_installation_id=self.client_installation_id,
+                )
+            )
+            session = self._accept_session(
+                response, expected_hardware_id=asset_serial
+            )
         except (AccessAuthenticationFailed, ClientAccessRuntimeError):
             self._record_event(
                 SafeClientEventName.AUTH_ACTIVATION_REJECTED,
@@ -225,7 +264,7 @@ class ClientAccessRuntime:
         password: str,
     ) -> AuthenticatedInstitutionSession:
         try:
-            observed = self._require_hardware()
+            self._require_hardware_connection()
             response = self._client.login(
                 LoginRequest(
                     account_name=account_name,
@@ -233,7 +272,7 @@ class ClientAccessRuntime:
                     client_installation_id=self.client_installation_id,
                 )
             )
-            session = self._accept_session(response, expected_hardware_id=observed)
+            session = self._accept_session(response)
         except (AccessAuthenticationFailed, ClientAccessRuntimeError):
             self._record_event(
                 SafeClientEventName.AUTH_LOGIN_REJECTED,
@@ -330,14 +369,10 @@ class ClientAccessRuntime:
             finally:
                 self._store.close()
 
-    def _require_hardware(self) -> str:
+    def _require_hardware_connection(self) -> None:
         result = self._hardware.discover()
-        if (
-            result.status is not ActivationHardwareStatus.READY
-            or result.hardware_id is None
-        ):
-            raise StableHardwareRequired("未发现具有稳定身份的压力设备")
-        return result.hardware_id
+        if result.status is not ActivationHardwareStatus.READY:
+            raise StableHardwareRequired("未发现可用的压力设备")
 
     def _record_event(
         self,

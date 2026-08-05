@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 from shared.contracts.access_control import (
     ActivateAccountRequest,
     ActivateAccountResponse,
+    InventoryActivationRequest,
     HardwareLeaseRequest,
     HardwareLeaseResponse,
     LoginRequest,
@@ -83,6 +84,16 @@ class CloudAccessClient:
         return self._model_request(
             "POST",
             "/v1/access/activate",
+            ActivateAccountResponse,
+            json=request.model_dump(mode="json"),
+        )
+
+    def activate_inventory(
+        self, request: InventoryActivationRequest
+    ) -> ActivateAccountResponse:
+        return self._model_request(
+            "POST",
+            "/v1/access/inventory-activate",
             ActivateAccountResponse,
             json=request.model_dump(mode="json"),
         )

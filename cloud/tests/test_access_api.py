@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
+import hmac
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -27,6 +29,7 @@ class TenantAccessApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.now = datetime.now(UTC).replace(microsecond=0)
         repository = InMemoryAccessRepository()
+        self.repository = repository
         private_key = Ed25519PrivateKey.generate()
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         signer = LicenseDocumentSigner(
@@ -82,6 +85,16 @@ class TenantAccessApiTests(unittest.IsolatedAsyncioTestCase):
         self.client = AsyncClient(
             transport=ASGITransport(app=app),
             base_url="https://cloud.test",
+        )
+        self.inventory_asset_serial = "FFP-DP4864-000001"
+        self.inventory_activation_code = "ffp_inventory_code_1234567890"
+        await repository.add_sales_inventory(
+            asset_serial=self.inventory_asset_serial,
+            activation_code_hash=hmac.new(
+                b"activation-key-must-contain-at-least-32-bytes",
+                self.inventory_activation_code.encode("utf-8"),
+                hashlib.sha256,
+            ).digest(),
         )
 
     async def asyncTearDown(self) -> None:
@@ -156,3 +169,42 @@ class TenantAccessApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(response.status_code, {401, 422})
         self.assertNotIn("seed-clinic", response.text)
+
+    async def test_inventory_activation_binds_asset_serial_once_and_starts_12_month_license(self) -> None:
+        installation_id = uuid4()
+        response = await self.client.post(
+            "/v1/access/inventory-activate",
+            json={
+                "tenant_name": "Inventory Clinic",
+                "account_name": "inventory-clinic",
+                "password": "correct-horse-battery-staple",
+                "password_confirmation": "correct-horse-battery-staple",
+                "asset_serial": self.inventory_asset_serial,
+                "activation_code": self.inventory_activation_code,
+                "client_installation_id": str(installation_id),
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        data = response.json()["data"]
+        self.assertEqual(data["hardware_id"], self.inventory_asset_serial)
+        self.assertEqual(data["signed_license"]["document"]["hardware_id"], self.inventory_asset_serial)
+        self.assertEqual(data["signed_license"]["document"]["valid_from"], self.now.isoformat().replace("+00:00", "Z"))
+        self.assertEqual(
+            data["signed_license"]["document"]["valid_until"],
+            self.now.replace(year=self.now.year + 1).isoformat().replace("+00:00", "Z"),
+        )
+
+        replay = await self.client.post(
+            "/v1/access/inventory-activate",
+            json={
+                "tenant_name": "Another Clinic",
+                "account_name": "another-clinic",
+                "password": "correct-horse-battery-staple",
+                "password_confirmation": "correct-horse-battery-staple",
+                "asset_serial": self.inventory_asset_serial,
+                "activation_code": self.inventory_activation_code,
+                "client_installation_id": str(uuid4()),
+            },
+        )
+        self.assertEqual(replay.status_code, 401)

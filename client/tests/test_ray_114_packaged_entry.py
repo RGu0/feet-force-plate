@@ -69,8 +69,8 @@ class _AccessRuntime:
     def __init__(self) -> None:
         self.logins = []
 
-    def discover_hardware_identity(self):
-        return "usb-serial-0123456789abcdef0123"
+    def hardware_connection_ready(self):
+        return True
 
     def login(self, account, password):
         self.logins.append((account, password))
@@ -79,13 +79,13 @@ class _AccessRuntime:
             account_id="account",
             license_id="license",
             hardware_asset_id="hardware-asset",
-            hardware_id="usb-serial-0123456789abcdef0123",
+            hardware_id="FFP-DP4864-000001",
             client_installation_id="installation",
             access_token="access-token-value-at-least-20",
             signed_license="signed-license",
         )
 
-    def activate(self, *_args):
+    def activate_inventory(self, *_args):
         raise AssertionError("not used")
 
 

@@ -34,6 +34,7 @@ from cloud.ingestion.principal import (
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
+    InventoryActivationRequest,
     HardwareLeaseRequest,
     LicenseControlRequest,
     LoginRequest,
@@ -313,6 +314,16 @@ def create_app(container: ServiceContainer) -> FastAPI:
         @app.post("/v1/access/activate")
         async def access_activate(request: Request, body: ActivateAccountRequest):
             result = await container.tenant_access.activate(
+                body,
+                source_fingerprint=source_fingerprint(request),
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/access/inventory-activate")
+        async def access_inventory_activate(
+            request: Request, body: InventoryActivationRequest
+        ):
+            result = await container.tenant_access.activate_inventory(
                 body,
                 source_fingerprint=source_fingerprint(request),
             )

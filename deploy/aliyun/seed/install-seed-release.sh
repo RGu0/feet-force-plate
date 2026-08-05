@@ -144,12 +144,22 @@ apply_migration() {
         runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -f "$file"
     fi
 }
+apply_migration_if_column_missing() {
+    local schema_name="$1"
+    local table_name="$2"
+    local column_name="$3"
+    local file="$4"
+    if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='$schema_name' AND table_name='$table_name' AND column_name='$column_name')")" != "t" ]]; then
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -f "$file"
+    fi
+}
 apply_migration iam.tenants "$release_source/cloud/migrations/0001_p3_cloud_platform.sql"
 apply_migration iam.users "$release_source/cloud/migrations/0002_p5_device_operations.sql"
 apply_migration iam.tenant_accounts "$release_source/cloud/migrations/0003_seed_mvp_access_control.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0004_allow_unsigned_revoked_license.sql"
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
+apply_migration_if_column_missing sales license_inventory device_inventory_id "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
 
 role_wrapper="$install_root/roles.sql"
 {

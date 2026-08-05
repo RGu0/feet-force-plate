@@ -45,7 +45,7 @@ pg_dump --format=custom --no-owner --no-privileges \
 ) >"$stage/object-manifest.sha256"
 tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
 
-schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license,0005_sales_inventory_activation"
+schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license,0005_sales_inventory_activation,0006_inventory_activation_pairing"
 printf '{"backup_id":"%s","implementation_sha":"%s","schema_versions":"%s","created_at":"%s"}\n' \
     "$backup_id" "$implementation_sha" "$schema_versions" "$(date -u +%FT%TZ)" \
     >"$stage/metadata.json"

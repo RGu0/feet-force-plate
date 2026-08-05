@@ -144,9 +144,7 @@ def test_login_does_not_claim_success_when_the_license_service_is_unavailable(qt
 def test_registration_requires_complete_values_before_attempting_activation(qtbot) -> None:
     """Catch an activation CTA that crashes or sends an incomplete registration."""
 
-    window = client.app.InstitutionAccessWindow(
-        stable_hardware_id="usb-serial-0123456789abcdef0123"
-    )
+    window = client.app.InstitutionAccessWindow(hardware_connected=True)
     qtbot.addWidget(window)
     window.show()
     qtbot.mouseClick(
@@ -154,11 +152,5 @@ def test_registration_requires_complete_values_before_attempting_activation(qtbo
         Qt.MouseButton.LeftButton,
     )
 
-    qtbot.mouseClick(
-        window.findChild(QPushButton, "REGISTER_INSTITUTION"),
-        Qt.MouseButton.LeftButton,
-    )
-
-    notice = window.findChild(QLabel, "registrationFormNotice")
-    assert notice.isVisible()
-    assert notice.text() == "请填写机构账号、一次性激活码和两次密码。"
+    activate = window.findChild(QPushButton, "REGISTER_INSTITUTION")
+    assert not activate.isEnabled()

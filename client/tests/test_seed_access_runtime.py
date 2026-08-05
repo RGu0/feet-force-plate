@@ -47,14 +47,8 @@ class MemoryCredentials:
 
 
 class FixedHardware:
-    def __init__(self, hardware_id: str) -> None:
-        self.hardware_id = hardware_id
-
     def discover(self) -> ActivationHardwareResult:
-        return ActivationHardwareResult(
-            ActivationHardwareStatus.READY,
-            self.hardware_id,
-        )
+        return ActivationHardwareResult(ActivationHardwareStatus.READY)
 
 
 class FakeAccessClient:
@@ -67,6 +61,7 @@ class FakeAccessClient:
         self.license_id = uuid4()
         self.hardware_asset_id = uuid4()
         self.activation_requests = []
+        self.inventory_activation_requests = []
         self.login_requests = []
         self.refresh_requests = []
         self.logout_requests = []
@@ -134,6 +129,12 @@ class FakeAccessClient:
             {**self.data(request.client_installation_id), "account_state": "ACTIVE"}
         )
 
+    def activate_inventory(self, request):
+        self.inventory_activation_requests.append(request)
+        return ActivateAccountResponse.model_validate(
+            {**self.data(request.client_installation_id), "account_state": "ACTIVE"}
+        )
+
     def login(self, request):
         self.login_requests.append(request)
         return LoginResponse.model_validate(
@@ -157,7 +158,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.now = datetime.now(UTC)
-        self.hardware_id = "usb-serial-0123456789abcdef0123"
+        self.hardware_id = "FFP-DP4864-000001"
         self.credentials = MemoryCredentials()
         self.store = ClientAccessStore(
             Path(self.temp.name) / "access.sqlite3",
@@ -168,7 +169,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.runtime = ClientAccessRuntime(
             self.client,
             self.store,
-            FixedHardware(self.hardware_id),
+            FixedHardware(),
             license_verifier=self.client.verifier,
             client_installation_id=self.installation_id,
             now=lambda: self.now,
@@ -180,12 +181,13 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_activation_persists_metadata_and_keyring_refresh_only(self) -> None:
-        session = self.runtime.activate(
+        session = self.runtime.activate_inventory(
+            "Seed Clinic",
             "seed-clinic",
+            self.hardware_id,
             "provider-activation-code-at-least-20",
             "correct-horse-battery-staple",
             "correct-horse-battery-staple",
-            self.hardware_id,
         )
 
         stored = self.store.load()
@@ -194,6 +196,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.hardware_id, self.hardware_id)
         self.assertEqual(stored.client_installation_id, self.installation_id)
         self.assertEqual(session.client_installation_id, str(self.installation_id))
+        self.assertEqual(self.client.inventory_activation_requests[-1].asset_serial, self.hardware_id)
         self.assertEqual(session.hardware_asset_id, str(self.client.hardware_asset_id))
         self.assertEqual(
             self.store.refresh_token(),
@@ -211,7 +214,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
             replacement = ClientAccessRuntime(
                 self.client,
                 replacement_store,
-                FixedHardware(self.hardware_id),
+                FixedHardware(),
                 license_verifier=self.client.verifier,
                 client_installation_id=replacement_installation,
                 now=lambda: self.now,
@@ -270,11 +273,18 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.assertIsNone(self.store.refresh_token())
         self.assertIsNotNone(self.store.load())
 
-    def test_hardware_mismatch_stops_authenticated_handoff(self) -> None:
-        self.client.hardware_id = "usb-serial-ffffffffffffffffffff"
+    def test_inventory_asset_mismatch_stops_authenticated_handoff(self) -> None:
+        self.client.hardware_id = "FFP-DP4864-000002"
 
         with self.assertRaises(LicenseHardwareMismatch):
-            self.runtime.login("seed-clinic", "correct-horse-battery-staple")
+            self.runtime.activate_inventory(
+                "Seed Clinic",
+                "seed-clinic",
+                "FFP-DP4864-000001",
+                "provider-activation-code-at-least-20",
+                "correct-horse-battery-staple",
+                "correct-horse-battery-staple",
+            )
 
     def test_settings_require_https_and_explicit_7443_integration_ca(self) -> None:
         ca_path = Path(self.temp.name) / "integration-ca.pem"

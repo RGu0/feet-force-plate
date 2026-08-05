@@ -46,7 +46,7 @@ class InstitutionAccessWindow(QMainWindow):
         *,
         on_login: Callable[[str, str], None] | None = None,
         on_activate: Callable[[str, str, str, str, str], None] | None = None,
-        stable_hardware_id: str | None = None,
+        hardware_connected: bool = False,
         allow_local_test_handoff: bool = False,
         environment_label: str | None = None,
     ) -> None:
@@ -58,7 +58,7 @@ class InstitutionAccessWindow(QMainWindow):
         self.resize(1440, 900)
         self._on_login = on_login
         self._on_activate = on_activate
-        self._stable_hardware_id = stable_hardware_id
+        self._hardware_connected = hardware_connected
         self._allow_local_test_handoff = allow_local_test_handoff
         self._environment_label = environment_label
         self._local_test_accounts: dict[str, str] = {}
@@ -259,6 +259,13 @@ class InstitutionAccessWindow(QMainWindow):
             "请输入服务商提供的机构账号",
         )
         layout.addSpacing(16)
+        asset_serial = self._line_field(
+            layout,
+            "设备编号",
+            "assetSerialInput",
+            "扫描设备标签二维码，或输入 FFP-DP4864-000001",
+        )
+        layout.addSpacing(16)
         layout.addWidget(self._field_label("一次性激活码 / License 码"))
         layout.addSpacing(8)
         license_code = QLineEdit()
@@ -271,7 +278,7 @@ class InstitutionAccessWindow(QMainWindow):
             self._status_pill(
                 "activationHardwareStatus",
                 self._hardware_status_text(),
-                "success" if self._stable_hardware_id else "warning",
+                "success" if self._hardware_connected else "warning",
             )
         )
         layout.addSpacing(20)
@@ -303,13 +310,15 @@ class InstitutionAccessWindow(QMainWindow):
         actions.addWidget(back)
         actions.addStretch(1)
         register = self._button("REGISTER_INSTITUTION", "激活 License", primary=True)
-        register.setEnabled(self._stable_hardware_id is not None)
+        register.setEnabled(False)
         license_code.textChanged.connect(
-            lambda text: self._update_activation_button(register, text)
+            lambda _text: self._update_activation_button(register)
         )
+        asset_serial.textChanged.connect(lambda _text: self._update_activation_button(register))
         register.clicked.connect(
             lambda: self._submit_activation(
                 account.text(),
+                asset_serial.text(),
                 license_code.text(),
                 password.findChild(QLineEdit, "registrationPasswordInput").text(),
                 confirmation.findChild(
@@ -449,17 +458,19 @@ class InstitutionAccessWindow(QMainWindow):
     def _submit_activation(
         self,
         account: str,
+        asset_serial: str,
         activation_code: str,
         password: str,
         password_confirmation: str,
     ) -> None:
         notice = self.findChild(QLabel, "registrationFormNotice")
         notice.setStyleSheet("color: #C23B3B; font-size: 14px;")
-        if not all(
-            value.strip()
-            for value in (account, activation_code, password, password_confirmation)
+        local_test_code = activation_code.strip().upper() == LOCAL_UI_TEST_LICENSE
+        required = (account, activation_code, password, password_confirmation)
+        if not all(value.strip() for value in required) or (
+            not local_test_code and not asset_serial.strip()
         ):
-            notice.setText("请填写机构账号、一次性激活码和两次密码。")
+            notice.setText("请填写机构账号、设备编号、一次性激活码和两次密码。")
             notice.show()
             return
         if password != password_confirmation:
@@ -487,7 +498,7 @@ class InstitutionAccessWindow(QMainWindow):
             login_notice.setText("本机测试账户已创建，请使用设置的密码登录。")
             login_notice.show()
             return
-        if self._stable_hardware_id is None:
+        if not self._hardware_connected:
             notice.setText("未发现可用于激活的硬件，请连接设备后重试。")
             notice.show()
             return
@@ -499,36 +510,39 @@ class InstitutionAccessWindow(QMainWindow):
         try:
             self._on_activate(
                 normalized_account,
+                asset_serial.strip().upper(),
                 activation_code.strip(),
                 password,
                 password_confirmation,
-                self._stable_hardware_id,
             )
         except Exception:
             notice.setText("激活未完成，请核对账号、激活码、网络和硬件后重试。")
             notice.show()
 
-    def set_hardware_identity(self, stable_hardware_id: str | None) -> None:
-        self._stable_hardware_id = stable_hardware_id
+    def set_hardware_connection(self, connected: bool) -> None:
+        self._hardware_connected = connected
         label = self.findChild(QLabel, "activationHardwareStatusText")
         pill = self.findChild(QFrame, "activationHardwareStatus")
         label.setText(self._hardware_status_text())
-        self._set_pill_tone(pill, "success" if stable_hardware_id else "warning")
+        self._set_pill_tone(pill, "success" if connected else "warning")
         button = self.findChild(QPushButton, "REGISTER_INSTITUTION")
-        code = self.findChild(QLineEdit, "licenseCodeInput").text()
-        self._update_activation_button(button, code)
+        self._update_activation_button(button)
 
     def _hardware_status_text(self) -> str:
-        if self._stable_hardware_id is None:
+        if not self._hardware_connected:
             return "未发现可激活硬件"
-        return f"已连接硬件 · …{self._stable_hardware_id[-6:]}"
+        return "已连接可用压力设备"
 
-    def _update_activation_button(self, button: QPushButton, code: str) -> None:
+    def _update_activation_button(self, button: QPushButton) -> None:
+        code = self.findChild(QLineEdit, "licenseCodeInput").text()
+        asset_serial = self.findChild(QLineEdit, "assetSerialInput").text()
         local_test = (
             self._allow_local_test_handoff
             and code.strip().upper() == LOCAL_UI_TEST_LICENSE
         )
-        button.setEnabled(self._stable_hardware_id is not None or local_test)
+        button.setEnabled(
+            local_test or (self._hardware_connected and bool(code.strip()) and bool(asset_serial.strip()))
+        )
 
     @staticmethod
     def _set_pill_tone(pill: QFrame, tone: str) -> None:

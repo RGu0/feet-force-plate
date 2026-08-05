@@ -580,25 +580,26 @@ def build_institution_access_screen(
 
     def activate(
         account: str,
+        asset_serial: str,
         activation_code: str,
         password: str,
         confirmation: str,
-        hardware_id: str,
     ) -> None:
         complete(
-            runtime.activate(
+            runtime.activate_inventory(
                 account,
+                account,
+                asset_serial,
                 activation_code,
                 password,
                 confirmation,
-                hardware_id,
             )
         )
 
     return InstitutionAccessWindow(
         on_login=login,
         on_activate=activate,
-        stable_hardware_id=runtime.discover_hardware_identity(),
+        hardware_connected=runtime.hardware_connection_ready(),
         environment_label=environment_label,
     )
 

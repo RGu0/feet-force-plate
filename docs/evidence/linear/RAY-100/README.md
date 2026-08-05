@@ -170,6 +170,44 @@ JUnit 位于 `../RAY-96/pytest-full-local-closeout-20260731.xml`，SHA-256
 
 ## Failures and limitations
 
+## 2026-08-04 资产编号首次激活替换（本机自动化证据）
+
+本次依据实机观察更新绑定口径：已连接的 CH340 DO-P4864 在 macOS 上可用，
+但不提供 USB serial number。因此 USB 仅表示“发现一块可用压力板”，不能再
+作为 License/设备的身份来源。首次激活的唯一绑定值改为设备标签或二维码的
+`FFP-DP4864-000001` 格式资产编号；终端安装 UUID 仍只表示电脑安装实例。
+
+- `POST /v1/access/inventory-activate` 对一个已配对的库存设备/激活码执行单一
+  事务：锁定库存、创建租户/账号/硬件/License/安装记录、签发 License，随后
+  将设备和 License 库存一并标记为已激活。
+- 客户端 P-00 新增 `assetSerialInput`，仅在已检测到一块可用压力板并已扫描/输入
+  资产编号和激活码时才可激活；界面不展示 USB 序列号或端口路径。
+- `cloud/migrations/0006_inventory_activation_pairing.sql` 新增设备库存到 License
+  库存的一对一关联。若 0005 已产生未配对的历史库存，迁移会安全失败，要求按
+  实际交付清单导入配对，不能依 UUID 排序猜测绑定关系。
+
+本机验证（仓库规范环境）：
+
+```text
+QT_QPA_PLATFORM=offscreen ./scripts/local-env.sh python -m pytest \
+  client/tests/test_ray_96_access_diagnostic_events.py \
+  cloud/tests/test_access_api.py \
+  client/tests/test_seed_hardware_identity.py \
+  client/tests/test_seed_access_runtime.py \
+  client/tests/test_seed_activation_ui.py \
+  client/tests/test_institution_access_ui.py \
+  client/tests/test_ray_114_packaged_entry.py -q
+35 passed in 1.44s
+```
+
+全仓 Python 回归另以临时 JUnit 写入 `/private/tmp`，结果为 `861 passed,
+1 skipped, 0 failures, 0 errors`；该报告没有提交，也不包含凭据、原始帧或
+客户数据。
+
+这证明的是本机合同、UI 组合和内存参考仓储的行为，不代替真实 PostgreSQL
+迁移/角色权限、已有库存配对导入、云端重启或现场操作验收。因此 RAY-100 保持
+`In Review`，不能标记 `Done`。
+
 - The production enrollment path deliberately requires a separate pre-authentication database role. Its exact grants and deployment isolation cannot be proven by source tests and must be reviewed in the real environment.
 - Current terminal identity is a short-lived server HMAC token. It proves API contract binding, not device-held private-key possession or certificate attestation.
 - Controlled upload after revocation lasts only while an already-issued token remains valid; post-expiry recovery must follow an explicit revocation-reason policy.

@@ -24,6 +24,7 @@ from .repository import (
     ClientInstallationRecord,
     HardwareAssetRecord,
     HardwareLeaseRecord,
+    InventoryActivationSeed,
     LicenseEntitlementRecord,
     PlatformIdentityRecord,
     PlatformRoleBindingRecord,
@@ -450,6 +451,195 @@ class PostgresAccessRepository:
                     installation=_installation(installation_row),
                 )
         except AccessActivationRejected:
+            raise
+
+    async def activate_inventory_atomically(
+        self,
+        *,
+        seed: InventoryActivationSeed,
+        activation_code_hash: bytes,
+        password_hash: str,
+        installation_id: UUID,
+        activated_at: datetime,
+        license_key_id: str,
+        license_document_json: str,
+        license_signature: str,
+    ) -> ActivatedAccess:
+        """Atomically bind one sales asset/code pair to its first tenant."""
+
+        if (
+            not password_hash
+            or not license_key_id
+            or not license_document_json
+            or not license_signature
+            or seed.group.hardware_identity != seed.asset_serial
+            or seed.group.activation_code_hash != activation_code_hash
+            or not seed.tenant.name.strip()
+        ):
+            raise AccessActivationRejected("activation credentials do not match")
+        try:
+            async with self._plain_transaction(self._activation_pool) as connection:
+                inventory = await connection.fetchrow(
+                    """SELECT d.device_inventory_id,l.license_inventory_id
+                       FROM sales.device_inventory d
+                       JOIN sales.license_inventory l
+                         ON l.device_inventory_id=d.device_inventory_id
+                       WHERE d.asset_serial=$1 AND l.activation_code_hmac=$2
+                         AND d.status='IN_STOCK' AND l.status='UNUSED'
+                       FOR UPDATE OF d,l""",
+                    seed.asset_serial,
+                    activation_code_hash,
+                )
+                if inventory is None:
+                    raise AccessActivationRejected("activation credentials do not match")
+                duplicate = await connection.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM device.client_installations "
+                    "WHERE client_installation_id=$1)", installation_id,
+                )
+                if duplicate:
+                    raise AccessActivationRejected("activation credentials do not match")
+                await connection.execute(
+                    "SELECT set_config('app.tenant_id', $1, true)",
+                    str(seed.tenant.tenant_id),
+                )
+                await connection.execute(
+                    "INSERT INTO iam.tenants (tenant_id,name,status,created_at,updated_at) "
+                    "VALUES ($1,$2,'ACTIVE',$3,$3)",
+                    seed.tenant.tenant_id,
+                    seed.tenant.name.strip(),
+                    activated_at,
+                )
+                await self._insert_group(
+                    connection, seed.tenant.tenant_id, seed.group, activated_at
+                )
+                await connection.execute(
+                    "UPDATE iam.tenant_accounts SET password_hash=$2,status='ACTIVE',"
+                    "activated_at=$3,updated_at=$3 WHERE tenant_id=$1 AND account_id=$4",
+                    seed.tenant.tenant_id,
+                    password_hash,
+                    activated_at,
+                    seed.group.account_id,
+                )
+                await connection.execute(
+                    "UPDATE iam.account_login_directory SET status='ACTIVE' "
+                    "WHERE login_name_hmac=$1",
+                    seed.group.login_name_hmac,
+                )
+                await connection.execute(
+                    "UPDATE iam.account_activation_codes SET consumed_at=$3 "
+                    "WHERE tenant_id=$1 AND activation_code_id=$2",
+                    seed.tenant.tenant_id,
+                    seed.group.activation_code_id,
+                    activated_at,
+                )
+                await connection.execute(
+                    """UPDATE device.license_entitlements
+                       SET status='ACTIVE',issued_at=$3,key_id=$4,document_json=$5::jsonb,
+                           signature=$6,updated_at=$3
+                       WHERE tenant_id=$1 AND license_id=$2""",
+                    seed.tenant.tenant_id,
+                    seed.group.license_id,
+                    activated_at,
+                    license_key_id,
+                    license_document_json,
+                    license_signature,
+                )
+                await connection.execute(
+                    """INSERT INTO device.client_installations
+                       (client_installation_id,tenant_id,account_id,first_seen_at,last_seen_at,
+                        status,created_at,updated_at)
+                       VALUES ($1,$2,$3,$4,$4,'ACTIVE',$4,$4)""",
+                    installation_id,
+                    seed.tenant.tenant_id,
+                    seed.group.account_id,
+                    activated_at,
+                )
+                await connection.execute(
+                    "INSERT INTO ops.access_resource_directory "
+                    "(resource_type,resource_id,tenant_id,created_at) "
+                    "VALUES ('INSTALLATION',$1,$2,$3)",
+                    installation_id,
+                    seed.tenant.tenant_id,
+                    activated_at,
+                )
+                await self._ensure_data_plane_projection(
+                    connection,
+                    tenant_id=seed.tenant.tenant_id,
+                    account_id=seed.group.account_id,
+                    installation_id=installation_id,
+                    projected_at=activated_at,
+                )
+                await connection.execute(
+                    """UPDATE sales.device_inventory
+                       SET status='ACTIVATED',activated_at=$2,tenant_id=$3,hardware_id=$4
+                       WHERE device_inventory_id=$1""",
+                    inventory["device_inventory_id"],
+                    activated_at,
+                    seed.tenant.tenant_id,
+                    seed.group.hardware_id,
+                )
+                await connection.execute(
+                    """UPDATE sales.license_inventory
+                       SET status='ACTIVATED',activated_at=$2,tenant_id=$3,license_id=$4
+                       WHERE license_inventory_id=$1""",
+                    inventory["license_inventory_id"],
+                    activated_at,
+                    seed.tenant.tenant_id,
+                    seed.group.license_id,
+                )
+                await connection.execute(
+                    """INSERT INTO sales.inventory_activations
+                       (inventory_activation_id,device_inventory_id,license_inventory_id,
+                        tenant_id,account_id,hardware_id,license_id,activated_at)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+                    uuid4(),
+                    inventory["device_inventory_id"],
+                    inventory["license_inventory_id"],
+                    seed.tenant.tenant_id,
+                    seed.group.account_id,
+                    seed.group.hardware_id,
+                    seed.group.license_id,
+                    activated_at,
+                )
+                tenant_row = await connection.fetchrow(
+                    "SELECT * FROM iam.tenants WHERE tenant_id=$1", seed.tenant.tenant_id
+                )
+                account_row = await connection.fetchrow(
+                    "SELECT * FROM iam.tenant_accounts WHERE account_id=$1",
+                    seed.group.account_id,
+                )
+                license_row = await connection.fetchrow(
+                    "SELECT * FROM device.license_entitlements WHERE license_id=$1",
+                    seed.group.license_id,
+                )
+                installation_row = await connection.fetchrow(
+                    "SELECT * FROM device.client_installations WHERE client_installation_id=$1",
+                    installation_id,
+                )
+                activation_row = await connection.fetchrow(
+                    "SELECT * FROM iam.account_activation_codes WHERE activation_code_id=$1",
+                    seed.group.activation_code_id,
+                )
+                hardware_row = await connection.fetchrow(
+                    "SELECT * FROM device.hardware_assets WHERE hardware_id=$1",
+                    seed.group.hardware_id,
+                )
+                return ActivatedAccess(
+                    tenant=TenantRecord(
+                        tenant_row["tenant_id"], tenant_row["name"],
+                        tenant_row["status"], tenant_row["created_at"],
+                    ),
+                    account=_account(account_row),
+                    license=_license(license_row),
+                    hardware=_hardware(hardware_row),
+                    activation_code=_activation(activation_row),
+                    installation=_installation(installation_row),
+                )
+        except AccessActivationRejected:
+            raise
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) in {"23505", "23514"}:
+                raise AccessActivationRejected("activation credentials do not match") from exc
             raise
         except Exception as exc:
             if getattr(exc, "sqlstate", None) in {"23505", "23514"}:

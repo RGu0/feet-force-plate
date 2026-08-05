@@ -20,6 +20,7 @@ from shared.contracts.access_control import (
     AccountState,
     ActivateAccountRequest,
     ActivateAccountResponse,
+    InventoryActivationRequest,
     LicenseDocumentV2,
     LicenseState,
     LoginRequest,
@@ -32,15 +33,18 @@ from shared.contracts.access_control import (
 from shared.contracts.client_sync import canonical_json_bytes
 
 from .passwords import hash_password, verify_password
-from .platform_service import normalize_login_name
+from .platform_service import _add_months, normalize_login_name
 from .repository import (
     AccessActivationRejected,
     AuthenticationAttemptRecord,
     HardwareAssetRecord,
+    InventoryActivationSeed,
     AccessRepository,
+    AccessGroupSeed,
     LicenseEntitlementRecord,
     RefreshSessionRecord,
     TenantAccountRecord,
+    TenantSeed,
 )
 
 
@@ -190,6 +194,86 @@ class TenantAuthenticationService:
             )
         except (AccessActivationRejected, ValueError) as exc:
             raise TenantAuthenticationRejected("account activation was rejected") from exc
+        finally:
+            await self._record_attempt(
+                login_name_hmac=login_digest,
+                source_fingerprint=source_fingerprint,
+                attempt_kind="TENANT_ACTIVATION",
+                succeeded=succeeded,
+                attempted_at=now,
+            )
+
+    async def activate_inventory(
+        self,
+        request: InventoryActivationRequest,
+        *,
+        source_fingerprint: bytes,
+    ) -> ActivateAccountResponse:
+        """Bind an unassigned sales asset and License at its first use."""
+
+        reject_local_test_license(request.activation_code)
+        now = self._now()
+        login_digest = self.login_name_digest(request.account_name)
+        await self._ensure_not_rate_limited(
+            login_name_hmac=login_digest,
+            source_fingerprint=source_fingerprint,
+            now=now,
+        )
+        succeeded = False
+        try:
+            tenant = TenantSeed(tenant_id=uuid4(), name=request.tenant_name)
+            group = AccessGroupSeed(
+                account_id=uuid4(),
+                login_name_hmac=login_digest,
+                account_display_name=normalize_login_name(request.account_name),
+                license_id=uuid4(),
+                hardware_id=uuid4(),
+                hardware_identity=request.asset_serial,
+                hardware_model="DO-P4864",
+                activation_code_id=uuid4(),
+                activation_code_hash=self._activation_digest(request.activation_code),
+                activation_expires_at=now + timedelta(days=1),
+                license_valid_from=now,
+                license_valid_until=_add_months(now, 12),
+                enabled_features=("reports.view", "screening.start", "sync.upload"),
+            )
+            document = LicenseDocumentV2(
+                tenant_id=tenant.tenant_id,
+                account_id=group.account_id,
+                license_id=group.license_id,
+                hardware_id=request.asset_serial,
+                status=LicenseState.ACTIVE,
+                issued_at=now,
+                valid_from=group.license_valid_from,
+                valid_until=group.license_valid_until,
+                version=1,
+                enabled_features=group.enabled_features,
+            )
+            signed = self._license_signer.sign(document)
+            activated = await self._repository.activate_inventory_atomically(
+                seed=InventoryActivationSeed(
+                    tenant=tenant, group=group, asset_serial=request.asset_serial
+                ),
+                activation_code_hash=group.activation_code_hash,
+                password_hash=hash_password(request.password),
+                installation_id=request.client_installation_id,
+                activated_at=now,
+                license_key_id=signed.key_id,
+                license_document_json=canonical_json_bytes(document).decode("utf-8"),
+                license_signature=signed.signature,
+            )
+            fields = await self._new_session_fields(
+                account=activated.account,
+                license_record=activated.license,
+                hardware=activated.hardware,
+                installation_id=request.client_installation_id,
+                signed_license=signed,
+                now=now,
+            )
+            succeeded = True
+            return ActivateAccountResponse(account_state=activated.account.status, **fields)
+        except (AccessActivationRejected, ValueError) as exc:
+            raise TenantAuthenticationRejected("inventory activation was rejected") from exc
         finally:
             await self._record_attempt(
                 login_name_hmac=login_digest,

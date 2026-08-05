@@ -48,6 +48,15 @@ class AccessGroupSeed:
 
 
 @dataclass(frozen=True, slots=True)
+class InventoryActivationSeed:
+    """The account group created when one sales device is first activated."""
+
+    tenant: TenantSeed
+    group: AccessGroupSeed
+    asset_serial: str
+
+
+@dataclass(frozen=True, slots=True)
 class TenantRecord:
     tenant_id: UUID
     name: str
@@ -253,6 +262,19 @@ class AccessRepository(Protocol):
         license_signature: str | None = None,
     ) -> ActivatedAccess: ...
 
+    async def activate_inventory_atomically(
+        self,
+        *,
+        seed: InventoryActivationSeed,
+        activation_code_hash: bytes,
+        password_hash: str,
+        installation_id: UUID,
+        activated_at: datetime,
+        license_key_id: str,
+        license_document_json: str,
+        license_signature: str,
+    ) -> ActivatedAccess: ...
+
     async def close_access_group(
         self, *, tenant_id: UUID, license_id: UUID, closed_at: datetime, reason_code: str
     ) -> UUID: ...
@@ -364,6 +386,9 @@ class InMemoryAccessRepository:
         self._licenses: dict[UUID, LicenseEntitlementRecord] = {}
         self._activation_codes: dict[UUID, ActivationCodeRecord] = {}
         self._activation_by_hash: dict[bytes, UUID] = {}
+        self._inventory_by_asset_serial: dict[str, bytes] = {}
+        self._inventory_asset_by_code: dict[bytes, str] = {}
+        self._activated_inventory_assets: set[str] = set()
         self._installations: dict[UUID, ClientInstallationRecord] = {}
         self._group_history: list[AccessGroupHistoryRecord] = []
         self._audit_events: list[AuditEventRecord] = []
@@ -625,6 +650,120 @@ class InMemoryAccessRepository:
                 activation_code=consumed_code,
                 installation=installation,
             )
+
+    async def add_sales_inventory(
+        self, *, asset_serial: str, activation_code_hash: bytes
+    ) -> None:
+        """Test and bootstrap seam; only keyed activation material is retained."""
+
+        async with self._lock:
+            if (
+                asset_serial in self._inventory_by_asset_serial
+                or activation_code_hash in self._inventory_asset_by_code
+            ):
+                raise AccessRepositoryConflict("sales inventory already exists")
+            self._inventory_by_asset_serial[asset_serial] = activation_code_hash
+            self._inventory_asset_by_code[activation_code_hash] = asset_serial
+
+    async def activate_inventory_atomically(
+        self,
+        *,
+        seed: InventoryActivationSeed,
+        activation_code_hash: bytes,
+        password_hash: str,
+        installation_id: UUID,
+        activated_at: datetime,
+        license_key_id: str,
+        license_document_json: str,
+        license_signature: str,
+    ) -> ActivatedAccess:
+        """Consume exactly one pre-created device/License inventory pair."""
+
+        async with self._lock:
+            if (
+                not password_hash
+                or not license_key_id
+                or not license_document_json
+                or not license_signature
+                or installation_id in self._installations
+                or seed.asset_serial in self._activated_inventory_assets
+                or self._inventory_by_asset_serial.get(seed.asset_serial)
+                != activation_code_hash
+                or self._inventory_asset_by_code.get(activation_code_hash)
+                != seed.asset_serial
+                or seed.group.hardware_identity != seed.asset_serial
+                or seed.group.activation_code_hash != activation_code_hash
+                or seed.tenant.tenant_id in self._tenants
+            ):
+                raise AccessActivationRejected("activation credentials do not match")
+            self._ensure_group_available(seed.group)
+            if not seed.tenant.name.strip():
+                raise AccessActivationRejected("activation credentials do not match")
+
+            tenant = TenantRecord(
+                seed.tenant.tenant_id, seed.tenant.name.strip(), "ACTIVE", activated_at
+            )
+            self._tenants[tenant.tenant_id] = tenant
+            try:
+                self._insert_group(tenant.tenant_id, seed.group, activated_at)
+                account = self._accounts[seed.group.account_id]
+                license_record = self._licenses[seed.group.license_id]
+                activation = self._activation_codes[seed.group.activation_code_id]
+                hardware = self._hardware[seed.group.hardware_id]
+                activated_account = replace(
+                    account,
+                    password_hash=password_hash,
+                    status=AccountState.ACTIVE,
+                    activated_at=activated_at,
+                )
+                activated_license = replace(
+                    license_record,
+                    status=LicenseState.ACTIVE,
+                    issued_at=activated_at,
+                    key_id=license_key_id,
+                    document_json=license_document_json,
+                    signature=license_signature,
+                )
+                consumed_code = replace(activation, consumed_at=activated_at)
+                installation = ClientInstallationRecord(
+                    tenant_id=tenant.tenant_id,
+                    client_installation_id=installation_id,
+                    account_id=account.account_id,
+                    first_seen_at=activated_at,
+                    last_seen_at=activated_at,
+                    status="ACTIVE",
+                )
+                self._accounts[account.account_id] = activated_account
+                self._licenses[license_record.license_id] = activated_license
+                self._activation_codes[activation.activation_code_id] = consumed_code
+                self._installations[installation_id] = installation
+                self._activated_inventory_assets.add(seed.asset_serial)
+                return ActivatedAccess(
+                    tenant=tenant,
+                    account=activated_account,
+                    license=activated_license,
+                    hardware=hardware,
+                    activation_code=consumed_code,
+                    installation=installation,
+                )
+            except Exception:
+                self._tenants.pop(tenant.tenant_id, None)
+                # All writes after _insert_group are derived from new unique IDs.
+                for mapping, key in (
+                    (self._accounts, seed.group.account_id),
+                    (self._hardware, seed.group.hardware_id),
+                    (self._licenses, seed.group.license_id),
+                    (self._activation_codes, seed.group.activation_code_id),
+                    (self._installations, installation_id),
+                ):
+                    mapping.pop(key, None)
+                self._account_by_login.pop(seed.group.login_name_hmac, None)
+                self._hardware_by_identity.pop(seed.group.hardware_identity, None)
+                self._activation_by_hash.pop(seed.group.activation_code_hash, None)
+                self._group_history = [
+                    row for row in self._group_history if row.tenant_id != tenant.tenant_id
+                ]
+                raise
 
     async def active_group_for_account(
         self, account_id: UUID

@@ -47,11 +47,8 @@ class _MemoryCredentials:
 
 
 class _FixedHardware:
-    def __init__(self, hardware_id: str) -> None:
-        self.hardware_id = hardware_id
-
     def discover(self) -> ActivationHardwareResult:
-        return ActivationHardwareResult(ActivationHardwareStatus.READY, self.hardware_id)
+        return ActivationHardwareResult(ActivationHardwareStatus.READY)
 
 
 class _FakeAccessClient:
@@ -143,13 +140,13 @@ class _FakeAccessClient:
 
 def _runtime(tmp_path: Path, events: object | None = None) -> tuple[ClientAccessRuntime, _FakeAccessClient, ClientAccessStore]:
     now = datetime(2026, 8, 2, 20, 30, tzinfo=UTC)
-    hardware_id = "usb-serial-0123456789abcdef0123"
+    hardware_id = "FFP-DP4864-000001"
     client = _FakeAccessClient(now, hardware_id)
     store = ClientAccessStore(tmp_path / "access.sqlite3", _MemoryCredentials())
     runtime = ClientAccessRuntime(
         client,
         store,
-        _FixedHardware(hardware_id),
+        _FixedHardware(),
         license_verifier=client.verifier,
         client_installation_id=uuid4(),
         now=lambda: now,
