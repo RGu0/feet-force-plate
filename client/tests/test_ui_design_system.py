@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from client.app.design_system import apply_design_system
@@ -54,6 +55,21 @@ def test_guidance_and_acquisition_pages_use_dedicated_operator_layouts(qtbot) ->
     assert guidance.findChild(QLabel, "stageFeetGuide") is not None
     assert guidance.findChild(QLabel, "countdownLabel") is not None
     assert acquisition.findChild(QWidget, "acquisitionContent") is not None
+
+
+def test_guidance_title_and_subtitle_inherit_design_tokens(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(20)
+
+    guidance = window.page_widget(PageId.POSITION_GUIDANCE)
+    title = guidance.findChild(QLabel, "positionGuideTitle")
+    subtitle = guidance.findChild(QLabel, "positionGuideSubtitle")
+
+    assert title.font().weight() == QFont.Weight.DemiBold
+    assert subtitle.font().pixelSize() == 16
+    assert subtitle.palette().color(subtitle.foregroundRole()) == QColor("#475569")
 
 
 def test_wizard_and_focus_pages_follow_the_source_screen_structure(qtbot) -> None:

@@ -61,13 +61,13 @@ QFrame[statusDot="true"] { background: #187A4D; border: 0; border-radius: 4px; m
 QFrame[statusDotTone="info"] { background: #2569BC; }
 QFrame[statusDotTone="warning"] { background: #96600D; }
 QFrame[statusDotTone="danger"] { background: #C23B3B; }
-QLabel#pageTitle { color: #0F172A; font-size: 28px; font-weight: 600; }
+QLabel#pageTitle, QLabel#positionGuideTitle { color: #0F172A; font-size: 28px; font-weight: 600; }
 QLabel#sectionTitle, QLabel#screeningTitle, QLabel#reportPreviewTitle {
     color: #0F172A;
     font-size: 20px;
     font-weight: 600;
 }
-QLabel#pageSubtitle, QLabel[secondaryText="true"] { color: #475569; font-size: 16px; }
+QLabel#pageSubtitle, QLabel#positionGuideSubtitle, QLabel[secondaryText="true"] { color: #475569; font-size: 16px; }
 QLabel[fieldLabel="true"], QLabel#fieldLabel {
     color: #0F172A;
     font-size: 14px;
