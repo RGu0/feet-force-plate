@@ -370,12 +370,16 @@ class ScreeningCoordinator:
         self.start_new_screening()
 
     def complete_acquisition(self) -> None:
-        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+        if self._machine.step not in {
+            ScreeningStep.ACQUIRING,
+            ScreeningStep.FINALIZING,
+        } or self._session_id is None:
             return
         session_id = self._session_id
         self._remaining_seconds = 0
-        self._transition(ScreeningStep.FINALIZING)
-        self._lifecycle_status = LifecycleStatus.FINALIZING
+        if self._machine.step is ScreeningStep.ACQUIRING:
+            self._transition(ScreeningStep.FINALIZING)
+            self._lifecycle_status = LifecycleStatus.FINALIZING
         self._sessions.finalize(session_id)
         quality = self._analysis.analyze(session_id)
         if quality.outcome is not QualityOutcome.VALID:
@@ -437,11 +441,22 @@ class ScreeningCoordinator:
                 return
         if self._stage_index + 1 < len(self._protocol.stages):
             self._stage_index += 1
-            self._remaining_seconds = None
-            self._transition(ScreeningStep.POSITION_GUIDANCE)
-            self._position_guidance.set_stage(self._current_stage)
+            if getattr(self._acquisition, "continuous_stage_capture", False):
+                self._remaining_seconds = self._current_stage.duration_seconds
+            else:
+                self._remaining_seconds = None
+                self._transition(ScreeningStep.POSITION_GUIDANCE)
+                self._position_guidance.set_stage(self._current_stage)
             return
-        self.complete_acquisition()
+        # A real hardware worker commits and quality-gates the shared physical
+        # capture asynchronously.  The UI may show finalizing, but no analysis
+        # or report is allowed until that worker reports completion.
+        self._remaining_seconds = 0
+        self._transition(ScreeningStep.FINALIZING)
+        self._lifecycle_status = LifecycleStatus.FINALIZING
+        finish = getattr(self._acquisition, "finish", None)
+        if callable(finish):
+            finish(self._session_id)
 
     @property
     def _current_stage(self):
