@@ -192,8 +192,19 @@ else
     mv -Tf /opt/feetforceplate/app.next /opt/feetforceplate/app
 fi
 
-install -o root -g root -m 0600 "$tls_private_key" /etc/feetforceplate/tls/seed.key
-install -o root -g root -m 0644 "$tls_certificate" /etc/feetforceplate/tls/seed.crt
+install_tls_file() {
+    local source_path="$1"
+    local target_path="$2"
+    local mode="$3"
+    if [[ "$(readlink -f "$source_path")" == "$(readlink -f "$target_path")" ]]; then
+        chown root:root "$target_path"
+        chmod "$mode" "$target_path"
+    else
+        install -o root -g root -m "$mode" "$source_path" "$target_path"
+    fi
+}
+install_tls_file "$tls_private_key" /etc/feetforceplate/tls/seed.key 0600
+install_tls_file "$tls_certificate" /etc/feetforceplate/tls/seed.crt 0644
 if [[ ! -f /etc/nginx/nginx.conf.pre-seed ]]; then
     cp -a /etc/nginx/nginx.conf /etc/nginx/nginx.conf.pre-seed
 fi
