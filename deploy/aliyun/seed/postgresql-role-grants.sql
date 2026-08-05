@@ -46,6 +46,7 @@ GRANT SELECT, INSERT, UPDATE ON device.devices TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON device.terminals TO ffp_activation_app;
 GRANT SELECT, INSERT, UPDATE ON device.terminal_device_bindings TO ffp_activation_app;
 GRANT SELECT ON iam.tenants TO ffp_activation_app;
+GRANT INSERT ON iam.account_login_directory, device.license_entitlements TO ffp_activation_app;
 
 ALTER ROLE ffp_seed_tenant SET statement_timeout = '60s';
 ALTER ROLE ffp_seed_activation SET statement_timeout = '30s';
