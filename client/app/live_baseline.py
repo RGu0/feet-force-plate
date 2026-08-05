@@ -57,7 +57,7 @@ class LiveBaselinePreflight:
         finally:
             connection.transport.close()
         values = np.stack([frame.values.reshape(-1, order="F") for frame in frames])
-        if float(np.median(values, axis=0).max()) > configuration.unloaded_frame_mean_max:
+        if float(values.mean(axis=1).max()) > configuration.unloaded_frame_mean_max:
             raise RuntimeError("baseline is loaded")
         digest = hashlib.sha256()
         for frame in frames:
