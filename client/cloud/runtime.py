@@ -19,6 +19,8 @@ from platformdirs import user_data_path
 from shared.contracts.access_control import (
     AccessSession,
     ActivateAccountRequest,
+    HardwareLeaseRequest,
+    HardwareLeaseResponse,
     InventoryActivationRequest,
     LoginRequest,
     LogoutRequest,
@@ -52,6 +54,16 @@ class AccessClientPort(Protocol):
     def refresh(self, request: RefreshRequest): ...
 
     def logout(self, request: LogoutRequest) -> None: ...
+
+    def acquire_hardware_lease(
+        self, access_token: str, request: HardwareLeaseRequest
+    ) -> HardwareLeaseResponse: ...
+
+    def renew_hardware_lease(
+        self, access_token: str, lease_id: UUID
+    ) -> HardwareLeaseResponse: ...
+
+    def release_hardware_lease(self, access_token: str, lease_id: UUID) -> None: ...
 
 
 class HardwareIdentityPort(Protocol):
