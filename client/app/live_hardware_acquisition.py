@@ -26,6 +26,7 @@ class QtLiveHardwareAcquisition(QObject):
         capture_session: Callable[[str], object],
         *,
         stage_count: int = 4,
+        require_stage_completion: bool = True,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -33,12 +34,15 @@ class QtLiveHardwareAcquisition(QObject):
             raise ValueError("stage_count must be positive")
         self._capture_session = capture_session
         self._stage_count = stage_count
+        self._require_stage_completion = require_stage_completion
         self._thread: threading.Thread | None = None
         self._session_id: str | None = None
         self._stage_duration_seconds = 0
         self._completed_stages = 0
         self._stage_started_at: float | None = None
         self._last_elapsed = -1
+        self._ui_stages_completed = False
+        self._capture_result: object | None = None
         self._on_progress: Callable[[int], None] = lambda _elapsed: None
         self._on_complete: Callable[[object], None] = lambda _result: None
         self._on_failure: Callable[[str], None] = lambda _message: None
@@ -114,14 +118,26 @@ class QtLiveHardwareAcquisition(QObject):
         self._completed_stages += 1
         if self._completed_stages >= self._stage_count:
             self._timer.stop()
+            self._ui_stages_completed = True
+            self._maybe_deliver_complete()
             return
         self._stage_started_at = time.monotonic()
         self._last_elapsed = -1
 
     def _deliver_complete(self, result: object) -> None:
-        self._timer.stop()
-        self._on_complete(result)
+        self._capture_result = result
+        self._maybe_deliver_complete()
 
     def _deliver_failure(self, message: str) -> None:
         self._timer.stop()
         self._on_failure(message)
+
+    def _maybe_deliver_complete(self) -> None:
+        result = self._capture_result
+        if result is None:
+            return
+        if self._require_stage_completion and not self._ui_stages_completed:
+            return
+        self._capture_result = None
+        self._timer.stop()
+        self._on_complete(result)

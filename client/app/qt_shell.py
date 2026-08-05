@@ -807,6 +807,60 @@ class ScreeningWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
+    def request_live_stage_attestations(
+        self,
+        *,
+        on_confirm: Callable[[tuple[bool, ...]], None],
+        on_decline: Callable[[], None],
+    ) -> None:
+        """Ask the supervising operator, in UI, rather than infer stage outcomes."""
+
+        dialog = QDialog(self)
+        dialog.setObjectName("liveStageAttestationDialog")
+        dialog.setWindowTitle("确认现场完成情况")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(640)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.addWidget(QLabel("请由现场工作人员逐段确认"))
+        note = QLabel(
+            "只有四段均在持续看护下完整完成，且无扶持、失衡或提前睁眼，才会生成基础报告。"
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        labels = (
+            "第一段：并足睁眼",
+            "第二段：并足闭眼",
+            "第三段：左脚在前半串联",
+            "第四段：右脚在前半串联",
+        )
+        boxes: list[QCheckBox] = []
+        for index, text in enumerate(labels, start=1):
+            box = QCheckBox(f"{text} 已完整完成")
+            box.setObjectName(f"liveStageAttestation{index}")
+            boxes.append(box)
+            layout.addWidget(box)
+        actions = QHBoxLayout()
+        decline = QPushButton("未全部完成，不生成报告")
+        decline.setObjectName("DECLINE_LIVE_STAGE_ATTESTATIONS")
+        confirm = QPushButton("确认并生成基础报告")
+        confirm.setObjectName("CONFIRM_LIVE_STAGE_ATTESTATIONS")
+        confirm.setEnabled(False)
+        for box in boxes:
+            box.toggled.connect(lambda _checked: confirm.setEnabled(all(item.isChecked() for item in boxes)))
+        decline.clicked.connect(lambda: (dialog.reject(), on_decline()))
+        confirm.clicked.connect(
+            lambda: (dialog.accept(), on_confirm(tuple(item.isChecked() for item in boxes)))
+        )
+        actions.addWidget(decline)
+        actions.addStretch(1)
+        actions.addWidget(confirm)
+        layout.addLayout(actions)
+        self._live_stage_attestation_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def present_report_document(self, document: BasicReportDocument) -> None:
         page = self._pages[PageId.REPORT_PREVIEW]
         replay_debug = document.kind == "V1_REPLAY_DEBUG"

@@ -50,11 +50,11 @@ from client.startup_validation.workflow import (
 )
 
 from .qt_shell import ScreeningWindow
-from .pages import PageId
 from .session_lock import LockTimeout, SessionLockController
 from .app_icon import application_icon
 from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
+from .live_institution_runtime import build_live_institution_runtime
 
 
 APP_VERSION = "0.1.0"
@@ -781,20 +781,22 @@ def main() -> int:
             lambda password: bool(runtime and runtime.verify_password(password)),
             timeout=timeout,
         )
-        workbench_holder: dict[str, ScreeningWindow] = {}
-
-        base_workbench_factory = composition.workbench_factory(
-            session_lock_controller=lock_controller,
-            protected_operation_active=lambda: (
-                workbench_holder.get("window") is not None
-                and workbench_holder["window"].current_page_id is PageId.ACQUIRING
-            ),
-        )
+        gate_holder: dict[str, object] = {}
 
         def workbench_factory() -> ScreeningWindow:
-            window = base_workbench_factory()
-            workbench_holder["window"] = window
-            return window
+            gate = gate_holder.get("gate")
+            startup_run = getattr(gate, "last_run", None)
+            if startup_run is None or runtime is None:
+                raise RuntimeError("authenticated live workbench requires a passed startup run")
+            live_runtime = build_live_institution_runtime(
+                session=session,
+                access_runtime=runtime,
+                startup_run=startup_run,
+                data_root=data_root,
+                export_destination=_choose_diagnostic_destination,
+            )
+            references["live_runtime"] = live_runtime
+            return live_runtime.controller.window
 
         gate = build_mandatory_startup_gate(
             audit_actor_id=session.client_installation_id,
@@ -803,12 +805,13 @@ def main() -> int:
             audit_trail=audit_trail,
             workbench_factory=workbench_factory,
         )
+        gate_holder["gate"] = gate
         references.update(
             gate=gate,
             audit_store=audit_store,
             telemetry_runtime=telemetry_runtime,
             lock_controller=lock_controller,
-            workbench_holder=workbench_holder,
+            gate_holder=gate_holder,
         )
         gate.start()
 

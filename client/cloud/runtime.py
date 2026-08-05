@@ -321,6 +321,20 @@ class ClientAccessRuntime:
             assert self._session is not None
             return self._session.access_token
 
+    def hardware_lease_lifecycle(
+        self, session: AuthenticatedInstitutionSession
+    ):
+        """Build the client-owned lease boundary for this authenticated binding."""
+
+        from .lease_runtime import HardwareLeaseLifecycle
+
+        return HardwareLeaseLifecycle(
+            self._client,
+            session,
+            self.current_access_token,
+            now=self._now,
+        )
+
     def refresh(self) -> AuthenticatedInstitutionSession:
         with self._token_lock:
             try:

@@ -66,6 +66,10 @@ class CloudAccessClient:
             base_url=base_url.rstrip("/"),
             verify=verify,
             transport=transport,
+            # The packaged device client connects only to the explicitly
+            # configured institution endpoint.  Ambient desktop proxy settings
+            # must not silently route access tokens or hardware leases.
+            trust_env=False,
             timeout=timeout
             or httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0),
         )

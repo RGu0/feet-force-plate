@@ -71,6 +71,7 @@ class ProductionPreflightService:
         estimated_test_bytes: int,
         reserve_bytes: int,
         hardware_lease: HardwareLeasePreflightPort | None = None,
+        live_baseline: HardwareLeasePreflightPort | None = None,
     ) -> None:
         if estimated_test_bytes <= 0 or reserve_bytes < 0:
             raise ValueError("preflight storage thresholds are invalid")
@@ -83,6 +84,7 @@ class ProductionPreflightService:
         self._estimated_test_bytes = estimated_test_bytes
         self._reserve_bytes = reserve_bytes
         self._hardware_lease = hardware_lease
+        self._live_baseline = live_baseline
 
     def run_preflight(self) -> PreflightSummary:
         startup_ready = (
@@ -159,6 +161,8 @@ class ProductionPreflightService:
         ]
         if self._hardware_lease is not None:
             checks.append(self._hardware_lease.acquire_for_new_session())
+        if self._live_baseline is not None:
+            checks.append(self._live_baseline.acquire_for_new_session())
         return PreflightSummary(tuple(checks))
 
 
@@ -173,6 +177,7 @@ def build_production_preflight(
     estimated_test_bytes: int = 64 * 1024**2,
     reserve_bytes: int = 512 * 1024**2,
     hardware_lease: HardwareLeasePreflightPort | None = None,
+    live_baseline: HardwareLeasePreflightPort | None = None,
 ) -> ProductionPreflightService:
     """Compose P-05 from the active device specification and local state store."""
 
@@ -191,4 +196,5 @@ def build_production_preflight(
         estimated_test_bytes=estimated_test_bytes,
         reserve_bytes=reserve_bytes,
         hardware_lease=hardware_lease,
+        live_baseline=live_baseline,
     )

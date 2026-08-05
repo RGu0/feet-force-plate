@@ -15,7 +15,7 @@ from client.workflow.consent import (
     ConsentWorkflow,
     RequiredConsentDeclined,
 )
-from client.workflow.models import ClientError, WorkflowState
+from client.workflow.models import ClientAction, ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 from client.local_analysis.display import DisplayRefreshController
 from client.workflow.participant import (
@@ -231,6 +231,52 @@ class ApplicationController:
 
     def on_acquisition_completed(self) -> None:
         self._coordinator.complete_acquisition()
+        self.refresh()
+
+    def on_live_hardware_capture_completed(
+        self,
+        result: object,
+        *,
+        record_attestations: Callable[[str, tuple[bool, ...]], None],
+    ) -> None:
+        """Continue only from a committed worker result and explicit UI attestation."""
+
+        state = self._coordinator.state
+        if not bool(getattr(result, "committed", False)) or state.session_id is None:
+            self._coordinator.handle_hardware_failure(
+                error=ClientError(
+                    code="E-DAT-101",
+                    operator_message="硬件数据未通过完整性检查，本次检测未完成",
+                    action=ClientAction.RETRY_SCREENING,
+                )
+            )
+            self.refresh()
+            return
+
+        session_id = state.session_id
+
+        def accept(completed: tuple[bool, ...]) -> None:
+            record_attestations(session_id, completed)
+            self._coordinator.complete_acquisition()
+            self.refresh()
+
+        def decline() -> None:
+            self._coordinator.handle_hardware_failure(
+                error=ClientError(
+                    code="E-OPR-001",
+                    operator_message="现场人员未确认全部动作完成，未生成基础报告",
+                    action=ClientAction.RETRY_SCREENING,
+                )
+            )
+            self.refresh()
+
+        self.window.request_live_stage_attestations(
+            on_confirm=accept,
+            on_decline=decline,
+        )
+
+    def on_live_hardware_capture_failed(self, technical_detail: str) -> None:
+        self._coordinator.handle_device_disconnect(technical_detail=technical_detail)
         self.refresh()
 
     def on_device_disconnected(self, technical_detail: str) -> None:

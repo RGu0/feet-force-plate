@@ -310,6 +310,7 @@ class MandatoryStartupGate(QObject):
         self._workbench_factory = workbench_factory
         self._quit_application = quit_application or QApplication.quit
         self._workbench: QWidget | None = None
+        self._last_run: DeviceValidationRun | None = None
         self._running = False
         self.window = StartupValidationWindow(
             on_retry=self.retry,
@@ -319,6 +320,12 @@ class MandatoryStartupGate(QObject):
     @property
     def workbench(self) -> QWidget | None:
         return self._workbench
+
+    @property
+    def last_run(self) -> DeviceValidationRun | None:
+        """The passed startup result used by the authenticated workbench preflight."""
+
+        return self._last_run
 
     def start(self) -> None:
         self.window.show()
@@ -359,6 +366,7 @@ class MandatoryStartupGate(QObject):
             and result.outcome is ValidationOutcome.PASS
             and self._coordinator.can_enter_workbench
         ):
+            self._last_run = result
             self._workbench = self._workbench_factory()
             self._workbench.show()
             self.window.hide()

@@ -279,7 +279,7 @@ class ScreeningCoordinator:
         return remaining
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None:
-        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+        if self._machine.step not in {ScreeningStep.ACQUIRING, ScreeningStep.FINALIZING} or self._session_id is None:
             return
         self._telemetry.record_error(
             code="E-DEV-002",
@@ -299,7 +299,7 @@ class ScreeningCoordinator:
     def handle_hardware_failure(self, *, error: ClientError) -> None:
         """Close only an active capture from the typed hardware/UI boundary."""
 
-        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+        if self._machine.step not in {ScreeningStep.ACQUIRING, ScreeningStep.FINALIZING} or self._session_id is None:
             return
         self._telemetry.record_error(
             code=error.code,
@@ -393,6 +393,8 @@ class ScreeningCoordinator:
             )
             return
         self._validity = SessionValidity.VALID
+        self._upload_status = UploadStatus.PENDING
+        self._analysis_status = AnalysisStatus.QUEUED
         try:
             report_id, version = self._reports.create_basic_report(session_id)
         except Exception as exc:
