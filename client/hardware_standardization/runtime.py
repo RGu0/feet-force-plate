@@ -65,6 +65,18 @@ class HardwareCalibrationMetadata:
     validation: str
 
 
+@dataclass(frozen=True, slots=True)
+class HardwareBaselineConfiguration:
+    """Public empty-board rules needed to establish a per-session reference."""
+
+    minimum_duration_seconds: float
+    maximum_no_valid_signal_seconds: float
+    unloaded_frame_mean_max: float
+    layout_digest: str
+    rules_version: str
+    threshold_version: str
+
+
 class HardwareRuntime:
     """Single implementation-selection point for the active hardware profile."""
 
@@ -110,6 +122,19 @@ class HardwareRuntime:
         return HardwareCalibrationMetadata(
             profile_version=specification.force_calibration_profile_version,
             validation=specification.force_validation,
+        )
+
+    @property
+    def baseline_configuration(self) -> HardwareBaselineConfiguration:
+        specification = self._adapter.specification
+        validation = specification.startup_validation
+        return HardwareBaselineConfiguration(
+            minimum_duration_seconds=specification.baseline_min_duration_s,
+            maximum_no_valid_signal_seconds=validation.maximum_no_valid_signal_s,
+            unloaded_frame_mean_max=validation.unloaded_frame_mean_max,
+            layout_digest=self._adapter.layout.digest,
+            rules_version=validation.rules_version,
+            threshold_version=validation.threshold_version,
         )
 
     def make_validation_thresholds(self):
