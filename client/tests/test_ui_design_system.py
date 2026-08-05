@@ -49,7 +49,9 @@ def test_guidance_and_acquisition_pages_use_dedicated_operator_layouts(qtbot) ->
     guidance = window.page_widget(PageId.POSITION_GUIDANCE)
     acquisition = window.page_widget(PageId.ACQUIRING)
 
-    assert guidance.findChild(QWidget, "footPlacementGuide") is not None
+    assert guidance.findChild(QWidget, "stageGuidance") is not None
+    assert guidance.findChild(QLabel, "stageBodyGuide") is not None
+    assert guidance.findChild(QLabel, "stageFeetGuide") is not None
     assert guidance.findChild(QLabel, "countdownLabel") is not None
     assert acquisition.findChild(QWidget, "acquisitionContent") is not None
 

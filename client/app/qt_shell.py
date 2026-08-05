@@ -57,7 +57,7 @@ from .session_lock import (
 )
 from .heatmap import HeatmapWidget
 from .pages import PAGE_DEFINITIONS, PageId, page_for_step
-from .position_guide import FootPlacementWidget
+from .position_guide import StageGuidanceWidget
 from .ui_models import DashboardSnapshot, ScreeningRecordRow, SupportSnapshot
 
 
@@ -559,23 +559,33 @@ class ScreeningWindow(QMainWindow):
             self._reset_stop_confirmation()
         if state.position_guidance is not None:
             page = self._pages[PageId.POSITION_GUIDANCE]
+            page.findChild(QLabel, "positionGuideTitle").setText(
+                state.stage_title or "请站到压力垫中央"
+            )
+            page.findChild(QLabel, "positionGuideSubtitle").setText(
+                state.position_guidance.instruction_text
+            )
             page.findChild(QLabel, "positionStatus").setText(
                 state.position_guidance.instruction_text
             )
-            page.findChild(QLabel, "countdownLabel").setText(
-                (
-                    str(state.position_guidance.countdown_seconds)
-                    if state.position_guidance.countdown_seconds is not None
-                    else ""
-                )
+            countdown = page.findChild(QLabel, "countdownLabel")
+            has_countdown = state.position_guidance.countdown_seconds is not None
+            countdown.setText(
+                str(state.position_guidance.countdown_seconds) if has_countdown else ""
             )
+            countdown.setVisible(has_countdown)
             page.findChild(QLabel, "positionState").setText(
                 state.position_guidance.countdown_text
+                if has_countdown
+                else "操作员确认站位和安全后，点击开始本段"
             )
             page.findChild(QPushButton, "START_ACQUISITION").setEnabled(
                 state.position_guidance.manual_start_allowed
             )
             if state.stage_index is not None and state.stage_count is not None:
+                page.findChild(StageGuidanceWidget, "stageGuidance").set_stage(
+                    state.stage_index
+                )
                 page.findChild(QLabel, "positionStage").setText(
                     f"第 {state.stage_index}/{state.stage_count} 段 · "
                     f"{state.stage_title or '当前动作'}"
@@ -1477,11 +1487,10 @@ class ScreeningWindow(QMainWindow):
         body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(32, 32, 32, 32)
         body_layout.setSpacing(0)
-        body_layout.addStretch(3)
-        title = self._label("请站到压力垫中央", "pageTitle", alignment=Qt.AlignmentFlag.AlignCenter)
+        title = self._label("请站到压力垫中央", "positionGuideTitle", alignment=Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 40px;")
         title.setFixedHeight(48)
-        subtitle = self._label("双脚自然站立，保持身体放松，目视前方", "pageSubtitle", alignment=Qt.AlignmentFlag.AlignCenter)
+        subtitle = self._label("双脚自然站立，保持身体放松，目视前方", "positionGuideSubtitle", alignment=Qt.AlignmentFlag.AlignCenter)
         subtitle.setFixedHeight(28)
         stage = self._label("第 --/-- 段", "positionStage", alignment=Qt.AlignmentFlag.AlignCenter)
         stage.setStyleSheet("font-size: 16px; font-weight: 600; color: #1E293B;")
@@ -1494,9 +1503,10 @@ class ScreeningWindow(QMainWindow):
         body_layout.addWidget(stage)
         body_layout.addSpacing(2)
         body_layout.addWidget(source)
-        body_layout.addSpacing(32)
-        guide = FootPlacementWidget()
-        body_layout.addWidget(guide, alignment=Qt.AlignmentFlag.AlignHCenter)
+        body_layout.addSpacing(20)
+        guide = StageGuidanceWidget()
+        guide.setMaximumHeight(320)
+        body_layout.addWidget(guide, 1, alignment=Qt.AlignmentFlag.AlignHCenter)
         details_host = QWidget()
         details_host.setFixedWidth(520)
         details = QHBoxLayout(details_host)
@@ -1508,7 +1518,7 @@ class ScreeningWindow(QMainWindow):
         status.setProperty("secondaryText", True)
         count_line = QHBoxLayout()
         count_line.addWidget(
-            self._label("请等待站位稳定", "positionState")
+            self._label("操作员确认站位和安全后，点击开始本段", "positionState")
         )
         countdown = self._label("", "countdownLabel")
         countdown.setStyleSheet("font-size: 48px; font-weight: 700; color: #2569BC;")

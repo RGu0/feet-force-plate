@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from client.app.pages import PageId
+from client.app.position_guide import StageGuidanceWidget
 from client.app.qt_shell import ScreeningWindow
 from client.workflow.models import (
     PreflightCheck,
@@ -41,6 +42,43 @@ def test_position_page_presents_numeric_and_text_countdown_with_one_main_action(
     assert start.text() == "开始本段"
     assert not start.isEnabled()
     assert not window.global_navigation_enabled
+
+
+def test_guidance_binds_each_manual_stage_and_keeps_start_available(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    guidance = PositionGuidanceState(
+        status=PositionStatus.READY,
+        instruction_text="按当前动作站位",
+        countdown_seconds=None,
+        countdown_text="不应显示旧的稳定性提示",
+        manual_start_allowed=True,
+    )
+    page = window.page_widget(PageId.POSITION_GUIDANCE)
+    guide = page.findChild(StageGuidanceWidget, "stageGuidance")
+    start = page.findChild(QPushButton, "START_ACQUISITION")
+
+    assert guide is not None
+    assert start is not None
+    for stage_index in (1, 2, 3, 4):
+        window.present_state(
+            WorkflowState(
+                step=ScreeningStep.POSITION_GUIDANCE,
+                position_guidance=guidance,
+                stage_index=stage_index,
+                stage_count=4,
+                stage_title=f"第 {stage_index} 段动作",
+            )
+        )
+        assert guide.property("guidanceStage") == stage_index
+        assert start.isEnabled()
+
+    assert page.findChild(QLabel, "positionState").text() == (
+        "操作员确认站位和安全后，点击开始本段"
+    )
+    assert page.findChild(QLabel, "countdownLabel").isHidden()
+    assert page.findChild(QLabel, "positionGuideTitle").text() == "第 4 段动作"
+    assert page.findChild(QLabel, "positionGuideSubtitle").text() == "按当前动作站位"
 
 
 def test_preflight_shows_four_checks_and_waits_for_operator_entry(qtbot) -> None:

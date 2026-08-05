@@ -1,61 +1,99 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 
-class FootPlacementWidget(QWidget):
-    """The single, low-detail stance canvas shown on source screen P-06."""
+ASSET_ROOT = Path(__file__).with_name("assets") / "position-guidance"
+GUIDANCE_ASSETS = {
+    1: ("stage-1-body.png", "stage-1-feet.png"),
+    2: ("stage-2-body.png", "stage-2-feet.png"),
+    3: ("stage-3-body.png", "stage-3-feet.png"),
+    4: ("stage-4-body.png", "stage-4-feet.jpg"),
+}
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.setObjectName("footPlacementGuide")
-        self.setAccessibleName("实时足印站位示意")
-        self.setAccessibleDescription("蓝色双脚轮廓位于压力垫中央虚线区域")
-        self.setMinimumSize(460, 380)
 
-    def paintEvent(self, event) -> None:
-        _ = event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor("#F6FAFD"))
+class StageGuidanceWidget(QWidget):
+    """Show the approved full-body and foot-placement image for one stage."""
 
-        grid_pen = QPen(QColor(37, 105, 188, 20), 1.0)
-        painter.setPen(grid_pen)
-        grid = 28
-        for x in range(0, self.width() + grid, grid):
-            painter.drawLine(x, 0, x, self.height())
-        for y in range(0, self.height() + grid, grid):
-            painter.drawLine(0, y, self.width(), y)
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("stageGuidance")
+        self.setAccessibleName("分段站位引导")
+        self.setAccessibleDescription("显示当前动作的全身站姿和双脚站位示意")
+        self.setMinimumSize(560, 230)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._body_source = QPixmap()
+        self._feet_source = QPixmap()
 
-        inset = self.rect().adjusted(40, 40, -40, -40)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor("#B7D3F2"), 2.0, Qt.PenStyle.DashLine))
-        painter.drawRoundedRect(inset, 20, 20)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(24)
+        self._body_label = self._image_label("stageBodyGuide", "全身站姿示意")
+        self._feet_label = self._image_label("stageFeetGuide", "双脚站位示意")
+        layout.addWidget(self._body_label, 1)
+        layout.addWidget(self._feet_label, 1)
 
-        painter.setBrush(QColor(23, 162, 196, 140))
-        painter.setPen(QPen(QColor(23, 162, 196, 190), 2.0))
-        scale_x = self.width() / 460.0
-        scale_y = self.height() / 380.0
-        for cx in (185, 275):
-            painter.drawEllipse(
-                int((cx - 42) * scale_x), int((150 - 38) * scale_y),
-                int(84 * scale_x), int(76 * scale_y),
+        self.set_stage(1)
+
+    @property
+    def asset_root(self) -> Path:
+        return ASSET_ROOT
+
+    def set_stage(self, stage_index: int) -> None:
+        try:
+            body_name, feet_name = GUIDANCE_ASSETS[stage_index]
+        except KeyError as error:
+            raise ValueError(f"unsupported guidance stage: {stage_index}") from error
+        self._body_source = self._load_asset(body_name)
+        self._feet_source = self._load_asset(feet_name)
+        self.setProperty("guidanceStage", stage_index)
+        self.setProperty("guidanceBodyAsset", body_name)
+        self.setProperty("guidanceFeetAsset", feet_name)
+        self._scale_images()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._scale_images()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._scale_images()
+
+    def _image_label(self, object_name: str, accessible_name: str) -> QLabel:
+        label = QLabel()
+        label.setObjectName(object_name)
+        label.setAccessibleName(accessible_name)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setScaledContents(False)
+        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        return label
+
+    def _load_asset(self, asset_name: str) -> QPixmap:
+        pixmap = QPixmap(str(ASSET_ROOT / asset_name))
+        if pixmap.isNull():
+            raise RuntimeError(f"unable to load stage guidance asset: {asset_name}")
+        return pixmap
+
+    def _scale_images(self) -> None:
+        self._set_scaled_pixmap(self._body_label, self._body_source)
+        self._set_scaled_pixmap(self._feet_label, self._feet_source)
+
+    @staticmethod
+    def _set_scaled_pixmap(label: QLabel, source: QPixmap) -> None:
+        if source.isNull():
+            return
+        available_size = label.contentsRect().size()
+        if available_size.isEmpty():
+            label.setPixmap(source)
+            return
+        label.setPixmap(
+            source.scaled(
+                available_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
-            painter.drawRoundedRect(
-                int((cx - 15) * scale_x), int(178 * scale_y),
-                int(34 * scale_x), int(64 * scale_y),
-                int(17 * scale_x), int(17 * scale_y),
-            )
-            painter.drawEllipse(
-                int((cx - 30) * scale_x), int(214 * scale_y),
-                int(60 * scale_x), int(76 * scale_y),
-            )
-
-        painter.setPen(QColor("#64748B"))
-        painter.drawText(
-            self.rect().adjusted(12, 8, -12, -8),
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
-            "实时足印示意",
         )
