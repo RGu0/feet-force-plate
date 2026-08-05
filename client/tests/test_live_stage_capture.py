@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from client.app.live_physical_workflow import (
     LivePhysicalCapture,
@@ -16,12 +17,15 @@ from client.app.live_physical_workflow import (
 )
 from client.device.acquisition import LatestFrameMailbox
 from client.device.protocol import ProtocolIntegrityEvent, RawFrame
+from client.device.session_runtime import SessionValidity
 from client.device.stage_windows import CapturedStageWindow, StageRecordingGate
 from client.device.transport import TransportDisconnected
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.spool.derived_artifact import read_derived_observation
 from client.spool.segments import read_segment
+from client.spool.session_commit import ValidSessionStager
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 
 
@@ -91,6 +95,35 @@ class _ControlledHardware:
         return SimpleNamespace(transport=transport, parser=_ControlledParser())
 
 
+class _FailFirstConnectHardware(_ControlledHardware):
+    def __init__(self) -> None:
+        super().__init__()
+        self.connect_attempts = 0
+
+    def connect_startup(self):
+        self.connect_attempts += 1
+        if self.connect_attempts == 1:
+            raise OSError("controlled startup failure")
+        return super().connect_startup()
+
+
+class _CloseFailingTransport(_ControlledTransport):
+    def close(self) -> None:
+        super().close()
+        raise OSError("controlled close failure")
+
+
+class _FailFirstCloseHardware(_ControlledHardware):
+    def connect_startup(self):
+        transport = (
+            _CloseFailingTransport()
+            if not self.connections
+            else _ControlledTransport()
+        )
+        self.connections.append(transport)
+        return SimpleNamespace(transport=transport, parser=_ControlledParser())
+
+
 class _Sessions:
     def metadata(self, session_id: str) -> LiveSessionMetadata:
         return LiveSessionMetadata(
@@ -130,8 +163,8 @@ def _frame_at(seconds: float, value: int, source_index: int) -> RawFrame:
     )
 
 
-def _capture_fixture(tmp_path):
-    hardware = _ControlledHardware()
+def _capture_fixture(tmp_path, *, hardware=None):
+    hardware = hardware or _ControlledHardware()
     key_provider = _KeyProvider()
     physical_store = StateStore(
         tmp_path / "physical.sqlite3", SensitiveBlobCodec(key_provider)
@@ -327,3 +360,121 @@ def test_retry_discards_only_failed_stage_and_reuses_completed_stage(tmp_path) -
     assert 99 not in _read_committed_raw_values(tmp_path, key_provider)
     assert len(hardware.connections) == 2
     assert second_transport.closed
+
+
+def test_connect_failure_cancels_open_stage_and_allows_same_stage_retry(tmp_path) -> None:
+    hardware = _FailFirstConnectHardware()
+    capture, _hardware, _keys, _mailbox = _capture_fixture(
+        tmp_path, hardware=hardware
+    )
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+
+    first_thread, first_results = _start_capture(capture, gate)
+    first_outcome = first_results.get(timeout=3)
+    first_thread.join(timeout=1)
+
+    assert isinstance(first_outcome, RetryableStageCaptureError)
+    assert gate.snapshot().cancelled
+    gate.open_stage("one", duration_seconds=20)
+
+    second_thread, second_results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 1)
+    _push_stage(
+        hardware.connections[0],
+        start_s=10,
+        first_value=10,
+        first_source_index=0,
+    )
+    second_outcome = second_results.get(timeout=3)
+    second_thread.join(timeout=1)
+
+    assert not isinstance(second_outcome, BaseException)
+    assert second_outcome.committed
+
+
+def test_close_failure_cannot_override_stage_error_or_keep_worker_claimed(tmp_path) -> None:
+    hardware = _FailFirstCloseHardware()
+    capture, _hardware, _keys, _mailbox = _capture_fixture(
+        tmp_path, hardware=hardware
+    )
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+    first_thread, first_results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 1)
+    hardware.connections[0].push(_frame_at(10, 10, 0))
+    hardware.connections[0].disconnect()
+
+    first_outcome = first_results.get(timeout=3)
+    first_thread.join(timeout=1)
+
+    assert isinstance(first_outcome, RetryableStageCaptureError)
+    assert "transport disconnected" in str(first_outcome)
+    assert hardware.connections[0].closed
+    assert gate.snapshot().cancelled
+
+    gate.open_stage("one", duration_seconds=20)
+    second_thread, second_results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 2)
+    _push_stage(
+        hardware.connections[1],
+        start_s=40,
+        first_value=20,
+        first_source_index=0,
+    )
+    second_outcome = second_results.get(timeout=3)
+    second_thread.join(timeout=1)
+
+    assert not isinstance(second_outcome, BaseException)
+    assert second_outcome.committed
+
+
+@pytest.mark.parametrize("failure_point", ("staged_frames", "quality", "commit"))
+def test_finalization_failures_discard_whole_session_without_stage_retry(
+    tmp_path, monkeypatch, failure_point: str
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+
+    if failure_point == "staged_frames":
+        monkeypatch.setattr(
+            ValidSessionStager,
+            "staged_frames",
+            lambda _self: (_ for _ in ()).throw(OSError("controlled staged read failure")),
+        )
+    elif failure_point == "quality":
+        monkeypatch.setattr(
+            DoP4864HardwareQualityGate,
+            "evaluate",
+            lambda _self, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("controlled quality failure")
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            ValidSessionStager,
+            "commit_valid",
+            lambda _self, **_kwargs: (_ for _ in ()).throw(
+                OSError("controlled commit failure")
+            ),
+        )
+
+    gate.open_stage("one", duration_seconds=20)
+    thread, results = _start_capture(capture, gate)
+    _wait_until(lambda: len(hardware.connections) == 1)
+    _push_stage(
+        hardware.connections[0],
+        start_s=10,
+        first_value=10,
+        first_source_index=0,
+    )
+
+    outcome = results.get(timeout=3)
+    thread.join(timeout=1)
+
+    assert not isinstance(outcome, BaseException)
+    assert outcome.validity is SessionValidity.INVALID
+    assert not outcome.committed
+    assert gate.snapshot().session_complete
+    assert not gate.snapshot().cancelled
+    assert not (tmp_path / "spool" / ".staging" / "session-1").exists()

@@ -64,6 +64,7 @@ class StageRecordingGate:
         self._frame_count = 0
         self._elapsed_seconds = 0.0
         self._completed_windows: list[CapturedStageWindow] = []
+        self._pending_window: CapturedStageWindow | None = None
         self._stage_complete = False
         self._session_complete = False
         self._cancelled = False
@@ -87,6 +88,10 @@ class StageRecordingGate:
         with self._lock:
             if self._session_complete:
                 raise RuntimeError("all expected stages are already complete")
+            if self._pending_window is not None:
+                raise RuntimeError(
+                    "stage boundary is awaiting durable acknowledgement"
+                )
             if self._active_stage_id is not None:
                 raise RuntimeError("a recording stage is already active")
             expected = self._expected_stage_ids[len(self._completed_windows)]
@@ -133,26 +138,37 @@ class StageRecordingGate:
                 / 1_000_000_000,
                 frame_count=self._frame_count,
             )
-            self._completed_windows.append(window)
             self._active_stage_id = None
-            self._stage_complete = True
-            self._session_complete = len(self._completed_windows) == len(
-                self._expected_stage_ids
-            )
+            self._pending_window = window
             return StageGateDecision(
                 True,
                 stage_id,
                 True,
-                self._session_complete,
+                len(self._completed_windows) + 1 == len(self._expected_stage_ids),
                 window,
+            )
+
+    def acknowledge_stage(self, window: CapturedStageWindow) -> None:
+        """Publish a boundary only after its final encrypted merge is durable."""
+
+        with self._lock:
+            if self._pending_window is None:
+                raise RuntimeError("no stage boundary is awaiting acknowledgement")
+            if window != self._pending_window:
+                raise ValueError("acknowledged stage window does not match the boundary")
+            self._completed_windows.append(window)
+            self._pending_window = None
+            self._stage_complete = True
+            self._session_complete = len(self._completed_windows) == len(
+                self._expected_stage_ids
             )
 
     def cancel_current_stage(self) -> None:
         with self._lock:
             stage_id = self._active_stage_id
-            if stage_id is None and self._stage_complete and self._completed_windows:
-                stage_id = self._completed_windows.pop().stage_id
-                self._session_complete = False
+            if stage_id is None and self._pending_window is not None:
+                stage_id = self._pending_window.stage_id
+                self._pending_window = None
             if stage_id is None:
                 return
             self._display_stage_id = stage_id

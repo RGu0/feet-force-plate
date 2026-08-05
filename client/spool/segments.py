@@ -58,6 +58,15 @@ class RestoredSegment:
     ciphertext_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class SegmentWriterCheckpoint:
+    """In-memory writer state used to roll back one staged transaction."""
+
+    frames: tuple[RawFrame, ...]
+    segment_index: int
+    versions: dict[str, str]
+
+
 def _canonical_json(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -104,6 +113,24 @@ class ImmutableSegmentWriter:
         self._target_bytes = target_plaintext_bytes
         self._segment_index = starting_segment_index
         self._frames: list[RawFrame] = []
+
+    def checkpoint(self) -> SegmentWriterCheckpoint:
+        """Snapshot mutable state before a caller-owned filesystem transaction."""
+
+        return SegmentWriterCheckpoint(
+            frames=tuple(self._frames),
+            segment_index=self._segment_index,
+            versions=dict(self._versions),
+        )
+
+    def restore(self, checkpoint: SegmentWriterCheckpoint) -> None:
+        """Restore mutable state after the caller removes transaction files."""
+
+        if not isinstance(checkpoint, SegmentWriterCheckpoint):
+            raise TypeError("segment writer checkpoint is required")
+        self._frames = list(checkpoint.frames)
+        self._segment_index = checkpoint.segment_index
+        self._versions = dict(checkpoint.versions)
 
     def append(self, frame: RawFrame) -> SealedSegment | None:
         value_dtype = _storage_dtype(frame.values.dtype)

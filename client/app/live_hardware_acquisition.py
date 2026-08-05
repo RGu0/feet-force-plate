@@ -130,6 +130,7 @@ class QtLiveHardwareAcquisition(QObject):
             self._stage_duration_seconds, int(snapshot.elapsed_seconds)
         )
         if not snapshot.stage_complete:
+            elapsed = min(elapsed, max(0, self._stage_duration_seconds - 1))
             if elapsed != self._last_elapsed:
                 self._last_elapsed = elapsed
                 self._on_progress(elapsed)

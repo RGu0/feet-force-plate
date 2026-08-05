@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from types import SimpleNamespace
 
@@ -45,8 +46,9 @@ def test_bridge_opens_each_stage_manually_without_restarting_capture(qtbot) -> N
                 start, end = stage_times[snapshot.stage_id]
                 gate.observe(_frame_at(start, source_index))
                 source_index += 1
-                gate.observe(_frame_at(end, source_index))
+                decision = gate.observe(_frame_at(end, source_index))
                 source_index += 1
+                gate.acknowledge_stage(decision.window)
             else:
                 time.sleep(0.001)
         return SimpleNamespace(committed=True, stage_windows=gate.snapshot().completed_windows)
@@ -90,7 +92,8 @@ def test_bridge_reports_failure_and_can_retry_same_stage_with_new_worker(qtbot) 
             gate.cancel_current_stage()
             raise RuntimeError("serial disconnected")
         gate.observe(_frame_at(10, 0))
-        gate.observe(_frame_at(30, 1))
+        decision = gate.observe(_frame_at(30, 1))
+        gate.acknowledge_stage(decision.window)
         return SimpleNamespace(committed=True, stage_windows=gate.snapshot().completed_windows)
 
     acquisition = QtLiveHardwareAcquisition(_capture, expected_stage_ids=("one",))
@@ -108,6 +111,56 @@ def test_bridge_reports_failure_and_can_retry_same_stage_with_new_worker(qtbot) 
     assert failed == ["RuntimeError: serial disconnected"]
     assert capture_calls == 2
     assert completed[0].committed
+
+
+def test_bridge_waits_for_durable_merge_before_terminal_progress_and_count(qtbot) -> None:
+    boundary_reached = threading.Event()
+    release_failure = threading.Event()
+    completed: list[object] = []
+    failed: list[str] = []
+    progress: list[int] = []
+    capture_calls = 0
+
+    def _capture(_session_id: str, gate):
+        nonlocal capture_calls
+        capture_calls += 1
+        gate.observe(_frame_at(10, 0))
+        decision = gate.observe(_frame_at(30, 1))
+        assert decision.window is not None
+        if capture_calls == 1:
+            boundary_reached.set()
+            assert release_failure.wait(timeout=2)
+            gate.cancel_current_stage()
+            raise RuntimeError("durable merge failed")
+        gate.acknowledge_stage(decision.window)
+        return SimpleNamespace(
+            committed=True,
+            stage_windows=gate.snapshot().completed_windows,
+        )
+
+    acquisition = QtLiveHardwareAcquisition(_capture, expected_stage_ids=("one",))
+    acquisition.set_callbacks(
+        on_progress=progress.append,
+        on_complete=completed.append,
+        on_failure=failed.append,
+    )
+
+    acquisition.start_stage("session-1", _stage("one"))
+    qtbot.waitUntil(boundary_reached.is_set)
+    qtbot.wait(150)
+
+    assert progress.count(20) == 0
+    assert completed == []
+
+    release_failure.set()
+    qtbot.waitUntil(lambda: bool(failed))
+    acquisition.start_stage("session-1", _stage("one"))
+    qtbot.waitUntil(lambda: bool(completed))
+
+    assert failed == ["RuntimeError: durable merge failed"]
+    assert progress.count(20) == 1
+    assert capture_calls == 2
+    assert [window.stage_id for window in completed[0].stage_windows] == ["one"]
 
 
 def test_bridge_rejects_session_change_without_opening_another_window(qtbot) -> None:

@@ -161,7 +161,7 @@ class ValidSessionStager:
         attempt: SealedStageAttempt,
         window: CapturedStageWindow,
     ) -> None:
-        """Merge one sealed stage attempt in the configured protocol order."""
+        """Atomically merge one sealed stage in the configured protocol order."""
 
         if self._finished:
             raise RuntimeError("session staging is already finished")
@@ -183,14 +183,57 @@ class ValidSessionStager:
             raise ValueError("stage order does not match the configured protocol")
         if not attempt.frames or len(attempt.frames) != window.frame_count:
             raise ValueError("verified stage frames must match its captured window")
-        policy = self._versions.get("stage_window_policy")
-        if policy is None:
-            self.freeze_versions({"stage_window_policy": _STAGE_WINDOW_POLICY_VERSION})
-        elif policy != _STAGE_WINDOW_POLICY_VERSION:
-            raise ValueError("stage window policy is frozen differently")
-        for frame in attempt.frames:
-            self.append(frame)
-        self._stage_windows.append(window)
+
+        writer_checkpoint = self._writer.checkpoint()
+        sealed_count = len(self._sealed)
+        window_count = len(self._stage_windows)
+        had_open_frames = self._has_open_frames
+        versions = dict(self._versions)
+        existing_paths = (
+            frozenset(self.staging_directory.iterdir())
+            if self.staging_directory.exists()
+            else frozenset()
+        )
+        try:
+            policy = self._versions.get("stage_window_policy")
+            if policy is None:
+                self.freeze_versions(
+                    {"stage_window_policy": _STAGE_WINDOW_POLICY_VERSION}
+                )
+            elif policy != _STAGE_WINDOW_POLICY_VERSION:
+                raise ValueError("stage window policy is frozen differently")
+            for frame in attempt.frames:
+                self.append(frame)
+            if self._has_open_frames:
+                self._sealed.append(self._writer.close())
+                self._has_open_frames = False
+            self._stage_windows.append(window)
+        except BaseException:
+            self._sealed[sealed_count:] = []
+            self._stage_windows[window_count:] = []
+            self._writer.restore(writer_checkpoint)
+            self._has_open_frames = had_open_frames
+            self._versions = versions
+            self._remove_transaction_paths(existing_paths)
+            raise
+
+    def _remove_transaction_paths(self, existing_paths: frozenset[Path]) -> None:
+        """Remove filesystem entries created by one failed stage merge."""
+
+        session_directory = self.staging_directory
+        if not session_directory.exists():
+            return
+        for path in frozenset(session_directory.iterdir()) - existing_paths:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        if not existing_paths and not any(session_directory.iterdir()):
+            session_directory.rmdir()
+            if self._staging_root.exists():
+                _fsync_directory(self._staging_root)
+            return
+        _fsync_directory(session_directory)
 
     def freeze_versions(self, additional_versions: dict[str, str]) -> None:
         """Bind acquisition policies before the first raw frame is accepted."""

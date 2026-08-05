@@ -41,6 +41,10 @@ def test_gate_discards_preparation_frames_and_closes_each_manual_window() -> Non
 
     assert end.record and end.stage_complete and not end.session_complete
     assert end.window == CapturedStageWindow("one", 0.0, 20.0, 2)
+    assert not gate.snapshot().stage_complete
+    assert gate.snapshot().completed_windows == ()
+    gate.acknowledge_stage(end.window)
+    assert gate.snapshot().stage_complete
     assert not gate.observe(_frame_at(35.0, source_index=3)).record
 
     gate.open_stage("two", duration_seconds=20)
@@ -48,10 +52,33 @@ def test_gate_discards_preparation_frames_and_closes_each_manual_window() -> Non
     final = gate.observe(_frame_at(80.0, source_index=5))
 
     assert final.record and final.stage_complete and final.session_complete
+    assert not gate.snapshot().session_complete
+    assert final.window is not None
+    gate.acknowledge_stage(final.window)
     assert gate.snapshot().completed_windows == (
         CapturedStageWindow("one", 0.0, 20.0, 2),
         CapturedStageWindow("two", 50.0, 70.0, 2),
     )
+
+
+def test_boundary_waits_for_durable_ack_and_can_cancel_pending_stage() -> None:
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+    gate.observe(_frame_at(10.0))
+
+    boundary = gate.observe(_frame_at(30.0, source_index=1))
+
+    assert boundary.stage_complete
+    assert boundary.window is not None
+    assert gate.snapshot().elapsed_seconds == 20
+    assert not gate.snapshot().stage_complete
+    assert gate.snapshot().completed_windows == ()
+    with pytest.raises(RuntimeError, match="durable acknowledgement"):
+        gate.open_stage("one", duration_seconds=20)
+
+    gate.cancel_current_stage()
+    gate.open_stage("one", duration_seconds=20)
+    assert not gate.snapshot().cancelled
 
 
 def test_gate_rejects_active_out_of_order_or_cross_session_stage_changes() -> None:

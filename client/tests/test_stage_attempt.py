@@ -26,13 +26,18 @@ class _KeyProvider:
         return b"a" * 32
 
 
-def _frame(index: int) -> RawFrame:
+def _frame(index: int, *, seconds: float | None = None) -> RawFrame:
     values = np.full((48, 64), index, dtype=np.uint8)
     values.setflags(write=False)
+    monotonic_ns = (
+        index * 50_000_000
+        if seconds is None
+        else round(seconds * 1_000_000_000)
+    )
     return RawFrame(
         values=values,
-        host_monotonic_ns=index * 50_000_000,
-        host_wall_time_ns=1_000_000_000 + index * 50_000_000,
+        host_monotonic_ns=monotonic_ns,
+        host_wall_time_ns=1_000_000_000 + monotonic_ns,
         source_index=index,
         device_frame_seq=None,
         device_timestamp_ns=None,
@@ -40,8 +45,14 @@ def _frame(index: int) -> RawFrame:
     )
 
 
-def _window(stage_id: str, start_s: float, end_s: float) -> CapturedStageWindow:
-    return CapturedStageWindow(stage_id, start_s, end_s, 1)
+def _window(
+    stage_id: str,
+    start_s: float,
+    end_s: float,
+    *,
+    frame_count: int = 1,
+) -> CapturedStageWindow:
+    return CapturedStageWindow(stage_id, start_s, end_s, frame_count)
 
 
 def _attempt(
@@ -148,6 +159,54 @@ def test_final_stager_merges_four_sealed_attempts_in_stage_order(tmp_path):
 
     assert stager.stage_windows == windows
     assert [frame.source_index for frame in stager.staged_frames()] == [0, 1, 2, 3]
+
+
+def test_verified_stage_merge_rolls_back_a_segment_written_before_failure(
+    tmp_path, monkeypatch
+):
+    stager = _valid_session_stager(tmp_path)
+    first = _attempt(tmp_path, "stage-1")
+    first.append(_frame(0, seconds=0))
+    stager.append_verified_stage(
+        first.seal(), _window("stage-1", 0, 20)
+    )
+    assert [frame.source_index for frame in stager.staged_frames()] == [0]
+
+    failed = _attempt(tmp_path, "stage-2")
+    failed.append(_frame(1, seconds=30))
+    failed.append(_frame(2, seconds=36))
+    original_close = stager._writer.close
+
+    def _write_then_fail():
+        original_close()
+        raise OSError("injected failure after encrypted segment write")
+
+    monkeypatch.setattr(stager._writer, "close", _write_then_fail)
+
+    with pytest.raises(OSError, match="injected failure"):
+        stager.append_verified_stage(
+            failed.seal(),
+            _window("stage-2", 30, 50, frame_count=2),
+        )
+
+    monkeypatch.setattr(stager._writer, "close", original_close)
+    assert stager.stage_windows == (_window("stage-1", 0, 20),)
+    assert [frame.source_index for frame in stager.staged_frames()] == [0]
+    assert len(tuple(stager.staging_directory.glob("segment-*.ffps"))) == 1
+
+    retry = _attempt(tmp_path, "stage-2")
+    retry.append(_frame(1, seconds=40))
+    retry.append(_frame(2, seconds=46))
+    stager.append_verified_stage(
+        retry.seal(),
+        _window("stage-2", 40, 60, frame_count=2),
+    )
+
+    assert [frame.source_index for frame in stager.staged_frames()] == [0, 1, 2]
+    assert [window.stage_id for window in stager.stage_windows] == [
+        "stage-1",
+        "stage-2",
+    ]
 
 
 def test_final_stager_rejects_duplicate_stage_and_retains_immutable_windows(tmp_path):

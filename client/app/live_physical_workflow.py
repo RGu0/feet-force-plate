@@ -174,13 +174,19 @@ class LivePhysicalCapture:
         self._claim_worker(session_id, gate)
         connection = None
         try:
-            connection = self._hardware.connect_startup()
-            state = self._state_for_connection(
-                session_id,
-                gate=gate,
-                parser=connection.parser,
-                reference=reference,
-            )
+            try:
+                connection = self._hardware.connect_startup()
+                state = self._state_for_connection(
+                    session_id,
+                    gate=gate,
+                    parser=connection.parser,
+                    reference=reference,
+                )
+            except Exception as exc:
+                gate.cancel_current_stage()
+                raise RetryableStageCaptureError(
+                    f"device startup failed: {type(exc).__name__}: {exc}"
+                ) from exc
             return self._capture_connection(
                 session_id,
                 gate=gate,
@@ -189,10 +195,15 @@ class LivePhysicalCapture:
                 parser=connection.parser,
             )
         finally:
-            if connection is not None:
-                connection.transport.close()
-            with self._state_lock:
-                self._active_workers.discard(session_id)
+            try:
+                if connection is not None:
+                    try:
+                        connection.transport.close()
+                    except Exception:
+                        pass
+            finally:
+                with self._state_lock:
+                    self._active_workers.discard(session_id)
 
     def _claim_worker(self, session_id: str, gate: StageRecordingGate) -> None:
         with self._state_lock:
@@ -402,18 +413,14 @@ class LivePhysicalCapture:
                     if decision.window is None:
                         raise RuntimeError("completed stage is missing its captured window")
                     sealed_attempt = attempt.seal()
+                    attempt.discard(reason="sealed for final session merge")
+                    attempt = None
                     state.stager.append_verified_stage(
                         sealed_attempt, decision.window
                     )
-                    # A reconnect creates a fresh parser whose source indexes
-                    # restart at zero.  Seal the final writer at every stage
-                    # boundary so a retry never appends that fresh index into
-                    # a partially open segment from an earlier stage.
-                    state.stager.staged_frames()
-                    attempt.discard(reason="merged into final session")
-                    attempt = None
                     state.integrity_events.extend(stage_integrity_events)
                     state.reconstructed_frames.extend(stage_reconstructed_frames)
+                    gate.acknowledge_stage(decision.window)
                     stage_integrity_events = []
                     stage_reconstructed_frames = []
                     current_stage_id = None
@@ -466,20 +473,31 @@ class LivePhysicalCapture:
     def _finalize_session(
         self, session_id: str, state: _LiveCaptureState
     ) -> LiveHardwareSessionResult:
-        raw_frames = state.stager.staged_frames()
-        processing_frames = tuple(
-            sorted(
-                (*raw_frames, *state.reconstructed_frames),
-                key=lambda frame: frame.host_monotonic_ns,
-            )
-        )
         acquisition = AcquisitionResult(
             session_id=session_id,
             outcome=AcquisitionOutcome.COMPLETED,
-            frames_stored=len(raw_frames),
+            frames_stored=sum(
+                window.frame_count for window in state.stager.stage_windows
+            ),
             integrity_events=tuple(state.integrity_events),
             reconstructed_frames=tuple(state.reconstructed_frames),
         )
+        try:
+            raw_frames = state.stager.staged_frames()
+            processing_frames = tuple(
+                sorted(
+                    (*raw_frames, *state.reconstructed_frames),
+                    key=lambda frame: frame.host_monotonic_ns,
+                )
+            )
+        except Exception as exc:
+            return self._discard_final_session(
+                session_id,
+                state,
+                acquisition,
+                reason=f"staged session read failed: {type(exc).__name__}",
+                ui_failure=processing_failed(),
+            )
         try:
             decision = state.quality_gate.evaluate(
                 session_id=session_id, frames=processing_frames
