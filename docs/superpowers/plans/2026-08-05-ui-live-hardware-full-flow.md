@@ -31,7 +31,7 @@
 
 **Files:** Create `client/cloud/lease_runtime.py`; modify `client/cloud/runtime.py`; test `client/tests/test_hardware_lease_runtime.py`.
 
-**Consumes:** authenticated access token and existing acquire/renew/release lease routes.
+**Consumes:** authenticated access token, server `hardware_id` UUID, installation UUID and existing acquire/renew/release lease routes.
 
 **Produces:** `HardwareLeaseLifecycle.acquire()`, `renew_if_due()`, `release(reason)` and immutable `LeaseState`.
 
@@ -41,7 +41,7 @@
 def test_acquire_binds_authenticated_asset_and_installation() -> None:
     state = HardwareLeaseLifecycle(client, runtime, session, now=clock).acquire()
     assert state.status is LeaseStatus.ACTIVE
-    assert client.requests[0].hardware_id == session.hardware_asset_id
+    assert client.requests[0].hardware_id == UUID(session.hardware_id)
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -57,7 +57,7 @@ class HardwareLeaseLifecycle:
     def release(self, reason: str) -> None: ...
 ```
 
-`acquire()` binds the authenticated asset/install ID. Renewal failure becomes `RECOVERY_REQUIRED` without deleting a current local session. `release()` is idempotent and runs on worker completion, stop and app close.
+Extend `AccessClientPort` with the typed lease methods already exposed by `CloudAccessClient`. `acquire()` binds `UUID(session.hardware_id)` and `UUID(session.client_installation_id)`; `hardware_asset_id` remains display/activation-only. Renewal failure becomes `RECOVERY_REQUIRED` without deleting a current local session. `release()` is idempotent and runs on worker completion, stop and app close.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
