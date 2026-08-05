@@ -104,10 +104,14 @@ def default_standard_protocol() -> ScreeningProtocol:
 
     return ScreeningProtocol(
         protocol_id="standard-static-bilateral",
-        version="v1-replay-debug/1.0.0",
+        version="v1-replay-debug/1.0.1",
         paradigm=ProtocolParadigm.STANDARD_BILATERAL,
         acquisition_duration_seconds=80,
-        start_condition=StartCondition(stable_hold_seconds=3),
+        start_condition=StartCondition(
+            stable_hold_seconds=0,
+            requires_minimum_contact=False,
+            requires_valid_area=False,
+        ),
         end_condition=EndCondition(),
         quality_gate=QualityGateProfile(
             gate_id="static-basic-quality",
@@ -270,22 +274,20 @@ class PositionGuidanceController:
         contact_ready: bool,
         in_valid_area: bool,
     ) -> PositionGuidanceState:
-        if not contact_ready or not in_valid_area:
+        condition = self._protocol.start_condition
+        if (
+            condition.requires_minimum_contact and not contact_ready
+        ) or (
+            condition.requires_valid_area and not in_valid_area
+        ):
             self.reset()
             return self._state
         if self._stable_since is None:
             self._stable_since = now_seconds
         elapsed = max(0.0, now_seconds - self._stable_since)
-        hold = self._protocol.start_condition.stable_hold_seconds
+        hold = condition.stable_hold_seconds
         if elapsed >= hold:
-            self._state = PositionGuidanceState(
-                status=PositionStatus.READY,
-                instruction_text=self._position_text(),
-                countdown_seconds=None,
-                countdown_text="站位已稳定，请点击“开始本段”",
-                manual_start_allowed=True,
-                auto_start=False,
-            )
+            self._state = self._ready_state()
             return self._state
         remaining = max(1, ceil(hold - elapsed))
         self._state = PositionGuidanceState(
@@ -298,12 +300,29 @@ class PositionGuidanceController:
         return self._state
 
     def _waiting_state(self) -> PositionGuidanceState:
+        condition = self._protocol.start_condition
+        if (
+            condition.stable_hold_seconds == 0
+            and not condition.requires_minimum_contact
+            and not condition.requires_valid_area
+        ):
+            return self._ready_state()
         return PositionGuidanceState(
             status=PositionStatus.WAITING,
             instruction_text=self._position_text(),
             countdown_seconds=None,
             countdown_text="请按指引调整站位，稳定后再开始本段",
             manual_start_allowed=False,
+        )
+
+    def _ready_state(self) -> PositionGuidanceState:
+        return PositionGuidanceState(
+            status=PositionStatus.READY,
+            instruction_text=self._position_text(),
+            countdown_seconds=None,
+            countdown_text="操作员确认站位和安全后，请点击“开始本段”",
+            manual_start_allowed=True,
+            auto_start=False,
         )
 
     def _position_text(self) -> str:

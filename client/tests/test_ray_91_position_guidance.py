@@ -1,10 +1,28 @@
 from __future__ import annotations
 
-from client.workflow.protocol import PositionGuidanceController, PositionStatus, default_standard_protocol
+from dataclasses import replace
+
+from client.workflow.protocol import (
+    PositionGuidanceController,
+    PositionStatus,
+    StartCondition,
+    default_standard_protocol,
+)
+
+
+def _sensor_gated_protocol():
+    return replace(
+        default_standard_protocol(),
+        start_condition=StartCondition(
+            stable_hold_seconds=3,
+            requires_minimum_contact=True,
+            requires_valid_area=True,
+        ),
+    )
 
 
 def test_stable_position_counts_down_with_text_and_resets_when_subject_leaves() -> None:
-    guidance = PositionGuidanceController(default_standard_protocol())
+    guidance = PositionGuidanceController(_sensor_gated_protocol())
 
     first = guidance.observe(now_seconds=10.0, contact_ready=True, in_valid_area=True)
     second = guidance.observe(now_seconds=11.0, contact_ready=True, in_valid_area=True)
@@ -22,7 +40,7 @@ def test_stable_position_counts_down_with_text_and_resets_when_subject_leaves() 
 
 
 def test_stable_hold_enables_manual_start_without_automatic_transition() -> None:
-    guidance = PositionGuidanceController(default_standard_protocol())
+    guidance = PositionGuidanceController(_sensor_gated_protocol())
 
     waiting = guidance.observe(
         now_seconds=0.0,
@@ -48,3 +66,12 @@ def test_stable_hold_enables_manual_start_without_automatic_transition() -> None
     assert not ready.auto_start
     assert "点击" in ready.countdown_text
     assert "自动开始" not in ready.countdown_text
+
+
+def test_default_screening_allows_operator_start_without_a_stability_gate() -> None:
+    guidance = PositionGuidanceController(default_standard_protocol())
+
+    assert guidance.state.status is PositionStatus.READY
+    assert guidance.state.manual_start_allowed
+    assert guidance.state.countdown_seconds is None
+    assert "确认" in guidance.state.countdown_text

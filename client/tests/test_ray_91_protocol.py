@@ -21,12 +21,12 @@ def test_default_protocol_is_versioned_and_captures_start_end_quality_and_prompt
     protocol = default_standard_protocol()
 
     assert protocol.protocol_id == "standard-static-bilateral"
-    assert protocol.version == "v1-replay-debug/1.0.0"
+    assert protocol.version == "v1-replay-debug/1.0.1"
     assert protocol.paradigm is ProtocolParadigm.STANDARD_BILATERAL
     assert protocol.acquisition_duration_seconds == 80
-    assert protocol.start_condition.stable_hold_seconds == 3
-    assert protocol.start_condition.requires_minimum_contact
-    assert protocol.start_condition.requires_valid_area
+    assert protocol.start_condition.stable_hold_seconds == 0
+    assert not protocol.start_condition.requires_minimum_contact
+    assert not protocol.start_condition.requires_valid_area
     assert protocol.end_condition.ends_on_duration
     assert protocol.end_condition.operator_stop_marks_incomplete
     assert protocol.quality_gate.version

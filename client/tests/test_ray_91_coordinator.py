@@ -85,23 +85,11 @@ def _coordinator() -> tuple[ScreeningCoordinator, _Sessions, _Acquisition]:
     return coordinator, sessions, acquisition
 
 
-def test_stable_position_waits_for_explicit_start_and_passes_protocol_snapshot() -> None:
+def test_operator_can_start_without_stability_gate_and_passes_protocol_snapshot() -> None:
     coordinator, sessions, acquisition = _coordinator()
 
-    first = coordinator.observe_position(
-        now_seconds=10.0,
-        contact_ready=True,
-        in_valid_area=True,
-    )
-    ready = coordinator.observe_position(
-        now_seconds=13.0,
-        contact_ready=True,
-        in_valid_area=True,
-    )
-
-    assert first.countdown_seconds == 3
-    assert ready.manual_start_allowed
-    assert not ready.auto_start
+    assert coordinator.state.position_guidance.manual_start_allowed
+    assert not coordinator.state.position_guidance.auto_start
     assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
     assert acquisition.started == []
     assert sessions.protocols == []
@@ -112,7 +100,7 @@ def test_stable_position_waits_for_explicit_start_and_passes_protocol_snapshot()
     assert sessions.protocols == [
         ProtocolSnapshot(
             protocol_id="standard-static-bilateral",
-                protocol_version="v1-replay-debug/1.0.0",
+                protocol_version="v1-replay-debug/1.0.1",
                 planned_duration_seconds=80,
                 quality_gate_id="static-basic-quality",
                 quality_gate_version="1.0.0-pilot",
@@ -126,26 +114,13 @@ def test_stable_position_waits_for_explicit_start_and_passes_protocol_snapshot()
     ]
 
 
-def test_manual_start_is_blocked_until_minimum_contact_and_valid_area() -> None:
+def test_manual_start_does_not_exclude_subjects_who_cannot_hold_stable_position() -> None:
     coordinator, sessions, _ = _coordinator()
 
-    assert not coordinator.start_acquisition()
     coordinator.observe_position(
         now_seconds=0.0,
-        contact_ready=True,
+        contact_ready=False,
         in_valid_area=False,
-    )
-    assert not coordinator.start_acquisition()
-    coordinator.observe_position(
-        now_seconds=1.0,
-        contact_ready=True,
-        in_valid_area=True,
-    )
-    assert not coordinator.start_acquisition()
-    coordinator.observe_position(
-        now_seconds=4.0,
-        contact_ready=True,
-        in_valid_area=True,
     )
 
     assert coordinator.start_acquisition()
