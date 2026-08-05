@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from client.cloud.runtime import StableHardwareRequired
+
 from .app_icon import application_icon
 from .design_system import apply_design_system
 
@@ -150,8 +152,19 @@ class InstitutionAccessWindow(QMainWindow):
         card_layout.addSpacing(20)
         status_row = QHBoxLayout()
         status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.addWidget(self._status_pill("loginDeviceStatus", "登录后检查设备", "neutral"))
+        status_row.addWidget(
+            self._status_pill(
+                "loginDeviceStatus",
+                self._login_hardware_status_text(),
+                "success" if self._hardware_connected else "warning",
+            )
+        )
         status_row.addStretch(1)
+        recheck_hardware = self._button(
+            "RECHECK_LOGIN_HARDWARE", "重新检查硬件", ghost=True
+        )
+        recheck_hardware.clicked.connect(self._refresh_hardware_connection)
+        status_row.addWidget(recheck_hardware)
         unable = self._button("LOGIN_HELP", "无法登录？", ghost=True)
         status_row.addWidget(unable)
         card_layout.addLayout(status_row)
@@ -463,7 +476,13 @@ class InstitutionAccessWindow(QMainWindow):
                 type(error).__name__,
             )
             self.show()
-            notice.setText("登录未完成，请检查账号、网络和已连接设备后重试。")
+            if isinstance(error, StableHardwareRequired):
+                self.set_hardware_connection(False)
+                notice.setText(
+                    "未发现可用压力设备，请检查 USB 数据线和供电后点击重新检查硬件。"
+                )
+            else:
+                notice.setText("登录未完成，请检查账号、网络和已连接设备后重试。")
             notice.show()
 
     def show_login_error(self, message: str) -> None:
@@ -557,16 +576,28 @@ class InstitutionAccessWindow(QMainWindow):
 
     def set_hardware_connection(self, connected: bool) -> None:
         self._hardware_connected = connected
-        label = self.findChild(QLabel, "activationHardwareStatusText")
-        pill = self.findChild(QFrame, "activationHardwareStatus")
-        label.setText(self._hardware_status_text())
-        self._set_pill_tone(pill, "success" if connected else "warning")
+        activation_label = self.findChild(QLabel, "activationHardwareStatusText")
+        activation_pill = self.findChild(QFrame, "activationHardwareStatus")
+        if activation_label is not None and activation_pill is not None:
+            activation_label.setText(self._hardware_status_text())
+            self._set_pill_tone(activation_pill, "success" if connected else "warning")
+        login_label = self.findChild(QLabel, "loginDeviceStatusText")
+        login_pill = self.findChild(QFrame, "loginDeviceStatus")
+        if login_label is not None and login_pill is not None:
+            login_label.setText(self._login_hardware_status_text())
+            self._set_pill_tone(login_pill, "success" if connected else "warning")
         button = self.findChild(QPushButton, "REGISTER_INSTITUTION")
-        self._update_activation_button(button)
+        if button is not None:
+            self._update_activation_button(button)
 
     def _hardware_status_text(self) -> str:
         if not self._hardware_connected:
             return "未发现可激活硬件"
+        return "已连接可用压力设备"
+
+    def _login_hardware_status_text(self) -> str:
+        if not self._hardware_connected:
+            return "未发现可用压力设备"
         return "已连接可用压力设备"
 
     def _update_activation_button(self, button: QPushButton) -> None:

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
 
 import client.app
 from client.app import institution_access
+from client.cloud.runtime import StableHardwareRequired
 
 
 def test_brand_logo_keeps_retina_native_pixels_at_its_logical_size(qapp) -> None:
@@ -162,6 +163,68 @@ def test_login_handoff_failure_restores_the_access_window(qtbot) -> None:
     assert window.isVisible()
     assert notice.isVisible()
     assert "private adapter detail" not in notice.text()
+
+
+def test_login_hardware_not_ready_is_explicit_and_never_leaks_password(qtbot) -> None:
+    """A physical precondition must not look like an account or network failure."""
+
+    submitted: list[tuple[str, str]] = []
+
+    def hardware_not_ready(account: str, password: str) -> None:
+        submitted.append((account, password))
+        raise StableHardwareRequired("private serial discovery detail")
+
+    window = client.app.InstitutionAccessWindow(
+        on_login=hardware_not_ready,
+        hardware_connected=False,
+        hardware_connection_ready=lambda: False,
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.findChild(QLineEdit, "institutionAccountInput").setText("clinic-account")
+    window.findChild(QLineEdit, "institutionPasswordInput").setText("password-must-not-appear")
+
+    qtbot.mouseClick(
+        window.findChild(QPushButton, "LOGIN_INSTITUTION"), Qt.MouseButton.LeftButton
+    )
+
+    notice = window.findChild(QLabel, "accessFormNotice")
+    assert submitted == [("clinic-account", "password-must-not-appear")]
+    assert notice.text() == (
+        "未发现可用压力设备，请检查 USB 数据线和供电后点击重新检查硬件。"
+    )
+    assert window.findChild(QLabel, "loginDeviceStatusText").text() == "未发现可用压力设备"
+    assert window.findChild(QPushButton, "RECHECK_LOGIN_HARDWARE").isVisible()
+    public_copy = " ".join(
+        label.text() for label in window.findChildren(QLabel)
+    )
+    assert "password-must-not-appear" not in public_copy
+    assert "private serial discovery detail" not in public_copy
+
+
+def test_login_hardware_recheck_recovers_without_submitting_credentials(qtbot) -> None:
+    """The login recheck is a local connection probe, not a credential retry."""
+
+    readiness = iter((False, True))
+    login_calls: list[tuple[str, str]] = []
+    window = client.app.InstitutionAccessWindow(
+        on_login=lambda account, password: login_calls.append((account, password)),
+        hardware_connected=False,
+        hardware_connection_ready=lambda: next(readiness),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    status = window.findChild(QLabel, "loginDeviceStatusText")
+    recheck = window.findChild(QPushButton, "RECHECK_LOGIN_HARDWARE")
+    assert status.text() == "未发现可用压力设备"
+
+    qtbot.mouseClick(recheck, Qt.MouseButton.LeftButton)
+    assert status.text() == "未发现可用压力设备"
+    qtbot.mouseClick(recheck, Qt.MouseButton.LeftButton)
+
+    assert status.text() == "已连接可用压力设备"
+    assert login_calls == []
 
 
 def test_registration_requires_complete_values_before_attempting_activation(qtbot) -> None:
