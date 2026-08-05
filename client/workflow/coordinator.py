@@ -204,7 +204,7 @@ class ScreeningCoordinator:
         if not self._position_guidance.state.manual_start_allowed:
             self._error = ClientError(
                 code="E-POS-001",
-                operator_message="请站到压力垫中央并保持站稳",
+                operator_message="请由操作员确认站位和安全后开始本段",
                 action=ClientAction.RECHECK,
             )
             return False
@@ -295,6 +295,24 @@ class ScreeningCoordinator:
             operator_message="压力设备连接已中断，本次检测未完成",
             action=ClientAction.RETRY_SCREENING,
         )
+
+    def handle_stage_capture_failure(self, *, technical_detail: str) -> None:
+        """Discard one failed attempt and return to the same stage guidance."""
+
+        if self._machine.step is not ScreeningStep.ACQUIRING or self._session_id is None:
+            return
+        self._telemetry.record_error(
+            code="E-ACQ-004",
+            session_id=self._session_id,
+            technical_detail=technical_detail,
+        )
+        self._acquisition.stop(self._session_id)
+        self._remaining_seconds = None
+        self._machine.retry_current_stage()
+        self._position_guidance.set_stage(self._current_stage)
+        self._position_guidance.reset()
+        self._error = None
+        self._notice = "本段采集中断，请重新连接设备并重测本段"
 
     def handle_hardware_failure(self, *, error: ClientError) -> None:
         """Close only an active capture from the typed hardware/UI boundary."""
@@ -388,7 +406,7 @@ class ScreeningCoordinator:
             self._machine.mark_retry_required()
             self._error = ClientError(
                 code="E-DAT-101",
-                operator_message="本次检测未完成，请重新站稳后检测",
+                operator_message="本次检测未通过质量检查，请重新检测",
                 action=ClientAction.RETRY_SCREENING,
             )
             return
@@ -443,12 +461,10 @@ class ScreeningCoordinator:
                 return
         if self._stage_index + 1 < len(self._protocol.stages):
             self._stage_index += 1
-            if getattr(self._acquisition, "continuous_stage_capture", False):
-                self._remaining_seconds = self._current_stage.duration_seconds
-            else:
-                self._remaining_seconds = None
-                self._transition(ScreeningStep.POSITION_GUIDANCE)
-                self._position_guidance.set_stage(self._current_stage)
+            self._remaining_seconds = None
+            self._transition(ScreeningStep.POSITION_GUIDANCE)
+            self._position_guidance.set_stage(self._current_stage)
+            self._position_guidance.reset()
             return
         # A real hardware worker commits and quality-gates the shared physical
         # capture asynchronously.  The UI may show finalizing, but no analysis
@@ -459,6 +475,8 @@ class ScreeningCoordinator:
         finish = getattr(self._acquisition, "finish", None)
         if callable(finish):
             finish(self._session_id)
+        else:
+            self.complete_acquisition()
 
     @property
     def _current_stage(self):

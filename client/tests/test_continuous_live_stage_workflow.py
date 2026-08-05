@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 from client.workflow.coordinator import ScreeningCoordinator
-from client.workflow.models import PreflightCheck, PreflightSummary, QualityOutcome, QualityResult
+from client.workflow.models import (
+    PreflightCheck,
+    PreflightSummary,
+    QualityOutcome,
+    QualityResult,
+)
 from client.workflow.state_machine import ScreeningStep
+
+
+EXPECTED_STAGE_IDS = (
+    "BILATERAL_EYES_OPEN",
+    "BILATERAL_EYES_CLOSED",
+    "SEMI_TANDEM_LEFT_FORWARD",
+    "SEMI_TANDEM_RIGHT_FORWARD",
+)
 
 
 class _Preflight:
@@ -19,7 +32,7 @@ class _Sessions:
         return "physical-session-1"
 
     def mark_incomplete(self, _session_id: str) -> None:
-        raise AssertionError("continuous capture must not be marked incomplete")
+        raise AssertionError("stage handoff must not mark the session incomplete")
 
     def mark_stage_complete(self, _session_id: str, stage_id: str) -> None:
         self.stages.append(stage_id)
@@ -32,11 +45,11 @@ class _Acquisition:
     continuous_stage_capture = True
 
     def __init__(self) -> None:
-        self.started: list[str] = []
+        self.started: list[tuple[str, str]] = []
         self.finished: list[str] = []
 
-    def start_stage(self, session_id, _stage) -> None:
-        self.started.append(session_id)
+    def start_stage(self, session_id, stage) -> None:
+        self.started.append((session_id, stage.stage_id))
 
     def finish(self, session_id: str) -> None:
         self.finished.append(session_id)
@@ -64,33 +77,38 @@ class _Telemetry:
         raise AssertionError("unexpected workflow error")
 
 
-def test_continuous_live_capture_keeps_one_hardware_session_across_all_four_ui_stages() -> None:
-    sessions, acquisition, reports = _Sessions(), _Acquisition(), _AnalysisAndReports()
+def _ready_live_coordinator() -> tuple[ScreeningCoordinator, _Acquisition]:
+    acquisition = _Acquisition()
     coordinator = ScreeningCoordinator(
-        preflight=_Preflight(), sessions=sessions, acquisition=acquisition,
-        analysis=reports, reports=reports, telemetry=_Telemetry(),
+        preflight=_Preflight(),
+        sessions=_Sessions(),
+        acquisition=acquisition,
+        analysis=_AnalysisAndReports(),
+        reports=_AnalysisAndReports(),
+        telemetry=_Telemetry(),
     )
-    coordinator.bind_participant(subject_uuid="subject-1", consent_record_id="consent-1")
+    coordinator.bind_participant(
+        subject_uuid="subject-1", consent_record_id="consent-1"
+    )
     coordinator.start_new_screening()
     coordinator.confirm_subject()
     coordinator.complete_profile()
     coordinator.confirm_consent()
     assert coordinator.run_preflight()
     assert coordinator.enter_position_guidance()
-    coordinator.observe_position(now_seconds=0.0, contact_ready=True, in_valid_area=True)
-    coordinator.observe_position(now_seconds=3.0, contact_ready=True, in_valid_area=True)
-    assert coordinator.start_acquisition()
+    return coordinator, acquisition
 
-    for _ in range(4):
+
+def test_each_live_stage_requires_guidance_and_a_new_operator_start() -> None:
+    coordinator, acquisition = _ready_live_coordinator()
+
+    for index, expected_stage in enumerate(EXPECTED_STAGE_IDS):
+        assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
+        assert coordinator.state.stage_index == index + 1
+        assert coordinator.start_acquisition()
+        assert acquisition.started[-1] == ("physical-session-1", expected_stage)
         coordinator.observe_acquisition_elapsed(elapsed_seconds=20)
 
-    assert acquisition.started == ["physical-session-1"]
-    assert len(sessions.stages) == 4
-    assert acquisition.finished == ["physical-session-1"]
-    assert sessions.finalized == []
     assert coordinator.state.step is ScreeningStep.FINALIZING
-
-    coordinator.complete_acquisition()
-
-    assert sessions.finalized == ["physical-session-1"]
-    assert coordinator.state.step is ScreeningStep.BASIC_REPORT
+    assert len(acquisition.started) == 4
+    assert acquisition.finished == ["physical-session-1"]

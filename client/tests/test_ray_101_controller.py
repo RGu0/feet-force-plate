@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
@@ -8,7 +9,7 @@ from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
 from client.app.controller import ApplicationController
 from client.app.pages import PageId
 from client.app.ui_models import DashboardSnapshot, ScreeningRecordRow, SupportSnapshot
-from client.workflow.models import WorkflowState
+from client.workflow.models import ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 
 
@@ -17,6 +18,8 @@ class _Coordinator:
         self._state = WorkflowState(step=ScreeningStep.HOME)
         self.exports: list[Path] = []
         self.print_count = 0
+        self.stage_capture_failures: list[str] = []
+        self.hardware_failures: list[ClientError] = []
 
     @property
     def state(self) -> WorkflowState:
@@ -67,6 +70,14 @@ class _Coordinator:
 
     def handle_device_disconnect(self, *, technical_detail: str) -> None:
         _ = technical_detail
+        self._state = WorkflowState(step=ScreeningStep.INCOMPLETE)
+
+    def handle_stage_capture_failure(self, *, technical_detail: str) -> None:
+        self.stage_capture_failures.append(technical_detail)
+        self._state = WorkflowState(step=ScreeningStep.POSITION_GUIDANCE)
+
+    def handle_hardware_failure(self, *, error: ClientError) -> None:
+        self.hardware_failures.append(error)
         self._state = WorkflowState(step=ScreeningStep.INCOMPLETE)
 
     def start_next_screening(self) -> None:
@@ -166,6 +177,77 @@ def test_device_events_refresh_result_and_recovery_pages(qtbot) -> None:
     controller.refresh()
     controller.on_device_disconnected("technical stack")
     assert controller.window.current_page_id == PageId.RESULT
+
+
+def test_live_capture_forwards_captured_windows_to_analysis_attestations(qtbot) -> None:
+    coordinator = _Coordinator()
+    coordinator._state = WorkflowState(
+        step=ScreeningStep.FINALIZING,
+        session_id="physical-session-1",
+    )
+    controller = ApplicationController(coordinator)
+    qtbot.addWidget(controller.window)
+    captured_windows = ("window-1", "window-2", "window-3", "window-4")
+    recorded = []
+    controller.window.request_live_stage_attestations = (
+        lambda *, on_confirm, on_decline: on_confirm((True, True, True, True))
+    )
+
+    def record_attestations(session_id, completed, *, captured_windows):
+        recorded.append((session_id, completed, captured_windows))
+
+    controller.on_live_hardware_capture_completed(
+        SimpleNamespace(committed=True, stage_windows=captured_windows),
+        record_attestations=record_attestations,
+    )
+
+    assert recorded == [
+        (
+            "physical-session-1",
+            (True, True, True, True),
+            captured_windows,
+        )
+    ]
+    assert coordinator.state.step is ScreeningStep.BASIC_REPORT
+
+
+def test_retryable_live_stage_worker_error_returns_to_stage_guidance(qtbot) -> None:
+    coordinator = _Coordinator()
+    coordinator._state = WorkflowState(
+        step=ScreeningStep.ACQUIRING,
+        session_id="physical-session-1",
+        stage_index=2,
+    )
+    controller = ApplicationController(coordinator)
+    qtbot.addWidget(controller.window)
+
+    controller.on_live_hardware_capture_failed("RetryableStageCaptureError: disconnected")
+
+    assert coordinator.stage_capture_failures == [
+        "RetryableStageCaptureError: disconnected"
+    ]
+    assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
+    assert controller.window.current_page_id is PageId.POSITION_GUIDANCE
+
+
+def test_final_session_storage_error_remains_fail_closed(qtbot) -> None:
+    coordinator = _Coordinator()
+    coordinator._state = WorkflowState(
+        step=ScreeningStep.FINALIZING,
+        session_id="physical-session-1",
+    )
+    controller = ApplicationController(coordinator)
+    qtbot.addWidget(controller.window)
+
+    controller.on_live_hardware_capture_failed(
+        "FinalSessionStorageError: final stager is poisoned"
+    )
+
+    assert coordinator.stage_capture_failures == []
+    assert len(coordinator.hardware_failures) == 1
+    assert coordinator.hardware_failures[0].code == "E-DAT-101"
+    assert coordinator.state.step is ScreeningStep.INCOMPLETE
+    assert controller.window.current_page_id is PageId.RESULT
 
 
 def test_start_next_action_returns_to_subject_identification(qtbot) -> None:

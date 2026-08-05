@@ -52,9 +52,14 @@ class SessionStateMachine:
         self._step = target
 
     def mark_incomplete(self) -> None:
-        if self._step is not ScreeningStep.ACQUIRING:
+        if self._step not in {ScreeningStep.ACQUIRING, ScreeningStep.FINALIZING}:
             raise InvalidTransition(f"cannot mark {self._step} incomplete")
         self._step = ScreeningStep.INCOMPLETE
+
+    def retry_current_stage(self) -> None:
+        if self._step is not ScreeningStep.ACQUIRING:
+            raise InvalidTransition(f"cannot retry current stage from {self._step}")
+        self._step = ScreeningStep.POSITION_GUIDANCE
 
     def retry(self) -> None:
         if self._step not in {ScreeningStep.INCOMPLETE, ScreeningStep.RETRY_REQUIRED}:

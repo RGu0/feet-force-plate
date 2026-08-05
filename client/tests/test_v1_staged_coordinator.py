@@ -1,5 +1,15 @@
+from dataclasses import replace
+
 from client.workflow.coordinator import ScreeningCoordinator
-from client.workflow.models import PreflightCheck, PreflightSummary, QualityOutcome, QualityResult
+from client.workflow.models import (
+    ClientAction,
+    ClientError,
+    PreflightCheck,
+    PreflightSummary,
+    QualityOutcome,
+    QualityResult,
+)
+from client.workflow.protocol import StartCondition, default_standard_protocol
 from client.workflow.state_machine import ScreeningStep
 
 
@@ -13,13 +23,14 @@ class _Sessions:
         self.created = []
         self.finalized = []
         self.completed_stages = []
+        self.incomplete = []
 
     def create_session(self, context, protocol):
         self.created.append((context, protocol))
         return "replay-session-1"
 
     def mark_incomplete(self, session_id):
-        raise AssertionError(session_id)
+        self.incomplete.append(session_id)
 
     def finalize(self, session_id):
         self.finalized.append(session_id)
@@ -31,6 +42,7 @@ class _Sessions:
 class _Acquisition:
     def __init__(self):
         self.stages = []
+        self.stopped = []
 
     def start(self, session_id):
         raise AssertionError(session_id)
@@ -39,13 +51,28 @@ class _Acquisition:
         self.stages.append((session_id, stage.stage_id))
 
     def stop(self, session_id):
-        _ = session_id
+        self.stopped.append(session_id)
+
+
+class _AsyncAcquisition(_Acquisition):
+    def __init__(self):
+        super().__init__()
+        self.finished = []
+
+    def finish(self, session_id):
+        self.finished.append(session_id)
 
 
 class _Analysis:
     def analyze(self, session_id):
         assert session_id == "replay-session-1"
         return QualityResult(QualityOutcome.VALID)
+
+
+class _InvalidAnalysis:
+    def analyze(self, session_id):
+        assert session_id == "replay-session-1"
+        return QualityResult(QualityOutcome.INVALID)
 
 
 class _Reports:
@@ -63,6 +90,143 @@ class _Reports:
 class _Telemetry:
     def record_error(self, **kwargs):
         raise AssertionError(kwargs)
+
+
+class _CollectingTelemetry:
+    def __init__(self):
+        self.errors = []
+
+    def record_error(self, **kwargs):
+        self.errors.append(kwargs)
+
+
+def _ready_coordinator():
+    sessions = _Sessions()
+    acquisition = _Acquisition()
+    telemetry = _CollectingTelemetry()
+    coordinator = ScreeningCoordinator(
+        preflight=_Preflight(), sessions=sessions, acquisition=acquisition,
+        analysis=_Analysis(), reports=_Reports(), telemetry=telemetry,
+        data_source_mode="REPLAY_DEBUG",
+    )
+    coordinator.bind_participant(subject_uuid="subject-1", consent_record_id="consent-1")
+    coordinator.start_new_screening()
+    coordinator.confirm_subject()
+    coordinator.complete_profile()
+    coordinator.confirm_consent()
+    assert coordinator.run_preflight()
+    assert coordinator.enter_position_guidance()
+    return coordinator, sessions, acquisition, telemetry
+
+
+def _coordinator_after_first_stage():
+    coordinator, sessions, acquisition, telemetry = _ready_coordinator()
+    assert coordinator.start_acquisition()
+    coordinator.observe_acquisition_elapsed(elapsed_seconds=20)
+    return coordinator, sessions, acquisition, telemetry
+
+
+def test_retryable_second_stage_failure_preserves_first_stage_and_session() -> None:
+    coordinator, sessions, acquisition, telemetry = _coordinator_after_first_stage()
+    session_id = coordinator.state.session_id
+    assert coordinator.start_acquisition()
+
+    coordinator.handle_stage_capture_failure(technical_detail="serial disconnected")
+
+    assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
+    assert coordinator.state.stage_index == 2
+    assert coordinator.state.session_id == session_id
+    assert coordinator.state.notice == "本段采集中断，请重新连接设备并重测本段"
+    assert sessions.completed_stages == [
+        ("replay-session-1", "BILATERAL_EYES_OPEN")
+    ]
+    assert sessions.incomplete == []
+    assert acquisition.stopped == ["replay-session-1"]
+    assert telemetry.errors == [
+        {
+            "code": "E-ACQ-004",
+            "session_id": "replay-session-1",
+            "technical_detail": "serial disconnected",
+        }
+    ]
+    assert coordinator.start_acquisition()
+    assert acquisition.stages[-1][1] == "BILATERAL_EYES_CLOSED"
+
+
+def test_blocked_manual_start_asks_operator_to_confirm_position_and_safety() -> None:
+    protocol = replace(
+        default_standard_protocol(),
+        start_condition=StartCondition(stable_hold_seconds=3),
+    )
+    coordinator = ScreeningCoordinator(
+        preflight=_Preflight(), sessions=_Sessions(), acquisition=_Acquisition(),
+        analysis=_Analysis(), reports=_Reports(), telemetry=_Telemetry(),
+        protocol=protocol,
+    )
+    coordinator.bind_participant(subject_uuid="subject-1", consent_record_id="consent-1")
+    coordinator.start_new_screening()
+    coordinator.confirm_subject()
+    coordinator.complete_profile()
+    coordinator.confirm_consent()
+    assert coordinator.run_preflight()
+    assert coordinator.enter_position_guidance()
+
+    assert not coordinator.start_acquisition()
+
+    assert coordinator.state.error.operator_message == "请由操作员确认站位和安全后开始本段"
+    assert "站稳" not in coordinator.state.error.operator_message
+
+
+def test_finalizing_storage_failure_closes_the_whole_session() -> None:
+    sessions = _Sessions()
+    acquisition = _AsyncAcquisition()
+    coordinator = ScreeningCoordinator(
+        preflight=_Preflight(), sessions=sessions, acquisition=acquisition,
+        analysis=_Analysis(), reports=_Reports(), telemetry=_CollectingTelemetry(),
+    )
+    coordinator.bind_participant(subject_uuid="subject-1", consent_record_id="consent-1")
+    coordinator.start_new_screening()
+    coordinator.confirm_subject()
+    coordinator.complete_profile()
+    coordinator.confirm_consent()
+    assert coordinator.run_preflight()
+    assert coordinator.enter_position_guidance()
+    for _ in range(4):
+        assert coordinator.start_acquisition()
+        coordinator.observe_acquisition_elapsed(elapsed_seconds=20)
+    assert coordinator.state.step is ScreeningStep.FINALIZING
+
+    coordinator.handle_hardware_failure(
+        error=ClientError(
+            code="E-DAT-101",
+            operator_message="硬件数据未通过完整性检查，本次检测未完成",
+            action=ClientAction.RETRY_SCREENING,
+        )
+    )
+
+    assert coordinator.state.step is ScreeningStep.INCOMPLETE
+    assert sessions.incomplete == ["replay-session-1"]
+
+
+def test_final_invalid_result_does_not_tell_operator_to_stand_still() -> None:
+    coordinator = ScreeningCoordinator(
+        preflight=_Preflight(), sessions=_Sessions(), acquisition=_Acquisition(),
+        analysis=_InvalidAnalysis(), reports=_Reports(), telemetry=_Telemetry(),
+    )
+    coordinator.bind_participant(subject_uuid="subject-1", consent_record_id="consent-1")
+    coordinator.start_new_screening()
+    coordinator.confirm_subject()
+    coordinator.complete_profile()
+    coordinator.confirm_consent()
+    assert coordinator.run_preflight()
+    assert coordinator.enter_position_guidance()
+    for _ in range(4):
+        assert coordinator.start_acquisition()
+        coordinator.observe_acquisition_elapsed(elapsed_seconds=20)
+
+    assert coordinator.state.step is ScreeningStep.RETRY_REQUIRED
+    assert coordinator.state.error.operator_message == "本次检测未通过质量检查，请重新检测"
+    assert "站稳" not in coordinator.state.error.operator_message
 
 
 def test_four_stage_protocol_returns_to_guidance_until_final_stage() -> None:
@@ -116,6 +280,7 @@ def test_four_stage_protocol_returns_to_guidance_until_final_stage() -> None:
     ]
     assert len(sessions.created) == 1
     assert sessions.finalized == ["replay-session-1"]
+    assert sessions.incomplete == []
     assert sessions.completed_stages == [
         ("replay-session-1", "BILATERAL_EYES_OPEN"),
         ("replay-session-1", "BILATERAL_EYES_CLOSED"),
