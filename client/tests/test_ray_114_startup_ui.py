@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton
 
 from client.app.startup_validation import StartupValidationWindow
+from client.app.position_guide import GUIDANCE_ASSETS
 from client.startup_validation.service import CollectionPhase, CollectionProgress
 from client.startup_validation.workflow import (
     StartupValidationState,
@@ -213,6 +214,23 @@ def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -
     assert (assets / "status-warning.svg").is_file()
     assert (assets / "app-icon.png").is_file()
     assert (assets / "FeetForcePlate.icns").is_file()
+    assert {
+        asset_name
+        for asset_pair in GUIDANCE_ASSETS.values()
+        for asset_name in asset_pair
+    } == {
+        "stage-1-body.png",
+        "stage-1-feet.png",
+        "stage-2-body.png",
+        "stage-2-feet.png",
+        "stage-3-body.png",
+        "stage-3-feet.png",
+        "stage-4-body.png",
+        "stage-4-feet.jpg",
+    }
+    for asset_pair in GUIDANCE_ASSETS.values():
+        for asset_name in asset_pair:
+            assert (assets / "position-guidance" / asset_name).is_file()
     assert 'datas = [(str(assets), "client/app/assets")]' in packaging_spec
     assert 'icon = assets / "FeetForcePlate.icns"' in packaging_spec
 

@@ -158,6 +158,7 @@ def build_live_institution_runtime(
     )
     # Keep owned resources reachable for the lifetime of the visible workbench.
     runtime.controller.window.setProperty(
-        "institutionLiveResources", (institution, physical_store, acquisition, baseline)
+        "institutionLiveResources",
+        (institution, physical_store, acquisition, capture, baseline),
     )
     return runtime
