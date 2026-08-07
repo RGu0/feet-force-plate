@@ -126,6 +126,13 @@ class ScreeningCoordinator:
         )
 
     def start_new_screening(self) -> None:
+        if self._machine.step in {
+            ScreeningStep.BASIC_REPORT,
+            ScreeningStep.INCOMPLETE,
+            ScreeningStep.RETRY_REQUIRED,
+            ScreeningStep.FAILED,
+        }:
+            self._reset_for_new_screening()
         self._transition(ScreeningStep.SUBJECT_IDENTIFICATION)
 
     def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None:
@@ -368,6 +375,9 @@ class ScreeningCoordinator:
     def start_next_screening(self) -> None:
         if self._machine.step is not ScreeningStep.BASIC_REPORT:
             return
+        self.start_new_screening()
+
+    def _reset_for_new_screening(self) -> None:
         self._machine = SessionStateMachine()
         self._session_id = None
         self._remaining_seconds = None
@@ -385,7 +395,6 @@ class ScreeningCoordinator:
         self._preflight_ready = False
         self._stage_index = 0
         self._position_guidance.set_stage(self._current_stage)
-        self.start_new_screening()
 
     def complete_acquisition(self) -> None:
         if self._machine.step not in {

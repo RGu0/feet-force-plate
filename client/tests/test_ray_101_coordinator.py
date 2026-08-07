@@ -478,6 +478,37 @@ class CoordinatorPreflightTests(unittest.TestCase):
             [("E-RPT-001", "session-1", "RuntimeError: template stack")],
         )
 
+    def test_failed_report_session_can_start_a_fresh_screening_from_workbench(
+        self,
+    ) -> None:
+        preflight = _PreflightPort(
+            PreflightSummary(checks=(PreflightCheck(key="device", ready=True),))
+        )
+        coordinator = _coordinator(
+            preflight=preflight,
+            sessions=_SessionPort(),
+            reports=_ReportPort(create_error=RuntimeError("template stack")),
+        )
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+        coordinator.run_preflight()
+        _start_acquisition(coordinator)
+        coordinator.complete_acquisition()
+        self.assertEqual(coordinator.state.step, ScreeningStep.FAILED)
+
+        coordinator.start_new_screening()
+
+        self.assertEqual(
+            coordinator.state.step,
+            ScreeningStep.SUBJECT_IDENTIFICATION,
+        )
+        self.assertIsNone(coordinator.state.session_id)
+        self.assertEqual(coordinator.state.validity, SessionValidity.UNKNOWN)
+        self.assertEqual(coordinator.state.report_status, ReportStatus.NOT_AVAILABLE)
+        self.assertIsNone(coordinator.state.error)
+
     def test_analysis_failure_is_visible_instead_of_leaving_finalizing_stuck(
         self,
     ) -> None:
