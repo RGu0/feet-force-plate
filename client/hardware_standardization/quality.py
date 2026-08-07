@@ -205,7 +205,7 @@ class DoP4864HardwareQualityGate:
 
     @staticmethod
     def _source_index(row: int, column: int) -> int:
-        return row + 48 * column
+        return int(row) + 48 * int(column)
 
     @classmethod
     def _repaired_source_indices(cls, repair) -> tuple[int, ...]:

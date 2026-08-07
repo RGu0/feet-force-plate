@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from client.device.protocol import RawFrame
@@ -79,6 +81,9 @@ def test_isolated_bad_cell_is_repaired_from_four_orthogonal_neighbours() -> None
 
     assert result.validity is HardwareDataValidity.VALID
     assert result.repaired_source_indices == (source_index,)
+    assert result.processing_metadata is not None
+    persisted_metadata = json.loads(json.dumps(result.processing_metadata))
+    assert persisted_metadata["repaired_source_indices"] == [source_index]
     assert result.physical_session is not None
     output = result.physical_session.frames[0]
     assert output.raw_count[source_index] == 255
