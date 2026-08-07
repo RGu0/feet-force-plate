@@ -33,6 +33,7 @@ from .hardware_identity import (
     ActivationHardwareIdentityProvider,
     ActivationHardwareStatus,
 )
+from .packaged_defaults import load_packaged_cloud_defaults
 from .policy import AccountHardwareLicenseVerifier
 from client.support import (
     SafeClientCounters,
@@ -122,29 +123,60 @@ class AccessRuntimeSettings:
         return "联调环境" if self.integration_mode else None
 
     @classmethod
-    def from_environment(cls, environment: dict[str, str] | None = None):
+    def from_environment(
+        cls,
+        environment: dict[str, str] | None = None,
+        *,
+        packaged_resource_root: Path | None = None,
+    ):
         env = os.environ if environment is None else environment
         raw_url = env.get("FEETFORCEPLATE_API_BASE_URL", "").strip()
         if not raw_url:
-            return None
+            resources = packaged_resource_root or (
+                Path(__file__).resolve().parents[1] / "app" / "resources"
+            )
+            defaults = load_packaged_cloud_defaults(resources)
+            if defaults is None:
+                return None
+            return cls._from_values(
+                raw_url=defaults.base_url,
+                integration_mode=defaults.integration_mode,
+                ca_bundle=str(defaults.ca_bundle),
+                license_key_id=defaults.license_key_id,
+                public_key_file=defaults.license_public_key,
+            )
+        return cls._from_values(
+            raw_url=raw_url,
+            integration_mode=env.get("FEETFORCEPLATE_INTEGRATION_MODE", "") == "1",
+            ca_bundle=env.get("FEETFORCEPLATE_CA_BUNDLE", "").strip(),
+            license_key_id=env.get(
+                "FEETFORCEPLATE_LICENSE_KEY_ID", "license/1"
+            ).strip(),
+            public_key_file=Path(
+                env.get("FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE", "").strip()
+            ),
+        )
+
+    @classmethod
+    def _from_values(
+        cls,
+        *,
+        raw_url: str,
+        integration_mode: bool,
+        ca_bundle: str,
+        license_key_id: str,
+        public_key_file: Path,
+    ):
         parsed = urlparse(raw_url)
         if parsed.scheme.lower() != "https" or not parsed.netloc:
             raise ValueError("FEETFORCEPLATE_API_BASE_URL must use HTTPS")
-        integration_mode = env.get("FEETFORCEPLATE_INTEGRATION_MODE", "") == "1"
         if parsed.port == 7443 and not integration_mode:
             raise ValueError("port 7443 requires explicit integration mode")
-        ca_bundle = env.get("FEETFORCEPLATE_CA_BUNDLE", "").strip()
         verify: bool | str = ca_bundle or True
         if integration_mode and parsed.port == 7443 and not ca_bundle:
             raise ValueError("integration endpoint requires an explicit CA bundle")
         if ca_bundle and not Path(ca_bundle).is_file():
             raise ValueError("configured CA bundle does not exist")
-        license_key_id = env.get(
-            "FEETFORCEPLATE_LICENSE_KEY_ID", "license/1"
-        ).strip()
-        public_key_file = Path(
-            env.get("FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE", "").strip()
-        )
         if not license_key_id or not public_key_file.is_file():
             raise ValueError("a pinned License public key file is required")
         return cls(

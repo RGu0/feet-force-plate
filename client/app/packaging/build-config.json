@@ -19,5 +19,16 @@
     "packaged_resource": "support-recipient.json",
     "missing_resource_behavior": "diagnostic-export-disabled-fail-closed"
   },
+  "cloud_default": {
+    "build_input": "optional-public-endpoint-ca-license-verification-directory",
+    "packaged_resources": [
+      "cloud-default.json",
+      "cloud-ca.pem",
+      "license-public.key"
+    ],
+    "integration_channel": "explicit-7443-self-signed-only",
+    "distribution_channel": "approved-dns-standard-https-port-only",
+    "private_material": "forbidden"
+  },
   "embedded_credentials": false
 }

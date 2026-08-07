@@ -45,6 +45,24 @@ fail-closed with customer-safe error `E-SUP-001`. Tests generate temporary
 keys/resources only; they do not establish deployed key custody, a Windows
 package, or target-OS packaging acceptance.
 
+## Packaged cloud default
+
+To bind a package to a cloud environment by default, set
+`FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY` to a directory containing exactly
+these public files:
+
+- `cloud-default.json`: endpoint, channel, and License key ID;
+- `cloud-ca.pem`: the pinned CA certificate/chain; and
+- `license-public.key`: the 32-byte Ed25519 License verification key.
+
+The spec validates these files then stages fixed package resource names; it
+never stores the build-input path. Process environment variables remain an
+explicit override for development and recovery. Do not put a private License
+key, database DSN, API token, or any activation credential in this directory.
+The current 7443 self-signed endpoint is an `integration` bundle only; a
+user-facing distribution requires an approved HTTPS endpoint on the standard
+port and its production trust material.
+
 ## Platform requirements
 
 - Windows: produce a signed outer installer; check CH340 driver readiness before device use and present a plain-language remediation path. Do not silently install a driver without operator or administrator confirmation.

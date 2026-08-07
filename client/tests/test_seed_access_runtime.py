@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import base64
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -323,6 +324,41 @@ class ClientAccessRuntimeTests(unittest.TestCase):
                     "FEETFORCEPLATE_LICENSE_PUBLIC_KEY_FILE": str(public_key_path),
                 }
             )
+
+    def test_packaged_public_cloud_defaults_create_runtime_settings_without_environment(
+        self,
+    ) -> None:
+        resources = Path(self.temp.name) / "packaged-resources"
+        resources.mkdir()
+        (resources / "cloud-default.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "feetforceplate-client-cloud-default/1",
+                    "channel": "integration",
+                    "api_base_url": "https://39.105.216.113:7443",
+                    "license_key_id": "license/2-key-1",
+                    "ca_bundle_resource": "cloud-ca.pem",
+                    "license_public_key_resource": "license-public.key",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (resources / "cloud-ca.pem").write_text("public test CA", encoding="utf-8")
+        (resources / "license-public.key").write_bytes(b"p" * 32)
+
+        settings = AccessRuntimeSettings.from_environment(
+            {}, packaged_resource_root=resources
+        )
+
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings.base_url, "https://39.105.216.113:7443")
+        self.assertTrue(settings.integration_mode)
+        self.assertEqual(settings.verify, str(resources / "cloud-ca.pem"))
+        self.assertEqual(settings.license_key_id, "license/2-key-1")
+        self.assertEqual(
+            settings.license_public_key_file, resources / "license-public.key"
+        )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,13 @@ import sys
 from pathlib import Path
 import tomllib
 
+from client.cloud.packaged_defaults import (
+    CA_BUNDLE_NAME,
+    CONFIG_NAME,
+    LICENSE_PUBLIC_KEY_NAME,
+    stage_packaged_cloud_defaults,
+)
+
 project_root = Path(SPECPATH).resolve().parents[2]
 entry_point = project_root / "main.py"
 assets = project_root / "client" / "app" / "assets"
@@ -21,6 +28,32 @@ datas = [(str(assets), "client/app/assets")]
 datas.append(
     (str(device_specification), "docs/hardware/device-specifications/do-p4864")
 )
+
+# A packaged build may bind to one environment using public-only inputs.  The
+# build source path is never embedded; only validated fixed basenames are
+# staged into the runtime resources directory.
+cloud_default_source = os.environ.get(
+    "FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY", ""
+).strip()
+if cloud_default_source:
+    staged_cloud_defaults = Path(workpath) / "public-cloud-defaults"
+    try:
+        stage_packaged_cloud_defaults(
+            Path(cloud_default_source), staged_cloud_defaults
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    for resource_name in (
+        CONFIG_NAME,
+        CA_BUNDLE_NAME,
+        LICENSE_PUBLIC_KEY_NAME,
+    ):
+        datas.append(
+            (
+                str(staged_cloud_defaults / resource_name),
+                "client/app/resources",
+            )
+        )
 
 # This optional build input is a public X25519 recipient resource.  Its source
 # path stays in the build process; only its fixed packaged basename is copied.
