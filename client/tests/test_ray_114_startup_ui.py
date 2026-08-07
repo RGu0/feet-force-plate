@@ -235,6 +235,23 @@ def test_packaged_startup_assets_are_runtime_files_not_design_document_links() -
     assert 'icon = assets / "FeetForcePlate.icns"' in packaging_spec
 
 
+def test_packaged_hardware_probe_includes_the_dop4864_device_specification() -> None:
+    packaging_spec = (
+        Path(__file__).parents[1] / "app" / "packaging" / "FeetForcePlate.spec"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'device_specification = project_root / "docs" / "hardware" '
+        '/ "device-specifications" / "do-p4864" / "1.0.json"'
+        in packaging_spec
+    )
+    assert (
+        '(str(device_specification), '
+        '"docs/hardware/device-specifications/do-p4864")'
+        in packaging_spec
+    )
+
+
 def test_repeated_signal_failure_prompts_support_without_technical_leak(qtbot) -> None:
     window = StartupValidationWindow()
     qtbot.addWidget(window)
