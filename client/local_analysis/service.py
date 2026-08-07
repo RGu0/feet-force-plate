@@ -11,7 +11,12 @@ from typing import Protocol
 from numpy import number
 from numpy.typing import NDArray
 
-from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus
+from client.reporting.models import (
+    BasicReportDocument,
+    ReportMetric,
+    ReportStage,
+    ReportStatus,
+)
 from client.reporting.copy import (
     BASIC_REPORT_DISCLAIMER,
     BASIC_REPORT_SUMMARY,
@@ -188,6 +193,25 @@ _REPORT_LABELS = {
     "left_load_percent": "左侧相对负重",
     "right_load_percent": "右侧相对负重",
 }
+_STAGE_TITLES = {
+    "BILATERAL_EYES_OPEN": "第一段：并足睁眼",
+    "BILATERAL_EYES_CLOSED": "第二段：并足闭眼",
+    "SEMI_TANDEM_LEFT_FORWARD": "第三段：左脚在前半串联",
+    "SEMI_TANDEM_RIGHT_FORWARD": "第四段：右脚在前半串联",
+}
+_STAGE_REPORT_LABELS = {
+    "left_load_percent": "左侧相对负载",
+    "right_load_percent": "右侧相对负载",
+    "anterior_load_percent": "前侧相对负载",
+    "posterior_load_percent": "后侧相对负载",
+    "cop_path_mm": "COP 路径长度",
+    "cop_mean_velocity_mm_s": "COP 平均速度",
+    "cop_ml_range_90_mm": "COP ML 90% 范围",
+    "cop_ap_range_90_mm": "COP AP 90% 范围",
+    "cop_ml_mean_velocity_mm_s": "COP ML 平均速度",
+    "cop_ap_mean_velocity_mm_s": "COP AP 平均速度",
+    "cop_ellipse_area_95_mm2": "COP 95% 椭圆面积",
+}
 _ALGORITHM_VERSION = "local-basic/1.0.0"
 
 
@@ -221,6 +245,27 @@ def build_basic_report_document(
     )
     if not report_metrics:
         raise ValueError("BASIC_READY requires at least one approved customer metric")
+    report_stages = tuple(
+        ReportStage(
+            stage_id=stage.stage_id,
+            title=_STAGE_TITLES[stage.stage_id],
+            relative_heatmap=stage.relative_heatmap,
+            metrics=tuple(
+                ReportMetric(
+                    key=metric.key,
+                    label=_STAGE_REPORT_LABELS[metric.key],
+                    value=metric.value,
+                    unit=metric.unit,
+                    definition_version=metric.definition_version,
+                )
+                for metric in stage.metrics
+                if metric.key in _STAGE_REPORT_LABELS
+            ),
+        )
+        for stage in result.stage_projections
+    )
+    if result.protocol_id == "standard-static-balance" and len(report_stages) != 4:
+        raise ValueError("physical BASIC_READY requires four stage projections")
     metric_keys = {metric.key for metric in report_metrics}
     summary = (
         BASIC_REPORT_SUMMARY
@@ -243,7 +288,8 @@ def build_basic_report_document(
         relative_heatmap=result.relative_heatmap,
         summary=summary,
         disclaimer=BASIC_REPORT_DISCLAIMER,
-        provenance=(result.algorithm_version, "report-schema/1.0.0"),
+        provenance=(result.algorithm_version, "report-schema/2.0.0"),
+        stages=report_stages,
     )
 
 

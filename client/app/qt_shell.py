@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from client.local_analysis.display import DisplayFrame
+from client.local_analysis.display import DisplayFrame, build_display_frame
 from client.reporting.copy import report_badges, report_parameter_note
 from client.reporting.models import BasicReportDocument
 from client.hardware_standardization.dynamic_defect_mask import DynamicDefectStatus
@@ -923,8 +923,62 @@ class ScreeningWindow(QMainWindow):
                 for metric in document.metrics
             )
         )
+        stage_parameter_lines: list[str] = []
+        for index in range(4):
+            heatmap = page.findChild(HeatmapWidget, f"reportStageHeatmap{index}")
+            stage_title = page.findChild(QLabel, f"reportStageTitle{index}")
+            if index >= len(document.stages):
+                heatmap.hide()
+                stage_title.hide()
+                continue
+            stage = document.stages[index]
+            stage_title.setText(stage.title)
+            stage_title.show()
+            heatmap.set_display_frame(
+                build_display_frame(
+                    stage.relative_heatmap,
+                    sequence=index + 1,
+                    captured_monotonic_seconds=float(index),
+                    cop_trail=(),
+                    total_trend=(),
+                )
+            )
+            heatmap.show()
+            metric_map = stage.metric_map
+            left = metric_map.get("left_load_percent")
+            right = metric_map.get("right_load_percent")
+            anterior = metric_map.get("anterior_load_percent")
+            posterior = metric_map.get("posterior_load_percent")
+            path = metric_map.get("cop_path_mm")
+            ml_range = metric_map.get("cop_ml_range_90_mm")
+            ap_range = metric_map.get("cop_ap_range_90_mm")
+            ellipse = metric_map.get("cop_ellipse_area_95_mm2")
+            load_parts: list[str] = []
+            if left is not None and right is not None:
+                load_parts.append(f"左右负载 {left.value:.1f}/{right.value:.1f}%")
+            if anterior is not None and posterior is not None:
+                load_parts.append(
+                    f"前后负载 {anterior.value:.1f}/{posterior.value:.1f}%"
+                )
+            cop_parts: list[str] = []
+            if path is not None:
+                cop_parts.append(f"COP 路径 {path.value:.1f}mm")
+            if ml_range is not None and ap_range is not None:
+                cop_parts.append(
+                    f"ML/AP 90% 范围 {ml_range.value:.1f}/{ap_range.value:.1f}mm"
+                )
+            if ellipse is not None:
+                cop_parts.append(f"95% 椭圆面积 {ellipse.value:.1f}mm²")
+            detail_lines = tuple(
+                line for line in (" · ".join(load_parts), " · ".join(cop_parts)) if line
+            )
+            stage_parameter_lines.append(
+                f"{stage.title}：" + "\n　".join(detail_lines)
+            )
         page.findChild(QLabel, "reportParameters").setText(
-            report_parameter_note(document.kind)
+            "\n".join(stage_parameter_lines)
+            if stage_parameter_lines
+            else report_parameter_note(document.kind)
         )
         page.findChild(QLabel, "reportPreviewFooter").setText(
             f"报告编号 {document.report_id} · v{document.version} · 生成 {document.generated_at:%Y-%m-%d %H:%M} · {document.disclaimer}"
@@ -2181,7 +2235,7 @@ class ScreeningWindow(QMainWindow):
         paper = QFrame()
         paper.setObjectName("reportPaper")
         paper.setFixedWidth(566)
-        paper.setMinimumHeight(780)
+        paper.setMinimumHeight(1320)
         layout = QVBoxLayout(paper)
         layout.setContentsMargins(44, 40, 44, 40)
         layout.setSpacing(0)
@@ -2228,30 +2282,44 @@ class ScreeningWindow(QMainWindow):
         layout.addSpacing(10)
         layout.addWidget(metrics)
         layout.addSpacing(22)
-        charts_title = self._label("图表", "reportChartsTitle")
+        charts_title = self._label("四阶段平均压力分布", "reportChartsTitle")
         charts_title.setProperty("reportSection", True)
         layout.addWidget(charts_title)
-        chart_row = QHBoxLayout()
-        mini_heatmap = HeatmapWidget(physical_grid=self._physical_grid)
-        mini_heatmap.setMinimumSize(230, 150)
-        mini_heatmap.setMaximumHeight(150)
-        chart_row.addWidget(mini_heatmap)
-        placeholder = QFrame()
-        placeholder.setProperty("reportPlaceholder", True)
-        placeholder.setMinimumSize(230, 150)
-        placeholder_layout = QVBoxLayout(placeholder)
-        text = self._label("稳定性轨迹和载荷曲线\n当前基础报告不显示", "copChartPlaceholder", alignment=Qt.AlignmentFlag.AlignCenter)
-        text.setProperty("mutedText", True)
-        placeholder_layout.addWidget(text)
-        chart_row.addWidget(placeholder)
+        charts = QGridLayout()
+        charts.setContentsMargins(0, 0, 0, 0)
+        charts.setHorizontalSpacing(14)
+        charts.setVerticalSpacing(12)
+        default_titles = (
+            "第一段：并足睁眼",
+            "第二段：并足闭眼",
+            "第三段：左脚在前半串联",
+            "第四段：右脚在前半串联",
+        )
+        for index, title in enumerate(default_titles):
+            card = QFrame()
+            card.setProperty("reportChartCard", True)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(6)
+            stage_title = self._label(title, f"reportStageTitle{index}")
+            stage_title.setProperty("secondaryText", True)
+            card_layout.addWidget(stage_title)
+            heatmap = HeatmapWidget(physical_grid=self._physical_grid)
+            heatmap.setObjectName(f"reportStageHeatmap{index}")
+            heatmap.setAccessibleName(f"{title}平均相对压力图")
+            heatmap.setMinimumSize(215, 145)
+            heatmap.setMaximumHeight(145)
+            card_layout.addWidget(heatmap)
+            charts.addWidget(card, index // 2, index % 2)
         layout.addSpacing(10)
-        layout.addLayout(chart_row)
+        layout.addLayout(charts)
         layout.addSpacing(22)
         params = self._label("专业参数", "reportParametersTitle")
         params.setProperty("reportSection", True)
         layout.addWidget(params)
         parameter_text = self._label("完成有效检测后，将按报告类型显示可用指标及其解释边界。", "reportParameters")
         parameter_text.setProperty("secondaryText", True)
+        parameter_text.setWordWrap(True)
         layout.addSpacing(10)
         layout.addWidget(parameter_text)
         layout.addStretch(1)

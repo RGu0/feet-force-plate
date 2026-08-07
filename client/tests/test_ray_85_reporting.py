@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus
+from client.reporting.models import (
+    BasicReportDocument,
+    ReportMetric,
+    ReportStage,
+    ReportStatus,
+)
 
 
 def test_basic_report_document_is_serializable_and_contains_no_diagnostic_claim() -> None:
@@ -31,7 +36,23 @@ def test_basic_report_document_is_serializable_and_contains_no_diagnostic_claim(
         relative_heatmap=((0.0, 1.0),),
         summary="基础相对压力分布已生成。",
         disclaimer="本报告用于健康筛查与风险提示，不作疾病诊断。",
-        provenance=("local-basic/1.0.0", "report-schema/1.0.0"),
+        provenance=("local-basic/1.0.0", "report-schema/2.0.0"),
+        stages=(
+            ReportStage(
+                stage_id="BILATERAL_EYES_OPEN",
+                title="第一段：并足睁眼",
+                relative_heatmap=((0.0, 1.0),),
+                metrics=(
+                    ReportMetric(
+                        "cop_path_mm",
+                        "COP 路径长度",
+                        12.5,
+                        "mm",
+                        "2.0.0",
+                    ),
+                ),
+            ),
+        ),
     )
 
     payload = json.loads(report.to_json())
@@ -42,3 +63,6 @@ def test_basic_report_document_is_serializable_and_contains_no_diagnostic_claim(
     assert "不作疾病诊断" in payload["disclaimer"]
     assert "quality" not in payload
     assert "stack" not in report.to_json().lower()
+    restored = BasicReportDocument.from_json(report.to_json())
+    assert restored == report
+    assert restored.stages[0].metric_map["cop_path_mm"].value == 12.5

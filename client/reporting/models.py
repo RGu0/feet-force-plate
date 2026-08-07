@@ -21,6 +21,18 @@ class ReportMetric:
 
 
 @dataclass(frozen=True, slots=True)
+class ReportStage:
+    stage_id: str
+    title: str
+    relative_heatmap: tuple[tuple[float, ...], ...]
+    metrics: tuple[ReportMetric, ...]
+
+    @property
+    def metric_map(self) -> dict[str, ReportMetric]:
+        return {metric.key: metric for metric in self.metrics}
+
+
+@dataclass(frozen=True, slots=True)
 class BasicReportDocument:
     report_id: str
     version: int
@@ -38,6 +50,7 @@ class BasicReportDocument:
     summary: str
     disclaimer: str
     provenance: tuple[str, ...]
+    stages: tuple[ReportStage, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +79,24 @@ class BasicReportDocument:
             "summary": self.summary,
             "disclaimer": self.disclaimer,
             "provenance": self.provenance,
+            "stages": [
+                {
+                    "stage_id": stage.stage_id,
+                    "title": stage.title,
+                    "relative_heatmap": stage.relative_heatmap,
+                    "metrics": [
+                        {
+                            "key": metric.key,
+                            "label": metric.label,
+                            "value": metric.value,
+                            "unit": metric.unit,
+                            "definition_version": metric.definition_version,
+                        }
+                        for metric in stage.metrics
+                    ],
+                }
+                for stage in self.stages
+            ],
         }
 
     def to_json(self) -> str:
@@ -99,4 +130,18 @@ class BasicReportDocument:
             summary=value["summary"],
             disclaimer=value["disclaimer"],
             provenance=tuple(value["provenance"]),
+            stages=tuple(
+                ReportStage(
+                    stage_id=stage["stage_id"],
+                    title=stage["title"],
+                    relative_heatmap=tuple(
+                        tuple(float(cell) for cell in row)
+                        for row in stage["relative_heatmap"]
+                    ),
+                    metrics=tuple(
+                        ReportMetric(**metric) for metric in stage["metrics"]
+                    ),
+                )
+                for stage in value.get("stages", ())
+            ),
         )

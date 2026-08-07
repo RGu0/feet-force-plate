@@ -10,6 +10,7 @@ import pytest
 from PySide6.QtWidgets import QLabel
 
 from client.app import ui_integration
+from client.app.heatmap import HeatmapWidget
 from client.app.pages import PageId
 from client.local_analysis.display import (
     DisplayRefreshController,
@@ -17,7 +18,12 @@ from client.local_analysis.display import (
     build_display_frame,
 )
 from client.local_analysis.service import ProcessingOutcome, ProcessingStatus
-from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus
+from client.reporting.models import (
+    BasicReportDocument,
+    ReportMetric,
+    ReportStage,
+    ReportStatus,
+)
 from client.workflow.models import (
     PreflightCheck,
     PreflightSummary,
@@ -33,6 +39,13 @@ def test_ui_integration_module_is_available_for_the_real_composition_root() -> N
 
 
 def _report() -> BasicReportDocument:
+    stage_heatmap = tuple(
+        tuple(
+            1.0 if (row, column) in {(20, 10), (20, 53)} else 0.0
+            for column in range(64)
+        )
+        for row in range(48)
+    )
     return BasicReportDocument(
         report_id="report-ui-1",
         version=2,
@@ -64,7 +77,31 @@ def _report() -> BasicReportDocument:
         relative_heatmap=((0.0, 1.0),),
         summary="基础相对压力分布已生成。",
         disclaimer="本报告用于健康筛查与风险提示，不作疾病诊断。",
-        provenance=("local-basic/1.0.0", "report-schema/1.0.0"),
+        provenance=("local-basic/1.0.0", "report-schema/2.0.0"),
+        stages=tuple(
+            ReportStage(
+                stage_id=stage_id,
+                title=title,
+                relative_heatmap=stage_heatmap,
+                metrics=(
+                    ReportMetric(
+                        "cop_path_mm",
+                        "COP 路径长度",
+                        float(index + 1),
+                        "mm",
+                        "2.0.0",
+                    ),
+                ),
+            )
+            for index, (stage_id, title) in enumerate(
+                (
+                    ("BILATERAL_EYES_OPEN", "第一段：并足睁眼"),
+                    ("BILATERAL_EYES_CLOSED", "第二段：并足闭眼"),
+                    ("SEMI_TANDEM_LEFT_FORWARD", "第三段：左脚在前半串联"),
+                    ("SEMI_TANDEM_RIGHT_FORWARD", "第四段：右脚在前半串联"),
+                )
+            )
+        ),
     )
 
 
@@ -221,6 +258,16 @@ def test_connected_controller_loads_the_exact_report_document_into_p10(qtbot) ->
 
     page = controller.window.page_widget(PageId.REPORT_PREVIEW)
     assert controller.window.current_page_id is PageId.REPORT_PREVIEW
+    report_page = controller.window.page_widget(PageId.REPORT_PREVIEW)
+    stage_maps = [
+        report_page.findChild(HeatmapWidget, f"reportStageHeatmap{index}")
+        for index in range(4)
+    ]
+    assert all(stage_map is not None for stage_map in stage_maps)
+    assert all(stage_map.display_frame is not None for stage_map in stage_maps)
+    parameters = page.findChild(QLabel, "reportParameters").text()
+    assert "第一段：并足睁眼" in parameters
+    assert "COP 路径 1.0mm" in parameters
     assert page.findChild(QLabel, "reportPreviewSummary").text() == report.summary
     assert page.findChild(QLabel, "reportPreviewTitle").text() == "基础筛查报告"
     assert "v2" in page.findChild(QLabel, "reportVersionPillText").text()

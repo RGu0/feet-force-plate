@@ -25,15 +25,16 @@ from .models import (
     LocalAnalysisResult,
     LocalMetricValue,
     LocalQualityStatus,
+    LocalStageProjection,
     WithheldMetric,
 )
 
 
-_RESULT_VERSION = 1
-_ALGORITHM_VERSION = "local-physical-analysis/1.0"
+_RESULT_VERSION = 2
+_ALGORITHM_VERSION = "local-physical-analysis/2.0"
 _PROTOCOL_ID = "standard-static-balance"
 _WITHHELD_REASON = "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED"
-_RELATIVE_BASIC_VERSION = "physical-relative-basic/1.0"
+_RELATIVE_BASIC_VERSION = "physical-relative-basic/2.0"
 _MINIMUM_RELATIVE_SAMPLE_RATE_HZ = 10.0
 _MINIMUM_RELATIVE_DURATION_S = 10.0
 _MAXIMUM_RELATIVE_GAP_INTERVALS = 2.5
@@ -67,6 +68,24 @@ _UNITS = {
     "total_frame_count": "count",
     "gap_count": "count",
 }
+_RELEASED_STAGE_FIELDS = {
+    "cop_path_mm",
+    "mean_velocity_mm_s",
+    "ap_mean_velocity_mm_s",
+    "ml_mean_velocity_mm_s",
+    "ap_range_90_mm",
+    "ml_range_90_mm",
+    "ellipse_area_95_mm2",
+}
+_REPORT_STAGE_FEATURES = (
+    ("cop_path_mm", "cop_path_mm"),
+    ("cop_mean_velocity_mm_s", "mean_velocity_mm_s"),
+    ("cop_ml_range_90_mm", "ml_range_90_mm"),
+    ("cop_ap_range_90_mm", "ap_range_90_mm"),
+    ("cop_ml_mean_velocity_mm_s", "ml_mean_velocity_mm_s"),
+    ("cop_ap_mean_velocity_mm_s", "ap_mean_velocity_mm_s"),
+    ("cop_ellipse_area_95_mm2", "ellipse_area_95_mm2"),
+)
 
 
 def analyze_committed_physical_session(
@@ -135,28 +154,24 @@ def analyze_physical_session(
     )
     release_failure = _relative_release_failure(session, protocol_context)
     if release_failure is None:
-        relative_heatmap, left_percent, right_percent = _relative_basic_projection(
+        stage_projections = _relative_stage_projections(
             session,
             protocol_context,
+            feature_set,
+            definition_version=definition_version,
+            relative_definition_version=relative_definition_version,
         )
+        first_stage = stage_projections[0]
+        relative_heatmap = first_stage.relative_heatmap
         customer_metrics = (
-            LocalMetricValue(
-                key="left_load_percent",
-                value=left_percent,
-                unit="percent",
-                definition_version=relative_definition_version,
-            ),
-            LocalMetricValue(
-                key="right_load_percent",
-                value=right_percent,
-                unit="percent",
-                definition_version=relative_definition_version,
-            ),
+            first_stage.metric_map["left_load_percent"],
+            first_stage.metric_map["right_load_percent"],
         )
         release_withheld: tuple[WithheldMetric, ...] = ()
         quality_status = LocalQualityStatus.VALID
     else:
         relative_heatmap = None
+        stage_projections = ()
         customer_metrics = ()
         release_withheld = (
             WithheldMetric("left_load_percent", release_failure),
@@ -175,10 +190,13 @@ def analyze_physical_session(
         customer_metrics=customer_metrics,
         internal_metrics=metrics,
         withheld_metrics=tuple(
-            WithheldMetric(metric.key, _WITHHELD_REASON) for metric in metrics
+            WithheldMetric(metric.key, _WITHHELD_REASON)
+            for metric in metrics
+            if metric.key.rsplit(":", 1)[-1] not in _RELEASED_STAGE_FIELDS
         )
         + release_withheld
         + (WithheldMetric("total_force_newton", "CALIBRATION_NOT_VERIFIED"),),
+        stage_projections=stage_projections,
     )
 
 
@@ -217,65 +235,135 @@ def _relative_release_failure(
     return None
 
 
-def _relative_basic_projection(
+def _relative_stage_projections(
     session: PhysicalPressureSession,
     protocol_context: StaticBalanceProtocolContext,
-) -> tuple[tuple[tuple[float, ...], ...], float, float]:
-    """Project the first bilateral stage without releasing absolute force or COP."""
-
-    stage = protocol_context.stages[0]
-    frames = tuple(
-        frame
-        for frame in session.frames
-        if stage.start_s <= frame.timestamp_s < stage.end_s
-    )
-    if not frames:
-        raise ValueError("relative basic projection requires first-stage frames")
-    forces = np.asarray(
-        [frame.estimated_force_n for frame in frames],
-        dtype=np.float64,
-    )
-    mean_force = np.mean(forces, axis=0, dtype=np.float64)
-    total_force = float(np.sum(mean_force))
-    if total_force <= 0:
-        raise ValueError("relative basic projection requires positive contact")
-
-    subject_ml = np.asarray(
-        [
-            board_to_subject_coordinates(
-                x_mm=point.board_x_mm,
-                y_mm=point.board_y_mm,
-                orientation=stage.subject_orientation,
-            )[0]
-            for point in session.points
-        ],
-        dtype=np.float64,
-    )
-    midline = float((np.min(subject_ml) + np.max(subject_ml)) / 2.0)
-    left_weights = np.where(subject_ml < midline, 1.0, 0.0)
-    right_weights = np.where(subject_ml > midline, 1.0, 0.0)
-    on_midline = np.isclose(subject_ml, midline)
-    left_weights[on_midline] = 0.5
-    right_weights[on_midline] = 0.5
-    left_percent = float(np.dot(mean_force, left_weights) / total_force * 100.0)
-    right_percent = float(np.dot(mean_force, right_weights) / total_force * 100.0)
+    feature_set,
+    *,
+    definition_version: str,
+    relative_definition_version: str,
+) -> tuple[LocalStageProjection, ...]:
+    """Build one mean relative distribution and descriptive metric set per stage."""
 
     x_values = tuple(sorted({point.board_x_mm for point in session.points}))
     y_values = tuple(sorted({point.board_y_mm for point in session.points}))
     x_index = {value: index for index, value in enumerate(x_values)}
     y_index = {value: index for index, value in enumerate(y_values)}
-    grid = np.zeros((len(y_values), len(x_values)), dtype=np.float64)
-    occupied: set[tuple[int, int]] = set()
-    for point, value in zip(session.points, mean_force, strict=True):
-        cell = (y_index[point.board_y_mm], x_index[point.board_x_mm])
-        if cell in occupied:
-            raise ValueError("physical points must map to unique grid cells")
-        occupied.add(cell)
-        grid[cell] = value
-    peak = float(np.max(grid))
-    relative = grid / peak if peak > 0 else np.zeros_like(grid)
+    projections: list[LocalStageProjection] = []
+    for stage_index, (stage, features) in enumerate(
+        zip(protocol_context.stages, feature_set.stages, strict=True)
+    ):
+        last_stage = stage_index == len(protocol_context.stages) - 1
+        frames = tuple(
+            frame
+            for frame in session.frames
+            if stage.start_s <= frame.timestamp_s < stage.end_s
+            or (last_stage and frame.timestamp_s == stage.end_s)
+        )
+        if not frames:
+            raise ValueError(f"stage {stage.stage_id.value} requires physical frames")
+        mean_force = np.mean(
+            np.asarray(
+                [frame.estimated_force_n for frame in frames],
+                dtype=np.float64,
+            ),
+            axis=0,
+            dtype=np.float64,
+        )
+        total_force = float(np.sum(mean_force))
+        if total_force <= 0:
+            raise ValueError(f"stage {stage.stage_id.value} requires positive contact")
+
+        subject_coordinates = tuple(
+            board_to_subject_coordinates(
+                x_mm=point.board_x_mm,
+                y_mm=point.board_y_mm,
+                orientation=stage.subject_orientation,
+            )
+            for point in session.points
+        )
+        subject_ml = np.asarray(
+            [coordinate[0] for coordinate in subject_coordinates], dtype=np.float64
+        )
+        subject_ap = np.asarray(
+            [coordinate[1] for coordinate in subject_coordinates], dtype=np.float64
+        )
+        left_percent, right_percent = _opposed_load_percentages(
+            mean_force, subject_ml
+        )
+        posterior_percent, anterior_percent = _opposed_load_percentages(
+            mean_force, subject_ap
+        )
+
+        grid = np.zeros((len(y_values), len(x_values)), dtype=np.float64)
+        occupied: set[tuple[int, int]] = set()
+        for point, value in zip(session.points, mean_force, strict=True):
+            cell = (y_index[point.board_y_mm], x_index[point.board_x_mm])
+            if cell in occupied:
+                raise ValueError("physical points must map to unique grid cells")
+            occupied.add(cell)
+            grid[cell] = value
+        peak = float(np.max(grid))
+        relative = grid / peak if peak > 0 else np.zeros_like(grid)
+        metrics = [
+            LocalMetricValue(
+                key="left_load_percent",
+                value=left_percent,
+                unit="percent",
+                definition_version=relative_definition_version,
+            ),
+            LocalMetricValue(
+                key="right_load_percent",
+                value=right_percent,
+                unit="percent",
+                definition_version=relative_definition_version,
+            ),
+            LocalMetricValue(
+                key="anterior_load_percent",
+                value=anterior_percent,
+                unit="percent",
+                definition_version=relative_definition_version,
+            ),
+            LocalMetricValue(
+                key="posterior_load_percent",
+                value=posterior_percent,
+                unit="percent",
+                definition_version=relative_definition_version,
+            ),
+        ]
+        metrics.extend(
+            LocalMetricValue(
+                key=report_key,
+                value=float(getattr(features, feature_name)),
+                unit=_UNITS[feature_name],
+                definition_version=definition_version,
+            )
+            for report_key, feature_name in _REPORT_STAGE_FEATURES
+        )
+        projections.append(
+            LocalStageProjection(
+                stage_id=stage.stage_id.value,
+                relative_heatmap=tuple(
+                    tuple(float(value) for value in row) for row in relative
+                ),
+                metrics=tuple(metrics),
+            )
+        )
+    return tuple(projections)
+
+
+def _opposed_load_percentages(
+    mean_force: np.ndarray,
+    coordinates: np.ndarray,
+) -> tuple[float, float]:
+    midline = float((np.min(coordinates) + np.max(coordinates)) / 2.0)
+    lower_weights = np.where(coordinates < midline, 1.0, 0.0)
+    upper_weights = np.where(coordinates > midline, 1.0, 0.0)
+    on_midline = np.isclose(coordinates, midline)
+    lower_weights[on_midline] = 0.5
+    upper_weights[on_midline] = 0.5
+    total_force = float(np.sum(mean_force))
     return (
-        tuple(tuple(float(value) for value in row) for row in relative),
-        left_percent,
-        right_percent,
+        float(np.dot(mean_force, lower_weights) / total_force * 100.0),
+        float(np.dot(mean_force, upper_weights) / total_force * 100.0),
     )

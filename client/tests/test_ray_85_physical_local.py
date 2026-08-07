@@ -246,8 +246,8 @@ def test_public_physical_session_releases_only_relative_basic_projection() -> No
     result = analyze_physical_session(session, _protocol(), parameters)
 
     assert isinstance(result, LocalAnalysisResult)
-    assert result.result_version == 1
-    assert result.algorithm_version.startswith("local-physical-analysis/1.0|")
+    assert result.result_version == 2
+    assert result.algorithm_version.startswith("local-physical-analysis/2.0|")
     assert result.protocol_id == "standard-static-balance"
     assert result.protocol_version == "static-balance/1"
     assert result.source_frame_count == 1_601
@@ -272,11 +272,63 @@ def test_public_physical_session_releases_only_relative_basic_projection() -> No
         )
     )
     assert len(result.internal_metrics) == 4 * len(_SCALAR_STAGE_FIELDS)
-    assert len(result.withheld_metrics) == len(result.internal_metrics) + 1
+    released_stage_fields = {
+        "cop_path_mm",
+        "mean_velocity_mm_s",
+        "ap_mean_velocity_mm_s",
+        "ml_mean_velocity_mm_s",
+        "ap_range_90_mm",
+        "ml_range_90_mm",
+        "ellipse_area_95_mm2",
+    }
+    assert not any(
+        metric.key.rsplit(":", 1)[-1] in released_stage_fields
+        for metric in result.withheld_metrics
+    )
     assert set(result.withheld_reason_map.values()) == {
         "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED",
         "CALIBRATION_NOT_VERIFIED",
     }
+
+
+def test_physical_result_keeps_four_stage_mean_maps_and_descriptive_metrics() -> None:
+    result = analyze_physical_session(
+        _physical_session(),
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/four-stage-basic-report",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert [projection.stage_id for projection in result.stage_projections] == [
+        stage.value for stage in StageId
+    ]
+    assert len(result.stage_projections) == 4
+    assert all(
+        np.asarray(projection.relative_heatmap).shape == (2, 2)
+        for projection in result.stage_projections
+    )
+    first = result.stage_projections[0]
+    assert first.metric_map["left_load_percent"].value == pytest.approx(49.0025)
+    assert first.metric_map["right_load_percent"].value == pytest.approx(50.9975)
+    assert first.metric_map["anterior_load_percent"].value == pytest.approx(50.0)
+    assert first.metric_map["posterior_load_percent"].value == pytest.approx(50.0)
+    assert set(first.metric_map) == {
+        "left_load_percent",
+        "right_load_percent",
+        "anterior_load_percent",
+        "posterior_load_percent",
+        "cop_path_mm",
+        "cop_mean_velocity_mm_s",
+        "cop_ml_range_90_mm",
+        "cop_ap_range_90_mm",
+        "cop_ml_mean_velocity_mm_s",
+        "cop_ap_mean_velocity_mm_s",
+        "cop_ellipse_area_95_mm2",
+    }
+    assert result.relative_heatmap == first.relative_heatmap
 
 
 def test_local_metrics_are_the_exact_features_used_by_cloud_physical_pipeline() -> None:
@@ -482,10 +534,24 @@ def test_valid_physical_result_builds_nondiagnostic_basic_ready_report() -> None
         "right_load_percent",
     }
     assert report.relative_heatmap == result.relative_heatmap
-    assert all("cop" not in metric.key.lower() for metric in report.metrics)
+    assert [stage.stage_id for stage in report.stages] == [
+        stage.value for stage in StageId
+    ]
+    assert [stage.title for stage in report.stages] == [
+        "第一段：并足睁眼",
+        "第二段：并足闭眼",
+        "第三段：左脚在前半串联",
+        "第四段：右脚在前半串联",
+    ]
+    assert all(stage.relative_heatmap for stage in report.stages)
+    assert all("cop_path_mm" in stage.metric_map for stage in report.stages)
+    assert all("cop_ml_range_90_mm" in stage.metric_map for stage in report.stages)
+    assert all("cop_ap_range_90_mm" in stage.metric_map for stage in report.stages)
     assert "总相对载荷" not in report.summary
-    assert "左右相对负重" in report.summary
+    assert "四段" in report.summary
+    assert "COP" in report.summary
     assert "不作疾病诊断" in report.disclaimer
+    assert "report-schema/2.0.0" in report.provenance
 
 
 def test_degraded_physical_result_never_builds_customer_report() -> None:

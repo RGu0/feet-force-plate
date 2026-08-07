@@ -42,6 +42,17 @@ class WithheldMetric:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalStageProjection:
+    stage_id: str
+    relative_heatmap: tuple[tuple[float, ...], ...]
+    metrics: tuple[LocalMetricValue, ...]
+
+    @property
+    def metric_map(self) -> dict[str, LocalMetricValue]:
+        return {metric.key: metric for metric in self.metrics}
+
+
+@dataclass(frozen=True, slots=True)
 class LocalAnalysisResult:
     result_version: int
     algorithm_version: str
@@ -54,6 +65,7 @@ class LocalAnalysisResult:
     customer_metrics: tuple[LocalMetricValue, ...]
     internal_metrics: tuple[LocalMetricValue, ...]
     withheld_metrics: tuple[WithheldMetric, ...]
+    stage_projections: tuple[LocalStageProjection, ...] = ()
 
     @property
     def customer_metric_map(self) -> dict[str, LocalMetricValue]:

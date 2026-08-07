@@ -18,6 +18,14 @@ from scipy.ndimage import gaussian_filter, label
 _CARDINAL_STRUCTURE = np.asarray(
     ((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=np.uint8
 )
+_HEAT_SCALE_RGB = (
+    (45, 79, 168),
+    (31, 159, 206),
+    (99, 198, 133),
+    (240, 194, 74),
+    (226, 85, 57),
+)
+_FADE_START = 28.0 / 255.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,3 +224,22 @@ def _nonzero_p99(values: NDArray[np.float64]) -> float:
 
 def _as_tuple(values: NDArray[np.float64]) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(value) for value in row) for row in values)
+
+
+def relative_color_rgba(value: float) -> tuple[int, int, int, int]:
+    """Return the shared UI/report pressure color over a transparent board."""
+
+    bounded = max(0.0, min(1.0, float(value)))
+    if bounded <= _FADE_START:
+        return (246, 250, 253, 0)
+    position = bounded * (len(_HEAT_SCALE_RGB) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(_HEAT_SCALE_RGB) - 1)
+    ratio = position - lower
+    start, end = _HEAT_SCALE_RGB[lower], _HEAT_SCALE_RGB[upper]
+    rgb = tuple(
+        round(start[channel] + (end[channel] - start[channel]) * ratio)
+        for channel in range(3)
+    )
+    pressure = (bounded - _FADE_START) / (1.0 - _FADE_START)
+    return (*rgb, round(255 * pressure**1.25))

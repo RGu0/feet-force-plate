@@ -10,7 +10,11 @@ from client.hardware_standardization.ports import HardwareDisplayGeometry
 from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayFrame
 
-from .heatmap_display import HeatmapDisplayConfig, HeatmapDisplayRefiner
+from .heatmap_display import (
+    HeatmapDisplayConfig,
+    HeatmapDisplayRefiner,
+    relative_color_rgba,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,29 +255,4 @@ class HeatmapWidget(QWidget):
 
 def _relative_color(value: float) -> QColor:
     """Interpolate the design-system-only pressure heat scale."""
-    stops = (
-        QColor("#2D4FA8"),
-        QColor("#1F9FCE"),
-        QColor("#63C685"),
-        QColor("#F0C24A"),
-        QColor("#E25539"),
-    )
-    bounded = max(0.0, min(1.0, value))
-    # Keep the actual P-07 board consistent with the heatmap replay: low
-    # pressure fades fully into the black board instead of forming blue blocks.
-    fade_start = 28.0 / 255.0
-    if bounded <= fade_start:
-        return QColor(246, 250, 253, 0)
-    position = bounded * (len(stops) - 1)
-    lower = int(position)
-    upper = min(lower + 1, len(stops) - 1)
-    ratio = position - lower
-    start, end = stops[lower], stops[upper]
-    color = QColor(
-        round(start.red() + (end.red() - start.red()) * ratio),
-        round(start.green() + (end.green() - start.green()) * ratio),
-        round(start.blue() + (end.blue() - start.blue()) * ratio),
-    )
-    pressure = (bounded - fade_start) / (1.0 - fade_start)
-    color.setAlphaF(pressure**1.25)
-    return color
+    return QColor(*relative_color_rgba(value))
