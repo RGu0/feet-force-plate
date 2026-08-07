@@ -245,6 +245,13 @@ class ApplicationController:
 
         state = self._coordinator.state
         if not bool(getattr(result, "committed", False)) or state.session_id is None:
+            ui_failure = getattr(result, "ui_failure", None)
+            if ui_failure is not None:
+                self._coordinator.handle_hardware_failure(
+                    error=resolve_hardware_ui_failure(ui_failure)
+                )
+                self.refresh()
+                return
             self._coordinator.handle_hardware_failure(
                 error=ClientError(
                     code="E-DAT-101",

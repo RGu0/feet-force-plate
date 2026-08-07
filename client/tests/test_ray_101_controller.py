@@ -9,6 +9,11 @@ from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget
 from client.app.controller import ApplicationController
 from client.app.pages import PageId
 from client.app.ui_models import DashboardSnapshot, ScreeningRecordRow, SupportSnapshot
+from client.device.session_ui import (
+    HardwareRecoveryAction,
+    HardwareUiFailure,
+    HardwareUiFailureCode,
+)
 from client.workflow.models import ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 
@@ -209,6 +214,33 @@ def test_live_capture_forwards_captured_windows_to_analysis_attestations(qtbot) 
         )
     ]
     assert coordinator.state.step is ScreeningStep.BASIC_REPORT
+
+
+def test_live_capture_preserves_the_hardware_quality_failure_category(qtbot) -> None:
+    coordinator = _Coordinator()
+    coordinator._state = WorkflowState(
+        step=ScreeningStep.FINALIZING,
+        session_id="physical-session-1",
+    )
+    controller = ApplicationController(coordinator)
+    qtbot.addWidget(controller.window)
+    failure = HardwareUiFailure(
+        code=HardwareUiFailureCode.FORCE_CONVERSION_FAILED,
+        recovery_action=HardwareRecoveryAction.CHECK_SENSOR_AND_RETRY,
+        retry_allowed=True,
+        operator_message_key="hardware.failure.force_conversion_failed",
+    )
+
+    controller.on_live_hardware_capture_completed(
+        SimpleNamespace(committed=False, stage_windows=(), ui_failure=failure),
+        record_attestations=lambda *_args, **_kwargs: None,
+    )
+
+    assert len(coordinator.hardware_failures) == 1
+    assert coordinator.hardware_failures[0].code == "E-DEV-109"
+    assert coordinator.hardware_failures[0].operator_message == (
+        "压力换算未完成，请检查压力垫后重新检测。"
+    )
 
 
 def test_retryable_live_stage_worker_error_returns_to_stage_guidance(qtbot) -> None:
