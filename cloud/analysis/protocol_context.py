@@ -110,8 +110,8 @@ def validate_static_balance_protocol_context(
             raise ProtocolContextError("stages must use the canonical four-stage order")
         if stage.start_s < 0 or stage.end_s <= stage.start_s:
             raise ProtocolContextError("stage bounds must be positive and ordered")
-        if previous_end is not None and stage.start_s != previous_end:
-            raise ProtocolContextError("stage windows must be contiguous")
+        if previous_end is not None and stage.start_s < previous_end:
+            raise ProtocolContextError("stage windows must not overlap")
         previous_end = stage.end_s
         if not 0 <= stage.actual_completion_s <= stage.end_s - stage.start_s:
             raise ProtocolContextError("actual_completion_s must fit inside the stage window")

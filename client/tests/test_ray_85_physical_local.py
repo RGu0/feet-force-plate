@@ -389,6 +389,70 @@ def test_relative_basic_projection_fails_closed_on_large_timestamp_gap() -> None
     assert result.withheld_reason_map["left_load_percent"] == "GAP_TOO_LARGE"
 
 
+def test_relative_basic_projection_does_not_treat_low_load_as_missing_hardware_data(
+) -> None:
+    source = _physical_session()
+    low_load_times = {5.0, 5.05, 5.1}
+    session = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=tuple(
+            PhysicalPressureFrame(
+                timestamp_s=frame.timestamp_s,
+                estimated_force_n=(0.0, 0.0, 0.0, 0.0),
+            )
+            if frame.timestamp_s in low_load_times
+            else frame
+            for frame in source.frames
+        ),
+    )
+
+    result = analyze_physical_session(
+        session,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/low-load-is-not-transport-gap",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.VALID
+    assert result.relative_heatmap is not None
+
+
+def test_relative_basic_projection_accepts_one_jittered_missing_sample() -> None:
+    source = _physical_session()
+    frames = tuple(
+        PhysicalPressureFrame(
+            timestamp_s=65.064,
+            estimated_force_n=frame.estimated_force_n,
+        )
+        if frame.timestamp_s == 65.05
+        else frame
+        for frame in source.frames
+        if frame.timestamp_s != 65.0
+    )
+    session = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=frames,
+    )
+
+    result = analyze_physical_session(
+        session,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/single-jittered-missing-sample",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.VALID
+    assert result.relative_heatmap is not None
+
+
 def test_valid_physical_result_builds_nondiagnostic_basic_ready_report() -> None:
     result = analyze_physical_session(
         _physical_session(),

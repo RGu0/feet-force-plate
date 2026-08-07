@@ -73,12 +73,20 @@ class _AcquisitionPort:
 
 
 class _AnalysisPort:
-    def __init__(self, result: QualityResult) -> None:
+    def __init__(
+        self,
+        result: QualityResult,
+        *,
+        analyze_error: Exception | None = None,
+    ) -> None:
         self.result = result
+        self.analyze_error = analyze_error
         self.analyzed: list[str] = []
 
     def analyze(self, session_id: str) -> QualityResult:
         self.analyzed.append(session_id)
+        if self.analyze_error is not None:
+            raise self.analyze_error
         return self.result
 
 
@@ -468,6 +476,41 @@ class CoordinatorPreflightTests(unittest.TestCase):
         self.assertEqual(
             telemetry.errors,
             [("E-RPT-001", "session-1", "RuntimeError: template stack")],
+        )
+
+    def test_analysis_failure_is_visible_instead_of_leaving_finalizing_stuck(
+        self,
+    ) -> None:
+        preflight = _PreflightPort(
+            PreflightSummary(checks=(PreflightCheck(key="device", ready=True),))
+        )
+        analysis = _AnalysisPort(
+            QualityResult(outcome=QualityOutcome.VALID),
+            analyze_error=RuntimeError("analysis stack"),
+        )
+        telemetry = _TelemetryPort()
+        coordinator = _coordinator(
+            preflight=preflight,
+            sessions=_SessionPort(),
+            analysis=analysis,
+            telemetry=telemetry,
+        )
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+        coordinator.run_preflight()
+        _start_acquisition(coordinator)
+
+        coordinator.complete_acquisition()
+
+        self.assertEqual(coordinator.state.step, ScreeningStep.FAILED)
+        self.assertEqual(coordinator.state.error.code, "E-RPT-001")
+        self.assertEqual(coordinator.state.error.action, ClientAction.CONTACT_SUPPORT)
+        self.assertNotIn("analysis stack", repr(coordinator.state))
+        self.assertEqual(
+            telemetry.errors,
+            [("E-RPT-001", "session-1", "RuntimeError: analysis stack")],
         )
 
     def test_export_and_print_remain_pinned_to_the_viewed_report_version(self) -> None:

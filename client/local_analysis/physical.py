@@ -36,7 +36,7 @@ _WITHHELD_REASON = "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED"
 _RELATIVE_BASIC_VERSION = "physical-relative-basic/1.0"
 _MINIMUM_RELATIVE_SAMPLE_RATE_HZ = 10.0
 _MINIMUM_RELATIVE_DURATION_S = 10.0
-_MAXIMUM_RELATIVE_GAP_INTERVALS = 2.0
+_MAXIMUM_RELATIVE_GAP_INTERVALS = 2.5
 _NON_SCALAR_STAGE_FIELDS = frozenset(
     {
         "stage_id",
@@ -133,7 +133,7 @@ def analyze_physical_session(
             feature_set.parameters_sha256,
         )
     )
-    release_failure = _relative_release_failure(feature_set)
+    release_failure = _relative_release_failure(session, protocol_context)
     if release_failure is None:
         relative_heatmap, left_percent, right_percent = _relative_basic_projection(
             session,
@@ -182,9 +182,21 @@ def analyze_physical_session(
     )
 
 
-def _relative_release_failure(feature_set) -> str | None:
-    for stage in feature_set.stages:
-        timestamps = np.asarray(stage.timestamps_s, dtype=np.float64)
+def _relative_release_failure(
+    session: PhysicalPressureSession,
+    protocol_context: StaticBalanceProtocolContext,
+) -> str | None:
+    for stage_index, stage in enumerate(protocol_context.stages):
+        last_stage = stage_index == len(protocol_context.stages) - 1
+        timestamps = np.asarray(
+            [
+                frame.timestamp_s
+                for frame in session.frames
+                if stage.start_s <= frame.timestamp_s < stage.end_s
+                or (last_stage and frame.timestamp_s == stage.end_s)
+            ],
+            dtype=np.float64,
+        )
         deltas = np.diff(timestamps)
         nominal_interval = float(np.median(deltas)) if deltas.size else 0.0
         sample_rate = 1.0 / nominal_interval if nominal_interval > 0 else 0.0

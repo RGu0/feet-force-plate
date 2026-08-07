@@ -112,6 +112,41 @@ def test_protocol_context_is_separate_and_has_canonical_stages() -> None:
     assert [stage.stage_id for stage in context.stages] == list(StageId)
 
 
+def test_protocol_context_accepts_operator_preparation_gaps_between_stages() -> None:
+    context = StaticBalanceProtocolContext(
+        session_id="session-physical-1",
+        protocol_version="static-balance/1",
+        stages=(
+            _stage(
+                StageId.BILATERAL_EYES_OPEN,
+                0.0,
+                orientation=SubjectOrientation.FORWARD,
+                foot=ForwardFoot.NONE,
+            ),
+            _stage(
+                StageId.BILATERAL_EYES_CLOSED,
+                24.0,
+                orientation=SubjectOrientation.FORWARD,
+                foot=ForwardFoot.NONE,
+            ),
+            _stage(
+                StageId.SEMI_TANDEM_LEFT_FORWARD,
+                48.0,
+                orientation=SubjectOrientation.LEFT_90,
+                foot=ForwardFoot.LEFT,
+            ),
+            _stage(
+                StageId.SEMI_TANDEM_RIGHT_FORWARD,
+                72.0,
+                orientation=SubjectOrientation.LEFT_90,
+                foot=ForwardFoot.RIGHT,
+            ),
+        ),
+    )
+
+    validate_static_balance_protocol_context(context)
+
+
 def test_protocol_context_rejects_invalid_left_turn_or_forward_foot() -> None:
     context = valid_protocol_context()
     invalid = StaticBalanceProtocolContext(

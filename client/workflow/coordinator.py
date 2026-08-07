@@ -399,21 +399,21 @@ class ScreeningCoordinator:
             self._transition(ScreeningStep.FINALIZING)
             self._lifecycle_status = LifecycleStatus.FINALIZING
         self._sessions.finalize(session_id)
-        quality = self._analysis.analyze(session_id)
-        if quality.outcome is not QualityOutcome.VALID:
-            self._validity = SessionValidity.INVALID
-            self._lifecycle_status = LifecycleStatus.CLOSED
-            self._machine.mark_retry_required()
-            self._error = ClientError(
-                code="E-DAT-101",
-                operator_message="本次检测未通过质量检查，请重新检测",
-                action=ClientAction.RETRY_SCREENING,
-            )
-            return
-        self._validity = SessionValidity.VALID
-        self._upload_status = UploadStatus.PENDING
-        self._analysis_status = AnalysisStatus.QUEUED
         try:
+            quality = self._analysis.analyze(session_id)
+            if quality.outcome is not QualityOutcome.VALID:
+                self._validity = SessionValidity.INVALID
+                self._lifecycle_status = LifecycleStatus.CLOSED
+                self._machine.mark_retry_required()
+                self._error = ClientError(
+                    code="E-DAT-101",
+                    operator_message="本次检测未通过质量检查，请重新检测",
+                    action=ClientAction.RETRY_SCREENING,
+                )
+                return
+            self._validity = SessionValidity.VALID
+            self._upload_status = UploadStatus.PENDING
+            self._analysis_status = AnalysisStatus.QUEUED
             report_id, version = self._reports.create_basic_report(session_id)
         except Exception as exc:
             technical_detail = f"{type(exc).__name__}: {exc}"
