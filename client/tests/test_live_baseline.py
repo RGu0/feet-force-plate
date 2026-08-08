@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from client.app.live_baseline import LiveBaselinePreflight
+from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.hardware_standardization.runtime import active_hardware_runtime
 
 

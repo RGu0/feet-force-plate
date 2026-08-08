@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from client.app.live_hardware_demo import static_balance_stage_plan
+from client.hardware_integration.live_hardware_demo import static_balance_stage_plan
 from scripts.run_dop4864_live_hardware_demo import _confirm_stage_completions
 
 

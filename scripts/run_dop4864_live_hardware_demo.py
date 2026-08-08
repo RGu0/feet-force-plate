@@ -19,7 +19,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from client.app.live_hardware_demo import (
+from client.hardware_integration.live_hardware_demo import (
     build_operator_attested_protocol,
     is_basic_report_eligible,
     operator_attestations_from_completion_flags,

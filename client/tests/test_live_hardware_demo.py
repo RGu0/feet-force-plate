@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from client.app.live_hardware_demo import (
+from client.hardware_integration.live_hardware_demo import (
     OperatorStageAttestation,
     build_operator_attested_protocol,
     is_basic_report_eligible,

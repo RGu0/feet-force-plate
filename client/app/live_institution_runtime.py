@@ -7,10 +7,10 @@ import time
 
 from client.app.heatmap import PhysicalGridOverlay
 from client.app.institution_store import InstitutionLocalStore, KeyringAesKeyProvider
-from client.app.live_baseline import LiveBaselinePreflight
+from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
-from client.app.live_hardware_acquisition import QtLiveHardwareAcquisition
-from client.app.live_physical_workflow import (
+from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
+from client.hardware_integration.live_physical_workflow import (
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,

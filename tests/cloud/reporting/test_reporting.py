@@ -248,11 +248,13 @@ class CloudReportingTests(unittest.TestCase):
         self.assertTrue(pdf.startswith(b"%PDF-1.4"))
         self.assertEqual(hashlib.sha256(pdf).hexdigest(), published.artifact.sha256)
         self.assertEqual(len(pdf), published.artifact.size_bytes)
-        self.assertTrue(
-            published.artifact.object_key.startswith("tenants/tenant-a/reports/report-a/v2/")
+        self.assertEqual(
+            published.artifact.object_key,
+            (
+                "tenants/tenant-a/reports/report-a/v2/"
+                f"{published.artifact.sha256}.pdf"
+            ),
         )
-        self.assertNotIn("2781", published.artifact.object_key)
-        self.assertNotIn("示例机构", published.artifact.object_key)
 
     def test_report_schema_has_no_public_link_qr_or_subject_account_delivery(self) -> None:
         report_service, _, _, _ = service()

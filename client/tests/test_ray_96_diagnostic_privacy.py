@@ -5,6 +5,7 @@ import errno
 import hashlib
 import json
 import multiprocessing
+import os
 import sys
 import types
 from io import BytesIO
@@ -211,8 +212,9 @@ def test_private_store_writes_hash_chained_mode_0600_records(tmp_path: Path) -> 
 
     records = store.verified_records()
     assert records[1].previous_sha256 == records[0].sha256
-    assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
-    assert (tmp_path / "safe-support-events").stat().st_mode & 0o777 == 0o700
+    if os.name != "nt":
+        assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
+        assert (tmp_path / "safe-support-events").stat().st_mode & 0o777 == 0o700
 
 
 def test_private_store_falls_back_to_path_permissions_without_fchmod(
@@ -222,12 +224,13 @@ def test_private_store_falls_back_to_path_permissions_without_fchmod(
     def unavailable_fchmod(*_args: object) -> None:
         raise AttributeError("fchmod is unavailable")
 
-    monkeypatch.setattr(safe_events.os, "fchmod", unavailable_fchmod)
+    monkeypatch.setattr(safe_events.os, "fchmod", unavailable_fchmod, raising=False)
     store = SafeClientEventStore(tmp_path / "safe-support-events")
     recorder = make_recorder(store, iter((EVENT_1,)).__next__)
 
     assert recorder.record(SafeClientEventName.APPLICATION_STARTED, SafeClientEventOutcome.OK)
-    assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert (tmp_path / "safe-support-events" / "events.jsonl").stat().st_mode & 0o777 == 0o600
 
 
 def test_windows_process_lock_retries_transient_contention(
@@ -408,7 +411,8 @@ def test_encrypted_export_has_fixed_archive_and_no_sensitive_canaries(tmp_path: 
         assert canary.encode() not in combined
         assert canary.encode() not in payload
     assert result.ciphertext_sha256 == hashlib.sha256(payload).hexdigest()
-    assert destination.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert destination.stat().st_mode & 0o777 == 0o600
 
 
 def test_encrypted_export_rejects_extra_field_records_without_artifacts(tmp_path: Path) -> None:
@@ -487,10 +491,21 @@ def test_encrypted_export_cleans_up_when_atomic_replace_is_interrupted(
     assert not list(tmp_path.glob(".ffpdiag-*"))
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows uses a required pre-replace path-permission fallback",
+)
 def test_encrypted_export_has_no_fallible_step_after_replacing_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A former destination must publish successfully even if chmod would now fail."""
+    """The POSIX publish path must not call path-based ``os.chmod``.
+
+    ``_set_private_file_mode`` uses descriptor ``fchmod`` on POSIX, so patching
+    ``os.chmod`` to raise must leave the export untouched — proving no path-based
+    permission step (a TOCTOU-prone, post-replace fallible step) sits in the
+    publish path. Skipped on Windows, where the path-based ``os.chmod`` fallback
+    is required and therefore legitimately fallible.
+    """
     private_key = X25519PrivateKey.generate()
     exporter = exporter_with_safe_records(tmp_path, private_key.public_key())
     destination = tmp_path / "existing.ffpdiag"
@@ -504,7 +519,8 @@ def test_encrypted_export_has_no_fallible_step_after_replacing_destination(
 
     assert result.destination == destination
     assert destination.read_bytes() != b"old diagnostic"
-    assert destination.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert destination.stat().st_mode & 0o777 == 0o600
 
 
 def test_encrypted_export_preserves_existing_destination_when_replace_fails(
@@ -525,7 +541,8 @@ def test_encrypted_export_preserves_existing_destination_when_replace_fails(
     with pytest.raises(OSError, match="simulated final replacement failure"):
         exporter.export(destination)
     assert destination.read_bytes() == b"old diagnostic"
-    assert destination.stat().st_mode & 0o777 == old_mode
+    if os.name != "nt":
+        assert destination.stat().st_mode & 0o777 == old_mode
     assert not list(tmp_path.glob(".ffpdiag-*"))
 
 

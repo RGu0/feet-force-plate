@@ -310,6 +310,10 @@ class AccessRepository(Protocol):
         self, *, login_name_hmac: bytes, source_fingerprint: bytes, since: datetime
     ) -> int: ...
 
+    async def failed_authentication_attempts_for_login(
+        self, *, login_name_hmac: bytes, since: datetime
+    ) -> int: ...
+
     async def acquire_hardware_lease(
         self, lease: HardwareLeaseRecord, *, acquired_at: datetime
     ) -> HardwareLeaseRecord: ...
@@ -354,6 +358,10 @@ class AccessRepository(Protocol):
 
     async def platform_identity_by_login_hmac(
         self, login_name_hmac: bytes
+    ) -> PlatformIdentityRecord | None: ...
+
+    async def platform_identity_by_id(
+        self, platform_identity_id: UUID
     ) -> PlatformIdentityRecord | None: ...
 
     async def platform_roles(
@@ -902,6 +910,20 @@ class InMemoryAccessRepository:
                 for attempt in self._authentication_attempts
             )
 
+    async def failed_authentication_attempts_for_login(
+        self,
+        *,
+        login_name_hmac: bytes,
+        since: datetime,
+    ) -> int:
+        async with self._lock:
+            return sum(
+                not attempt.succeeded
+                and attempt.login_name_hmac == login_name_hmac
+                and attempt.attempted_at >= since
+                for attempt in self._authentication_attempts
+            )
+
     async def acquire_hardware_lease(
         self,
         lease: HardwareLeaseRecord,
@@ -1165,6 +1187,12 @@ class InMemoryAccessRepository:
             return (
                 None if identity_id is None else self._platform_identities[identity_id]
             )
+
+    async def platform_identity_by_id(
+        self, platform_identity_id: UUID
+    ) -> PlatformIdentityRecord | None:
+        async with self._lock:
+            return self._platform_identities.get(platform_identity_id)
 
     async def platform_roles(
         self,

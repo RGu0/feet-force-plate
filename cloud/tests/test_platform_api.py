@@ -155,7 +155,7 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grant.status_code, 201, grant.text)
 
     async def test_support_cannot_provision_and_tenant_token_cannot_call_platform(self) -> None:
-        owner = self.identities.verify_access_token(self.owner_login.access_token)
+        owner = await self.identities.verify_access_token(self.owner_login.access_token)
         support_login = await self.identities.create_identity(
             owner,
             login_name="platform-support",

@@ -20,7 +20,7 @@ MODULES = (
 
 
 def _text(paths: tuple[str, ...]) -> str:
-    return "\n".join((ROOT / path).read_text() for path in paths)
+    return "\n".join((ROOT / path).read_text(encoding="utf-8") for path in paths)
 
 
 def test_authoritative_docs_encode_the_approved_seed_access_model() -> None:
@@ -46,7 +46,7 @@ def test_module_docs_distinguish_current_seed_and_legacy_terminal_compatibility(
 
 
 def test_current_seed_sections_contain_no_rejected_onboarding_or_security_claims() -> None:
-    module10 = (ROOT / "docs/modules/10-device-management.md").read_text()
+    module10 = (ROOT / "docs/modules/10-device-management.md").read_text(encoding="utf-8")
     seed_sections = "\n".join(
         text.split("## Seed MVP access model", 1)[-1]
         for text in (_text(PRIMARY), _text(MODULES))

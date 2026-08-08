@@ -1007,6 +1007,18 @@ class PostgresAccessRepository:
             )
         return int(count)
 
+    async def failed_authentication_attempts_for_login(
+        self, *, login_name_hmac: bytes, since: datetime
+    ) -> int:
+        async with self._plain_transaction(self._activation_pool) as connection:
+            count = await connection.fetchval(
+                """SELECT count(*) FROM ops.authentication_attempts
+                   WHERE login_name_hmac=$1 AND succeeded=false
+                     AND attempted_at >= $2""",
+                login_name_hmac, since,
+            )
+        return int(count)
+
     async def replace_license(
         self, *, license_id: UUID, expected_version: int, status: LicenseState,
         issued_at: datetime, valid_until: datetime, key_id: str,
@@ -1227,6 +1239,16 @@ class PostgresAccessRepository:
             row = await connection.fetchrow(
                 "SELECT * FROM iam.platform_identities WHERE login_name_hmac=$1",
                 login_name_hmac,
+            )
+        return None if row is None else _platform_identity(row)
+
+    async def platform_identity_by_id(
+        self, platform_identity_id: UUID
+    ) -> PlatformIdentityRecord | None:
+        async with self._plain_transaction(self._platform_pool) as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM iam.platform_identities WHERE platform_identity_id=$1",
+                platform_identity_id,
             )
         return None if row is None else _platform_identity(row)
 

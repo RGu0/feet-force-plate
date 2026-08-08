@@ -16,8 +16,14 @@ from client.cloud.packaged_defaults import (
 project_root = Path(SPECPATH).resolve().parents[2]
 entry_point = project_root / "main.py"
 assets = project_root / "client" / "app" / "assets"
+device_specifications = project_root / "docs" / "hardware" / "device-specifications"
 icon = assets / "FeetForcePlate.icns"
 device_specification = project_root / "docs" / "hardware" / "device-specifications" / "do-p4864" / "1.0.json"
+required_design_font = assets / "fonts" / "NotoSansSC-VF.ttf"
+if not device_specification.is_file():
+    raise SystemExit(f"Required device specification is missing: {device_specification}")
+if not required_design_font.is_file():
+    raise SystemExit(f"Required design font is missing: {required_design_font}")
 with (project_root / "pyproject.toml").open("rb") as project_file:
     app_version = tomllib.load(project_file)["project"]["version"]
 
@@ -28,6 +34,7 @@ datas = [(str(assets), "client/app/assets")]
 datas.append(
     (str(device_specification), "docs/hardware/device-specifications/do-p4864")
 )
+datas.append((str(device_specifications), "docs/hardware/device-specifications"))
 
 # A packaged build may bind to one environment using public-only inputs.  The
 # build source path is never embedded; only validated fixed basenames are

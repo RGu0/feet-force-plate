@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from client.app.institution_store import InstitutionLocalStore
-from client.app.live_physical_workflow import InstitutionLiveSessions, LivePhysicalProcessor
+from client.hardware_integration.live_physical_workflow import (
+    InstitutionLiveSessions,
+    LivePhysicalProcessor,
+)
 from client.local_analysis.service import ProcessingStatus
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 from client.workflow.consent import ConsentRequest

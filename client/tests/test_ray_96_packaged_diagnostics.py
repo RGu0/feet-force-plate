@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import runpy
 import shutil
 from datetime import UTC, datetime
@@ -126,6 +127,8 @@ def test_invalid_packaged_recipient_disables_only_export_without_artifacts(
     tmp_path: Path, resource_kind: str
 ) -> None:
     """Relaxing recipient validation must not create a final or plaintext diagnostic artifact."""
+    if os.name == "nt" and resource_kind == "writable":
+        pytest.skip("Windows does not expose POSIX group/other write bits")
     private_key = X25519PrivateKey.generate()
     resource = tmp_path / "recipient.json"
     if resource_kind == "writable":
@@ -227,7 +230,8 @@ def test_spec_stages_an_arbitrarily_named_public_resource_at_fixed_runtime_path(
     staged_source, destination_dir = recipient_data[0]
     assert Path(staged_source).name == "support-recipient.json"
     assert destination_dir == "client/app/resources"
-    assert Path(staged_source).stat().st_mode & 0o777 == 0o644
+    if os.name != "nt":
+        assert Path(staged_source).stat().st_mode & 0o777 == 0o644
     artifact = tmp_path / "onedir" / destination_dir / "support-recipient.json"
     artifact.parent.mkdir(parents=True)
     shutil.copyfile(staged_source, artifact)

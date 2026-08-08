@@ -99,7 +99,12 @@ class RuntimeFaultInjectionTests(unittest.TestCase):
         result = self._runtime(
             session_id=session_id,
             transport=transport,
-            parser=DaoOneP4864Parser(_profile(), allow_unverified=True),
+            parser=DaoOneP4864Parser(
+                _profile(),
+                allow_unverified=True,
+                monotonic_ns=iter(range(10_000, 100_000, 100)).__next__,
+                wall_time_ns=lambda: 2_000,
+            ),
         ).capture(session_id=session_id, target_frames=3)
 
         self.assertEqual(result.validity, SessionValidity.VALID)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -83,7 +83,7 @@ def test_bootstrap_owner_then_create_multiple_platform_identities() -> None:
             display_name="Platform Owner",
             password="correct-horse-battery-staple",
         )
-        owner_context = identities.verify_access_token(owner.access_token)
+        owner_context = await identities.verify_access_token(owner.access_token)
         support = await identities.create_identity(
             owner_context,
             login_name="platform-support",
@@ -127,7 +127,7 @@ def test_platform_login_uses_independent_identity_and_roles() -> None:
                 password="correct-horse-battery-staple",
             )
         )
-        context = identities.verify_access_token(response.access_token)
+        context = await identities.verify_access_token(response.access_token)
         assert context.platform_identity_id == response.platform_identity_id
         assert context.roles == frozenset({PlatformRole.OWNER})
 
@@ -143,7 +143,7 @@ def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> N
             display_name="Platform Owner",
             password="correct-horse-battery-staple",
         )
-        owner_context = identities.verify_access_token(owner.access_token)
+        owner_context = await identities.verify_access_token(owner.access_token)
         support_login = await identities.create_identity(
             owner_context,
             login_name="platform-support",
@@ -158,8 +158,8 @@ def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> N
             password="engineer-password-long-enough",
             roles=(PlatformRole.ENGINEER,),
         )
-        support = identities.verify_access_token(support_login.access_token)
-        engineer = identities.verify_access_token(engineer_login.access_token)
+        support = await identities.verify_access_token(support_login.access_token)
+        engineer = await identities.verify_access_token(engineer_login.access_token)
         request = SensitiveAccessGrantRequest(
             tenant_id=tenant_id,
             purpose_code="SUPPORT_DIAGNOSIS",
@@ -191,7 +191,47 @@ def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> N
             )
 
         actions = [event.action for event in await repository.audit_events(tenant_id=tenant_id)]
-        assert actions == ["sensitive-access.grant", "sensitive-access.use"]
+        assert actions == [
+            "sensitive-access.deny",
+            "sensitive-access.grant",
+            "sensitive-access.use",
+            "sensitive-access.deny",
+        ]
+        deny_reasons = [
+            dict(event.details).get("reason")
+            for event in await repository.audit_events(tenant_id=tenant_id)
+            if event.action == "sensitive-access.deny"
+        ]
+        assert deny_reasons == ["role_unauthorized", "context_inactive"]
+
+    asyncio.run(exercise())
+
+
+def test_sensitive_access_records_denial_when_grant_invalid() -> None:
+    async def exercise() -> None:
+        repository, clock, identities, sensitive = _services()
+        tenant_id = await _seed_tenant(repository)
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        owner_context = await identities.verify_access_token(owner.access_token)
+        with pytest.raises(PlatformPermissionDenied, match="grant is invalid"):
+            await sensitive.read_identity(
+                owner_context,
+                grant_id=uuid4(),
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=lambda: ("Never Loaded", None),
+            )
+        events = [
+            event
+            for event in await repository.audit_events(tenant_id=tenant_id)
+            if event.action == "sensitive-access.deny"
+        ]
+        assert len(events) == 1
+        assert dict(events[0].details).get("reason") == "grant_invalid"
 
     asyncio.run(exercise())
 
@@ -205,7 +245,7 @@ def test_cross_tenant_platform_listing_is_masked_operational_summary() -> None:
             display_name="Platform Owner",
             password="correct-horse-battery-staple",
         )
-        context = identities.verify_access_token(owner.access_token)
+        context = await identities.verify_access_token(owner.access_token)
 
         rows = await sensitive.list_tenants(context)
 
@@ -215,5 +255,85 @@ def test_cross_tenant_platform_listing_is_masked_operational_summary() -> None:
         serialized = rows[0].model_dump_json().lower()
         assert "patient" not in serialized
         assert "contact" not in serialized
+
+    asyncio.run(exercise())
+
+
+def test_verify_access_token_rejects_stale_token_after_role_rotation() -> None:
+    async def exercise() -> None:
+        repository, clock, identities, _ = _services()
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        context = await identities.verify_access_token(owner.access_token)
+        assert context.roles == frozenset({PlatformRole.OWNER})
+
+        # Simulate `rotate-platform-role`: bump token_version and close role
+        # bindings, then re-add a narrower SUPPORT role. The CLI performs these
+        # steps atomically against Postgres; this test exercises the verifier's
+        # rebinding path against the in-memory repository.
+        identity = repository._platform_identities[context.platform_identity_id]
+        repository._platform_identities[context.platform_identity_id] = replace(
+            identity, token_version=identity.token_version + 1
+        )
+        for binding in repository._platform_role_bindings:
+            if binding.platform_identity_id == context.platform_identity_id:
+                repository._platform_role_bindings.remove(binding)
+        from uuid import uuid4 as _uuid4
+        from cloud.access_control.repository import PlatformRoleBindingRecord
+        repository._platform_role_bindings.append(
+            PlatformRoleBindingRecord(
+                binding_id=_uuid4(),
+                platform_identity_id=context.platform_identity_id,
+                role=PlatformRole.SUPPORT,
+                valid_from=clock(),
+            )
+        )
+
+        with pytest.raises(PlatformPermissionDenied, match="stale"):
+            await identities.verify_access_token(owner.access_token)
+
+        fresh = await identities.login(
+            PlatformLoginRequest(
+                login_name="platform-owner",
+                password="correct-horse-battery-staple",
+            )
+        )
+        refreshed = await identities.verify_access_token(fresh.access_token)
+        assert refreshed.roles == frozenset({PlatformRole.SUPPORT})
+        assert refreshed.token_version == identity.token_version + 1
+
+    asyncio.run(exercise())
+
+
+def test_platform_login_throttles_after_five_failed_attempts() -> None:
+    async def exercise() -> None:
+        _, _, identities, _ = _services()
+        await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        bad_request = PlatformLoginRequest(
+            login_name="platform-owner",
+            password="wrong-password",
+        )
+        for _ in range(5):
+            with pytest.raises(PlatformPermissionDenied, match="rejected"):
+                await identities.login(bad_request, source_fingerprint=b"fingerprint-a")
+        # Distributed source rotation must not reset the account-level counter.
+        with pytest.raises(PlatformPermissionDenied, match="temporarily unavailable"):
+            await identities.login(bad_request, source_fingerprint=b"fingerprint-b")
+        # Correct password is also rejected while the account is locked.
+        with pytest.raises(PlatformPermissionDenied, match="temporarily unavailable"):
+            await identities.login(
+                PlatformLoginRequest(
+                    login_name="platform-owner",
+                    password="correct-horse-battery-staple",
+                ),
+                source_fingerprint=b"fingerprint-c",
+            )
 
     asyncio.run(exercise())

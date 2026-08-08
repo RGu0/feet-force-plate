@@ -11,8 +11,8 @@ from uuid import uuid4
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from client.app.institution_store import InstitutionLocalStore
-from client.app.live_baseline import LiveBaselinePreflight
-from client.app.live_hardware_demo import (
+from client.hardware_integration.live_baseline import LiveBaselinePreflight
+from client.hardware_integration.live_hardware_demo import (
     build_operator_attested_protocol,
     is_basic_report_eligible,
     operator_attestations_from_completion_flags,

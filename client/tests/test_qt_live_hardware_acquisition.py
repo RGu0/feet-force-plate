@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from client.app.live_hardware_acquisition import QtLiveHardwareAcquisition
+from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
 from client.device.protocol import RawFrame
 
 

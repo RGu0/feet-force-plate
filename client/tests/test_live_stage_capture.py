@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from client.app.live_physical_workflow import (
+from client.hardware_integration.live_physical_workflow import (
     LivePhysicalCapture,
     LiveSessionMetadata,
     RetryableStageCaptureError,

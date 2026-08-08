@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -70,4 +71,5 @@ def test_restore_drill_uses_isolated_targets_and_cleans_private_material() -> No
     assert 'rm -rf -- "$work_root"' in text
     assert 'rm -f -- "$identity_source"' in text
     assert "dropdb --if-exists feetforceplate_seed" not in text
-    assert path.stat().st_mode & 0o100
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o100

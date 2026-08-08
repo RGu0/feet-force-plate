@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
-from client.app.design_system import apply_design_system
+from client.app.design_system import (
+    STEADY_HEALTH_STYLESHEET,
+    apply_design_system,
+    bundled_font_paths,
+)
 from client.app.pages import PageId
+from client.app.institution_access import InstitutionAccessWindow
 from client.app.qt_shell import ScreeningWindow
 from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus as ReportDocumentStatus
 
@@ -22,6 +27,81 @@ def test_design_system_marks_primary_actions_and_preserves_target_size(qtbot) ->
     assert window.property("uiTheme") == "steady-health"
     assert "#2569BC" in window.styleSheet()
     assert primary.minimumHeight() >= 44
+
+
+def test_design_system_ships_the_fonts_required_by_the_ui_tokens() -> None:
+    """The desktop build must not depend on fonts being preinstalled on Windows."""
+
+    ui_font, numeric_font = bundled_font_paths()
+
+    assert ui_font.is_file()
+    assert numeric_font.is_file()
+    assert ui_font.parent.name == "fonts"
+    assert numeric_font.parent.name == "fonts"
+
+
+def test_design_system_does_not_declare_a_system_font_fallback() -> None:
+    """A fallback would make an installed client visually depend on its host OS."""
+
+    assert 'font-family: "Noto Sans SC";' in STEADY_HEALTH_STYLESHEET
+    assert "Microsoft YaHei UI" not in STEADY_HEALTH_STYLESHEET
+
+
+def test_design_system_uses_the_bundled_family_for_ui_and_numeric_content(qtbot) -> None:
+    """Qt must not fall back to the target computer's default Windows font."""
+
+    window = QWidget()
+    metric = QLabel("51.2%", window)
+    metric.setProperty("numericText", True)
+    qtbot.addWidget(window)
+
+    apply_design_system(window)
+
+    assert window.font().family() == "Noto Sans SC"
+    assert metric.font().family() == "Noto Sans SC"
+    metrics = QFontMetrics(metric.font())
+    assert len({metrics.horizontalAdvance(digit) for digit in "0123456789"}) == 1
+
+
+def test_screening_metric_labels_are_marked_for_the_numeric_font(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+
+    for object_name in ("countdownLabel", "remainingTime", "remainingSeconds"):
+        label = window.findChild(QLabel, object_name)
+        assert label is not None
+        assert label.property("numericText") is True
+
+
+def test_institution_title_applies_the_design_weight_to_the_variable_font(qtbot) -> None:
+    window = InstitutionAccessWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(0)
+
+    title = window.findChild(QLabel, "accessTitle")
+    weight_axis = QFont.Tag.fromString("wght")
+
+    assert title is not None
+    assert title.font().weight() == QFont.Weight.DemiBold
+    assert title.font().pixelSize() == 32
+    assert title.font().isVariableAxisSet(weight_axis)
+    assert title.font().variableAxisValue(weight_axis) == 600.0
+
+
+def test_countdown_keeps_its_design_weight_when_using_the_numeric_font(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(0)
+
+    countdown = window.findChild(QLabel, "countdownLabel")
+    weight_axis = QFont.Tag.fromString("wght")
+
+    assert countdown is not None
+    assert countdown.font().weight() == QFont.Weight.Bold
+    assert countdown.font().isVariableAxisSet(weight_axis)
+    assert countdown.font().variableAxisValue(weight_axis) == 700.0
 
 
 def test_workbench_has_source_topbar_statuses_and_central_primary_action(qtbot) -> None:

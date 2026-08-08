@@ -1040,6 +1040,10 @@ class InMemoryPlatformRepository:
     async def status(
         self, context: TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
+        # Authorization rule (commit f7fb6a4): session status is shared within a
+        # tenant so a replacement installation can recover a workflow started on
+        # a retired terminal. Tenant scope is enforced; terminal ownership is
+        # intentionally not checked here, unlike session/segment read methods.
         context.ensure_active()
         tenant = self._session_tenants.get(session_id)
         if tenant is not None and tenant != context.tenant_id:
