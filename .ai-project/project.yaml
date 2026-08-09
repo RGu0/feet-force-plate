@@ -1,0 +1,16 @@
+schema_version: 1
+id: "feet-force-plate"
+repository: "git@github.com:RGu0/feet-force-plate.git"
+default_branch: "master"
+linear_project: "feet-force-plate"
+commands:
+  default:
+    setup: ["./dev", "setup"]
+    test: ["./dev", "test"]
+    lint: ["./dev", "lint"]
+    build: ["./dev", "build"]
+  windows:
+    setup: ["pwsh", "-File", "dev.ps1", "setup"]
+    test: ["pwsh", "-File", "dev.ps1", "test"]
+    lint: ["pwsh", "-File", "dev.ps1", "lint"]
+    build: ["pwsh", "-File", "dev.ps1", "build"]
