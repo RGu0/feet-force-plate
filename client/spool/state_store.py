@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import os
 from pathlib import Path
+import re
 import sqlite3
 import threading
 from typing import Protocol
@@ -15,7 +16,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from shared.contracts.client_sync import FormalUploadEnvelope
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -383,6 +384,18 @@ class StateStore:
                         "ALTER TABLE sync_handoffs ADD COLUMN upload_envelope BLOB"
                     )
                 self._connection.execute("PRAGMA user_version=8")
+            if version < 9:
+                columns = {
+                    str(row[1])
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    ).fetchall()
+                }
+                if "last_error_code" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN last_error_code TEXT"
+                    )
+                self._connection.execute("PRAGMA user_version=9")
 
     def record_validation_audit(
         self,
@@ -810,7 +823,8 @@ class StateStore:
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs
-                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?, next_attempt_at_ns=NULL
+                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?,
+                    next_attempt_at_ns=NULL, last_error_code=NULL
                 WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING', 'RETRY_WAIT')""",
                 (confirmed_at_ns, session_id),
             ).rowcount
@@ -870,26 +884,70 @@ class StateStore:
             for row in rows
         )
 
-    def defer_sync_handoff(self, session_id: str, *, next_attempt_at_ns: int) -> None:
+    def defer_sync_handoff(
+        self,
+        session_id: str,
+        *,
+        error_code: str,
+        next_attempt_at_ns: int,
+    ) -> None:
         if next_attempt_at_ns < 0:
             raise ValueError("next_attempt_at_ns must be non-negative")
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
             changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='RETRY_WAIT', next_attempt_at_ns=?
+                """UPDATE sync_handoffs SET state='RETRY_WAIT',
+                    next_attempt_at_ns=?, last_error_code=?
                 WHERE session_id=? AND state='UPLOADING'""",
-                (next_attempt_at_ns, session_id),
+                (next_attempt_at_ns, error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)
+
+    def sync_handoff_retry_state(
+        self, session_id: str
+    ) -> tuple[int, int | None, str | None]:
+        """Expose durable scheduling facts without decrypting upload identity."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT attempt_count, next_attempt_at_ns, last_error_code
+                FROM sync_handoffs WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return (
+            int(row[0]),
+            int(row[1]) if row[1] is not None else None,
+            str(row[2]) if row[2] is not None else None,
+        )
 
     def mark_sync_handoff_conflict(self, session_id: str) -> None:
         """Stop automatic retries when a remote immutable digest conflicts."""
 
         with self._lock, self._connection:
             changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='CONFLICT', next_attempt_at_ns=NULL
+                """UPDATE sync_handoffs SET state='CONFLICT',
+                    next_attempt_at_ns=NULL, last_error_code='E-SYN-409'
                 WHERE session_id=? AND state='UPLOADING'""",
                 (session_id,),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
+
+    def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
+        """Stop automatic retries after a non-retryable cloud contract rejection."""
+
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs SET state='BLOCKED',
+                    next_attempt_at_ns=NULL, last_error_code=?
+                WHERE session_id=? AND state='UPLOADING'""",
+                (error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)

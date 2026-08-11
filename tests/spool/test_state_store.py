@@ -84,7 +84,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 8)
+        self.assertEqual(self.store.schema_version, 9)
         expected = {
             "subject_refs",
             "consent_records",
@@ -300,7 +300,7 @@ class StateStoreTests(unittest.TestCase):
 
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
-        self.assertEqual(self.store.schema_version, 8)
+        self.assertEqual(self.store.schema_version, 9)
         with sqlite3.connect(self.db_path) as verification:
             columns = {
                 row[1]

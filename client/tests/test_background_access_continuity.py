@@ -4,6 +4,7 @@ import threading
 import unittest
 
 from client.app.session_lock import SessionLockController
+from client.sync.persistent_upload import UploadCycleOutcome
 from client.sync.worker import (
     BackgroundAccessScheduler,
     BackgroundAccessWorker,
@@ -25,19 +26,19 @@ class TokenProvider:
                 raise RuntimeError("refresh unavailable")
             return self.token
 
+    def refresh(self) -> object:
+        return object()
+
 
 class UploadQueue:
     def __init__(self) -> None:
         self.uploaded_with: list[str] = []
-        self.retry_count = 0
         self.sealed_payload_present = True
 
-    def upload_next(self, access_token: str) -> bool:
+    def upload_next(self, token_provider: TokenProvider) -> UploadCycleOutcome:
+        access_token = token_provider.current_access_token()
         self.uploaded_with.append(access_token)
-        return True
-
-    def schedule_retry(self) -> None:
-        self.retry_count += 1
+        return UploadCycleOutcome.CONFIRMED
 
 
 class Heartbeats:
@@ -81,13 +82,13 @@ class BackgroundAccessContinuityTests(unittest.TestCase):
         self.assertEqual(len(self.uploads.uploaded_with), 1)
         self.assertEqual(len(self.heartbeats.sent), 1)
 
-    def test_refresh_failure_schedules_retry_without_deleting_sealed_data(self) -> None:
+    def test_refresh_failure_does_not_ask_worker_to_mutate_queue_state(self) -> None:
         self.tokens.fail = True
 
         result = self.worker.run_cycle(self.status)
 
         self.assertTrue(result.retry_scheduled)
-        self.assertEqual(self.uploads.retry_count, 1)
+        self.assertFalse(hasattr(self.uploads, "schedule_retry"))
         self.assertTrue(self.uploads.sealed_payload_present)
         self.assertEqual(self.events, ["background_access.retry_scheduled"])
         combined = " ".join(self.events)
@@ -111,13 +112,16 @@ class BackgroundAccessSchedulerTests(unittest.TestCase):
                 self.attempts = 0
                 self.recovered = threading.Event()
 
-            def upload_next(self, access_token: str) -> bool:
+            def upload_next(
+                self, token_provider: TokenProvider
+            ) -> UploadCycleOutcome:
                 self.attempts += 1
                 if self.attempts == 1:
-                    raise RuntimeError("temporary network outage")
+                    return UploadCycleOutcome.DEFERRED
+                access_token = token_provider.current_access_token()
                 self.uploaded_with.append(access_token)
                 self.recovered.set()
-                return True
+                return UploadCycleOutcome.CONFIRMED
 
         uploads = TemporaryNetworkQueue()
         worker = BackgroundAccessWorker(TokenProvider(), uploads, Heartbeats())
@@ -142,7 +146,7 @@ class BackgroundAccessSchedulerTests(unittest.TestCase):
             scheduler.stop()
 
         self.assertGreaterEqual(uploads.attempts, 2)
-        self.assertEqual(uploads.retry_count, 1)
+        self.assertFalse(hasattr(uploads, "schedule_retry"))
 
 
 if __name__ == "__main__":
