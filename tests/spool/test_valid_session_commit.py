@@ -1,7 +1,9 @@
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 
@@ -13,6 +15,13 @@ from client.spool.derived_artifact import read_derived_observation
 from client.spool import session_commit
 from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.cloud import (
+    ConsentCreateRequest,
+    SessionVersions,
+    SubjectCreateRequest,
+    TestProtocol as UploadTestProtocol,
+)
 
 
 class StaticKeyProvider:
@@ -31,6 +40,37 @@ def _frame(index: int) -> RawFrame:
         device_frame_seq=None,
         device_timestamp_ns=None,
         quality_flags=frozenset(),
+    )
+
+
+def _formal_upload_envelope(
+    *, session_id, subject_id, consent_id
+) -> FormalUploadEnvelope:
+    return FormalUploadEnvelope(
+        session_id=session_id,
+        subject=SubjectCreateRequest(subject_uuid=subject_id),
+        consent=ConsentCreateRequest(
+            consent_record_id=consent_id,
+            subject_uuid=subject_id,
+            policy_version="consent/1",
+            purpose_codes=("SCREENING",),
+            data_categories=("SCREENING",),
+            granted_at=datetime(2026, 8, 11, tzinfo=UTC),
+            evidence_type="OPERATOR_CONFIRMED",
+            terminal_signature="test-signature-value",
+        ),
+        client_installation_id=uuid4(),
+        hardware_asset_id=uuid4(),
+        site_id=None,
+        test_protocol=UploadTestProtocol(id="standard-screening", version="1.0"),
+        versions=SessionVersions(
+            app="0.1.0",
+            protocol_profile="do-p4864/1",
+            payload_schema="raw-segment/1",
+            calibration="calibration/1",
+        ),
+        config_snapshot={"quality_gate_id": "static-basic-quality"},
+        started_at=datetime(2026, 8, 11, tzinfo=UTC),
     )
 
 
@@ -123,6 +163,52 @@ class ValidSessionStagerTests(unittest.TestCase):
             ("CLOSED", "VALID", 1_100_000_000),
         )
         self.assertFalse((final / "registration.json").exists())
+
+    def test_recovery_restores_the_same_formal_upload_envelope(self) -> None:
+        session_id = uuid4()
+        subject_id = uuid4()
+        consent_id = uuid4()
+        envelope = _formal_upload_envelope(
+            session_id=session_id,
+            subject_id=subject_id,
+            consent_id=consent_id,
+        )
+        self.store.put_subject_ref(str(subject_id), b"opaque")
+        self.store.put_consent_record(
+            str(consent_id), str(subject_id), b"operator-confirmed", recorded_at_ns=1
+        )
+        stager = ValidSessionStager(
+            self.root / "data",
+            session_id=str(session_id),
+            key_provider=self.keys,
+            store=self.store,
+            subject_uuid=str(subject_id),
+            consent_id=str(consent_id),
+            versions={"protocol": "observed-compact/1", "quality": "mvp/1"},
+            started_at_ns=1_000_000_000,
+            upload_envelope=envelope,
+        )
+        stager.append(_frame(10))
+        original = self.store.commit_valid_session
+
+        def simulated_power_loss(*args, **kwargs):
+            raise SystemExit("simulated process loss")
+
+        self.store.commit_valid_session = simulated_power_loss  # type: ignore[method-assign]
+        try:
+            with self.assertRaises(SystemExit):
+                stager.commit_valid(ended_at_ns=1_100_000_000)
+        finally:
+            self.store.commit_valid_session = original  # type: ignore[method-assign]
+
+        recovered = ValidSessionStager.recover_promoted_sessions(
+            self.root / "data", self.store, self.keys
+        )
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(
+            self.store.sync_handoff_envelope(str(session_id)), envelope
+        )
 
     def test_valid_session_retains_an_encrypted_repaired_force_observation(self) -> None:
         stager = self._stager("derived")

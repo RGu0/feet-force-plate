@@ -1,13 +1,25 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID, uuid4
+
+from pydantic import ValidationError
 
 from client.spool.state_store import (
     GateReason,
     SensitiveBlobCodec,
     StateStore,
     ValidSegmentRecord,
+)
+from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.cloud import (
+    ConsentCreateRequest,
+    IdentityProfileInput,
+    SessionVersions,
+    SubjectCreateRequest,
+    TestProtocol as UploadTestProtocol,
 )
 
 
@@ -19,6 +31,42 @@ class StaticKeyProvider:
     def get_key(self) -> bytes:
         self.calls += 1
         return self.key
+
+
+def _formal_upload_envelope(
+    *,
+    session_id: UUID,
+    subject_id: UUID,
+    consent_id: UUID,
+) -> FormalUploadEnvelope:
+    return FormalUploadEnvelope(
+        session_id=session_id,
+        subject=SubjectCreateRequest(
+            subject_uuid=subject_id,
+            identity_profile=IdentityProfileInput(contact="13800000000"),
+        ),
+        consent=ConsentCreateRequest(
+            consent_record_id=consent_id,
+            subject_uuid=subject_id,
+            policy_version="consent/1",
+            purpose_codes=("SCREENING",),
+            data_categories=("SCREENING",),
+            granted_at=datetime(2026, 8, 11, tzinfo=UTC),
+            evidence_type="OPERATOR_CONFIRMED",
+            terminal_signature="test-signature-value",
+        ),
+        client_installation_id=uuid4(),
+        hardware_asset_id=uuid4(),
+        site_id=None,
+        test_protocol=UploadTestProtocol(id="standard-screening", version="1.0"),
+        versions=SessionVersions(
+            app="0.1.0",
+            protocol_profile="do-p4864/1",
+            payload_schema="raw-segment/1",
+            calibration="calibration/1",
+        ),
+        started_at=datetime(2026, 8, 11, tzinfo=UTC),
+    )
 
 
 class StateStoreTests(unittest.TestCase):
@@ -36,7 +84,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 7)
+        self.assertEqual(self.store.schema_version, 8)
         expected = {
             "subject_refs",
             "consent_records",
@@ -51,6 +99,114 @@ class StateStoreTests(unittest.TestCase):
             "session_artifacts",
         }
         self.assertTrue(expected.issubset(self.store.table_names()))
+
+    def test_formal_upload_envelope_rejects_cross_identity_aliases(self) -> None:
+        session_id = uuid4()
+        subject_id = uuid4()
+        consent_id = uuid4()
+        valid = _formal_upload_envelope(
+            session_id=session_id,
+            subject_id=subject_id,
+            consent_id=consent_id,
+        )
+
+        with self.subTest("consent subject"):
+            with self.assertRaisesRegex(
+                ValidationError, "consent subject must match upload subject"
+            ):
+                FormalUploadEnvelope(
+                    **{
+                        **valid.model_dump(),
+                        "consent": valid.consent.model_copy(
+                            update={"subject_uuid": uuid4()}
+                        ),
+                    }
+                )
+        with self.subTest("session subject alias"):
+            with self.assertRaisesRegex(
+                ValidationError, "session id cannot alias subject uuid"
+            ):
+                FormalUploadEnvelope(
+                    **{**valid.model_dump(), "session_id": subject_id}
+                )
+
+    def test_valid_session_atomically_persists_an_encrypted_upload_envelope(self) -> None:
+        session_id = uuid4()
+        subject_id = uuid4()
+        consent_id = uuid4()
+        envelope = _formal_upload_envelope(
+            session_id=session_id,
+            subject_id=subject_id,
+            consent_id=consent_id,
+        )
+        self.store.put_subject_ref(str(subject_id), b"opaque")
+        self.store.put_consent_record(
+            str(consent_id), str(subject_id), b"operator-confirmed", recorded_at_ns=1
+        )
+
+        self.store.commit_valid_session(
+            str(session_id),
+            subject_uuid=str(subject_id),
+            consent_id=str(consent_id),
+            versions_json=b'{"protocol":"static-balance/1"}',
+            started_at_ns=10,
+            ended_at_ns=20,
+            manifest_sha256="a" * 64,
+            segments=(
+                ValidSegmentRecord(
+                    segment_id="formal-segment-1",
+                    relative_path="sessions/formal/segment-1.ffps",
+                    byte_count=128,
+                    sealed_at_ns=20,
+                ),
+            ),
+            upload_envelope=envelope,
+        )
+
+        self.assertEqual(self.store.sync_handoff_envelope(str(session_id)), envelope)
+        self.assertNotIn(b"13800000000", self.db_path.read_bytes())
+
+    def test_upload_envelope_identity_mismatch_registers_no_transaction_rows(self) -> None:
+        envelope_session_id = uuid4()
+        envelope_subject_id = uuid4()
+        envelope_consent_id = uuid4()
+        envelope = _formal_upload_envelope(
+            session_id=envelope_session_id,
+            subject_id=envelope_subject_id,
+            consent_id=envelope_consent_id,
+        )
+        cases = (
+            ("session", uuid4(), envelope_subject_id, envelope_consent_id),
+            ("subject", envelope_session_id, uuid4(), envelope_consent_id),
+            ("consent", envelope_session_id, envelope_subject_id, uuid4()),
+        )
+        for label, session_id, subject_id, consent_id in cases:
+            segment_id = f"mismatch-{label}"
+            with self.subTest(label):
+                with self.assertRaisesRegex(ValueError, "upload envelope .* mismatch"):
+                    self.store.commit_valid_session(
+                        str(session_id),
+                        subject_uuid=str(subject_id),
+                        consent_id=str(consent_id),
+                        versions_json=b"{}",
+                        started_at_ns=10,
+                        ended_at_ns=20,
+                        manifest_sha256="b" * 64,
+                        segments=(
+                            ValidSegmentRecord(
+                                segment_id=segment_id,
+                                relative_path=f"sessions/{session_id}/segment.ffps",
+                                byte_count=128,
+                                sealed_at_ns=20,
+                            ),
+                        ),
+                        upload_envelope=envelope,
+                    )
+                with self.assertRaises(KeyError):
+                    self.store.session_status(str(session_id))
+                self.assertFalse(self.store.segment_exists(segment_id))
+                with self.assertRaises(KeyError):
+                    self.store.sync_handoff_state(str(session_id))
 
     def test_sensitive_subject_and_consent_blobs_are_encrypted_outside_database_key(self) -> None:
         subject_plaintext = b'internal-subject-ref:person@example.invalid'
@@ -144,13 +300,14 @@ class StateStoreTests(unittest.TestCase):
 
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
-        self.assertEqual(self.store.schema_version, 7)
+        self.assertEqual(self.store.schema_version, 8)
         with sqlite3.connect(self.db_path) as verification:
             columns = {
                 row[1]
                 for row in verification.execute("PRAGMA table_info(sync_handoffs)")
             }
         self.assertIn("supporting_local_analysis", columns)
+        self.assertIn("upload_envelope", columns)
 
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")

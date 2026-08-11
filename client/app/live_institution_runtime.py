@@ -29,6 +29,10 @@ from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
 
 
+APP_VERSION = "0.1.0"
+RAW_SEGMENT_PAYLOAD_SCHEMA = "raw-segment/1"
+
+
 class _Telemetry:
     def record_error(self, **_event) -> None:
         pass
@@ -65,6 +69,8 @@ def build_live_institution_runtime(
     startup_run,
     data_root: Path,
     export_destination,
+    app_version: str = APP_VERSION,
+    payload_schema: str = RAW_SEGMENT_PAYLOAD_SCHEMA,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
@@ -91,6 +97,17 @@ def build_live_institution_runtime(
     )
     raw_mailbox = hardware.make_latest_frame_mailbox()
     display_mailbox = LatestDisplayFrameMailbox()
+    formal_upload_inputs = {}
+    if hasattr(session, "hardware_asset_id"):
+        calibration = hardware.calibration_metadata
+        formal_upload_inputs = {
+            "client_installation_id": session.client_installation_id,
+            "hardware_asset_id": session.hardware_asset_id,
+            "site_id": getattr(session, "site_id", None),
+            "app_version": app_version,
+            "payload_schema": payload_schema,
+            "calibration_profile": calibration.profile_version,
+        }
     capture = LivePhysicalCapture(
         hardware=hardware,
         sessions=sessions,
@@ -99,6 +116,7 @@ def build_live_institution_runtime(
         key_provider=key_provider,
         spool_root=data_root / "spool",
         latest_frames=raw_mailbox,
+        **formal_upload_inputs,
     )
     acquisition = QtLiveHardwareAcquisition(capture.capture)
     processor = LivePhysicalProcessor(

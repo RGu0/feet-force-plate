@@ -9,11 +9,13 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Protocol
+from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from shared.contracts.client_sync import FormalUploadEnvelope
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -369,6 +371,18 @@ class StateStore:
                         "ADD COLUMN next_attempt_at_ns INTEGER"
                     )
                 self._connection.execute("PRAGMA user_version=7")
+            if version < 8:
+                columns = {
+                    str(row[1])
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    ).fetchall()
+                }
+                if "upload_envelope" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_envelope BLOB"
+                    )
+                self._connection.execute("PRAGMA user_version=8")
 
     def record_validation_audit(
         self,
@@ -612,6 +626,7 @@ class StateStore:
         manifest_sha256: str,
         segments: tuple[ValidSegmentRecord, ...],
         artifacts: tuple[ValidArtifactRecord, ...] = (),
+        upload_envelope: FormalUploadEnvelope | None = None,
     ) -> None:
         """Atomically register only a fully validated, already-promoted session."""
 
@@ -625,6 +640,33 @@ class StateStore:
             raise ValueError("segment ids must be unique")
         if len({artifact.artifact_id for artifact in artifacts}) != len(artifacts):
             raise ValueError("artifact ids must be unique")
+        encrypted_upload_envelope: bytes | None = None
+        if upload_envelope is not None:
+            try:
+                matches_session = UUID(session_id) == upload_envelope.session_id
+            except ValueError:
+                matches_session = False
+            try:
+                matches_subject = UUID(subject_uuid) == upload_envelope.subject.subject_uuid
+            except ValueError:
+                matches_subject = False
+            try:
+                matches_consent = (
+                    consent_id is not None
+                    and UUID(consent_id) == upload_envelope.consent.consent_record_id
+                )
+            except ValueError:
+                matches_consent = False
+            if not matches_session:
+                raise ValueError("upload envelope session mismatch")
+            if not matches_subject:
+                raise ValueError("upload envelope subject mismatch")
+            if not matches_consent:
+                raise ValueError("upload envelope consent mismatch")
+            encrypted_upload_envelope = self._codec.encrypt(
+                upload_envelope.model_dump_json().encode("utf-8"),
+                context=f"formal_upload_envelope:{session_id}",
+            )
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT INTO sessions(
@@ -675,9 +717,14 @@ class StateStore:
             )
             self._connection.execute(
                 """INSERT INTO sync_handoffs(
-                    session_id, manifest_sha256, state, created_at_ns
-                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?)""",
-                (session_id, manifest_sha256, ended_at_ns),
+                    session_id, manifest_sha256, state, created_at_ns, upload_envelope
+                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?, ?)""",
+                (
+                    session_id,
+                    manifest_sha256,
+                    ended_at_ns,
+                    encrypted_upload_envelope,
+                ),
             )
 
     def sync_handoff_state(self, session_id: str) -> str:
@@ -688,6 +735,20 @@ class StateStore:
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
+
+    def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT upload_envelope FROM sync_handoffs WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            raise KeyError(session_id)
+        plaintext = self._codec.decrypt(
+            bytes(row[0]),
+            context=f"formal_upload_envelope:{session_id}",
+        )
+        return FormalUploadEnvelope.model_validate_json(plaintext)
 
     def attach_supporting_local_analysis(
         self,

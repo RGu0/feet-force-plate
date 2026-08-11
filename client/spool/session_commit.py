@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import json
 import os
@@ -17,6 +18,7 @@ from client.hardware_standardization.public_export import (
     restore_committed_physical_pressure_session,
 )
 from client.workflow.protocol import default_standard_protocol
+from shared.contracts.client_sync import FormalUploadEnvelope
 
 from .derived_artifact import (
     DerivedArtifact,
@@ -31,7 +33,13 @@ from .segments import (
     write_session_manifest,
 )
 from .stage_attempt import SealedStageAttempt
-from .state_store import KeyProvider, StateStore, ValidArtifactRecord, ValidSegmentRecord
+from .state_store import (
+    KeyProvider,
+    SensitiveBlobCodec,
+    StateStore,
+    ValidArtifactRecord,
+    ValidSegmentRecord,
+)
 
 
 _STAGE_WINDOW_POLICY_VERSION = "operator-started-stage-window/1"
@@ -107,6 +115,7 @@ class ValidSessionStager:
         consent_id: str | None,
         versions: dict[str, str],
         started_at_ns: int,
+        upload_envelope: FormalUploadEnvelope | None = None,
         segment_duration_seconds: float = 5.0,
         expected_stage_ids: tuple[str, ...] | None = None,
     ) -> None:
@@ -122,6 +131,7 @@ class ValidSessionStager:
         self._consent_id = consent_id
         self._versions = dict(versions)
         self._started_at_ns = started_at_ns
+        self._upload_envelope = upload_envelope
         self._expected_stage_ids = (
             expected_stage_ids
             if expected_stage_ids is not None
@@ -148,6 +158,16 @@ class ValidSessionStager:
     @property
     def staging_directory(self) -> Path:
         return self._staging_root / self._session_id
+
+    @property
+    def subject_uuid(self) -> str:
+        return self._subject_uuid
+
+    @property
+    def upload_envelope(self) -> FormalUploadEnvelope:
+        if self._upload_envelope is None:
+            raise RuntimeError("formal upload envelope is unavailable")
+        return self._upload_envelope
 
     @property
     def stage_windows(self) -> tuple[CapturedStageWindow, ...]:
@@ -377,6 +397,7 @@ class ValidSessionStager:
             "started_at_ns": self._started_at_ns,
             "ended_at_ns": ended_at_ns,
             "manifest_sha256": str(manifest["manifest_sha256"]),
+            "upload_envelope": self._encoded_recovery_envelope(),
             "segments": [
                 {
                     "segment_id": record.segment_id,
@@ -418,6 +439,7 @@ class ValidSessionStager:
                 manifest_sha256=str(manifest["manifest_sha256"]),
                 segments=records,
                 artifacts=artifact_records,
+                upload_envelope=self._upload_envelope,
             )
         except Exception:
             os.replace(final, staging)
@@ -433,6 +455,16 @@ class ValidSessionStager:
             manifest_sha256=str(manifest["manifest_sha256"]),
             session_directory=final,
         )
+
+    def _encoded_recovery_envelope(self) -> str | None:
+        if self._upload_envelope is None:
+            return None
+        plaintext = self._upload_envelope.model_dump_json().encode("utf-8")
+        encrypted = SensitiveBlobCodec(self._key_provider).encrypt(
+            plaintext,
+            context=f"formal_upload_envelope:{self._session_id}",
+        )
+        return base64.b64encode(encrypted).decode("ascii")
 
     def _ensure_active(self) -> None:
         if self._poisoned_reason is not None:
@@ -507,6 +539,26 @@ class ValidSessionStager:
                     )
                     if derived.get("session_id") != session_id:
                         raise ValueError("promoted derived artifact session mismatch")
+                encoded_envelope = payload.get("upload_envelope")
+                upload_envelope = None
+                if encoded_envelope is not None:
+                    if not isinstance(encoded_envelope, str):
+                        raise ValueError("invalid formal upload recovery envelope")
+                    try:
+                        encrypted_envelope = base64.b64decode(
+                            encoded_envelope.encode("ascii"), validate=True
+                        )
+                        plaintext_envelope = SensitiveBlobCodec(key_provider).decrypt(
+                            encrypted_envelope,
+                            context=f"formal_upload_envelope:{session_id}",
+                        )
+                        upload_envelope = FormalUploadEnvelope.model_validate_json(
+                            plaintext_envelope
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "invalid formal upload recovery envelope"
+                        ) from exc
                 store.commit_valid_session(
                     session_id,
                     subject_uuid=str(payload["subject_uuid"]),
@@ -517,6 +569,7 @@ class ValidSessionStager:
                     manifest_sha256=str(payload["manifest_sha256"]),
                     segments=segments,
                     artifacts=artifacts,
+                    upload_envelope=upload_envelope,
                 )
                 recovered += 1
             registration_path.unlink()
