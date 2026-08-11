@@ -4,6 +4,8 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from client.app import live_institution_runtime as live_runtime
 
 
@@ -42,6 +44,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     class Hardware:
         display_geometry = SimpleNamespace(maximum_refresh_hz=20)
         specification_id = "dop4864/test"
+        calibration_metadata = SimpleNamespace(
+            profile_version="calibration-authoritative/42"
+        )
 
         def make_latest_frame_mailbox(self):
             return object()
@@ -88,9 +93,11 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     acquisition: Acquisition | None = None
     capture: Capture | None = None
     processor: Processor | None = None
+    capture_kwargs: dict[str, object] = {}
 
     def make_capture(**kwargs):
         nonlocal capture
+        capture_kwargs.update(kwargs)
         capture = Capture(**kwargs)
         return capture
 
@@ -146,7 +153,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
 
     live_runtime.build_live_institution_runtime(
         session=SimpleNamespace(
-            tenant_id="tenant-1", client_installation_id="installation-1"
+            tenant_id="tenant-1",
+            client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+            hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
         ),
         access_runtime=SimpleNamespace(
             hardware_lease_lifecycle=lambda _session: object()
@@ -154,6 +163,8 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         startup_run=object(),
         data_root=tmp_path,
         export_destination=lambda: None,
+        app_version="9.8.7-authoritative",
+        payload_schema="raw-segment/7",
     )
 
     assert (
@@ -165,6 +176,14 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     )
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
     assert events.index("processor") < events.index("callbacks")
+    formal_upload = capture_kwargs["formal_upload"]
+    assert formal_upload.client_installation_id == (
+        "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
+    )
+    assert formal_upload.hardware_asset_id == "7d9238d9-0ef8-4de4-b0c5-f08e22b72268"
+    assert formal_upload.app_version == "9.8.7-authoritative"
+    assert formal_upload.payload_schema == "raw-segment/7"
+    assert formal_upload.calibration_profile == "calibration-authoritative/42"
     callbacks = acquisition.callbacks
     callbacks["on_progress"](7)
     result = SimpleNamespace(stage_windows=("window-1",))
@@ -180,3 +199,48 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         capture,
         baseline,
     )
+
+
+def test_formal_live_runtime_rejects_missing_authenticated_hardware_asset(
+    monkeypatch, tmp_path: Path
+) -> None:
+    hardware = SimpleNamespace(
+        calibration_metadata=SimpleNamespace(profile_version="calibration/1")
+    )
+    monkeypatch.setattr(live_runtime, "active_hardware_runtime", lambda: hardware)
+    monkeypatch.setattr(
+        live_runtime,
+        "KeyringAesKeyProvider",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("storage must not open before formal identity validation")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="hardware_asset_id"):
+        live_runtime.build_live_institution_runtime(
+            session=SimpleNamespace(
+                tenant_id="tenant-1",
+                client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+            ),
+            access_runtime=object(),
+            startup_run=object(),
+            data_root=tmp_path,
+            export_destination=lambda: None,
+            app_version="9.8.7-authoritative",
+            payload_schema="raw-segment/7",
+        )
+
+
+def test_formal_live_runtime_requires_explicit_capture_versions(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="app_version"):
+        live_runtime.build_live_institution_runtime(
+            session=SimpleNamespace(
+                tenant_id="tenant-1",
+                client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+                hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
+            ),
+            access_runtime=object(),
+            startup_run=object(),
+            data_root=tmp_path,
+            export_destination=lambda: None,
+        )

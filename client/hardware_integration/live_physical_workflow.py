@@ -49,7 +49,10 @@ from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import ProtocolSnapshot
-from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.client_sync import (
+    RAW_SEGMENT_PAYLOAD_SCHEMA,
+    FormalUploadEnvelope,
+)
 from shared.contracts.cloud import SessionVersions, TestProtocol
 
 
@@ -59,6 +62,41 @@ class LiveSessionMetadata:
     consent_record_id: str
     captured_at: datetime
     protocol: ProtocolSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FormalCaptureUpload:
+    """Authenticated identity and authoritative versions frozen for capture."""
+
+    client_installation_id: str
+    hardware_asset_id: str
+    site_id: str | None
+    app_version: str
+    payload_schema: str
+    calibration_profile: str
+
+    def __post_init__(self) -> None:
+        required = (
+            "client_installation_id",
+            "hardware_asset_id",
+            "app_version",
+            "payload_schema",
+            "calibration_profile",
+        )
+        for field_name in required:
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} is required for formal upload")
+        for field_name in ("client_installation_id", "hardware_asset_id"):
+            try:
+                UUID(getattr(self, field_name))
+            except ValueError as exc:
+                raise ValueError(f"{field_name} must be a UUID") from exc
+        if self.site_id is not None:
+            try:
+                UUID(self.site_id)
+            except ValueError as exc:
+                raise ValueError("site_id must be a UUID when provided") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,12 +182,7 @@ class LivePhysicalCapture:
         maximum_no_valid_signal_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
         read_size: int = FRAME_LENGTH,
-        client_installation_id: str | None = None,
-        hardware_asset_id: str | None = None,
-        site_id: str | None = None,
-        app_version: str | None = None,
-        payload_schema: str = "raw-segment/1",
-        calibration_profile: str | None = None,
+        formal_upload: FormalCaptureUpload | None,
         monotonic_ns=time.monotonic_ns,
         wall_time_ns=time.time_ns,
     ) -> None:
@@ -176,24 +209,7 @@ class LivePhysicalCapture:
             raise ValueError("maximum no-valid-signal interval must be positive")
         self._storage_append_timeout_s = storage_append_timeout_s
         self._read_size = read_size
-        formal_values = (
-            client_installation_id,
-            hardware_asset_id,
-            app_version,
-            calibration_profile,
-        )
-        if any(value is not None for value in formal_values) and not all(
-            value is not None and value.strip() for value in formal_values
-        ):
-            raise ValueError("formal upload identity and versions must be complete")
-        if not payload_schema.strip():
-            raise ValueError("payload schema is required")
-        self._client_installation_id = client_installation_id
-        self._hardware_asset_id = hardware_asset_id
-        self._site_id = site_id
-        self._app_version = app_version
-        self._payload_schema = payload_schema
-        self._calibration_profile = calibration_profile
+        self._formal_upload = formal_upload
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
         self._states: dict[str, _LiveCaptureState] = {}
@@ -284,7 +300,6 @@ class LivePhysicalCapture:
                 "institution_live": "institution-live-ui/1",
                 "protocol": "static-balance/live-ui/1",
                 "protocol_profile": parser.profile.version,
-                "payload_schema": self._payload_schema,
                 "maximum_no_valid_signal_ns": str(
                     self._maximum_no_valid_signal_ns
                 ),
@@ -296,12 +311,23 @@ class LivePhysicalCapture:
                 ),
                 **quality_gate.frozen_configuration_versions(),
             }
+            payload_schema = (
+                RAW_SEGMENT_PAYLOAD_SCHEMA
+                if self._formal_upload is None
+                else self._formal_upload.payload_schema
+            )
+            versions["payload_schema"] = payload_schema
             upload_envelope = self._formal_upload_envelope(
                 session_id=session_id,
                 metadata=metadata,
                 protocol_profile=parser.profile.version,
                 started_at_ns=started_at_ns,
             )
+            stager_versions = {
+                "institution_live": versions["institution_live"],
+                "protocol": versions["protocol"],
+                "payload_schema": payload_schema,
+            }
             stager = ValidSessionStager(
                 self._spool_root,
                 session_id=session_id,
@@ -309,11 +335,7 @@ class LivePhysicalCapture:
                 store=self._physical_store,
                 subject_uuid=metadata.subject_uuid,
                 consent_id=metadata.consent_record_id,
-                versions={
-                    "institution_live": versions["institution_live"],
-                    "protocol": versions["protocol"],
-                    "payload_schema": versions["payload_schema"],
-                },
+                versions=stager_versions,
                 started_at_ns=started_at_ns,
                 upload_envelope=upload_envelope,
                 expected_stage_ids=gate.expected_stage_ids,
@@ -322,7 +344,7 @@ class LivePhysicalCapture:
                 {
                     key: value
                     for key, value in versions.items()
-                    if key not in {"institution_live", "protocol", "payload_schema"}
+                    if key not in stager_versions
                 }
             )
             state = _LiveCaptureState(
@@ -344,11 +366,9 @@ class LivePhysicalCapture:
         protocol_profile: str,
         started_at_ns: int,
     ) -> FormalUploadEnvelope | None:
-        if self._client_installation_id is None:
+        formal_upload = self._formal_upload
+        if formal_upload is None:
             return None
-        assert self._hardware_asset_id is not None
-        assert self._app_version is not None
-        assert self._calibration_profile is not None
         if metadata.protocol is None:
             raise RuntimeError("formal upload requires the frozen protocol snapshot")
         subject = self._sessions.subject_upload_request(metadata.subject_uuid)
@@ -359,18 +379,20 @@ class LivePhysicalCapture:
             session_id=UUID(session_id),
             subject=subject,
             consent=consent,
-            client_installation_id=UUID(self._client_installation_id),
-            hardware_asset_id=UUID(self._hardware_asset_id),
-            site_id=None if self._site_id is None else UUID(self._site_id),
+            client_installation_id=UUID(formal_upload.client_installation_id),
+            hardware_asset_id=UUID(formal_upload.hardware_asset_id),
+            site_id=(
+                None if formal_upload.site_id is None else UUID(formal_upload.site_id)
+            ),
             test_protocol=TestProtocol(
                 id=metadata.protocol.protocol_id,
                 version=metadata.protocol.protocol_version,
             ),
             versions=SessionVersions(
-                app=self._app_version,
+                app=formal_upload.app_version,
                 protocol_profile=protocol_profile,
-                payload_schema=self._payload_schema,
-                calibration=self._calibration_profile,
+                payload_schema=formal_upload.payload_schema,
+                calibration=formal_upload.calibration_profile,
             ),
             config_snapshot=config_snapshot,
             started_at=datetime.fromtimestamp(started_at_ns / 1_000_000_000, UTC),

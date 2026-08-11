@@ -8,6 +8,7 @@ from client.device.stage_windows import StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
 from client.hardware_integration.live_physical_workflow import (
+    FormalCaptureUpload,
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
@@ -72,12 +73,14 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             key_provider=key,
             spool_root=tmp_path / "spool",
             latest_frames=None,
-            client_installation_id=str(installation_id),
-            hardware_asset_id=str(hardware_asset_id),
-            site_id=None,
-            app_version="0.1.0",
-            payload_schema="raw-segment/1",
-            calibration_profile="calibration/1",
+            formal_upload=FormalCaptureUpload(
+                client_installation_id=str(installation_id),
+                hardware_asset_id=str(hardware_asset_id),
+                site_id=None,
+                app_version="9.8.7-authoritative",
+                payload_schema="raw-segment/7",
+                calibration_profile="calibration-authoritative/42",
+            ),
             wall_time_ns=lambda: 1_786_406_400_000_000_000,
         )
         adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
@@ -108,9 +111,13 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
         )
         assert state.stager.upload_envelope.client_installation_id == installation_id
         assert state.stager.upload_envelope.hardware_asset_id == hardware_asset_id
+        assert state.stager.upload_envelope.versions.app == "9.8.7-authoritative"
         assert state.stager.upload_envelope.versions.protocol_profile == "do-p4864/1"
-        assert state.stager.upload_envelope.versions.payload_schema == "raw-segment/1"
-        assert state.stager.upload_envelope.versions.calibration == "calibration/1"
+        assert state.stager.upload_envelope.versions.payload_schema == "raw-segment/7"
+        assert (
+            state.stager.upload_envelope.versions.calibration
+            == "calibration-authoritative/42"
+        )
         assert state.stager.upload_envelope.config_snapshot["stage_ids"] == list(
             protocol.stage_ids
         )

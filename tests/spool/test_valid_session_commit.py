@@ -109,6 +109,8 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertFalse((self.root / "data" / "sessions" / "invalid").exists())
         with self.assertRaises(KeyError):
             self.store.session_status("invalid")
+        with self.assertRaises(KeyError):
+            self.store.sync_handoff_state("invalid")
 
     def test_valid_capture_is_promoted_then_registered_with_ready_network_handoff(self) -> None:
         stager = self._stager("valid")

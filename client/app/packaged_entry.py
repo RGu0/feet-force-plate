@@ -18,6 +18,7 @@ from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
 
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from shared.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
 from client.support import (
     PlatformFamily,
     SafeClientEventName,
@@ -846,6 +847,8 @@ def main() -> int:
                 startup_run=startup_run,
                 data_root=data_root,
                 export_destination=_choose_diagnostic_destination,
+                app_version=APP_VERSION,
+                payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
             )
             references["live_runtime"] = live_runtime
             return live_runtime.controller.window

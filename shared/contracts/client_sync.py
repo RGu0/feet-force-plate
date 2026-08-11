@@ -25,6 +25,9 @@ from .cloud import (
 )
 
 
+RAW_SEGMENT_PAYLOAD_SCHEMA = "raw-segment/1"
+
+
 class FormalUploadEnvelope(ContractModel):
     """Immutable identity and version snapshot for one valid-session handoff."""
 

@@ -11,6 +11,7 @@ from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
 from client.hardware_integration.live_physical_workflow import (
+    FormalCaptureUpload,
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
@@ -27,10 +28,6 @@ from client.spool.state_store import SensitiveBlobCodec, StateStore
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
-
-
-APP_VERSION = "0.1.0"
-RAW_SEGMENT_PAYLOAD_SCHEMA = "raw-segment/1"
 
 
 class _Telemetry:
@@ -69,12 +66,27 @@ def build_live_institution_runtime(
     startup_run,
     data_root: Path,
     export_destination,
-    app_version: str = APP_VERSION,
-    payload_schema: str = RAW_SEGMENT_PAYLOAD_SCHEMA,
+    app_version: str,
+    payload_schema: str,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
     hardware = active_hardware_runtime()
+    client_installation_id = getattr(session, "client_installation_id", None)
+    if not isinstance(client_installation_id, str) or not client_installation_id.strip():
+        raise ValueError("client_installation_id is required for formal runtime")
+    hardware_asset_id = getattr(session, "hardware_asset_id", None)
+    if not isinstance(hardware_asset_id, str) or not hardware_asset_id.strip():
+        raise ValueError("hardware_asset_id is required for formal runtime")
+    calibration = hardware.calibration_metadata
+    formal_upload = FormalCaptureUpload(
+        client_installation_id=client_installation_id,
+        hardware_asset_id=hardware_asset_id,
+        site_id=getattr(session, "site_id", None),
+        app_version=app_version,
+        payload_schema=payload_schema,
+        calibration_profile=calibration.profile_version,
+    )
     key_provider = KeyringAesKeyProvider()
     institution = InstitutionLocalStore.open(
         data_root / "institution", key_provider=key_provider
@@ -97,17 +109,6 @@ def build_live_institution_runtime(
     )
     raw_mailbox = hardware.make_latest_frame_mailbox()
     display_mailbox = LatestDisplayFrameMailbox()
-    formal_upload_inputs = {}
-    if hasattr(session, "hardware_asset_id"):
-        calibration = hardware.calibration_metadata
-        formal_upload_inputs = {
-            "client_installation_id": session.client_installation_id,
-            "hardware_asset_id": session.hardware_asset_id,
-            "site_id": getattr(session, "site_id", None),
-            "app_version": app_version,
-            "payload_schema": payload_schema,
-            "calibration_profile": calibration.profile_version,
-        }
     capture = LivePhysicalCapture(
         hardware=hardware,
         sessions=sessions,
@@ -116,7 +117,7 @@ def build_live_institution_runtime(
         key_provider=key_provider,
         spool_root=data_root / "spool",
         latest_frames=raw_mailbox,
-        **formal_upload_inputs,
+        formal_upload=formal_upload,
     )
     acquisition = QtLiveHardwareAcquisition(capture.capture)
     processor = LivePhysicalProcessor(

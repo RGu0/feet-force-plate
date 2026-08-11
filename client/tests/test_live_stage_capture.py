@@ -179,6 +179,7 @@ def _capture_fixture(tmp_path, *, hardware=None):
         key_provider=key_provider,
         spool_root=tmp_path / "spool",
         latest_frames=mailbox,
+        formal_upload=None,
     )
     return capture, hardware, key_provider, mailbox
 
