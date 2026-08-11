@@ -61,6 +61,7 @@ class ManifestOutboxTests(unittest.IsolatedAsyncioTestCase):
                 consent_record_id=self.consent_id,
                 site_id=self.site_id,
                 terminal_id=self.terminal_id,
+                client_installation_id=self.terminal_id,
                 device_id=self.device_id,
                 test_protocol=TestProtocol(id="standard-screening", version="1.0"),
                 versions=SessionVersions(

@@ -295,6 +295,7 @@ class HttpIngestionClientTests(unittest.TestCase):
                     consent_record_id=uuid4(),
                     site_id=None,
                     terminal_id=terminal_id,
+                    client_installation_id=terminal_id,
                     device_id=uuid4(),
                     test_protocol=TestProtocol(id="standard-screening", version="1.0"),
                     versions={

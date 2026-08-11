@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from httpx import ASGITransport, AsyncClient
 
+from cloud.access_control.lease_service import HardwareLeaseService
 from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.repository import InMemoryAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
@@ -27,6 +28,7 @@ from cloud.ingestion.object_store import InMemoryObjectStore
 from cloud.ingestion.service import IngestionService
 from shared.contracts.access_control import (
     ActivateAccountRequest,
+    HardwareLeaseRequest,
     LicenseControlAction,
     LicenseControlRequest,
     PlatformRole,
@@ -170,6 +172,10 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
                 ingestion=ingestion,
                 subjects=subjects,
                 devices=devices,
+                hardware_leases=HardwareLeaseService(
+                    self.access_repository,
+                    now=lambda: self.now,
+                ),
                 tenant_access=self.tenant_access,
                 tenant_tokens=self.tenant_tokens,
             )
@@ -196,6 +202,7 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
             consent_record_id=self.consent_id,
             site_id=self.site_id,
             terminal_id=self.installation_id,
+            client_installation_id=self.installation_id,
             device_id=self.device_id,
             test_protocol=ProtocolContract(id="standard-screening", version="1.0"),
             versions=SessionVersions(
@@ -260,10 +267,6 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(granted.status_code, 201, granted.text)
 
     async def test_suspension_blocks_new_test_but_existing_upload_continues(self) -> None:
-        await self.create_subject_and_consent(self.session.access_token)
-        created = await self.create_session(self.session.access_token, self.session_id)
-        self.assertEqual(created.status_code, 201, created.text)
-
         await self.platform.control_license(
             self.operator,
             self.provisioned.license_id,
@@ -281,8 +284,19 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(refreshed.capabilities.allow_new_test)
         self.assertTrue(refreshed.capabilities.allow_upload)
 
-        rejected = await self.create_session(refreshed.access_token, uuid4())
-        self.assertEqual(rejected.status_code, 403, rejected.text)
+        rejected_lease = await self.client.post(
+            "/v1/access/hardware-lease",
+            headers=self.headers(refreshed.access_token),
+            json=HardwareLeaseRequest(
+                hardware_id=self.session.hardware_id,
+                client_installation_id=self.installation_id,
+            ).model_dump(mode="json"),
+        )
+        self.assertEqual(rejected_lease.status_code, 409, rejected_lease.text)
+
+        await self.create_subject_and_consent(refreshed.access_token)
+        created = await self.create_session(refreshed.access_token, self.session_id)
+        self.assertEqual(created.status_code, 201, created.text)
 
         payload = b"captured before suspension"
         metadata = SegmentMetadata(

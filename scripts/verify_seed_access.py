@@ -146,7 +146,8 @@ async def run_local_acceptance() -> dict[str, object]:
         context = tenant_ingestion_principal(access_context)
         request_session = SessionCreateRequest(
             session_id=session_id, subject_uuid=subject_id, consent_record_id=consent_id,
-            site_id=site_id, terminal_id=installation_id, device_id=group.hardware_id,
+            site_id=site_id, terminal_id=installation_id,
+            client_installation_id=installation_id, device_id=group.hardware_id,
             test_protocol=TestProtocol(id="synthetic-seed", version="1.0"),
             versions=SessionVersions(
                 app="acceptance/1", protocol_profile="do-p4864/1",

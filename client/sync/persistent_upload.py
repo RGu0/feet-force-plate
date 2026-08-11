@@ -93,6 +93,7 @@ class SessionUploadContext:
             consent_record_id=consent_id,
             site_id=self.site_id,
             terminal_id=self.terminal_id,
+            client_installation_id=self.terminal_id,
             device_id=self.device_id,
             test_protocol=self.test_protocol,
             versions=SessionVersions(

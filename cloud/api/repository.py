@@ -780,8 +780,6 @@ class InMemoryPlatformRepository:
         session = self._sessions.get((context.tenant_id, session_id))
         if session is None:
             raise ResourceNotFound("会话不存在", session_id=str(session_id))
-        if session.request.terminal_id != context.terminal_id:
-            raise TenantAccessDenied("会话不属于当前终端", session_id=str(session_id))
         return session
 
     def _idempotent_result(
@@ -804,16 +802,25 @@ class InMemoryPlatformRepository:
         request: SessionCreateRequest,
         idempotency_key: str,
     ) -> SessionCreateResponse:
-        terminal = self._terminal(context)
+        self._terminal(context)
         digest = canonical_sha256(request)
         replay = self._idempotent_result(context.tenant_id, "session.create", idempotency_key, digest)
         if replay is not None:
             return replay.model_copy(update={"idempotent_replay": True})
-        if request.terminal_id != context.terminal_id or request.site_id != terminal.site_id:
-            raise TenantAccessDenied("会话终端或站点与认证上下文不一致")
+        captured_installation = self._terminals.get(
+            (context.tenant_id, request.client_installation_id)
+        )
+        if (
+            captured_installation is None
+            or request.site_id != captured_installation.site_id
+        ):
+            raise TenantAccessDenied("采集安装或站点不属于认证租户")
         device = self._devices.get((context.tenant_id, request.device_id))
-        if device is None or device.status != "ACTIVE":
-            raise TenantAccessDenied("设备不属于当前租户", device_id=str(request.device_id))
+        if device is None:
+            raise TenantAccessDenied(
+                "采集硬件资产不属于认证租户",
+                device_id=str(request.device_id),
+            )
         if (context.tenant_id, request.subject_uuid) not in self._subjects:
             raise TenantAccessDenied("受试者不属于当前租户", subject_uuid=str(request.subject_uuid))
         consent = self._consents.get((context.tenant_id, request.consent_record_id))

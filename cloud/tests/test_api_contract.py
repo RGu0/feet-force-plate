@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.auth import TerminalTokenIssuer
@@ -95,6 +96,7 @@ class IngestionApiContractTests(unittest.IsolatedAsyncioTestCase):
             consent_record_id=self.consent_id,
             site_id=self.site_id,
             terminal_id=self.terminal_id,
+            client_installation_id=self.terminal_id,
             device_id=self.device_id,
             test_protocol=TestProtocol(id="standard-screening", version="1.0"),
             versions=SessionVersions(
@@ -105,6 +107,22 @@ class IngestionApiContractTests(unittest.IsolatedAsyncioTestCase):
             ),
             started_at=datetime.now(UTC),
         )
+
+    def test_session_contract_requires_explicit_matching_installation_identity(self) -> None:
+        request = self.session_request()
+
+        self.assertEqual(request.client_installation_id, self.terminal_id)
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "client installation must match legacy terminal id",
+        ):
+            SessionCreateRequest(
+                **{
+                    **request.model_dump(),
+                    "client_installation_id": uuid4(),
+                }
+            )
 
     def metadata(self, payload: bytes, index: int) -> SegmentMetadata:
         return SegmentMetadata(

@@ -125,7 +125,7 @@ class SubjectConsentService:
         idempotency_key: str,
     ) -> SubjectSummary:
         context = coerce_ingestion_principal(context)
-        context.ensure_can_start_new()
+        context.ensure_can_upload()
         protected = None
         protected_identity = None
         if request.external_identifier is not None:
@@ -167,7 +167,7 @@ class SubjectConsentService:
         idempotency_key: str,
     ) -> ConsentResponse:
         context = coerce_ingestion_principal(context)
-        context.ensure_can_start_new()
+        context.ensure_can_upload()
         return await self._repository.create_consent(
             context, request, canonical_sha256(request), idempotency_key
         )

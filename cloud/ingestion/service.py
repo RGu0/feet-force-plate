@@ -51,7 +51,7 @@ class IngestionService:
         idempotency_key: str,
     ) -> SessionCreateResponse:
         context = coerce_ingestion_principal(context)
-        context.ensure_can_start_new()
+        context.ensure_can_upload()
         if request.versions.payload_schema not in self._payload_schemas:
             raise SchemaUnsupported(
                 "客户端原始分段模式不受支持",
