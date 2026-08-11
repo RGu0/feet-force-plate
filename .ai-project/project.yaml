@@ -3,6 +3,11 @@ id: "feet-force-plate"
 repository: "git@github.com:RGu0/feet-force-plate.git"
 default_branch: "master"
 linear_project: "feet-force-plate"
+# independent: completion requires an APPROVED review by someone other than the
+# PR author. Change to "self" only where that is impossible, such as a repository
+# with a single maintainer; the review record then stands alone and the receipt
+# says so.
+review_policy: "independent"
 commands:
   default:
     setup: ["./dev", "setup"]
