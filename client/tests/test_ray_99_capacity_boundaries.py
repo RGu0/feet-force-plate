@@ -110,6 +110,11 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
         confirmed_session_id, confirmed_segment_path = _commit_handoff(
             store, tmp_path, index=49, byte_count=1
         )
+        uploading_handoff = store.lease_sync_handoff(now_ns=now_ns)
+        assert uploading_handoff is not None
+        assert uploading_handoff.session_id == confirmed_session_id
+        assert store.sync_handoff_state(confirmed_session_id) == "UPLOADING"
+
         decision_with_50_handoffs = store.evaluate_new_test(
             now_ns=now_ns,
             free_disk_bytes=PENDING_BYTE_LIMIT + 1,
@@ -122,9 +127,15 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
         )
         _assert_existing_work_remains_allowed(decision_with_50_handoffs)
 
+        uploading_snapshot = store.offline_snapshot()
+        assert uploading_snapshot.pending_session_count == 50
+        assert uploading_snapshot.pending_bytes == 50
+
         store.mark_cloud_confirmed(confirmed_session_id, confirmed_at_ns=now_ns)
 
-        assert store.offline_snapshot().pending_session_count == 49
+        confirmed_snapshot = store.offline_snapshot()
+        assert confirmed_snapshot.pending_session_count == 49
+        assert confirmed_snapshot.pending_bytes == 49
         assert confirmed_segment_path.exists()
     finally:
         store.close()
