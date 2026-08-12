@@ -4,6 +4,8 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from client.app import live_institution_runtime as live_runtime
 
 
@@ -42,14 +44,12 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     class Hardware:
         display_geometry = SimpleNamespace(maximum_refresh_hz=20)
         specification_id = "dop4864/test"
+        calibration_metadata = SimpleNamespace(
+            profile_version="calibration-authoritative/42"
+        )
 
         def make_latest_frame_mailbox(self):
             return object()
-
-    class Institution:
-        @staticmethod
-        def open(*_args, **_kwargs):
-            return institution
 
     class PhysicalStore:
         def __init__(self, *_args) -> None:
@@ -83,21 +83,18 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
 
     institution = SimpleNamespace(consent_port=lambda: object())
     controller = _FakeController()
-    physical_store: PhysicalStore | None = None
+    physical_store = PhysicalStore()
     baseline: object | None = None
     acquisition: Acquisition | None = None
     capture: Capture | None = None
     processor: Processor | None = None
+    capture_kwargs: dict[str, object] = {}
 
     def make_capture(**kwargs):
         nonlocal capture
+        capture_kwargs.update(kwargs)
         capture = Capture(**kwargs)
         return capture
-
-    def make_physical_store(*args):
-        nonlocal physical_store
-        physical_store = PhysicalStore(*args)
-        return physical_store
 
     def make_baseline(_hardware):
         nonlocal baseline
@@ -115,9 +112,30 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         return processor
 
     monkeypatch.setattr(live_runtime, "active_hardware_runtime", lambda: Hardware())
-    monkeypatch.setattr(live_runtime, "KeyringAesKeyProvider", lambda: object())
-    monkeypatch.setattr(live_runtime, "InstitutionLocalStore", Institution)
-    monkeypatch.setattr(live_runtime, "StateStore", make_physical_store)
+    monkeypatch.setattr(
+        live_runtime,
+        "KeyringAesKeyProvider",
+        lambda: (_ for _ in ()).throw(AssertionError("workbench must reuse key provider")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "InstitutionLocalStore",
+        SimpleNamespace(
+            open=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("workbench must reuse institution store")
+            )
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("workbench must reuse physical store")
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", lambda _store: object())
     monkeypatch.setattr(live_runtime, "LiveBaselinePreflight", make_baseline)
     monkeypatch.setattr(live_runtime, "HardwareLeasePreflight", lambda _lease: object())
@@ -146,25 +164,39 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
 
     live_runtime.build_live_institution_runtime(
         session=SimpleNamespace(
-            tenant_id="tenant-1", client_installation_id="installation-1"
+            tenant_id="tenant-1",
+            client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+            hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
         ),
         access_runtime=SimpleNamespace(
             hardware_lease_lifecycle=lambda _session: object()
         ),
+        key_provider=object(),
+        institution=institution,
+        physical_store=physical_store,
         startup_run=object(),
         data_root=tmp_path,
         export_destination=lambda: None,
+        app_version="9.8.7-authoritative",
+        payload_schema="raw-segment/7",
     )
 
     assert (
         acquisition is not None
         and capture is not None
         and processor is not None
-        and physical_store is not None
         and baseline is not None
     )
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
     assert events.index("processor") < events.index("callbacks")
+    formal_upload = capture_kwargs["formal_upload"]
+    assert formal_upload.client_installation_id == (
+        "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
+    )
+    assert formal_upload.hardware_asset_id == "7d9238d9-0ef8-4de4-b0c5-f08e22b72268"
+    assert formal_upload.app_version == "9.8.7-authoritative"
+    assert formal_upload.payload_schema == "raw-segment/7"
+    assert formal_upload.calibration_profile == "calibration-authoritative/42"
     callbacks = acquisition.callbacks
     callbacks["on_progress"](7)
     result = SimpleNamespace(stage_windows=("window-1",))
@@ -180,3 +212,55 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         capture,
         baseline,
     )
+
+
+def test_formal_live_runtime_rejects_missing_authenticated_hardware_asset(
+    monkeypatch, tmp_path: Path
+) -> None:
+    hardware = SimpleNamespace(
+        calibration_metadata=SimpleNamespace(profile_version="calibration/1")
+    )
+    monkeypatch.setattr(live_runtime, "active_hardware_runtime", lambda: hardware)
+    monkeypatch.setattr(
+        live_runtime,
+        "KeyringAesKeyProvider",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("storage must not open before formal identity validation")
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="hardware_asset_id"):
+        live_runtime.build_live_institution_runtime(
+            session=SimpleNamespace(
+                tenant_id="tenant-1",
+                client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+            ),
+            access_runtime=object(),
+            key_provider=object(),
+            institution=object(),
+            physical_store=object(),
+            startup_run=object(),
+            data_root=tmp_path,
+            export_destination=lambda: None,
+            app_version="9.8.7-authoritative",
+            payload_schema="raw-segment/7",
+        )
+
+
+def test_formal_live_runtime_requires_explicit_capture_versions(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="app_version"):
+        live_runtime.build_live_institution_runtime(
+            session=SimpleNamespace(
+                tenant_id="tenant-1",
+                client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
+                hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
+            ),
+            access_runtime=object(),
+            key_provider=object(),
+            institution=object(),
+            physical_store=object(),
+            startup_run=object(),
+            data_root=tmp_path,
+            export_destination=lambda: None,
+        )

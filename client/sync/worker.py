@@ -6,15 +6,17 @@ from dataclasses import dataclass
 import threading
 from typing import Protocol
 
+from client.sync.persistent_upload import UploadCycleOutcome, UploadTokenProvider
 
-class AccessTokenProvider(Protocol):
-    def current_access_token(self) -> str: ...
+
+class AccessTokenProvider(UploadTokenProvider, Protocol):
+    pass
 
 
 class UploadQueuePort(Protocol):
-    def upload_next(self, access_token: str) -> bool: ...
-
-    def schedule_retry(self) -> None: ...
+    def upload_next(
+        self, token_provider: UploadTokenProvider
+    ) -> UploadCycleOutcome: ...
 
 
 class HeartbeatPort(Protocol):
@@ -56,15 +58,19 @@ class BackgroundAccessWorker:
 
     def run_cycle(self, status: BackgroundHeartbeat) -> WorkerCycleResult:
         try:
+            outcome = self._uploads.upload_next(self._tokens)
             access_token = self._tokens.current_access_token()
-            uploaded = self._uploads.upload_next(access_token)
             self._heartbeat.send(access_token, status)
         except Exception:
-            self._uploads.schedule_retry()
             self._event_sink("background_access.retry_scheduled")
             return WorkerCycleResult(False, False, True)
+        uploaded = outcome is UploadCycleOutcome.CONFIRMED
+        retry_scheduled = outcome is UploadCycleOutcome.DEFERRED
+        if retry_scheduled:
+            self._event_sink("background_access.retry_scheduled")
+            return WorkerCycleResult(uploaded, True, True)
         self._event_sink("background_access.cycle_completed")
-        return WorkerCycleResult(uploaded, True, False)
+        return WorkerCycleResult(uploaded, True, retry_scheduled)
 
 
 class BackgroundAccessScheduler:

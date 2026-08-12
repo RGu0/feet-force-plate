@@ -17,6 +17,9 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux Qt runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
       - uses: astral-sh/setup-uv@v6
         with:
           version: "latest"
@@ -32,6 +35,9 @@ jobs:
           uv run --extra dev python -m pytest
           client/tests/test_ray_91_protocol.py
           client/tests/test_ray_91_reference_protocol_fixture.py
+          client/tests/test_institution_store.py
+          client/tests/test_p3_persistent_upload.py
+          client/tests/test_ray_99_packaged_upload_runtime.py
           tests/spool/test_recovery.py
           tests/spool/test_valid_session_commit.py
           cloud/tests/test_client_sync_contract.py

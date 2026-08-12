@@ -80,6 +80,7 @@ def _session_record(row: Any) -> SessionRecord:
         consent_record_id=row["consent_record_id"],
         site_id=row["site_id"],
         terminal_id=row["terminal_id"],
+        client_installation_id=row["terminal_id"],
         device_id=row["device_id"],
         test_protocol=TestProtocol(
             id=row["test_protocol_id"], version=row["test_protocol_version"]
@@ -462,17 +463,21 @@ class PostgresPlatformRepository:
                 """
                 SELECT
                     EXISTS (
-                        SELECT 1 FROM device.terminals t
-                        WHERE t.tenant_id=$1 AND t.terminal_id=$2 AND t.site_id IS NOT DISTINCT FROM $3
-                          AND t.status='ACTIVE'
-                    ) AS terminal_ok,
+                        SELECT 1
+                        FROM device.client_installations i
+                        JOIN device.terminals t
+                          ON t.tenant_id=i.tenant_id
+                         AND t.terminal_id=i.client_installation_id
+                        WHERE i.tenant_id=$1 AND i.client_installation_id=$2
+                          AND t.site_id IS NOT DISTINCT FROM $3
+                    ) AS installation_ok,
                     EXISTS (
-                        SELECT 1 FROM device.devices d
-                        JOIN device.terminal_device_bindings b
-                          ON b.tenant_id=d.tenant_id AND b.device_id=d.device_id
-                        WHERE d.tenant_id=$1 AND d.device_id=$4 AND d.status='ACTIVE'
-                          AND b.terminal_id=$2 AND b.valid_to IS NULL
-                    ) AS device_ok,
+                        SELECT 1
+                        FROM device.hardware_assets h
+                        JOIN device.devices d
+                          ON d.tenant_id=h.tenant_id AND d.device_id=h.hardware_id
+                        WHERE h.tenant_id=$1 AND h.hardware_id=$4
+                    ) AS hardware_ok,
                     EXISTS (
                         SELECT 1 FROM subject.subjects s
                         WHERE s.tenant_id=$1 AND s.subject_uuid=$5 AND s.status='ACTIVE'
@@ -484,14 +489,14 @@ class PostgresPlatformRepository:
                     ) AS consent_ok
                 """,
                 context.tenant_id,
-                context.terminal_id,
+                request.client_installation_id,
                 request.site_id,
                 request.device_id,
                 request.subject_uuid,
                 request.consent_record_id,
             )
-            if request.terminal_id != context.terminal_id or not all(validation.values()):
-                raise TenantAccessDenied("会话引用与认证租户、终端或授权不一致")
+            if not all(validation.values()):
+                raise TenantAccessDenied("会话引用与认证租户、采集身份或授权不一致")
             existing = await connection.fetchrow(
                 "SELECT * FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE",
                 context.tenant_id,
@@ -520,7 +525,7 @@ class PostgresPlatformRepository:
                     request.session_id,
                     context.tenant_id,
                     request.site_id,
-                    context.terminal_id,
+                    request.client_installation_id,
                     request.device_id,
                     request.subject_uuid,
                     request.consent_record_id,
@@ -905,8 +910,6 @@ class PostgresPlatformRepository:
             if row is None:
                 raise ResourceNotFound("会话不存在", session_id=str(session_id))
             record = _session_record(row)
-            if record.request.terminal_id != context.terminal_id:
-                raise TenantAccessDenied("会话不属于当前终端", session_id=str(session_id))
             return record
 
     @staticmethod
@@ -964,8 +967,6 @@ class PostgresPlatformRepository:
             )
             if session is None:
                 raise ResourceNotFound("会话不存在", session_id=str(session_id))
-            if session["terminal_id"] != context.terminal_id:
-                raise TenantAccessDenied("会话不属于当前终端")
             if session["ingest_status"] in ("INGESTED", "CONFLICT"):
                 raise SegmentDigestConflict("会话不再接受分段")
             row = await connection.fetchrow(
@@ -1015,14 +1016,13 @@ class PostgresPlatformRepository:
             result = await connection.execute(
                 """
                 UPDATE screening.sessions SET ingest_status='CONFLICT', updated_at=now()
-                WHERE tenant_id=$1 AND session_id=$2 AND terminal_id=$3
+                WHERE tenant_id=$1 AND session_id=$2
                 """,
                 context.tenant_id,
                 session_id,
-                context.terminal_id,
             )
             if result == "UPDATE 0":
-                raise TenantAccessDenied("会话不属于当前终端")
+                raise ResourceNotFound("会话不存在", session_id=str(session_id))
             await connection.execute(
                 """
                 INSERT INTO screening.ingest_problems (
@@ -1103,8 +1103,6 @@ class PostgresPlatformRepository:
             )
             if session is None:
                 raise ResourceNotFound("会话不存在", session_id=str(session_id))
-            if session["terminal_id"] != context.terminal_id:
-                raise TenantAccessDenied("会话不属于当前终端")
             existing = await connection.fetchrow(
                 """
                 SELECT * FROM screening.session_manifests

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 import threading
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from client.app.institution_store import InstitutionLocalStore
@@ -49,6 +49,11 @@ from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import ProtocolSnapshot
+from shared.contracts.client_sync import (
+    RAW_SEGMENT_PAYLOAD_SCHEMA,
+    FormalUploadEnvelope,
+)
+from shared.contracts.cloud import SessionVersions, TestProtocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +61,42 @@ class LiveSessionMetadata:
     subject_uuid: str
     consent_record_id: str
     captured_at: datetime
+    protocol: ProtocolSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FormalCaptureUpload:
+    """Authenticated identity and authoritative versions frozen for capture."""
+
+    client_installation_id: str
+    hardware_asset_id: str
+    site_id: str | None
+    app_version: str
+    payload_schema: str
+    calibration_profile: str
+
+    def __post_init__(self) -> None:
+        required = (
+            "client_installation_id",
+            "hardware_asset_id",
+            "app_version",
+            "payload_schema",
+            "calibration_profile",
+        )
+        for field_name in required:
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} is required for formal upload")
+        for field_name in ("client_installation_id", "hardware_asset_id"):
+            try:
+                UUID(getattr(self, field_name))
+            except ValueError as exc:
+                raise ValueError(f"{field_name} must be a UUID") from exc
+        if self.site_id is not None:
+            try:
+                UUID(self.site_id)
+            except ValueError as exc:
+                raise ValueError("site_id must be a UUID when provided") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +136,10 @@ class InstitutionLiveSessions:
     ) -> str:
         session_id = self._store.create_session(context, protocol)
         self._metadata[session_id] = LiveSessionMetadata(
-            context.subject_uuid, context.consent_record_id, datetime.now(UTC)
+            context.subject_uuid,
+            context.consent_record_id,
+            datetime.now(UTC),
+            protocol,
         )
         return session_id
 
@@ -113,6 +157,12 @@ class InstitutionLiveSessions:
 
     def finalize(self, session_id: str) -> None:
         self._store.finalize(session_id)
+
+    def subject_upload_request(self, subject_uuid: str):
+        return self._store.subject_upload_request(subject_uuid)
+
+    def consent_upload_request(self, consent_record_id: str):
+        return self._store.consent_upload_request(consent_record_id)
 
 
 class LivePhysicalCapture:
@@ -132,6 +182,7 @@ class LivePhysicalCapture:
         maximum_no_valid_signal_ns: int | None = None,
         storage_append_timeout_s: float | None = None,
         read_size: int = FRAME_LENGTH,
+        formal_upload: FormalCaptureUpload | None,
         monotonic_ns=time.monotonic_ns,
         wall_time_ns=time.time_ns,
     ) -> None:
@@ -158,6 +209,7 @@ class LivePhysicalCapture:
             raise ValueError("maximum no-valid-signal interval must be positive")
         self._storage_append_timeout_s = storage_append_timeout_s
         self._read_size = read_size
+        self._formal_upload = formal_upload
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
         self._states: dict[str, _LiveCaptureState] = {}
@@ -231,14 +283,15 @@ class LivePhysicalCapture:
                 return existing
 
             metadata = self._sessions.metadata(session_id)
+            started_at_ns = self._wall_time_ns()
             self._physical_store.put_subject_ref(
-                session_id, metadata.subject_uuid.encode()
+                metadata.subject_uuid, metadata.subject_uuid.encode()
             )
             self._physical_store.put_consent_record(
                 metadata.consent_record_id,
-                session_id,
+                metadata.subject_uuid,
                 metadata.consent_record_id.encode(),
-                recorded_at_ns=self._wall_time_ns(),
+                recorded_at_ns=started_at_ns,
             )
             quality_gate = DoP4864HardwareQualityGate(
                 baseline_reference=reference
@@ -258,25 +311,40 @@ class LivePhysicalCapture:
                 ),
                 **quality_gate.frozen_configuration_versions(),
             }
+            payload_schema = (
+                RAW_SEGMENT_PAYLOAD_SCHEMA
+                if self._formal_upload is None
+                else self._formal_upload.payload_schema
+            )
+            versions["payload_schema"] = payload_schema
+            upload_envelope = self._formal_upload_envelope(
+                session_id=session_id,
+                metadata=metadata,
+                protocol_profile=parser.profile.version,
+                started_at_ns=started_at_ns,
+            )
+            stager_versions = {
+                "institution_live": versions["institution_live"],
+                "protocol": versions["protocol"],
+                "payload_schema": payload_schema,
+            }
             stager = ValidSessionStager(
                 self._spool_root,
                 session_id=session_id,
                 key_provider=self._key_provider,
                 store=self._physical_store,
-                subject_uuid=session_id,
+                subject_uuid=metadata.subject_uuid,
                 consent_id=metadata.consent_record_id,
-                versions={
-                    "institution_live": versions["institution_live"],
-                    "protocol": versions["protocol"],
-                },
-                started_at_ns=self._wall_time_ns(),
+                versions=stager_versions,
+                started_at_ns=started_at_ns,
+                upload_envelope=upload_envelope,
                 expected_stage_ids=gate.expected_stage_ids,
             )
             stager.freeze_versions(
                 {
                     key: value
                     for key, value in versions.items()
-                    if key not in {"institution_live", "protocol"}
+                    if key not in stager_versions
                 }
             )
             state = _LiveCaptureState(
@@ -289,6 +357,46 @@ class LivePhysicalCapture:
             )
             self._states[session_id] = state
             return state
+
+    def _formal_upload_envelope(
+        self,
+        *,
+        session_id: str,
+        metadata: LiveSessionMetadata,
+        protocol_profile: str,
+        started_at_ns: int,
+    ) -> FormalUploadEnvelope | None:
+        formal_upload = self._formal_upload
+        if formal_upload is None:
+            return None
+        if metadata.protocol is None:
+            raise RuntimeError("formal upload requires the frozen protocol snapshot")
+        subject = self._sessions.subject_upload_request(metadata.subject_uuid)
+        consent = self._sessions.consent_upload_request(metadata.consent_record_id)
+        config_snapshot = asdict(metadata.protocol)
+        config_snapshot["stage_ids"] = list(metadata.protocol.stage_ids)
+        return FormalUploadEnvelope(
+            session_id=UUID(session_id),
+            subject=subject,
+            consent=consent,
+            client_installation_id=UUID(formal_upload.client_installation_id),
+            hardware_asset_id=UUID(formal_upload.hardware_asset_id),
+            site_id=(
+                None if formal_upload.site_id is None else UUID(formal_upload.site_id)
+            ),
+            test_protocol=TestProtocol(
+                id=metadata.protocol.protocol_id,
+                version=metadata.protocol.protocol_version,
+            ),
+            versions=SessionVersions(
+                app=formal_upload.app_version,
+                protocol_profile=protocol_profile,
+                payload_schema=formal_upload.payload_schema,
+                calibration=formal_upload.calibration_profile,
+            ),
+            config_snapshot=config_snapshot,
+            started_at=datetime.fromtimestamp(started_at_ns / 1_000_000_000, UTC),
+        )
 
     def _capture_connection(
         self,

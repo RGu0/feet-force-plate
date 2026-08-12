@@ -6,14 +6,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 import os
 from pathlib import Path
+import re
 import sqlite3
 import threading
 from typing import Protocol
+from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from shared.contracts.client_sync import FormalUploadEnvelope
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -25,6 +28,10 @@ class KeyProvider(Protocol):
     def get_key(self) -> bytes: ...
 
 
+class KeyProviderUnavailable(RuntimeError):
+    """The secure key handle exists but cannot be reached at this moment."""
+
+
 class SensitiveBlobCodec:
     """AES-256-GCM envelope whose key is fetched, never persisted in SQLite."""
 
@@ -32,7 +39,7 @@ class SensitiveBlobCodec:
         self._key_provider = key_provider
 
     def encrypt(self, plaintext: bytes, *, context: str) -> bytes:
-        key = self._key_provider.get_key()
+        key = self._load_key()
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         nonce = os.urandom(12)
@@ -42,12 +49,22 @@ class SensitiveBlobCodec:
     def decrypt(self, envelope: bytes, *, context: str) -> bytes:
         if len(envelope) < 30 or envelope[0] != 1:
             raise ValueError("unsupported or truncated sensitive blob envelope")
-        key = self._key_provider.get_key()
+        key = self._load_key()
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         return AESGCM(key).decrypt(
             envelope[1:13], envelope[13:], context.encode("utf-8")
         )
+
+    def _load_key(self) -> bytes:
+        try:
+            return self._key_provider.get_key()
+        except KeyProviderUnavailable:
+            raise
+        except OSError as exc:
+            raise KeyProviderUnavailable(
+                "OS credential storage is temporarily unavailable"
+            ) from exc
 
 
 class GateReason(StrEnum):
@@ -369,6 +386,30 @@ class StateStore:
                         "ADD COLUMN next_attempt_at_ns INTEGER"
                     )
                 self._connection.execute("PRAGMA user_version=7")
+            if version < 8:
+                columns = {
+                    str(row[1])
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    ).fetchall()
+                }
+                if "upload_envelope" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_envelope BLOB"
+                    )
+                self._connection.execute("PRAGMA user_version=8")
+            if version < 9:
+                columns = {
+                    str(row[1])
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    ).fetchall()
+                }
+                if "last_error_code" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN last_error_code TEXT"
+                    )
+                self._connection.execute("PRAGMA user_version=9")
 
     def record_validation_audit(
         self,
@@ -612,6 +653,7 @@ class StateStore:
         manifest_sha256: str,
         segments: tuple[ValidSegmentRecord, ...],
         artifacts: tuple[ValidArtifactRecord, ...] = (),
+        upload_envelope: FormalUploadEnvelope | None = None,
     ) -> None:
         """Atomically register only a fully validated, already-promoted session."""
 
@@ -625,6 +667,33 @@ class StateStore:
             raise ValueError("segment ids must be unique")
         if len({artifact.artifact_id for artifact in artifacts}) != len(artifacts):
             raise ValueError("artifact ids must be unique")
+        encrypted_upload_envelope: bytes | None = None
+        if upload_envelope is not None:
+            try:
+                matches_session = UUID(session_id) == upload_envelope.session_id
+            except ValueError:
+                matches_session = False
+            try:
+                matches_subject = UUID(subject_uuid) == upload_envelope.subject.subject_uuid
+            except ValueError:
+                matches_subject = False
+            try:
+                matches_consent = (
+                    consent_id is not None
+                    and UUID(consent_id) == upload_envelope.consent.consent_record_id
+                )
+            except ValueError:
+                matches_consent = False
+            if not matches_session:
+                raise ValueError("upload envelope session mismatch")
+            if not matches_subject:
+                raise ValueError("upload envelope subject mismatch")
+            if not matches_consent:
+                raise ValueError("upload envelope consent mismatch")
+            encrypted_upload_envelope = self._codec.encrypt(
+                upload_envelope.model_dump_json().encode("utf-8"),
+                context=f"formal_upload_envelope:{session_id}",
+            )
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT INTO sessions(
@@ -675,9 +744,14 @@ class StateStore:
             )
             self._connection.execute(
                 """INSERT INTO sync_handoffs(
-                    session_id, manifest_sha256, state, created_at_ns
-                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?)""",
-                (session_id, manifest_sha256, ended_at_ns),
+                    session_id, manifest_sha256, state, created_at_ns, upload_envelope
+                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?, ?)""",
+                (
+                    session_id,
+                    manifest_sha256,
+                    ended_at_ns,
+                    encrypted_upload_envelope,
+                ),
             )
 
     def sync_handoff_state(self, session_id: str) -> str:
@@ -688,6 +762,20 @@ class StateStore:
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
+
+    def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT upload_envelope FROM sync_handoffs WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            raise KeyError(session_id)
+        plaintext = self._codec.decrypt(
+            bytes(row[0]),
+            context=f"formal_upload_envelope:{session_id}",
+        )
+        return FormalUploadEnvelope.model_validate_json(plaintext)
 
     def attach_supporting_local_analysis(
         self,
@@ -749,7 +837,8 @@ class StateStore:
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs
-                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?, next_attempt_at_ns=NULL
+                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?,
+                    next_attempt_at_ns=NULL, last_error_code=NULL
                 WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING', 'RETRY_WAIT')""",
                 (confirmed_at_ns, session_id),
             ).rowcount
@@ -809,26 +898,70 @@ class StateStore:
             for row in rows
         )
 
-    def defer_sync_handoff(self, session_id: str, *, next_attempt_at_ns: int) -> None:
+    def defer_sync_handoff(
+        self,
+        session_id: str,
+        *,
+        error_code: str,
+        next_attempt_at_ns: int,
+    ) -> None:
         if next_attempt_at_ns < 0:
             raise ValueError("next_attempt_at_ns must be non-negative")
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
             changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='RETRY_WAIT', next_attempt_at_ns=?
+                """UPDATE sync_handoffs SET state='RETRY_WAIT',
+                    next_attempt_at_ns=?, last_error_code=?
                 WHERE session_id=? AND state='UPLOADING'""",
-                (next_attempt_at_ns, session_id),
+                (next_attempt_at_ns, error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)
+
+    def sync_handoff_retry_state(
+        self, session_id: str
+    ) -> tuple[int, int | None, str | None]:
+        """Expose durable scheduling facts without decrypting upload identity."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT attempt_count, next_attempt_at_ns, last_error_code
+                FROM sync_handoffs WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return (
+            int(row[0]),
+            int(row[1]) if row[1] is not None else None,
+            str(row[2]) if row[2] is not None else None,
+        )
 
     def mark_sync_handoff_conflict(self, session_id: str) -> None:
         """Stop automatic retries when a remote immutable digest conflicts."""
 
         with self._lock, self._connection:
             changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='CONFLICT', next_attempt_at_ns=NULL
+                """UPDATE sync_handoffs SET state='CONFLICT',
+                    next_attempt_at_ns=NULL, last_error_code='E-SYN-409'
                 WHERE session_id=? AND state='UPLOADING'""",
                 (session_id,),
+            ).rowcount
+        if not changed:
+            raise KeyError(session_id)
+
+    def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
+        """Stop automatic retries after a non-retryable cloud contract rejection."""
+
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
+        with self._lock, self._connection:
+            changed = self._connection.execute(
+                """UPDATE sync_handoffs SET state='BLOCKED',
+                    next_attempt_at_ns=NULL, last_error_code=?
+                WHERE session_id=? AND state='UPLOADING'""",
+                (error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)
@@ -999,7 +1132,7 @@ class StateStore:
             handoffs = self._connection.execute(
                 """UPDATE sync_handoffs
                 SET state='READY_FOR_NETWORK', next_attempt_at_ns=NULL
-                WHERE state IN ('UPLOADING', 'RETRY_WAIT')"""
+                WHERE state='UPLOADING'"""
             ).rowcount
         return RecoveryResult(sessions, uploads, telemetry, handoffs)
 
@@ -1054,16 +1187,20 @@ class StateStore:
             )
 
     def offline_snapshot(self) -> OfflineSnapshot:
-        pending = ("SEALED", "PENDING_UPLOAD", "UPLOADING", "CORRUPT")
         with self._lock:
             row = self._connection.execute(
                 """SELECT terminal_state.last_successful_online_ns,
-                    COUNT(DISTINCT segments.session_id),
-                    COALESCE(SUM(segments.byte_count), 0)
+                    COUNT(DISTINCT CASE
+                        WHEN h.state != 'CLOUD_CONFIRMED' THEN h.session_id
+                    END),
+                    COALESCE(SUM(CASE
+                        WHEN h.state != 'CLOUD_CONFIRMED' THEN s.byte_count
+                        ELSE 0
+                    END), 0)
                 FROM terminal_state
-                LEFT JOIN segments ON segments.state IN (?, ?, ?, ?)
-                WHERE terminal_state.singleton=1""",
-                pending,
+                LEFT JOIN sync_handoffs h ON 1=1
+                LEFT JOIN segments s ON s.session_id=h.session_id
+                WHERE terminal_state.singleton=1"""
             ).fetchone()
         return OfflineSnapshot(row[0], int(row[1]), int(row[2]))
 

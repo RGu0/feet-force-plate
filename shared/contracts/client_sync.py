@@ -6,19 +6,68 @@ import hashlib
 import json
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Annotated, Any, Mapping, Sequence
+from typing import Annotated, Any, Literal, Mapping, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from .cloud import (
     ContractModel,
+    ConsentCreateRequest,
     ReceivedSegment,
     SegmentAcknowledgement,
     SegmentMetadata,
     SegmentReceiptStatus,
     Sha256Hex,
+    SessionCreateRequest,
+    SessionVersions,
+    SubjectCreateRequest,
+    TestProtocol,
 )
+
+
+RAW_SEGMENT_PAYLOAD_SCHEMA = "raw-segment/1"
+
+
+class FormalUploadEnvelope(ContractModel):
+    """Immutable identity and version snapshot for one valid-session handoff."""
+
+    schema_version: Literal["formal-upload-envelope/1"] = "formal-upload-envelope/1"
+    session_id: UUID
+    subject: SubjectCreateRequest
+    consent: ConsentCreateRequest
+    client_installation_id: UUID
+    hardware_asset_id: UUID
+    site_id: UUID | None
+    test_protocol: TestProtocol
+    versions: SessionVersions
+    config_snapshot: dict[str, Any] = Field(default_factory=dict)
+    started_at: datetime
+
+    @model_validator(mode="after")
+    def validate_session_identities(self) -> FormalUploadEnvelope:
+        if self.subject.subject_uuid != self.consent.subject_uuid:
+            raise ValueError("consent subject must match upload subject")
+        if self.session_id == self.subject.subject_uuid:
+            raise ValueError("session id cannot alias subject uuid")
+        return self
+
+    def session_request(self) -> SessionCreateRequest:
+        """Derive cloud registration only from the persisted immutable snapshot."""
+
+        return SessionCreateRequest(
+            session_id=self.session_id,
+            subject_uuid=self.subject.subject_uuid,
+            consent_record_id=self.consent.consent_record_id,
+            site_id=self.site_id,
+            terminal_id=self.client_installation_id,
+            client_installation_id=self.client_installation_id,
+            device_id=self.hardware_asset_id,
+            test_protocol=self.test_protocol,
+            versions=self.versions,
+            started_at=self.started_at,
+            config_snapshot=self.config_snapshot,
+        )
 
 
 class LocalSegmentState(StrEnum):

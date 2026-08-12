@@ -316,6 +316,7 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         consent_record_id=consent_id,
         site_id=None,
         terminal_id=second_installation,
+        client_installation_id=second_installation,
         device_id=hardware_asset_id,
         test_protocol=TestProtocol(id="seed-acceptance", version="1.0"),
         versions=SessionVersions(

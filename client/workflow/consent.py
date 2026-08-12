@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -38,6 +39,16 @@ class ConsentRequest:
     purpose_codes: tuple[str, ...]
     data_categories: tuple[str, ...]
     evidence_type: str
+
+
+class ConsentEvidenceSigner(Protocol):
+    def sign(
+        self,
+        request: ConsentRequest,
+        *,
+        consent_record_id: str,
+        granted_at: datetime,
+    ) -> str: ...
 
 
 class ConsentResolutionStatus(StrEnum):

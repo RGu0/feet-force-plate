@@ -16,12 +16,22 @@ import os
 from pathlib import Path
 import sqlite3
 import uuid
+from collections.abc import Callable
 
 from platformdirs import user_data_path
 
 from client.reporting.models import BasicReportDocument
-from client.spool.state_store import KeyProvider, SensitiveBlobCodec
-from client.workflow.consent import ConsentPolicy, ConsentReceipt, ConsentRequest
+from client.spool.state_store import (
+    KeyProvider,
+    KeyProviderUnavailable,
+    SensitiveBlobCodec,
+)
+from client.workflow.consent import (
+    ConsentEvidenceSigner,
+    ConsentPolicy,
+    ConsentReceipt,
+    ConsentRequest,
+)
 from client.workflow.participant import (
     AnalysisProfile,
     CreateSubjectRequest,
@@ -32,6 +42,14 @@ from client.workflow.participant import (
 )
 from client.workflow.protocol import ProtocolSnapshot
 from client.workflow.models import ScreeningParticipantContext
+from shared.contracts.client_sync import canonical_json_bytes
+from shared.contracts.cloud import (
+    ConsentCreateRequest,
+    ExternalIdentifierInput,
+    IdentityProfileInput,
+    ProfileValue,
+    SubjectCreateRequest,
+)
 
 
 class KeyringAesKeyProvider:
@@ -44,6 +62,63 @@ class KeyringAesKeyProvider:
         try:
             import keyring
         except ImportError as exc:  # pragma: no cover - packaging contract
+            raise KeyProviderUnavailable("system credential storage is required") from exc
+        try:
+            encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
+        except Exception as exc:
+            raise KeyProviderUnavailable(
+                "system credential storage is temporarily unavailable"
+            ) from exc
+        if encoded is None:
+            key = os.urandom(32)
+            try:
+                keyring.set_password(
+                    self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode()
+                )
+            except Exception as exc:
+                raise KeyProviderUnavailable(
+                    "system credential storage is temporarily unavailable"
+                ) from exc
+            return key
+        try:
+            key = base64.b64decode(encoded.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("stored institution data key is malformed") from exc
+        if len(key) != 32:
+            raise ValueError("stored institution data key is not AES-256")
+        return key
+
+
+class KeyringConsentEvidenceSigner:
+    _SERVICE = "FeetForcePlate.institution-storage"
+    _ACCOUNT = "consent-evidence-hmac-sha256-v1"
+
+    def sign(
+        self,
+        request: ConsentRequest,
+        *,
+        consent_record_id: str,
+        granted_at: datetime,
+    ) -> str:
+        payload = canonical_json_bytes({
+            "consent_record_id": consent_record_id,
+            "tenant_id": request.tenant_id,
+            "terminal_id": request.terminal_id,
+            "subject_uuid": request.subject_uuid,
+            "policy_version": request.policy_version,
+            "purpose_codes": request.purpose_codes,
+            "data_categories": request.data_categories,
+            "evidence_type": request.evidence_type,
+            "granted_at": granted_at,
+        })
+        return "hmac-sha256:" + base64.urlsafe_b64encode(
+            hmac.digest(self._key(), payload, "sha256")
+        ).rstrip(b"=").decode("ascii")
+
+    def _key(self) -> bytes:
+        try:
+            import keyring
+        except ImportError as exc:  # pragma: no cover - packaging contract
             raise RuntimeError("system credential storage is required") from exc
         encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
         if encoded is None:
@@ -52,7 +127,7 @@ class KeyringAesKeyProvider:
             return key
         key = base64.b64decode(encoded.encode("ascii"), validate=True)
         if len(key) != 32:
-            raise RuntimeError("stored institution data key is not AES-256")
+            raise RuntimeError("stored consent evidence key is not SHA-256 sized")
         return key
 
 
@@ -68,6 +143,8 @@ class InstitutionLocalStore:
         *,
         key_provider: KeyProvider,
         query_index_key: bytes,
+        now: Callable[[], datetime],
+        consent_signer: ConsentEvidenceSigner,
     ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
@@ -77,6 +154,8 @@ class InstitutionLocalStore:
         if len(query_index_key) != 32:
             raise ValueError("institution query index key must be 32 bytes")
         self._query_index_key = query_index_key
+        self._now = now
+        self._consent_signer = consent_signer
         self._create_schema()
 
     @classmethod
@@ -86,6 +165,8 @@ class InstitutionLocalStore:
         *,
         key_provider: KeyProvider | None = None,
         query_index_key: bytes | None = None,
+        now: Callable[[], datetime] | None = None,
+        consent_signer: ConsentEvidenceSigner | None = None,
     ) -> "InstitutionLocalStore":
         storage_root = Path(root) if root is not None else Path(
             user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True)
@@ -94,6 +175,8 @@ class InstitutionLocalStore:
             storage_root,
             key_provider=key_provider or KeyringAesKeyProvider(),
             query_index_key=query_index_key or _load_query_index_key(),
+            now=now or _utc_now,
+            consent_signer=consent_signer or KeyringConsentEvidenceSigner(),
         )
 
     def close(self) -> None:
@@ -243,6 +326,11 @@ class InstitutionLocalStore:
         ).fetchall()
         for (encrypted,) in rows:
             value = json.loads(self.codec.decrypt(encrypted, context=f"consent:{subject_uuid}"))
+            if not all(
+                name in value
+                for name in ("granted_at", "evidence_type", "terminal_signature")
+            ):
+                continue
             receipt = ConsentReceipt(
                 consent_record_id=value["consent_record_id"], tenant_id=value["tenant_id"],
                 subject_uuid=value["subject_uuid"], policy_version=value["policy_version"],
@@ -258,18 +346,100 @@ class InstitutionLocalStore:
 
     def create_consent(self, request: ConsentRequest) -> ConsentReceipt:
         self._require_subject(request.tenant_id, request.subject_uuid)
+        granted_at = self._now()
         receipt = ConsentReceipt(
             consent_record_id=uuid.uuid4().hex, tenant_id=request.tenant_id,
             subject_uuid=request.subject_uuid, policy_version=request.policy_version,
             purpose_codes=request.purpose_codes, data_categories=request.data_categories,
         )
-        payload = self.codec.encrypt(_json(asdict(receipt)), context=f"consent:{receipt.subject_uuid}")
+        payload = {
+            **asdict(receipt),
+            "granted_at": granted_at.isoformat(),
+            "evidence_type": request.evidence_type,
+            "terminal_signature": self._consent_signer.sign(
+                request,
+                consent_record_id=receipt.consent_record_id,
+                granted_at=granted_at,
+            ),
+        }
         with self.db:
             self.db.execute(
                 "INSERT INTO institution_consents VALUES (?,?,?,?)",
-                (self._lookup("consent", receipt.consent_record_id), receipt.tenant_id, receipt.subject_uuid, payload),
+                (
+                    self._lookup("consent", receipt.consent_record_id),
+                    receipt.tenant_id,
+                    receipt.subject_uuid,
+                    self.codec.encrypt(_json(payload), context=f"consent:{receipt.subject_uuid}"),
+                ),
             )
         return receipt
+
+    def subject_upload_request(self, subject_uuid: str) -> SubjectCreateRequest:
+        row = self.db.execute(
+            """SELECT tenant_id, issuer, id_type, payload FROM institution_subjects
+               WHERE subject_uuid=?""",
+            (subject_uuid,),
+        ).fetchone()
+        if row is None:
+            raise KeyError("subject is unavailable for upload")
+        tenant_id, issuer, id_type, encrypted = row
+        self._require_subject(tenant_id, subject_uuid)
+        payload = json.loads(self.codec.decrypt(encrypted, context=f"subject:{subject_uuid}"))
+        external_identifier = _external_identifier_upload_request(
+            issuer=issuer,
+            id_type=id_type,
+            external_id=payload["external_id"],
+        )
+        identity = payload["identity"]
+        identity_profile = None
+        if identity is not None and (identity.get("name") is not None or identity.get("contact") is not None):
+            identity_profile = IdentityProfileInput(
+                display_name=identity.get("name"),
+                contact=identity.get("contact"),
+            )
+        return SubjectCreateRequest(
+            subject_uuid=subject_uuid,
+            external_identifier=external_identifier,
+            identity_profile=identity_profile,
+            analysis_profile={
+                name: ProfileValue(state=value["state"], value=value["value"])
+                for name, value in payload["analysis_profile"].items()
+            },
+        )
+
+    def consent_upload_request(self, consent_record_id: str) -> ConsentCreateRequest:
+        row = self.db.execute(
+            """SELECT tenant_id, subject_uuid, payload FROM institution_consents
+               WHERE consent_lookup=?""",
+            (self._lookup("consent", consent_record_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError("consent is unavailable for upload")
+        tenant_id, subject_uuid, encrypted = row
+        value = json.loads(self.codec.decrypt(encrypted, context=f"consent:{subject_uuid}"))
+        if (
+            value.get("consent_record_id") != consent_record_id
+            or value.get("tenant_id") != tenant_id
+            or value.get("subject_uuid") != subject_uuid
+        ):
+            raise KeyError("consent identity does not match its stored record")
+        self._require_subject(tenant_id, subject_uuid)
+        try:
+            granted_at = value["granted_at"]
+            evidence_type = value["evidence_type"]
+            terminal_signature = value["terminal_signature"]
+        except KeyError as exc:
+            raise KeyError("consent requires operator reconfirmation before upload") from exc
+        return ConsentCreateRequest(
+            consent_record_id=consent_record_id,
+            subject_uuid=subject_uuid,
+            policy_version=value["policy_version"],
+            purpose_codes=tuple(value["purpose_codes"]),
+            data_categories=tuple(value["data_categories"]),
+            granted_at=granted_at,
+            evidence_type=evidence_type,
+            terminal_signature=terminal_signature,
+        )
 
     def create_session(
         self, context: ScreeningParticipantContext, protocol: ProtocolSnapshot
@@ -417,6 +587,20 @@ def _profile_payload(profile: AnalysisProfile) -> dict[str, dict[str, object | N
             ("condition_tags", profile.condition_tags), ("injury_tags", profile.injury_tags),
         )
     }
+
+
+def _external_identifier_upload_request(
+    *, issuer: str | None, id_type: str | None, external_id: str | None
+) -> ExternalIdentifierInput | None:
+    if issuer is None and id_type is None and external_id is None:
+        return None
+    if issuer is None or id_type is None or external_id is None:
+        raise KeyError("subject external identifier does not match its stored record")
+    return ExternalIdentifierInput(issuer=issuer, id_type=id_type, external_id=external_id)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _json(value: object) -> bytes:

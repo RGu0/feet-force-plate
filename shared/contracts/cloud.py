@@ -234,11 +234,18 @@ class SessionCreateRequest(ContractModel):
     consent_record_id: UUID
     site_id: UUID | None
     terminal_id: UUID
+    client_installation_id: UUID
     device_id: UUID
     test_protocol: TestProtocol
     versions: SessionVersions
     started_at: datetime
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def installation_matches_legacy_terminal(self) -> SessionCreateRequest:
+        if self.client_installation_id != self.terminal_id:
+            raise ValueError("client installation must match legacy terminal id")
+        return self
 
 
 class SessionCreateResponse(ContractModel):
