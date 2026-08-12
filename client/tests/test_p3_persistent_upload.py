@@ -433,10 +433,18 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.store = StateStore(
             self.root / "state.sqlite3", SensitiveBlobCodec(self.keys)
         )
-        self.store.recover_interrupted_state(recovered_at_ns=30_000_000_000)
+        self.store.recover_interrupted_state(recovered_at_ns=2_000_000_000)
+        clock.value = 2_000_000_000
 
         _, retry_at_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
         assert retry_at_ns is not None
+        self.assertGreater(retry_at_ns, clock.value)
+        self.assertIs(
+            self._queue(remote, clock=clock).upload_next(_Tokens()),
+            UploadCycleOutcome.IDLE,
+        )
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+
         clock.value = retry_at_ns
         outcome = self._queue(remote, clock=clock).upload_next(_Tokens())
 
