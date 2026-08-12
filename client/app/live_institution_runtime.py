@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-import time
 
 from client.app.heatmap import PhysicalGridOverlay
-from client.app.institution_store import InstitutionLocalStore, KeyringAesKeyProvider
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
@@ -24,7 +22,6 @@ from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
-from client.spool.state_store import SensitiveBlobCodec, StateStore
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
@@ -63,6 +60,9 @@ def build_live_institution_runtime(
     *,
     session: AuthenticatedInstitutionSession,
     access_runtime: ClientAccessRuntime,
+    key_provider,
+    institution,
+    physical_store,
     startup_run,
     data_root: Path,
     export_destination,
@@ -87,15 +87,6 @@ def build_live_institution_runtime(
         payload_schema=payload_schema,
         calibration_profile=calibration.profile_version,
     )
-    key_provider = KeyringAesKeyProvider()
-    institution = InstitutionLocalStore.open(
-        data_root / "institution", key_provider=key_provider
-    )
-    physical_store = StateStore(
-        data_root / "database" / "institution-live.sqlite3",
-        SensitiveBlobCodec(key_provider),
-    )
-    physical_store.record_successful_online(time.time_ns())
     sessions = InstitutionLiveSessions(institution)
     baseline = LiveBaselinePreflight(hardware)
     lease = HardwareLeasePreflight(access_runtime.hardware_lease_lifecycle(session))

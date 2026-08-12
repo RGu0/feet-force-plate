@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import stat
 import sys
+import time
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -18,6 +19,8 @@ from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
 
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.app.institution_store import InstitutionLocalStore, KeyringAesKeyProvider
+from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
 from shared.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
 from client.support import (
     PlatformFamily,
@@ -299,11 +302,17 @@ class PackagedShutdown:
         self._telemetry_runtime = telemetry_runtime
         self._audit_store = audit_store
         self._access_runtime = access_runtime
+        self._upload_runtime: PackagedUploadRuntime | None = None
+        self._institution_store = None
+        self._physical_store = None
         self._closed = False
 
     def attach_authenticated_resources(
         self,
         *,
+        upload_runtime: PackagedUploadRuntime | None,
+        institution_store,
+        physical_store,
         telemetry_runtime: DefaultValidationTelemetryRuntime | None,
         audit_store: StateStore,
     ) -> None:
@@ -311,11 +320,19 @@ class PackagedShutdown:
             raise RuntimeError("packaged shutdown is already closed")
         self._telemetry_runtime = telemetry_runtime
         self._audit_store = audit_store
+        self._upload_runtime = upload_runtime
+        self._institution_store = institution_store
+        self._physical_store = physical_store
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._close(self._upload_runtime)
+        self._close(self._institution_store)
+        self._close(self._physical_store)
+        self._close(self._telemetry_runtime)
+        self._close(self._audit_store)
         try:
             self._recorder.record(
                 SafeClientEventName.APPLICATION_EXITED,
@@ -323,8 +340,6 @@ class PackagedShutdown:
             )
         except Exception:
             pass
-        self._close(self._telemetry_runtime)
-        self._close(self._audit_store)
         self._close(self._access_runtime)
 
     @staticmethod
@@ -418,12 +433,18 @@ class PackagedEntryComposition:
     def attach_authenticated_resources(
         self,
         *,
+        upload_runtime: PackagedUploadRuntime | None,
+        institution_store,
+        physical_store,
         telemetry_runtime: DefaultValidationTelemetryRuntime | None,
         audit_store: StateStore,
     ) -> None:
         if self._shutdown is None:
             raise RuntimeError("packaged composition must start before authentication")
         self._shutdown.attach_authenticated_resources(
+            upload_runtime=upload_runtime,
+            institution_store=institution_store,
+            physical_store=physical_store,
             telemetry_runtime=telemetry_runtime,
             audit_store=audit_store,
         )
@@ -809,6 +830,27 @@ def main() -> int:
     def authenticated(session: SeedAuthenticatedInstitutionSession) -> None:
         access.hide()
         audit_trail, audit_store = _default_validation_audit_trail(data_root)
+        key_provider = KeyringAesKeyProvider()
+        institution_store = InstitutionLocalStore.open(
+            data_root / "institution", key_provider=key_provider
+        )
+        physical_store = StateStore(
+            data_root / "database" / "institution-live.sqlite3",
+            SensitiveBlobCodec(key_provider),
+        )
+        physical_store.record_successful_online(time.time_ns())
+        upload_runtime = None
+        if runtime is not None and settings is not None:
+            upload_runtime = build_packaged_upload_runtime(
+                data_root,
+                settings,
+                session,
+                runtime,
+                key_provider,
+                institution_store,
+                physical_store,
+            )
+            upload_runtime.start()
         telemetry_runtime = None
         if runtime is not None and settings is not None:
             telemetry_runtime = start_default_validation_telemetry_upload(
@@ -821,6 +863,9 @@ def main() -> int:
                 client_installation_id=session.client_installation_id,
             )
         composition.attach_authenticated_resources(
+            upload_runtime=upload_runtime,
+            institution_store=institution_store,
+            physical_store=physical_store,
             telemetry_runtime=telemetry_runtime,
             audit_store=audit_store,
         )
@@ -844,6 +889,9 @@ def main() -> int:
             live_runtime = build_live_institution_runtime(
                 session=session,
                 access_runtime=runtime,
+                key_provider=key_provider,
+                institution=institution_store,
+                physical_store=physical_store,
                 startup_run=startup_run,
                 data_root=data_root,
                 export_destination=_choose_diagnostic_destination,
@@ -864,6 +912,9 @@ def main() -> int:
         references.update(
             gate=gate,
             audit_store=audit_store,
+            upload_runtime=upload_runtime,
+            institution_store=institution_store,
+            physical_store=physical_store,
             telemetry_runtime=telemetry_runtime,
             lock_controller=lock_controller,
             gate_holder=gate_holder,

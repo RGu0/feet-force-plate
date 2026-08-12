@@ -51,11 +51,6 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         def make_latest_frame_mailbox(self):
             return object()
 
-    class Institution:
-        @staticmethod
-        def open(*_args, **_kwargs):
-            return institution
-
     class PhysicalStore:
         def __init__(self, *_args) -> None:
             pass
@@ -88,7 +83,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
 
     institution = SimpleNamespace(consent_port=lambda: object())
     controller = _FakeController()
-    physical_store: PhysicalStore | None = None
+    physical_store = PhysicalStore()
     baseline: object | None = None
     acquisition: Acquisition | None = None
     capture: Capture | None = None
@@ -100,11 +95,6 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         capture_kwargs.update(kwargs)
         capture = Capture(**kwargs)
         return capture
-
-    def make_physical_store(*args):
-        nonlocal physical_store
-        physical_store = PhysicalStore(*args)
-        return physical_store
 
     def make_baseline(_hardware):
         nonlocal baseline
@@ -122,9 +112,30 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         return processor
 
     monkeypatch.setattr(live_runtime, "active_hardware_runtime", lambda: Hardware())
-    monkeypatch.setattr(live_runtime, "KeyringAesKeyProvider", lambda: object())
-    monkeypatch.setattr(live_runtime, "InstitutionLocalStore", Institution)
-    monkeypatch.setattr(live_runtime, "StateStore", make_physical_store)
+    monkeypatch.setattr(
+        live_runtime,
+        "KeyringAesKeyProvider",
+        lambda: (_ for _ in ()).throw(AssertionError("workbench must reuse key provider")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "InstitutionLocalStore",
+        SimpleNamespace(
+            open=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("workbench must reuse institution store")
+            )
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        live_runtime,
+        "StateStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("workbench must reuse physical store")
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", lambda _store: object())
     monkeypatch.setattr(live_runtime, "LiveBaselinePreflight", make_baseline)
     monkeypatch.setattr(live_runtime, "HardwareLeasePreflight", lambda _lease: object())
@@ -160,6 +171,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         access_runtime=SimpleNamespace(
             hardware_lease_lifecycle=lambda _session: object()
         ),
+        key_provider=object(),
+        institution=institution,
+        physical_store=physical_store,
         startup_run=object(),
         data_root=tmp_path,
         export_destination=lambda: None,
@@ -171,7 +185,6 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         acquisition is not None
         and capture is not None
         and processor is not None
-        and physical_store is not None
         and baseline is not None
     )
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
@@ -214,6 +227,7 @@ def test_formal_live_runtime_rejects_missing_authenticated_hardware_asset(
         lambda: (_ for _ in ()).throw(
             AssertionError("storage must not open before formal identity validation")
         ),
+        raising=False,
     )
 
     with pytest.raises(ValueError, match="hardware_asset_id"):
@@ -223,6 +237,9 @@ def test_formal_live_runtime_rejects_missing_authenticated_hardware_asset(
                 client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
             ),
             access_runtime=object(),
+            key_provider=object(),
+            institution=object(),
+            physical_store=object(),
             startup_run=object(),
             data_root=tmp_path,
             export_destination=lambda: None,
@@ -240,6 +257,9 @@ def test_formal_live_runtime_requires_explicit_capture_versions(tmp_path: Path) 
                 hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
             ),
             access_runtime=object(),
+            key_provider=object(),
+            institution=object(),
+            physical_store=object(),
             startup_run=object(),
             data_root=tmp_path,
             export_destination=lambda: None,

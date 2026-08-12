@@ -148,7 +148,7 @@ def test_configured_access_screen_hands_authenticated_session_forward(qtbot) -> 
 
 
 def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> None:
-    """Reordering telemetry/audit/access shutdown or double-recording exit must fail."""
+    """Reordering upload/stores/telemetry/access shutdown or double close must fail."""
 
     class _Recorder:
         def __init__(self) -> None:
@@ -172,6 +172,18 @@ def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> 
         def close(self) -> None:
             order.append("audit-store-close")
 
+    class _InstitutionStore:
+        def close(self) -> None:
+            order.append("institution-store-close")
+
+    class _PhysicalStore:
+        def close(self) -> None:
+            order.append("physical-store-close")
+
+    class _UploadRuntime:
+        def close(self) -> None:
+            order.extend(("upload-scheduler-stop", "upload-http-close"))
+
     class _AccessRuntime:
         def close(self) -> None:
             order.append("access-cloud-close-store-close")
@@ -183,6 +195,13 @@ def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> 
         telemetry_runtime=telemetry,
         audit_store=_AuditStore(),
         access_runtime=_AccessRuntime(),
+    )
+    shutdown.attach_authenticated_resources(
+        upload_runtime=_UploadRuntime(),
+        institution_store=_InstitutionStore(),
+        physical_store=_PhysicalStore(),
+        telemetry_runtime=telemetry,
+        audit_store=_AuditStore(),
     )
 
     shutdown.close()
@@ -196,6 +215,10 @@ def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> 
         )
     ]
     assert order == [
+        "upload-scheduler-stop",
+        "upload-http-close",
+        "institution-store-close",
+        "physical-store-close",
         "telemetry-stop-join",
         "telemetry-cloud-close",
         "audit-store-close",
