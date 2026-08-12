@@ -74,6 +74,8 @@ def test_builds_exact_validated_integration_bundle(tmp_path: Path) -> None:
         "cloud-ca.pem",
         "license-public.key",
     }
+    assert (bundle / "cloud-ca.pem").read_bytes() == ca.read_bytes()
+    assert (bundle / "license-public.key").read_bytes() == key.read_bytes()
     defaults = load_packaged_cloud_defaults(bundle)
     assert defaults is not None
     assert defaults.integration_mode is True
