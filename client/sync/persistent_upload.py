@@ -18,7 +18,12 @@ import httpx
 from pydantic import ValidationError
 
 from client.spool.segments import SegmentIntegrityError, read_segment
-from client.spool.state_store import KeyProvider, StateStore, SyncHandoff
+from client.spool.state_store import (
+    KeyProvider,
+    KeyProviderUnavailable,
+    StateStore,
+    SyncHandoff,
+)
 from shared.contracts.client_sync import (
     FormalUploadEnvelope,
     canonical_sha256,
@@ -34,6 +39,7 @@ from shared.contracts.cloud import (
     SegmentAcknowledgement,
     SegmentListResponse,
     SegmentMetadata,
+    SegmentReceiptStatus,
     SessionCreateRequest,
     SessionCreateResponse,
     SessionManifest,
@@ -289,11 +295,17 @@ class PersistentUploadQueue:
     ) -> UploadCycleOutcome:
         try:
             envelope = self._store.sync_handoff_envelope(handoff.session_id)
+        except KeyProviderUnavailable as exc:
+            raise UploadRetryable(
+                "local upload key is temporarily unavailable",
+                error_code="E-SYN-503",
+            ) from exc
         except Exception as exc:
             raise UploadConflict("formal upload envelope is unavailable") from exc
 
         status = self._client.get_status(access_token, envelope.session_id)
         if status is not None:
+            self._require_status_session(status, envelope.session_id)
             if status.ingest_status is IngestStatus.INGESTED:
                 self._require_valid(status)
                 return self._confirm(handoff)
@@ -314,8 +326,15 @@ class PersistentUploadQueue:
             envelope.session_request(),
             session_key(envelope),
         )
-        local = self._local_segments(handoff, envelope)
+        try:
+            local = self._local_segments(handoff, envelope)
+        except KeyProviderUnavailable as exc:
+            raise UploadRetryable(
+                "local upload key is temporarily unavailable",
+                error_code="E-SYN-503",
+            ) from exc
         remote = self._client.list_segments(access_token, envelope.session_id)
+        self._require_segment_list(remote, envelope.session_id, local)
         remote_by_index = {item.index: item.sha256 for item in remote.received}
         if set(remote_by_index) - set(local):
             raise UploadConflict("server has a segment outside the local manifest")
@@ -333,10 +352,11 @@ class PersistentUploadQueue:
                 segment.metadata,
                 segment.payload,
             )
-            if acknowledgement.sha256 != segment.metadata.sha256:
-                raise UploadConflict(
-                    "server acknowledgement digest differs from local immutable file"
-                )
+            self._require_acknowledgement(
+                acknowledgement,
+                session_id=envelope.session_id,
+                segment=segment.metadata,
+            )
 
         manifest = SessionManifest(
             segment_count=len(local),
@@ -356,15 +376,21 @@ class PersistentUploadQueue:
             ),
             local_quality_outcome=ValidityStatus.VALID,
         )
-        self._client.complete_session(
+        completion = self._client.complete_session(
             access_token,
             envelope.session_id,
             manifest,
             completion_key(manifest),
         )
+        self._require_completion(
+            completion,
+            session_id=envelope.session_id,
+            manifest_sha256=canonical_sha256(manifest),
+        )
         final_status = self._client.get_status(access_token, envelope.session_id)
         if final_status is None:
             raise UploadRetryable("server status is not yet available")
+        self._require_status_session(final_status, envelope.session_id)
         if final_status.ingest_status is not IngestStatus.INGESTED:
             self._require_continuable(final_status)
             raise UploadRetryable(
@@ -384,6 +410,68 @@ class PersistentUploadQueue:
     def _require_valid(status: SessionStatusResponse) -> None:
         if status.validity_status is not ValidityStatus.VALID:
             raise UploadConflict("ingested session is not valid")
+
+    @staticmethod
+    def _require_status_session(
+        status: SessionStatusResponse, session_id: UUID
+    ) -> None:
+        if status.session_id != session_id:
+            raise UploadConflict("server status belongs to another session")
+
+    @staticmethod
+    def _require_segment_list(
+        response: SegmentListResponse,
+        session_id: UUID,
+        local: dict[int, _LocalSegment],
+    ) -> None:
+        if response.session_id != session_id:
+            raise UploadConflict("server segment list belongs to another session")
+        received_indices: set[int] = set()
+        for receipt in response.received:
+            if receipt.index in received_indices or receipt.index not in local:
+                raise UploadConflict("server segment list has an invalid received index")
+            if receipt.status is not SegmentReceiptStatus.ACKNOWLEDGED:
+                raise UploadConflict("server segment list has a non-acknowledged receipt")
+            received_indices.add(receipt.index)
+        missing_indices = set(response.missing)
+        if (
+            len(missing_indices) != len(response.missing)
+            or not missing_indices.issubset(local)
+            or received_indices & missing_indices
+        ):
+            raise UploadConflict("server segment list has an invalid missing index")
+
+    @staticmethod
+    def _require_acknowledgement(
+        acknowledgement: SegmentAcknowledgement,
+        *,
+        session_id: UUID,
+        segment: SegmentMetadata,
+    ) -> None:
+        if acknowledgement.session_id != session_id:
+            raise UploadConflict("server segment acknowledgement belongs to another session")
+        if acknowledgement.index != segment.segment_index:
+            raise UploadConflict("server acknowledged another segment index")
+        if acknowledgement.status is not SegmentReceiptStatus.ACKNOWLEDGED:
+            raise UploadConflict("server did not acknowledge the immutable segment")
+        if acknowledgement.sha256 != segment.sha256:
+            raise UploadConflict(
+                "server acknowledgement digest differs from local immutable file"
+            )
+
+    @staticmethod
+    def _require_completion(
+        completion: ManifestCompletionResponse,
+        *,
+        session_id: UUID,
+        manifest_sha256: str,
+    ) -> None:
+        if completion.session_id != session_id:
+            raise UploadConflict("server completion belongs to another session")
+        if completion.manifest_sha256 != manifest_sha256:
+            raise UploadConflict("server completed a different immutable manifest")
+        if completion.ingest_status is not IngestStatus.INGESTED:
+            raise UploadConflict("server completion has an unexpected ingest status")
 
     @staticmethod
     def _require_continuable(status: SessionStatusResponse) -> None:
@@ -528,6 +616,7 @@ class HttpIngestionClient:
             base_url=base_url.rstrip("/"),
             verify=verify,
             transport=transport,
+            trust_env=False,
         )
         self._terminal_id = terminal_id
 

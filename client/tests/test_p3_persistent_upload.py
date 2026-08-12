@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import httpx
@@ -22,7 +23,7 @@ from client.sync.persistent_upload import (
     UploadCycleOutcome,
     UploadRetryable,
 )
-from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.client_sync import FormalUploadEnvelope, canonical_sha256
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
@@ -80,6 +81,10 @@ class _IngestionService:
         self.complete_keys: list[str] = []
         self.failures: dict[str, list[Exception]] = {}
         self.lose_complete_response_once = False
+        self.list_response: SegmentListResponse | None = None
+        self.acknowledgement: SegmentAcknowledgement | None = None
+        self.completion_response: ManifestCompletionResponse | None = None
+        self.completion_status: SessionStatusResponse | None = None
 
     def _fail_if_requested(self, operation: str) -> None:
         failures = self.failures.get(operation, [])
@@ -91,8 +96,6 @@ class _IngestionService:
     ) -> SessionStatusResponse | None:
         self.calls.append(f"status:{access_token}")
         self._fail_if_requested("status")
-        if self.status is not None:
-            assert self.status.session_id == session_id
         return self.status
 
     def create_subject(
@@ -150,6 +153,8 @@ class _IngestionService:
     ) -> SegmentListResponse:
         self.calls.append("segments")
         self._fail_if_requested("segments")
+        if self.list_response is not None:
+            return self.list_response
         return SegmentListResponse(
             session_id=session_id,
             received=tuple(
@@ -174,6 +179,8 @@ class _IngestionService:
         self.put_calls.append(metadata.segment_index)
         self._fail_if_requested("put")
         self.received[metadata.segment_index] = (metadata, payload)
+        if self.acknowledgement is not None:
+            return self.acknowledgement
         return SegmentAcknowledgement(
             session_id=session_id,
             index=metadata.segment_index,
@@ -200,12 +207,12 @@ class _IngestionService:
                 segment.size_bytes,
             ) or payload != self.received[segment.index][1]:
                 raise AssertionError("manifest does not describe received immutable bytes")
-        result = ManifestCompletionResponse(
+        result = self.completion_response or ManifestCompletionResponse(
             session_id=session_id,
             ingest_status=IngestStatus.INGESTED,
-            manifest_sha256="a" * 64,
+            manifest_sha256=canonical_sha256(manifest),
         )
-        self.status = SessionStatusResponse(
+        self.status = self.completion_status or SessionStatusResponse(
             session_id=session_id,
             validity_status=ValidityStatus.VALID,
             ingest_status=IngestStatus.INGESTED,
@@ -414,6 +421,109 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertTrue(sealed.path.exists())
 
+    def test_wrong_status_session_identity_never_confirms_another_handoff(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.status = SessionStatusResponse(
+            session_id=uuid4(),
+            validity_status=ValidityStatus.VALID,
+            ingest_status=IngestStatus.INGESTED,
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+
+    def test_wrong_segment_list_session_identity_never_progresses_handoff(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.list_response = SegmentListResponse(
+            session_id=uuid4(),
+            received=(),
+            missing=(0,),
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(remote.put_calls, [])
+
+    def test_segment_list_requires_acknowledged_receipt_status(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        payload = sealed.path.read_bytes()
+        remote = _IngestionService()
+        remote.received[0] = (
+            SegmentMetadata(
+                segment_index=0,
+                start_frame_index=0,
+                frame_count=2,
+                start_monotonic_ns=0,
+                end_monotonic_ns=5_000_000_000,
+                compression="none",
+                cipher="aes-256-gcm",
+                size_bytes=len(payload),
+                sha256=hashlib.sha256(payload).hexdigest(),
+                payload_schema_version="raw-segment/1",
+            ),
+            payload,
+        )
+        remote.list_response = SegmentListResponse(
+            session_id=self.session_id,
+            received=(
+                {
+                    "index": 0,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "status": SegmentReceiptStatus.CONFLICT,
+                },
+            ),
+            missing=(),
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(remote.put_calls, [])
+
+    def test_segment_acknowledgement_binds_session_index_and_receipt_status(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.acknowledgement = SegmentAcknowledgement(
+            session_id=uuid4(),
+            index=1,
+            sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
+            status=SegmentReceiptStatus.CONFLICT,
+            object_key="objects/wrong-handoff",
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertNotEqual(
+            self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED"
+        )
+
+    def test_completion_response_binds_session_manifest_and_ingest_status(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.completion_response = ManifestCompletionResponse(
+            session_id=uuid4(),
+            ingest_status=IngestStatus.RECEIVING,
+            manifest_sha256="0" * 64,
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertNotEqual(
+            self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED"
+        )
+
     def test_lost_complete_response_reconciles_after_restart_without_duplicates(
         self,
     ) -> None:
@@ -594,6 +704,57 @@ class PersistentUploadQueueTests(unittest.TestCase):
             ["status:first-access-token", "status:refreshed-access-token", "subject"],
         )
 
+    def test_temporarily_unavailable_envelope_key_defers_instead_of_conflicting(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        original = self.keys.get_key
+        self.keys.get_key = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+            OSError("keychain is temporarily unavailable")
+        )
+        try:
+            outcome = self._queue(_IngestionService()).upload_next(_Tokens())
+        finally:
+            self.keys.get_key = original  # type: ignore[method-assign]
+
+        self.assertIs(outcome, UploadCycleOutcome.DEFERRED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+
+    def test_temporarily_unavailable_segment_key_defers_instead_of_conflicting(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        original = self.keys.get_key
+        calls = 0
+
+        def unavailable_on_segment_decrypt() -> bytes:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("keychain is temporarily unavailable")
+            return original()
+
+        self.keys.get_key = unavailable_on_segment_decrypt  # type: ignore[method-assign]
+        try:
+            outcome = self._queue(_IngestionService()).upload_next(_Tokens())
+        finally:
+            self.keys.get_key = original  # type: ignore[method-assign]
+
+        self.assertIs(outcome, UploadCycleOutcome.DEFERRED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+
+    def test_corrupt_encrypted_envelope_remains_a_conflict(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        with self.store._connection:
+            self.store._connection.execute(
+                "UPDATE sync_handoffs SET upload_envelope=? WHERE session_id=?",
+                (b"not-an-encrypted-envelope", str(self.session_id)),
+            )
+
+        outcome = self._queue(_IngestionService()).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+
     def test_local_length_failure_conflicts_without_deleting_data(self) -> None:
         sealed = self._seal(0)
         self._commit(sealed)
@@ -635,6 +796,13 @@ class PersistentUploadQueueTests(unittest.TestCase):
 
 
 class HttpIngestionClientTests(unittest.TestCase):
+    def test_http_client_ignores_environment_proxy_and_certificate_overrides(self) -> None:
+        terminal_id = uuid4()
+        with patch("client.sync.persistent_upload.httpx.Client") as constructor:
+            HttpIngestionClient("https://cloud.test", terminal_id=terminal_id)
+
+        self.assertIs(constructor.call_args.kwargs["trust_env"], False)
+
     def test_request_carries_the_bound_terminal_identity(self) -> None:
         terminal_id = uuid4()
         session_id = uuid4()

@@ -21,7 +21,11 @@ from collections.abc import Callable
 from platformdirs import user_data_path
 
 from client.reporting.models import BasicReportDocument
-from client.spool.state_store import KeyProvider, SensitiveBlobCodec
+from client.spool.state_store import (
+    KeyProvider,
+    KeyProviderUnavailable,
+    SensitiveBlobCodec,
+)
 from client.workflow.consent import (
     ConsentEvidenceSigner,
     ConsentPolicy,
@@ -58,15 +62,30 @@ class KeyringAesKeyProvider:
         try:
             import keyring
         except ImportError as exc:  # pragma: no cover - packaging contract
-            raise RuntimeError("system credential storage is required") from exc
-        encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
+            raise KeyProviderUnavailable("system credential storage is required") from exc
+        try:
+            encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
+        except Exception as exc:
+            raise KeyProviderUnavailable(
+                "system credential storage is temporarily unavailable"
+            ) from exc
         if encoded is None:
             key = os.urandom(32)
-            keyring.set_password(self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode())
+            try:
+                keyring.set_password(
+                    self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode()
+                )
+            except Exception as exc:
+                raise KeyProviderUnavailable(
+                    "system credential storage is temporarily unavailable"
+                ) from exc
             return key
-        key = base64.b64decode(encoded.encode("ascii"), validate=True)
+        try:
+            key = base64.b64decode(encoded.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("stored institution data key is malformed") from exc
         if len(key) != 32:
-            raise RuntimeError("stored institution data key is not AES-256")
+            raise ValueError("stored institution data key is not AES-256")
         return key
 
 

@@ -17,7 +17,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from client.device.protocol import RawFrame
-from .state_store import KeyProvider
+from .state_store import KeyProvider, KeyProviderUnavailable
 
 
 MAGIC = b"FFPSSEG1"
@@ -204,7 +204,7 @@ class ImmutableSegmentWriter:
             for frame in self._frames
         )
         compressed = zlib.compress(raw, level=6)
-        key = self._key_provider.get_key()
+        key = _load_key(self._key_provider)
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         ciphertext = AESGCM(key).encrypt(nonce, compressed, header_bytes)
@@ -275,7 +275,7 @@ def read_segment(path: str | Path, key_provider: KeyProvider) -> RestoredSegment
             raise SegmentIntegrityError("ciphertext SHA-256 mismatch")
         header = json.loads(header_bytes)
         stored_dtype = _dtype_from_encoding(header["value_dtype"])
-        key = key_provider.get_key()
+        key = _load_key(key_provider)
         compressed = AESGCM(key).decrypt(
             bytes.fromhex(header["nonce_hex"]), ciphertext, header_bytes
         )
@@ -315,6 +315,17 @@ def read_segment(path: str | Path, key_provider: KeyProvider) -> RestoredSegment
         quality_flags=frozenset(header["quality_flags"]),
         ciphertext_sha256=digest.hex(),
     )
+
+
+def _load_key(key_provider: KeyProvider) -> bytes:
+    try:
+        return key_provider.get_key()
+    except KeyProviderUnavailable:
+        raise
+    except OSError as exc:
+        raise KeyProviderUnavailable(
+            "OS credential storage is temporarily unavailable"
+        ) from exc
 
 
 def _storage_dtype(dtype: np.dtype) -> np.dtype | None:

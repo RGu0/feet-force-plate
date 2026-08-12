@@ -28,6 +28,10 @@ class KeyProvider(Protocol):
     def get_key(self) -> bytes: ...
 
 
+class KeyProviderUnavailable(RuntimeError):
+    """The secure key handle exists but cannot be reached at this moment."""
+
+
 class SensitiveBlobCodec:
     """AES-256-GCM envelope whose key is fetched, never persisted in SQLite."""
 
@@ -35,7 +39,7 @@ class SensitiveBlobCodec:
         self._key_provider = key_provider
 
     def encrypt(self, plaintext: bytes, *, context: str) -> bytes:
-        key = self._key_provider.get_key()
+        key = self._load_key()
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         nonce = os.urandom(12)
@@ -45,12 +49,22 @@ class SensitiveBlobCodec:
     def decrypt(self, envelope: bytes, *, context: str) -> bytes:
         if len(envelope) < 30 or envelope[0] != 1:
             raise ValueError("unsupported or truncated sensitive blob envelope")
-        key = self._key_provider.get_key()
+        key = self._load_key()
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         return AESGCM(key).decrypt(
             envelope[1:13], envelope[13:], context.encode("utf-8")
         )
+
+    def _load_key(self) -> bytes:
+        try:
+            return self._key_provider.get_key()
+        except KeyProviderUnavailable:
+            raise
+        except OSError as exc:
+            raise KeyProviderUnavailable(
+                "OS credential storage is temporarily unavailable"
+            ) from exc
 
 
 class GateReason(StrEnum):

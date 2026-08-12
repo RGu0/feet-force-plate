@@ -209,6 +209,8 @@ def test_packaged_shutdown_is_idempotent_and_preserves_real_resource_order() -> 
     telemetry = DefaultValidationTelemetryRuntime(_Background(), _Cloud())
     physical_store = _PhysicalStore()
     upload_runtime = PackagedUploadRuntime(
+        spool_root=Path("/formal-data/spool"),
+        key_provider=object(),
         physical_store=physical_store,
         upload_scheduler=_UploadScheduler(),
         http_client=_UploadHttp(),

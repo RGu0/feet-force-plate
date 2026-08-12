@@ -9,6 +9,7 @@ import time
 from typing import Any, Protocol
 from uuid import UUID
 
+from client.spool.session_commit import ValidSessionStager
 from client.spool.state_store import KeyProvider, StateStore
 
 from .persistent_upload import HttpIngestionClient, PersistentUploadQueue
@@ -146,7 +147,17 @@ class _UploadScheduler:
 class PackagedUploadRuntime:
     """Own HTTP and its single upload worker, never the shared local stores."""
 
-    def __init__(self, *, physical_store, upload_scheduler, http_client) -> None:
+    def __init__(
+        self,
+        *,
+        spool_root: Path,
+        key_provider: KeyProvider,
+        physical_store,
+        upload_scheduler,
+        http_client,
+    ) -> None:
+        self._spool_root = Path(spool_root)
+        self._key_provider = key_provider
         self._physical_store = physical_store
         self._upload_scheduler = upload_scheduler
         self._http_client = http_client
@@ -160,6 +171,11 @@ class PackagedUploadRuntime:
                 raise RuntimeError("packaged upload runtime is already closed")
             if self._started:
                 return
+            ValidSessionStager.recover_promoted_sessions(
+                self._spool_root,
+                self._physical_store,
+                self._key_provider,
+            )
             self._physical_store.recover_interrupted_state(recovered_at_ns=time.time_ns())
             try:
                 self._upload_scheduler.start()
@@ -203,11 +219,12 @@ def build_packaged_upload_runtime(
         terminal_id=UUID(str(session.client_installation_id)),
         verify=settings.verify,
     )
+    spool_root = data_root / "spool"
     tracking_store = _LeaseTrackingStore(physical_store)
     try:
         queue = PersistentUploadQueue(
             tracking_store,
-            data_root,
+            spool_root,
             key_provider,
             http_client,
         )
@@ -218,6 +235,8 @@ def build_packaged_upload_runtime(
         http_client.close()
         raise
     return PackagedUploadRuntime(
+        spool_root=spool_root,
+        key_provider=key_provider,
         physical_store=physical_store,
         upload_scheduler=scheduler,
         http_client=http_client,

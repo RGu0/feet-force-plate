@@ -15,6 +15,7 @@ from client.spool.derived_artifact import read_derived_observation
 from client.spool import session_commit
 from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.sync.runtime import PackagedUploadRuntime
 from shared.contracts.client_sync import FormalUploadEnvelope
 from shared.contracts.cloud import (
     ConsentCreateRequest,
@@ -203,14 +204,38 @@ class ValidSessionStagerTests(unittest.TestCase):
         finally:
             self.store.commit_valid_session = original  # type: ignore[method-assign]
 
-        recovered = ValidSessionStager.recover_promoted_sessions(
-            self.root / "data", self.store, self.keys
-        )
+        order = []
+        test_case = self
 
-        self.assertEqual(recovered, 1)
+        class _Scheduler:
+            def start(inner_self) -> None:
+                test_case.assertEqual(
+                    test_case.store.sync_handoff_envelope(str(session_id)), envelope
+                )
+                order.append("scheduler.start")
+
+            def stop(inner_self) -> None:
+                order.append("scheduler.stop")
+
+        class _Http:
+            def close(inner_self) -> None:
+                order.append("http.close")
+
+        runtime = PackagedUploadRuntime(
+            spool_root=self.root / "data",
+            key_provider=self.keys,
+            physical_store=self.store,
+            upload_scheduler=_Scheduler(),
+            http_client=_Http(),
+        )
+        runtime.start()
+
         self.assertEqual(
             self.store.sync_handoff_envelope(str(session_id)), envelope
         )
+        self.assertEqual(order, ["scheduler.start"])
+        runtime.close()
+        self.assertEqual(order, ["scheduler.start", "scheduler.stop", "http.close"])
 
     def test_valid_session_retains_an_encrypted_repaired_force_observation(self) -> None:
         stager = self._stager("derived")

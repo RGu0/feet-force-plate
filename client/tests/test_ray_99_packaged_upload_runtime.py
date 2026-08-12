@@ -12,7 +12,9 @@ from client.sync import runtime as upload_runtime_module
 from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
 
 
-def test_upload_runtime_recovers_before_one_daemon_scheduler_and_closes_only_owned_network_resources() -> None:
+def test_upload_runtime_recovers_promoted_files_then_sqlite_before_scheduler(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Catch a restart that races upload recovery, duplicates workers, or closes shared SQLite."""
 
     order: list[str] = []
@@ -36,8 +38,27 @@ def test_upload_runtime_recovers_before_one_daemon_scheduler_and_closes_only_own
         def close(self) -> None:
             order.append("http.close")
 
+    physical_store = _PhysicalStore()
+    key_provider = object()
+    spool_root = tmp_path / "spool"
+
+    def recover_promoted(root, store, keys) -> int:
+        assert root == spool_root
+        assert store is physical_store
+        assert keys is key_provider
+        order.append("recover_promoted_sessions")
+        return 1
+
+    monkeypatch.setattr(
+        upload_runtime_module.ValidSessionStager,
+        "recover_promoted_sessions",
+        recover_promoted,
+    )
+
     runtime = PackagedUploadRuntime(
-        physical_store=_PhysicalStore(),
+        spool_root=spool_root,
+        key_provider=key_provider,
+        physical_store=physical_store,
         upload_scheduler=_UploadScheduler(),
         http_client=_HttpClient(),
     )
@@ -53,7 +74,11 @@ def test_upload_runtime_recovers_before_one_daemon_scheduler_and_closes_only_own
     runtime.close()
     runtime.close()
 
-    assert order[:2] == ["recover_interrupted_state", "upload_scheduler.start"]
+    assert order[:3] == [
+        "recover_promoted_sessions",
+        "recover_interrupted_state",
+        "upload_scheduler.start",
+    ]
     assert order.count("upload_scheduler.start") == 1
     assert order.count("upload_scheduler.stop") == 1
     assert order.count("http.close") == 1
@@ -72,6 +97,7 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
     scheduler_threads: set[int] = set()
     delegated_access: list[object] = []
     order: list[str] = []
+    queue_roots: list[Path] = []
 
     class _PhysicalStore:
         def __init__(self) -> None:
@@ -99,8 +125,9 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
             order.append("http.close")
 
     class _EventSignallingQueue:
-        def __init__(self, store, *_args) -> None:
+        def __init__(self, store, repository_root, *_args) -> None:
             self.store = store
+            queue_roots.append(Path(repository_root))
             self.calls = 0
 
         def upload_next(self, access_runtime) -> None:
@@ -141,6 +168,8 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
     assert order.count("blocked:leased-session:E-SYN-500") == 1
     assert len(scheduler_threads) == 1
     assert delegated_access and all(item is access_runtime for item in delegated_access)
+    assert queue_roots == [tmp_path / "spool"]
+    assert (queue_roots[0] / "sessions") != (tmp_path / "sessions")
     assert "E-SYN-500" in caplog.text
     assert "credential-shaped-secret-must-not-be-logged" not in caplog.text
     assert order[-1] == "http.close"
