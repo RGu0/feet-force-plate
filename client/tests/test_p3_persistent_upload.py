@@ -445,6 +445,63 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(len(remote.complete_keys), 1)
         self.assertTrue(sealed.path.exists())
 
+    def test_restart_preserves_equal_jitter_and_retry_after_deadlines(self) -> None:
+        """A restart must not lease durable backoff work before its due time."""
+
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.failures["status"] = [
+            UploadRetryable("temporary"),
+            UploadRetryable("rate limited", retry_after_seconds=60.0),
+        ]
+        clock = _Clock()
+
+        self.assertIs(
+            self._queue(remote, clock=clock, random_fraction=lambda: 0.0).upload_next(
+                _Tokens()
+            ),
+            UploadCycleOutcome.DEFERRED,
+        )
+        self.assertEqual(
+            self.store.sync_handoff_retry_state(str(self.session_id)),
+            (1, 3_500_000_000, "E-SYN-001"),
+        )
+
+        self.store.close()
+        self.store = StateStore(
+            self.root / "state.sqlite3", SensitiveBlobCodec(self.keys)
+        )
+        self.store.recover_interrupted_state(recovered_at_ns=2_000_000_000)
+        clock.value = 2_000_000_000
+        self.assertIs(
+            self._queue(remote, clock=clock).upload_next(_Tokens()),
+            UploadCycleOutcome.IDLE,
+        )
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+
+        clock.value = 3_500_000_000
+        self.assertIs(
+            self._queue(remote, clock=clock).upload_next(_Tokens()),
+            UploadCycleOutcome.DEFERRED,
+        )
+        self.assertEqual(
+            self.store.sync_handoff_retry_state(str(self.session_id)),
+            (2, 63_500_000_000, "E-SYN-001"),
+        )
+
+        self.store.close()
+        self.store = StateStore(
+            self.root / "state.sqlite3", SensitiveBlobCodec(self.keys)
+        )
+        self.store.recover_interrupted_state(recovered_at_ns=4_000_000_000)
+        clock.value = 4_000_000_000
+        self.assertIs(
+            self._queue(remote, clock=clock).upload_next(_Tokens()),
+            UploadCycleOutcome.IDLE,
+        )
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+
     def test_retry_delay_uses_durable_attempt_count_and_equal_jitter_bounds(
         self,
     ) -> None:

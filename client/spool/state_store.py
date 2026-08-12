@@ -1118,7 +1118,7 @@ class StateStore:
             handoffs = self._connection.execute(
                 """UPDATE sync_handoffs
                 SET state='READY_FOR_NETWORK', next_attempt_at_ns=NULL
-                WHERE state IN ('UPLOADING', 'RETRY_WAIT')"""
+                WHERE state='UPLOADING'"""
             ).rowcount
         return RecoveryResult(sessions, uploads, telemetry, handoffs)
 
