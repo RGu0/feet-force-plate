@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import threading
 import time
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from client.spool.state_store import KeyProvider, StateStore
@@ -13,10 +14,74 @@ from client.spool.state_store import KeyProvider, StateStore
 from .persistent_upload import HttpIngestionClient, PersistentUploadQueue
 
 
+_LOGGER = logging.getLogger(__name__)
+_UNEXPECTED_UPLOAD_ERROR_CODE = "E-SYN-500"
+
+
 class _AccessTokenRuntime(Protocol):
     def current_access_token(self) -> str: ...
 
     def refresh(self) -> object: ...
+
+
+class _LeaseTrackingStore:
+    """Track only the lease owned by one scheduler cycle around a shared store."""
+
+    def __init__(self, store: StateStore) -> None:
+        self._store = store
+        self._leased_session_id: str | None = None
+        self._lock = threading.Lock()
+
+    def begin_cycle(self) -> None:
+        with self._lock:
+            self._leased_session_id = None
+
+    def lease_sync_handoff(self, *, now_ns: int):
+        handoff = self._store.lease_sync_handoff(now_ns=now_ns)
+        with self._lock:
+            self._leased_session_id = (
+                None if handoff is None else str(handoff.session_id)
+            )
+        return handoff
+
+    def finish_cycle(self) -> None:
+        with self._lock:
+            self._leased_session_id = None
+
+    def block_escaped_lease(self) -> None:
+        with self._lock:
+            session_id = self._leased_session_id
+            self._leased_session_id = None
+        if session_id is None:
+            return
+        self._store.mark_sync_handoff_blocked(
+            session_id,
+            error_code=_UNEXPECTED_UPLOAD_ERROR_CODE,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+
+class _RecoverableUploadQueue:
+    """Expose escaped-lease recovery without changing the durable queue contract."""
+
+    def __init__(self, queue: PersistentUploadQueue, store: _LeaseTrackingStore) -> None:
+        self._queue = queue
+        self._store = store
+
+    def upload_next(self, access_runtime: _AccessTokenRuntime):
+        self._store.begin_cycle()
+        try:
+            outcome = self._queue.upload_next(access_runtime)
+        except Exception:
+            raise
+        else:
+            self._store.finish_cycle()
+            return outcome
+
+    def recover_escaped_lease(self) -> None:
+        self._store.block_escaped_lease()
 
 
 class _UploadScheduler:
@@ -62,8 +127,19 @@ class _UploadScheduler:
             try:
                 self._queue.upload_next(self._access_runtime)
             except Exception:
-                # The queue persists transient failure state; never terminate uploads on it.
-                pass
+                try:
+                    recover = getattr(self._queue, "recover_escaped_lease", None)
+                    if recover is not None:
+                        recover()
+                except Exception:
+                    _LOGGER.error(
+                        "packaged upload lease recovery failed: %s",
+                        _UNEXPECTED_UPLOAD_ERROR_CODE,
+                    )
+                _LOGGER.error(
+                    "packaged upload cycle failed: %s",
+                    _UNEXPECTED_UPLOAD_ERROR_CODE,
+                )
             self._stop_requested.wait(self._poll_interval_seconds)
 
 
@@ -85,7 +161,11 @@ class PackagedUploadRuntime:
             if self._started:
                 return
             self._physical_store.recover_interrupted_state(recovered_at_ns=time.time_ns())
-            self._upload_scheduler.start()
+            try:
+                self._upload_scheduler.start()
+            except Exception:
+                self._upload_scheduler.stop()
+                raise
             self._started = True
 
     def stop(self) -> None:
@@ -123,15 +203,23 @@ def build_packaged_upload_runtime(
         terminal_id=UUID(str(session.client_installation_id)),
         verify=settings.verify,
     )
-    queue = PersistentUploadQueue(
-        physical_store,
-        data_root,
-        key_provider,
-        http_client,
-    )
+    tracking_store = _LeaseTrackingStore(physical_store)
+    try:
+        queue = PersistentUploadQueue(
+            tracking_store,
+            data_root,
+            key_provider,
+            http_client,
+        )
+        scheduler = _UploadScheduler(
+            _RecoverableUploadQueue(queue, tracking_store), access_runtime
+        )
+    except Exception:
+        http_client.close()
+        raise
     return PackagedUploadRuntime(
         physical_store=physical_store,
-        upload_scheduler=_UploadScheduler(queue, access_runtime),
+        upload_scheduler=scheduler,
         http_client=http_client,
     )
 

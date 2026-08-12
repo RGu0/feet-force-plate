@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+import threading
+from types import SimpleNamespace
+
+import pytest
+
 from client.app.session_lock import SessionLockController
-from client.sync.runtime import PackagedUploadRuntime
+from client.sync import runtime as upload_runtime_module
+from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
 
 
 def test_upload_runtime_recovers_before_one_daemon_scheduler_and_closes_only_owned_network_resources() -> None:
@@ -50,3 +58,126 @@ def test_upload_runtime_recovers_before_one_daemon_scheduler_and_closes_only_own
     assert order.count("upload_scheduler.stop") == 1
     assert order.count("http.close") == 1
     assert "physical_store.close" not in order
+
+
+def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Removing escaped-lease recovery, daemon polling, or single-start must fail."""
+
+    first_cycle = threading.Event()
+    second_cycle = threading.Event()
+    scheduler_threads: set[int] = set()
+    delegated_access: list[object] = []
+    order: list[str] = []
+
+    class _PhysicalStore:
+        def __init__(self) -> None:
+            self.lease_count = 0
+
+        def recover_interrupted_state(self, *, recovered_at_ns: int) -> None:
+            assert recovered_at_ns > 0
+            order.append("recover_interrupted_state")
+
+        def lease_sync_handoff(self, *, now_ns: int):
+            assert now_ns > 0
+            self.lease_count += 1
+            if self.lease_count == 1:
+                return SimpleNamespace(session_id="leased-session")
+            return None
+
+        def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
+            order.append(f"blocked:{session_id}:{error_code}")
+
+    class _HttpClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            order.append("http.open")
+
+        def close(self) -> None:
+            order.append("http.close")
+
+    class _EventSignallingQueue:
+        def __init__(self, store, *_args) -> None:
+            self.store = store
+            self.calls = 0
+
+        def upload_next(self, access_runtime) -> None:
+            delegated_access.append(access_runtime)
+            scheduler_threads.add(threading.get_ident())
+            assert threading.current_thread().daemon is True
+            self.calls += 1
+            if self.calls == 1:
+                self.store.lease_sync_handoff(now_ns=1)
+                first_cycle.set()
+                raise RuntimeError("credential-shaped-secret-must-not-be-logged")
+            second_cycle.set()
+
+    monkeypatch.setattr(upload_runtime_module, "HttpIngestionClient", _HttpClient)
+    monkeypatch.setattr(
+        upload_runtime_module, "PersistentUploadQueue", _EventSignallingQueue
+    )
+    physical_store = _PhysicalStore()
+    access_runtime = object()
+    runtime = build_packaged_upload_runtime(
+        tmp_path,
+        SimpleNamespace(base_url="https://upload.invalid", verify=True),
+        SimpleNamespace(client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c"),
+        access_runtime,
+        object(),
+        object(),
+        physical_store,
+    )
+
+    with caplog.at_level(logging.ERROR, logger=upload_runtime_module.__name__):
+        runtime.start()
+        runtime.start()
+        assert first_cycle.wait(timeout=1.0)
+        assert second_cycle.wait(timeout=1.0)
+        runtime.close()
+
+    assert order.count("recover_interrupted_state") == 1
+    assert order.count("blocked:leased-session:E-SYN-500") == 1
+    assert len(scheduler_threads) == 1
+    assert delegated_access and all(item is access_runtime for item in delegated_access)
+    assert "E-SYN-500" in caplog.text
+    assert "credential-shaped-secret-must-not-be-logged" not in caplog.text
+    assert order[-1] == "http.close"
+
+
+def test_factory_closes_http_if_queue_construction_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A queue-construction exception must not leak the already-open HTTP client."""
+
+    order: list[str] = []
+
+    class _HttpClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            order.append("http.open")
+
+        def close(self) -> None:
+            order.append("http.close")
+
+    class _BrokenQueue:
+        def __init__(self, *_args) -> None:
+            raise RuntimeError("queue construction failed")
+
+    monkeypatch.setattr(upload_runtime_module, "HttpIngestionClient", _HttpClient)
+    monkeypatch.setattr(upload_runtime_module, "PersistentUploadQueue", _BrokenQueue)
+
+    with pytest.raises(RuntimeError, match="queue construction failed"):
+        build_packaged_upload_runtime(
+            tmp_path,
+            SimpleNamespace(base_url="https://upload.invalid", verify=True),
+            SimpleNamespace(
+                client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c"
+            ),
+            object(),
+            object(),
+            object(),
+            object(),
+        )
+
+    assert order == ["http.open", "http.close"]

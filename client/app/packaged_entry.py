@@ -310,11 +310,11 @@ class PackagedShutdown:
     def attach_authenticated_resources(
         self,
         *,
-        upload_runtime: PackagedUploadRuntime | None,
-        institution_store,
-        physical_store,
-        telemetry_runtime: DefaultValidationTelemetryRuntime | None,
-        audit_store: StateStore,
+        upload_runtime: PackagedUploadRuntime | None = None,
+        institution_store=None,
+        physical_store=None,
+        telemetry_runtime: DefaultValidationTelemetryRuntime | None = None,
+        audit_store: StateStore | None = None,
     ) -> None:
         if self._closed:
             raise RuntimeError("packaged shutdown is already closed")
@@ -324,15 +324,29 @@ class PackagedShutdown:
         self._institution_store = institution_store
         self._physical_store = physical_store
 
+    def close_authenticated_resources(self) -> None:
+        """Release a partial or complete authenticated handoff without closing access."""
+
+        resources = (
+            self._upload_runtime,
+            self._institution_store,
+            self._physical_store,
+            self._telemetry_runtime,
+            self._audit_store,
+        )
+        self._upload_runtime = None
+        self._institution_store = None
+        self._physical_store = None
+        self._telemetry_runtime = None
+        self._audit_store = None
+        for resource in resources:
+            self._close(resource)
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self._close(self._upload_runtime)
-        self._close(self._institution_store)
-        self._close(self._physical_store)
-        self._close(self._telemetry_runtime)
-        self._close(self._audit_store)
+        self.close_authenticated_resources()
         try:
             self._recorder.record(
                 SafeClientEventName.APPLICATION_EXITED,
@@ -433,11 +447,11 @@ class PackagedEntryComposition:
     def attach_authenticated_resources(
         self,
         *,
-        upload_runtime: PackagedUploadRuntime | None,
-        institution_store,
-        physical_store,
-        telemetry_runtime: DefaultValidationTelemetryRuntime | None,
-        audit_store: StateStore,
+        upload_runtime: PackagedUploadRuntime | None = None,
+        institution_store=None,
+        physical_store=None,
+        telemetry_runtime: DefaultValidationTelemetryRuntime | None = None,
+        audit_store: StateStore | None = None,
     ) -> None:
         if self._shutdown is None:
             raise RuntimeError("packaged composition must start before authentication")
@@ -448,6 +462,10 @@ class PackagedEntryComposition:
             telemetry_runtime=telemetry_runtime,
             audit_store=audit_store,
         )
+
+    def close_authenticated_resources(self) -> None:
+        if self._shutdown is not None:
+            self._shutdown.close_authenticated_resources()
 
     def close(self) -> None:
         if self._shutdown is not None:
@@ -801,6 +819,163 @@ def _packaged_diagnostic_support_factory(
     return make
 
 
+def compose_authenticated_session(
+    *,
+    session: SeedAuthenticatedInstitutionSession,
+    data_root: Path,
+    runtime: ClientAccessRuntime | None,
+    settings: AccessRuntimeSettings | None,
+    composition: PackagedEntryComposition,
+    access,
+    references: dict[str, object],
+    audit_trail_factory=_default_validation_audit_trail,
+    key_provider_factory=KeyringAesKeyProvider,
+    institution_store_opener=InstitutionLocalStore.open,
+    physical_store_factory=StateStore,
+    upload_runtime_builder=build_packaged_upload_runtime,
+    telemetry_runtime_builder=start_default_validation_telemetry_upload,
+    telemetry_cloud_client_factory=ValidationTelemetryCloudClient,
+    gate_builder=build_mandatory_startup_gate,
+    connector_builder=build_asset_serial_startup_connector,
+    live_runtime_builder=build_live_institution_runtime,
+) -> None:
+    """Compose one authenticated handoff and register ownership as it is acquired."""
+
+    access.hide()
+    audit_trail = None
+    audit_store = None
+    key_provider = None
+    institution_store = None
+    physical_store = None
+    upload_runtime = None
+    telemetry_runtime = None
+
+    def attach_acquired_resources() -> None:
+        composition.attach_authenticated_resources(
+            upload_runtime=upload_runtime,
+            institution_store=institution_store,
+            physical_store=physical_store,
+            telemetry_runtime=telemetry_runtime,
+            audit_store=audit_store,
+        )
+
+    try:
+        audit_trail, audit_store = audit_trail_factory(data_root)
+        attach_acquired_resources()
+
+        key_provider = key_provider_factory()
+        institution_store = institution_store_opener(
+            data_root / "institution", key_provider=key_provider
+        )
+        attach_acquired_resources()
+
+        physical_store = physical_store_factory(
+            data_root / "database" / "institution-live.sqlite3",
+            SensitiveBlobCodec(key_provider),
+        )
+        attach_acquired_resources()
+        physical_store.record_successful_online(time.time_ns())
+
+        if runtime is not None and settings is not None:
+            upload_runtime = upload_runtime_builder(
+                data_root,
+                settings,
+                session,
+                runtime,
+                key_provider,
+                institution_store,
+                physical_store,
+            )
+            attach_acquired_resources()
+            upload_runtime.start()
+
+            telemetry_cloud_client = telemetry_cloud_client_factory(
+                settings.base_url,
+                verify=settings.verify,
+                access_token_provider=runtime.current_access_token,
+            )
+            try:
+                telemetry_runtime = telemetry_runtime_builder(
+                    audit_trail=audit_trail,
+                    cloud_client=telemetry_cloud_client,
+                    client_installation_id=session.client_installation_id,
+                )
+            except Exception:
+                PackagedShutdown._close(telemetry_cloud_client)
+                raise
+            if telemetry_runtime is None:
+                PackagedShutdown._close(telemetry_cloud_client)
+            attach_acquired_resources()
+
+        timeout_minutes = runtime.lock_timeout_minutes() if runtime is not None else 30
+        timeout = (
+            LockTimeout.NEVER
+            if timeout_minutes is None
+            else LockTimeout(str(timeout_minutes))
+        )
+        lock_controller = SessionLockController(
+            lambda password: bool(runtime and runtime.verify_password(password)),
+            timeout=timeout,
+        )
+        gate_holder: dict[str, object] = {}
+
+        def workbench_factory() -> ScreeningWindow:
+            gate = gate_holder.get("gate")
+            startup_run = getattr(gate, "last_run", None)
+            if startup_run is None or runtime is None:
+                raise RuntimeError(
+                    "authenticated live workbench requires a passed startup run"
+                )
+            live_runtime = live_runtime_builder(
+                session=session,
+                access_runtime=runtime,
+                key_provider=key_provider,
+                institution=institution_store,
+                physical_store=physical_store,
+                startup_run=startup_run,
+                data_root=data_root,
+                export_destination=_choose_diagnostic_destination,
+                app_version=APP_VERSION,
+                payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
+            )
+            references["live_runtime"] = live_runtime
+            return live_runtime.controller.window
+
+        gate = gate_builder(
+            audit_actor_id=session.client_installation_id,
+            app_version=APP_VERSION,
+            connector=connector_builder(),
+            audit_trail=audit_trail,
+            workbench_factory=workbench_factory,
+        )
+        gate_holder["gate"] = gate
+        references.update(
+            gate=gate,
+            audit_store=audit_store,
+            upload_runtime=upload_runtime,
+            institution_store=institution_store,
+            physical_store=physical_store,
+            telemetry_runtime=telemetry_runtime,
+            lock_controller=lock_controller,
+            gate_holder=gate_holder,
+        )
+        gate.start()
+    except Exception:
+        composition.close_authenticated_resources()
+        for name in (
+            "gate",
+            "audit_store",
+            "upload_runtime",
+            "institution_store",
+            "physical_store",
+            "telemetry_runtime",
+            "lock_controller",
+            "gate_holder",
+        ):
+            references.pop(name, None)
+        raise
+
+
 def main() -> int:
     """Start the package at P-00 institution access."""
 
@@ -828,98 +1003,15 @@ def main() -> int:
     app.aboutToQuit.connect(composition.close)
 
     def authenticated(session: SeedAuthenticatedInstitutionSession) -> None:
-        access.hide()
-        audit_trail, audit_store = _default_validation_audit_trail(data_root)
-        key_provider = KeyringAesKeyProvider()
-        institution_store = InstitutionLocalStore.open(
-            data_root / "institution", key_provider=key_provider
+        compose_authenticated_session(
+            session=session,
+            data_root=data_root,
+            runtime=runtime,
+            settings=settings,
+            composition=composition,
+            access=access,
+            references=references,
         )
-        physical_store = StateStore(
-            data_root / "database" / "institution-live.sqlite3",
-            SensitiveBlobCodec(key_provider),
-        )
-        physical_store.record_successful_online(time.time_ns())
-        upload_runtime = None
-        if runtime is not None and settings is not None:
-            upload_runtime = build_packaged_upload_runtime(
-                data_root,
-                settings,
-                session,
-                runtime,
-                key_provider,
-                institution_store,
-                physical_store,
-            )
-            upload_runtime.start()
-        telemetry_runtime = None
-        if runtime is not None and settings is not None:
-            telemetry_runtime = start_default_validation_telemetry_upload(
-                audit_trail=audit_trail,
-                cloud_client=ValidationTelemetryCloudClient(
-                    settings.base_url,
-                    verify=settings.verify,
-                    access_token_provider=runtime.current_access_token,
-                ),
-                client_installation_id=session.client_installation_id,
-            )
-        composition.attach_authenticated_resources(
-            upload_runtime=upload_runtime,
-            institution_store=institution_store,
-            physical_store=physical_store,
-            telemetry_runtime=telemetry_runtime,
-            audit_store=audit_store,
-        )
-        timeout_minutes = runtime.lock_timeout_minutes() if runtime is not None else 30
-        timeout = (
-            LockTimeout.NEVER
-            if timeout_minutes is None
-            else LockTimeout(str(timeout_minutes))
-        )
-        lock_controller = SessionLockController(
-            lambda password: bool(runtime and runtime.verify_password(password)),
-            timeout=timeout,
-        )
-        gate_holder: dict[str, object] = {}
-
-        def workbench_factory() -> ScreeningWindow:
-            gate = gate_holder.get("gate")
-            startup_run = getattr(gate, "last_run", None)
-            if startup_run is None or runtime is None:
-                raise RuntimeError("authenticated live workbench requires a passed startup run")
-            live_runtime = build_live_institution_runtime(
-                session=session,
-                access_runtime=runtime,
-                key_provider=key_provider,
-                institution=institution_store,
-                physical_store=physical_store,
-                startup_run=startup_run,
-                data_root=data_root,
-                export_destination=_choose_diagnostic_destination,
-                app_version=APP_VERSION,
-                payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
-            )
-            references["live_runtime"] = live_runtime
-            return live_runtime.controller.window
-
-        gate = build_mandatory_startup_gate(
-            audit_actor_id=session.client_installation_id,
-            app_version=APP_VERSION,
-            connector=build_asset_serial_startup_connector(),
-            audit_trail=audit_trail,
-            workbench_factory=workbench_factory,
-        )
-        gate_holder["gate"] = gate
-        references.update(
-            gate=gate,
-            audit_store=audit_store,
-            upload_runtime=upload_runtime,
-            institution_store=institution_store,
-            physical_store=physical_store,
-            telemetry_runtime=telemetry_runtime,
-            lock_controller=lock_controller,
-            gate_holder=gate_holder,
-        )
-        gate.start()
 
     access = build_institution_access_screen(
         runtime=runtime,
