@@ -1173,16 +1173,20 @@ class StateStore:
             )
 
     def offline_snapshot(self) -> OfflineSnapshot:
-        pending = ("SEALED", "PENDING_UPLOAD", "UPLOADING", "CORRUPT")
         with self._lock:
             row = self._connection.execute(
                 """SELECT terminal_state.last_successful_online_ns,
-                    COUNT(DISTINCT segments.session_id),
-                    COALESCE(SUM(segments.byte_count), 0)
+                    COUNT(DISTINCT CASE
+                        WHEN h.state != 'CLOUD_CONFIRMED' THEN h.session_id
+                    END),
+                    COALESCE(SUM(CASE
+                        WHEN h.state != 'CLOUD_CONFIRMED' THEN s.byte_count
+                        ELSE 0
+                    END), 0)
                 FROM terminal_state
-                LEFT JOIN segments ON segments.state IN (?, ?, ?, ?)
-                WHERE terminal_state.singleton=1""",
-                pending,
+                LEFT JOIN sync_handoffs h ON 1=1
+                LEFT JOIN segments s ON s.session_id=h.session_id
+                WHERE terminal_state.singleton=1"""
             ).fetchone()
         return OfflineSnapshot(row[0], int(row[1]), int(row[2]))
 

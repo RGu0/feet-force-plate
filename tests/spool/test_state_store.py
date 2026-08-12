@@ -344,21 +344,22 @@ class StateStoreTests(unittest.TestCase):
         for index in range(50):
             session_id = f"session-{index}"
             segment_id = f"segment-{index}"
-            self.store.create_session(
+            self.store.commit_valid_session(
                 session_id,
                 subject_uuid="subject-uuid",
                 consent_id=None,
-                lifecycle_status="CLOSED",
                 versions_json=b"{}",
                 started_at_ns=index,
-            )
-            self.store.add_segment(
-                segment_id,
-                session_id=session_id,
-                relative_path=f"{session_id}/{segment_id}.ffps",
-                byte_count=50_000_000,
-                state="PENDING_UPLOAD",
-                sealed_at_ns=index,
+                ended_at_ns=index + 1,
+                manifest_sha256=f"{index:064x}",
+                segments=(
+                    ValidSegmentRecord(
+                        segment_id=segment_id,
+                        relative_path=f"{session_id}/{segment_id}.ffps",
+                        byte_count=50_000_000,
+                        sealed_at_ns=index + 1,
+                    ),
+                ),
             )
         snapshot = self.store.offline_snapshot()
         decision = self.store.evaluate_new_test(
@@ -417,7 +418,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertTrue(self.store.segment_exists("pending"))
         self.assertTrue(self.store.segment_exists("retained"))
 
-    def test_corrupt_quarantined_data_still_counts_against_offline_quota(self) -> None:
+    def test_unregistered_corrupt_data_does_not_count_as_a_formal_handoff(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")
         self.store.create_session(
             "session-1",
@@ -438,8 +439,8 @@ class StateStoreTests(unittest.TestCase):
 
         snapshot = self.store.offline_snapshot()
 
-        self.assertEqual(snapshot.pending_session_count, 1)
-        self.assertEqual(snapshot.pending_bytes, 123)
+        self.assertEqual(snapshot.pending_session_count, 0)
+        self.assertEqual(snapshot.pending_bytes, 0)
 
 
 if __name__ == "__main__":
