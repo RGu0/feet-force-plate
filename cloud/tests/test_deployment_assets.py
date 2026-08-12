@@ -22,6 +22,11 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
     assert "--help|-h" not in text
     assert ".ray-99-integration.lock" in text
     assert "mv -T" in text
+    assert 'mv -- "$backup" "$destination"' not in text
+    assert 'mv -T -n -- "$backup" "$destination"' in text
+    assert "ca_source_payload = ca_input.read()" in text
+    assert "ca_input.seek" not in text
+    assert "write_from_stream" not in text
 
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:

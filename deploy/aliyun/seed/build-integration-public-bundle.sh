@@ -110,7 +110,10 @@ cleanup() {
         && [[ -e "$backup" || -L "$backup" ]] \
         && [[ ! -e "$destination" && ! -L "$destination" ]]
     ); then
-        mv -- "$backup" "$destination"
+        mv -T -n -- "$backup" "$destination" || true
+        if [[ -e "$backup" || -L "$backup" ]]; then
+            echo "build-integration-public-bundle.sh: preserved backup after restore collision" >&2
+        fi
     fi
     if [[ "$published" -ne 1 && -n "${staging:-}" && -d "$staging" ]]; then
         rm -rf -- "$staging"
@@ -169,11 +172,6 @@ def open_regular_file(path: Path, label: str):
         raise
 
 
-def write_from_stream(source, destination: Path) -> None:
-    with destination.open("xb") as output:
-        while chunk := source.read(1024 * 1024):
-            output.write(chunk)
-
 parsed = urlparse(api_base_url)
 try:
     port = parsed.port
@@ -197,9 +195,9 @@ with (
     open_regular_file(ca_source, "CA certificate") as ca_input,
     open_regular_file(public_key_source, "License public key") as public_key_input,
 ):
-    if not ca_input.read(1):
+    ca_source_payload = ca_input.read()
+    if not ca_source_payload:
         raise SystemExit("CA certificate must not be empty")
-    ca_input.seek(0)
     public_key_source_payload = public_key_input.read()
     public_key_payload = public_key_source_payload.strip()
     if len(public_key_payload) != 32:
@@ -224,7 +222,7 @@ with (
         json.dumps(config, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    write_from_stream(ca_input, staging / "cloud-ca.pem")
+    (staging / "cloud-ca.pem").write_bytes(ca_source_payload)
     (staging / "license-public.key").write_bytes(public_key_source_payload)
 for name in ("cloud-default.json", "cloud-ca.pem", "license-public.key"):
     (staging / name).chmod(0o644)
