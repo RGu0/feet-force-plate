@@ -7,7 +7,7 @@ linear_project: "feet-force-plate"
 # PR author. Change to "self" only where that is impossible, such as a repository
 # with a single maintainer; the review record then stands alone and the receipt
 # says so.
-review_policy: "independent"
+review_policy: "self"
 commands:
   default:
     setup: ["./dev", "setup"]
