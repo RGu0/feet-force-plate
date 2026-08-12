@@ -495,12 +495,12 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(remote.put_calls, [])
 
     def _assert_acknowledgement_conflict(
-        self, acknowledgement: SegmentAcknowledgement
+        self, acknowledgement_factory: Callable[[SealedSegment], SegmentAcknowledgement]
     ) -> None:
         sealed = self._seal(0)
         self._commit(sealed)
         remote = _IngestionService()
-        remote.acknowledgement = acknowledgement
+        remote.acknowledgement = acknowledgement_factory(sealed)
 
         outcome = self._queue(remote).upload_next(_Tokens())
 
@@ -510,9 +510,8 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
 
     def test_segment_acknowledgement_rejects_wrong_session_only(self) -> None:
-        sealed = self._seal(0)
         self._assert_acknowledgement_conflict(
-            SegmentAcknowledgement(
+            lambda sealed: SegmentAcknowledgement(
                 session_id=uuid4(),
                 index=0,
                 sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
@@ -522,9 +521,8 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
 
     def test_segment_acknowledgement_rejects_wrong_index_only(self) -> None:
-        sealed = self._seal(0)
         self._assert_acknowledgement_conflict(
-            SegmentAcknowledgement(
+            lambda sealed: SegmentAcknowledgement(
                 session_id=self.session_id,
                 index=1,
                 sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
@@ -534,9 +532,8 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
 
     def test_segment_acknowledgement_rejects_non_acknowledged_status_only(self) -> None:
-        sealed = self._seal(0)
         self._assert_acknowledgement_conflict(
-            SegmentAcknowledgement(
+            lambda sealed: SegmentAcknowledgement(
                 session_id=self.session_id,
                 index=0,
                 sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
