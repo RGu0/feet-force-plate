@@ -73,11 +73,7 @@ while [[ "$#" -gt 0 ]]; do
             replace=1
             shift
             ;;
-        --help|-h)
-            usage
-            exit 0
-            ;;
-        --*)
+        -*)
             die "unknown option: $1"
             ;;
         *)
@@ -102,15 +98,12 @@ for command_name in python3 sha256sum install mv; do
         || die "required command is unavailable: $command_name"
 done
 
-if [[ -e "$destination" || -L "$destination" ]]; then
-    [[ "$replace" -eq 1 ]] \
-        || die "destination already exists; pass --replace to preserve and replace it"
-fi
-
 install -d -m 0755 "$bundle_root"
-staging="$(mktemp -d "$bundle_root/.ray-99-integration.XXXXXX")"
 published=0
 backup=""
+staging=""
+lock_directory="$bundle_root/.ray-99-integration.lock"
+lock_acquired=0
 cleanup() {
     if (
         [[ "$published" -ne 1 && -n "$backup" ]] \
@@ -122,15 +115,30 @@ cleanup() {
     if [[ "$published" -ne 1 && -n "${staging:-}" && -d "$staging" ]]; then
         rm -rf -- "$staging"
     fi
+    if [[ "$lock_acquired" -eq 1 ]]; then
+        rmdir -- "$lock_directory"
+    fi
 }
 trap cleanup EXIT
+
+if ! mkdir -- "$lock_directory"; then
+    die "public bundle publication is already in progress"
+fi
+lock_acquired=1
+
+if [[ -e "$destination" || -L "$destination" ]]; then
+    [[ "$replace" -eq 1 ]] \
+        || die "destination already exists; pass --replace to preserve and replace it"
+fi
+
+staging="$(mktemp -d "$bundle_root/.ray-99-integration.XXXXXX")"
 
 python3 - "$api_base_url" "$ca_cert" "$license_public_key" \
     "$license_key_id" "$staging" <<'PY'
 import base64
 import binascii
 import json
-import shutil
+import os
 import stat
 import sys
 from pathlib import Path
@@ -143,17 +151,28 @@ public_key_source = Path(public_key_name)
 staging = Path(staging_name)
 
 
-def require_regular_file(path: Path, label: str) -> None:
+def open_regular_file(path: Path, label: str):
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
     try:
-        mode = path.lstat().st_mode
+        descriptor = os.open(path, flags)
     except OSError as exc:
-        raise SystemExit(f"{label} must be a readable regular file") from exc
-    if not stat.S_ISREG(mode):
-        raise SystemExit(f"{label} must be a regular file and not a symlink")
+        raise SystemExit(
+            f"{label} must be a readable regular file and not a symlink"
+        ) from exc
+    try:
+        mode = os.fstat(descriptor).st_mode
+        if not stat.S_ISREG(mode):
+            raise SystemExit(f"{label} must be a regular file and not a symlink")
+        return os.fdopen(descriptor, "rb", closefd=True)
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
-require_regular_file(ca_source, "CA certificate")
-require_regular_file(public_key_source, "License public key")
+def write_from_stream(source, destination: Path) -> None:
+    with destination.open("xb") as output:
+        while chunk := source.read(1024 * 1024):
+            output.write(chunk)
 
 parsed = urlparse(api_base_url)
 try:
@@ -174,32 +193,39 @@ if (
 if not license_key_id.strip():
     raise SystemExit("License key ID must not be empty")
 
-try:
-    public_key_payload = public_key_source.read_bytes().strip()
-except OSError as exc:
-    raise SystemExit("License public key must be readable") from exc
-if len(public_key_payload) != 32:
-    try:
-        public_key_payload = base64.b64decode(public_key_payload, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise SystemExit("License public key must contain 32 raw or base64 bytes") from exc
-if len(public_key_payload) != 32:
-    raise SystemExit("License public key must contain 32 raw or base64 bytes")
+with (
+    open_regular_file(ca_source, "CA certificate") as ca_input,
+    open_regular_file(public_key_source, "License public key") as public_key_input,
+):
+    if not ca_input.read(1):
+        raise SystemExit("CA certificate must not be empty")
+    ca_input.seek(0)
+    public_key_source_payload = public_key_input.read()
+    public_key_payload = public_key_source_payload.strip()
+    if len(public_key_payload) != 32:
+        try:
+            public_key_payload = base64.b64decode(public_key_payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise SystemExit(
+                "License public key must contain 32 raw or base64 bytes"
+            ) from exc
+    if len(public_key_payload) != 32:
+        raise SystemExit("License public key must contain 32 raw or base64 bytes")
 
-config = {
-    "schema_version": "feetforceplate-client-cloud-default/1",
-    "channel": "integration",
-    "api_base_url": api_base_url.rstrip("/"),
-    "license_key_id": license_key_id.strip(),
-    "ca_bundle_resource": "cloud-ca.pem",
-    "license_public_key_resource": "license-public.key",
-}
-(staging / "cloud-default.json").write_text(
-    json.dumps(config, ensure_ascii=True, indent=2) + "\n",
-    encoding="utf-8",
-)
-shutil.copyfile(ca_source, staging / "cloud-ca.pem")
-shutil.copyfile(public_key_source, staging / "license-public.key")
+    config = {
+        "schema_version": "feetforceplate-client-cloud-default/1",
+        "channel": "integration",
+        "api_base_url": api_base_url.rstrip("/"),
+        "license_key_id": license_key_id.strip(),
+        "ca_bundle_resource": "cloud-ca.pem",
+        "license_public_key_resource": "license-public.key",
+    }
+    (staging / "cloud-default.json").write_text(
+        json.dumps(config, ensure_ascii=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    write_from_stream(ca_input, staging / "cloud-ca.pem")
+    (staging / "license-public.key").write_bytes(public_key_source_payload)
 for name in ("cloud-default.json", "cloud-ca.pem", "license-public.key"):
     (staging / name).chmod(0o644)
 staging.chmod(0o755)
@@ -230,16 +256,18 @@ PY
 )
 
 if [[ -e "$destination" || -L "$destination" ]]; then
+    [[ "$replace" -eq 1 ]] \
+        || die "destination appeared before publication; refusing without --replace"
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     backup="$bundle_root/ray-99-integration.previous-$timestamp"
     [[ ! -e "$backup" && ! -L "$backup" ]] \
         || die "replacement backup already exists for timestamp $timestamp"
-    mv -- "$destination" "$backup"
+    mv -T -- "$destination" "$backup"
 fi
 
-if ! mv -- "$staging" "$destination"; then
+if ! mv -T -n -- "$staging" "$destination" || [[ -d "$staging" ]]; then
     if [[ -n "$backup" && ! -e "$destination" && ! -L "$destination" ]]; then
-        mv -- "$backup" "$destination"
+        mv -T -- "$backup" "$destination"
     fi
     die "failed to publish validated bundle"
 fi

@@ -148,6 +148,48 @@ def test_rejects_symlink_and_invalid_public_key(tmp_path: Path) -> None:
     assert not (tmp_path / "published" / "ray-99-integration").exists()
 
 
+def test_rejects_empty_ca_without_publishing(tmp_path: Path) -> None:
+    """Catches publication of a bundle whose trusted CA input is empty."""
+
+    _require_root()
+    ca, key = _write_public_inputs(tmp_path)
+    ca.write_bytes(b"")
+
+    result = _run_bundle(tmp_path, *_bundle_arguments(ca, key))
+
+    assert result.returncode != 0
+    assert not (tmp_path / "published" / "ray-99-integration").exists()
+
+
+def test_rejects_busy_publication_lock_without_publishing(tmp_path: Path) -> None:
+    """Catches concurrent publication entering the destination move sequence."""
+
+    _require_root()
+    ca, key = _write_public_inputs(tmp_path)
+    published = tmp_path / "published"
+    published.mkdir()
+    (published / ".ray-99-integration.lock").mkdir()
+
+    result = _run_bundle(tmp_path, *_bundle_arguments(ca, key))
+
+    assert result.returncode != 0
+    assert "already in progress" in result.stderr
+    assert not (published / "ray-99-integration").exists()
+
+
+@pytest.mark.parametrize("option", ["--help", "-h"])
+def test_rejects_uncontracted_help_options(tmp_path: Path, option: str) -> None:
+    """Catches parser expansion beyond the five contracted option names."""
+
+    _require_root()
+
+    result = _run_bundle(tmp_path, option)
+
+    assert result.returncode != 0
+    assert "unknown option" in result.stderr
+    assert not (tmp_path / "published").exists()
+
+
 def test_failed_replacement_preserves_existing_bundle(tmp_path: Path) -> None:
     """Catches replacement logic that moves a valid bundle before validation."""
 

@@ -15,6 +15,13 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
     assert "must run as root" in text
     assert "seed.env" not in text
     assert "systemctl" not in text
+    assert "os.O_NOFOLLOW" in text
+    assert "os.fstat" in text
+    assert "copyfile(" not in text
+    assert "copyfileobj(" not in text
+    assert "--help|-h" not in text
+    assert ".ray-99-integration.lock" in text
+    assert "mv -T" in text
 
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
