@@ -272,6 +272,9 @@ fi
 published=1
 
 echo "bundle=ray-99-integration"
+echo "destination=$destination"
+echo "api_base_url=$api_base_url"
+echo "license_key_id=$license_key_id"
 for name in cloud-default.json cloud-ca.pem license-public.key; do
     digest="$(sha256sum "$destination/$name")"
     echo "sha256=${digest%% *} file=$name"

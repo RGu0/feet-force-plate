@@ -81,6 +81,11 @@ def test_builds_exact_validated_integration_bundle(tmp_path: Path) -> None:
     assert defaults.integration_mode is True
     assert defaults.base_url == "https://integration.test:7443"
     assert defaults.license_key_id == "license/integration-1"
+    assert f"destination={bundle}" in result.stdout.splitlines()
+    assert "api_base_url=https://integration.test:7443" in result.stdout.splitlines()
+    assert "license_key_id=license/integration-1" in result.stdout.splitlines()
+    assert str(ca) not in result.stdout
+    assert str(key) not in result.stdout
 
 
 def test_requires_root_without_creating_bundle(tmp_path: Path) -> None:
