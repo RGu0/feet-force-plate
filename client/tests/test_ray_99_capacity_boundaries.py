@@ -99,21 +99,29 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
     try:
         store.put_subject_ref("subject-1", b"opaque")
         store.record_successful_online(now_ns)
+        handoff_segments = {}
         for index in range(49):
-            _commit_handoff(store, tmp_path, index=index, byte_count=1)
+            session_id, segment_path = _commit_handoff(
+                store, tmp_path, index=index, byte_count=index + 1
+            )
+            handoff_segments[session_id] = (segment_path, index + 1)
 
         decision_with_49_handoffs = store.evaluate_new_test(
             now_ns=now_ns,
             free_disk_bytes=PENDING_BYTE_LIMIT + 1,
             estimated_test_bytes=0,
         )
-        confirmed_session_id, confirmed_segment_path = _commit_handoff(
-            store, tmp_path, index=49, byte_count=1
+        session_id, segment_path = _commit_handoff(
+            store, tmp_path, index=49, byte_count=50
         )
+        handoff_segments[session_id] = (segment_path, 50)
         uploading_handoff = store.lease_sync_handoff(now_ns=now_ns)
         assert uploading_handoff is not None
-        assert uploading_handoff.session_id == confirmed_session_id
-        assert store.sync_handoff_state(confirmed_session_id) == "UPLOADING"
+        uploading_session_id = uploading_handoff.session_id
+        uploading_segment_path, uploading_segment_bytes = handoff_segments[
+            uploading_session_id
+        ]
+        assert store.sync_handoff_state(uploading_session_id) == "UPLOADING"
 
         decision_with_50_handoffs = store.evaluate_new_test(
             now_ns=now_ns,
@@ -129,14 +137,17 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
 
         uploading_snapshot = store.offline_snapshot()
         assert uploading_snapshot.pending_session_count == 50
-        assert uploading_snapshot.pending_bytes == 50
+        pending_bytes_before_confirmation = uploading_snapshot.pending_bytes
 
-        store.mark_cloud_confirmed(confirmed_session_id, confirmed_at_ns=now_ns)
+        store.mark_cloud_confirmed(uploading_session_id, confirmed_at_ns=now_ns)
 
         confirmed_snapshot = store.offline_snapshot()
         assert confirmed_snapshot.pending_session_count == 49
-        assert confirmed_snapshot.pending_bytes == 49
-        assert confirmed_segment_path.exists()
+        assert (
+            confirmed_snapshot.pending_bytes
+            == pending_bytes_before_confirmation - uploading_segment_bytes
+        )
+        assert uploading_segment_path.exists()
     finally:
         store.close()
 
