@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import httpx
@@ -84,6 +85,9 @@ class _IngestionService:
         self.list_response: SegmentListResponse | None = None
         self.acknowledgement: SegmentAcknowledgement | None = None
         self.completion_response: ManifestCompletionResponse | None = None
+        self.completion_response_factory: (
+            Callable[[UUID, SessionManifest], ManifestCompletionResponse] | None
+        ) = None
         self.completion_status: SessionStatusResponse | None = None
 
     def _fail_if_requested(self, operation: str) -> None:
@@ -207,7 +211,9 @@ class _IngestionService:
                 segment.size_bytes,
             ) or payload != self.received[segment.index][1]:
                 raise AssertionError("manifest does not describe received immutable bytes")
-        result = self.completion_response or ManifestCompletionResponse(
+        result = self.completion_response_factory(session_id, manifest) if (
+            self.completion_response_factory is not None
+        ) else self.completion_response or ManifestCompletionResponse(
             session_id=session_id,
             ingest_status=IngestStatus.INGESTED,
             manifest_sha256=canonical_sha256(manifest),
@@ -488,17 +494,13 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
         self.assertEqual(remote.put_calls, [])
 
-    def test_segment_acknowledgement_binds_session_index_and_receipt_status(self) -> None:
+    def _assert_acknowledgement_conflict(
+        self, acknowledgement: SegmentAcknowledgement
+    ) -> None:
         sealed = self._seal(0)
         self._commit(sealed)
         remote = _IngestionService()
-        remote.acknowledgement = SegmentAcknowledgement(
-            session_id=uuid4(),
-            index=1,
-            sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
-            status=SegmentReceiptStatus.CONFLICT,
-            object_key="objects/wrong-handoff",
-        )
+        remote.acknowledgement = acknowledgement
 
         outcome = self._queue(remote).upload_next(_Tokens())
 
@@ -507,21 +509,97 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED"
         )
 
-    def test_completion_response_binds_session_manifest_and_ingest_status(self) -> None:
+    def test_segment_acknowledgement_rejects_wrong_session_only(self) -> None:
+        sealed = self._seal(0)
+        self._assert_acknowledgement_conflict(
+            SegmentAcknowledgement(
+                session_id=uuid4(),
+                index=0,
+                sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
+                status=SegmentReceiptStatus.ACKNOWLEDGED,
+                object_key="objects/wrong-handoff",
+            )
+        )
+
+    def test_segment_acknowledgement_rejects_wrong_index_only(self) -> None:
+        sealed = self._seal(0)
+        self._assert_acknowledgement_conflict(
+            SegmentAcknowledgement(
+                session_id=self.session_id,
+                index=1,
+                sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
+                status=SegmentReceiptStatus.ACKNOWLEDGED,
+                object_key="objects/wrong-index",
+            )
+        )
+
+    def test_segment_acknowledgement_rejects_non_acknowledged_status_only(self) -> None:
+        sealed = self._seal(0)
+        self._assert_acknowledgement_conflict(
+            SegmentAcknowledgement(
+                session_id=self.session_id,
+                index=0,
+                sha256=hashlib.sha256(sealed.path.read_bytes()).hexdigest(),
+                status=SegmentReceiptStatus.CONFLICT,
+                object_key="objects/wrong-status",
+            )
+        )
+
+    def _assert_completion_conflict(
+        self,
+        *,
+        completion_response_factory: (
+            Callable[[UUID, SessionManifest], ManifestCompletionResponse] | None
+        ) = None,
+        completion_status: SessionStatusResponse | None = None,
+    ) -> None:
         sealed = self._seal(0)
         self._commit(sealed)
         remote = _IngestionService()
-        remote.completion_response = ManifestCompletionResponse(
-            session_id=uuid4(),
-            ingest_status=IngestStatus.RECEIVING,
-            manifest_sha256="0" * 64,
-        )
+        remote.completion_response_factory = completion_response_factory
+        remote.completion_status = completion_status
 
         outcome = self._queue(remote).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
         self.assertNotEqual(
             self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED"
+        )
+
+    def test_completion_response_rejects_wrong_session_only(self) -> None:
+        self._assert_completion_conflict(
+            completion_response_factory=lambda _session_id, manifest: ManifestCompletionResponse(
+                session_id=uuid4(),
+                ingest_status=IngestStatus.INGESTED,
+                manifest_sha256=canonical_sha256(manifest),
+            )
+        )
+
+    def test_completion_response_rejects_wrong_manifest_digest_only(self) -> None:
+        self._assert_completion_conflict(
+            completion_response_factory=lambda session_id, _manifest: ManifestCompletionResponse(
+                session_id=session_id,
+                ingest_status=IngestStatus.INGESTED,
+                manifest_sha256="0" * 64,
+            )
+        )
+
+    def test_completion_response_rejects_wrong_ingest_status_only(self) -> None:
+        self._assert_completion_conflict(
+            completion_response_factory=lambda session_id, manifest: ManifestCompletionResponse(
+                session_id=session_id,
+                ingest_status=IngestStatus.RECEIVING,
+                manifest_sha256=canonical_sha256(manifest),
+            )
+        )
+
+    def test_final_completion_status_rejects_wrong_session_only(self) -> None:
+        self._assert_completion_conflict(
+            completion_status=SessionStatusResponse(
+                session_id=uuid4(),
+                validity_status=ValidityStatus.VALID,
+                ingest_status=IngestStatus.INGESTED,
+            )
         )
 
     def test_lost_complete_response_reconciles_after_restart_without_duplicates(

@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import sys
+from types import SimpleNamespace
 from uuid import UUID
 
-from client.app.institution_store import InstitutionLocalStore
+import pytest
+
+from client.app.institution_store import (
+    InstitutionLocalStore,
+    KeyringAesKeyProvider,
+)
+from client.spool.state_store import KeyProviderUnavailable
 from client.reporting.models import BasicReportDocument, ReportStatus
 from client.workflow.consent import ConsentPolicy, ConsentRequest, ConsentWorkflow
 from client.workflow.participant import (
@@ -29,6 +37,21 @@ class _Signer:
 
     def sign(self, request, *, consent_record_id: str, granted_at: datetime) -> str:
         return self.value
+
+
+def test_keyring_aes_key_provider_maps_backend_exception_to_retryable_boundary(
+    monkeypatch,
+) -> None:
+    class BackendUnavailable(Exception):
+        pass
+
+    def unavailable(_service: str, _account: str) -> str | None:
+        raise BackendUnavailable("credential daemon unavailable")
+
+    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(get_password=unavailable))
+
+    with pytest.raises(KeyProviderUnavailable):
+        KeyringAesKeyProvider().get_key()
 
 
 def _subject_with_external_profile_and_identity() -> CreateSubjectRequest:
