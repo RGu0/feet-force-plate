@@ -435,7 +435,10 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.store.recover_interrupted_state(recovered_at_ns=30_000_000_000)
 
-        outcome = self._queue(remote).upload_next(_Tokens())
+        _, retry_at_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
+        assert retry_at_ns is not None
+        clock.value = retry_at_ns
+        outcome = self._queue(remote, clock=clock).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFIRMED)
         self.assertEqual(remote.put_calls, [0])
