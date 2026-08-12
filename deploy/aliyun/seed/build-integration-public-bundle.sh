@@ -98,6 +98,24 @@ for command_name in python3 sha256sum install mv; do
         || die "required command is unavailable: $command_name"
 done
 
+python3 - "$api_base_url" "$ca_cert" "$license_public_key" \
+    "$license_key_id" "$bundle_root" <<'PY'
+import sys
+import unicodedata
+
+
+labels = (
+    "API base URL",
+    "CA certificate path",
+    "License public key path",
+    "License key ID",
+    "public bundle root",
+)
+for label, value in zip(labels, sys.argv[1:], strict=True):
+    if any(unicodedata.category(character) == "Cc" for character in value):
+        raise SystemExit(f"{label} must not contain control characters")
+PY
+
 install -d -m 0755 "$bundle_root"
 published=0
 backup=""
@@ -144,6 +162,7 @@ import json
 import os
 import stat
 import sys
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -188,7 +207,16 @@ if (
 ):
     raise SystemExit("API base URL must use HTTPS with explicit port 7443")
 
-if not license_key_id.strip():
+if any(
+    unicodedata.category(character) == "Cc"
+    for value in (api_base_url, license_key_id)
+    for character in value
+):
+    raise SystemExit("published metadata must not contain control characters")
+
+normalized_api_base_url = api_base_url.rstrip("/")
+normalized_license_key_id = license_key_id.strip()
+if not normalized_license_key_id:
     raise SystemExit("License key ID must not be empty")
 
 with (
@@ -199,11 +227,14 @@ with (
     if not ca_source_payload:
         raise SystemExit("CA certificate must not be empty")
     public_key_source_payload = public_key_input.read()
-    public_key_payload = public_key_source_payload.strip()
+    public_key_payload = public_key_source_payload
     if len(public_key_payload) != 32:
         try:
-            public_key_payload = base64.b64decode(public_key_payload, validate=True)
-        except (binascii.Error, ValueError) as exc:
+            textual_public_key = public_key_payload.decode("ascii").strip()
+            public_key_payload = base64.b64decode(
+                textual_public_key, validate=True
+            )
+        except (UnicodeDecodeError, binascii.Error, ValueError) as exc:
             raise SystemExit(
                 "License public key must contain 32 raw or base64 bytes"
             ) from exc
@@ -213,8 +244,8 @@ with (
     config = {
         "schema_version": "feetforceplate-client-cloud-default/1",
         "channel": "integration",
-        "api_base_url": api_base_url.rstrip("/"),
-        "license_key_id": license_key_id.strip(),
+        "api_base_url": normalized_api_base_url,
+        "license_key_id": normalized_license_key_id,
         "ca_bundle_resource": "cloud-ca.pem",
         "license_public_key_resource": "license-public.key",
     }
@@ -230,6 +261,7 @@ staging.chmod(0o755)
 PY
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+validated_summary="$(
 (
     cd "$repository_root"
     PYTHONPATH="$repository_root" python3 - "$staging" "$api_base_url" \
@@ -250,8 +282,12 @@ if defaults.base_url != expected_url.rstrip("/"):
     raise SystemExit("staged public bundle endpoint does not match the request")
 if defaults.license_key_id != expected_key_id.strip():
     raise SystemExit("staged public bundle License key ID does not match the request")
+print(f"{defaults.base_url}\t{defaults.license_key_id}")
 PY
 )
+)"
+IFS=$'\t' read -r normalized_api_base_url normalized_license_key_id \
+    <<< "$validated_summary"
 
 if [[ -e "$destination" || -L "$destination" ]]; then
     [[ "$replace" -eq 1 ]] \
@@ -271,10 +307,9 @@ if ! mv -T -n -- "$staging" "$destination" || [[ -d "$staging" ]]; then
 fi
 published=1
 
-echo "bundle=ray-99-integration"
 echo "destination=$destination"
-echo "api_base_url=$api_base_url"
-echo "license_key_id=$license_key_id"
+echo "api_base_url=$normalized_api_base_url"
+echo "license_key_id=$normalized_license_key_id"
 for name in cloud-default.json cloud-ca.pem license-public.key; do
     digest="$(sha256sum "$destination/$name")"
     echo "sha256=${digest%% *} file=$name"

@@ -7,6 +7,7 @@ import binascii
 import json
 import os
 import shutil
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -43,12 +44,13 @@ def _read_file(directory: Path, name: str) -> Path:
 
 
 def _valid_public_key(resource: Path) -> None:
-    payload = resource.read_bytes().strip()
+    payload = resource.read_bytes()
     if len(payload) == 32:
         return
     try:
-        payload = base64.b64decode(payload, validate=True)
-    except binascii.Error as exc:
+        textual_payload = payload.decode("ascii").strip()
+        payload = base64.b64decode(textual_payload, validate=True)
+    except (UnicodeDecodeError, binascii.Error) as exc:
         raise ValueError("License public key file is invalid") from exc
     if len(payload) != 32:
         raise ValueError("License public key must contain 32 raw bytes")
@@ -79,12 +81,22 @@ def load_packaged_cloud_defaults(directory: Path) -> PackagedCloudDefaults | Non
         raise ValueError("packaged cloud configuration has an invalid channel")
     if not isinstance(base_url, str) or not isinstance(license_key_id, str):
         raise ValueError("packaged cloud configuration has invalid values")
+    if any(
+        unicodedata.category(character) == "Cc"
+        for value in (base_url, license_key_id)
+        for character in value
+    ):
+        raise ValueError("packaged cloud configuration contains control characters")
     parsed = urlparse(base_url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("packaged cloud API endpoint has an invalid port") from exc
     if parsed.scheme.lower() != "https" or not parsed.netloc:
         raise ValueError("packaged cloud API endpoint must use HTTPS")
-    if channel == "integration" and parsed.port != 7443:
+    if channel == "integration" and port != 7443:
         raise ValueError("integration bundle must use explicit port 7443")
-    if channel == "distribution" and parsed.port not in (None, 443):
+    if channel == "distribution" and port not in (None, 443):
         raise ValueError("distribution bundle must use the standard HTTPS port")
     ca_bundle = _read_file(directory, CA_BUNDLE_NAME)
     public_key = _read_file(directory, LICENSE_PUBLIC_KEY_NAME)

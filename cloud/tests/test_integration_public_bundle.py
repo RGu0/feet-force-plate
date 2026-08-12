@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -39,7 +40,11 @@ def _bundle_arguments(ca: Path, key: Path) -> tuple[str, ...]:
     )
 
 
-def _run_bundle(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_bundle(
+    tmp_path: Path,
+    *args: str,
+    bundle_root: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run the actual wrapper, redirecting its root-only output for this test."""
 
     return subprocess.run(
@@ -49,7 +54,9 @@ def _run_bundle(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
         check=False,
         env={
             **os.environ,
-            "FEETFORCEPLATE_PUBLIC_BUNDLE_ROOT": str(tmp_path / "published"),
+            "FEETFORCEPLATE_PUBLIC_BUNDLE_ROOT": str(
+                bundle_root or tmp_path / "published"
+            ),
         },
     )
 
@@ -65,7 +72,10 @@ def test_builds_exact_validated_integration_bundle(tmp_path: Path) -> None:
     _require_root()
     ca, key = _write_public_inputs(tmp_path)
 
-    result = _run_bundle(tmp_path, *_bundle_arguments(ca, key))
+    arguments = list(_bundle_arguments(ca, key))
+    arguments[1] = "https://integration.test:7443/"
+    arguments[-1] = "  license/integration-1  "
+    result = _run_bundle(tmp_path, *arguments)
 
     assert result.returncode == 0, result.stderr
     bundle = tmp_path / "published" / "ray-99-integration"
@@ -81,11 +91,83 @@ def test_builds_exact_validated_integration_bundle(tmp_path: Path) -> None:
     assert defaults.integration_mode is True
     assert defaults.base_url == "https://integration.test:7443"
     assert defaults.license_key_id == "license/integration-1"
-    assert f"destination={bundle}" in result.stdout.splitlines()
-    assert "api_base_url=https://integration.test:7443" in result.stdout.splitlines()
-    assert "license_key_id=license/integration-1" in result.stdout.splitlines()
+    names = ("cloud-default.json", "cloud-ca.pem", "license-public.key")
+    expected_stdout = [
+        f"destination={bundle}",
+        "api_base_url=https://integration.test:7443",
+        "license_key_id=license/integration-1",
+        *[
+            f"sha256={hashlib.sha256((bundle / name).read_bytes()).hexdigest()} file={name}"
+            for name in names
+        ],
+    ]
+    assert result.stdout.splitlines() == expected_stdout
+    assert result.stderr == ""
     assert str(ca) not in result.stdout
     assert str(key) not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b" " + b"p" * 31, b"p" * 31 + b"\n"],
+    ids=["leading-space-byte", "trailing-newline-byte"],
+)
+def test_accepts_exact_32_byte_raw_public_key_before_text_normalization(
+    tmp_path: Path, payload: bytes
+) -> None:
+    """Catches raw key bytes being stripped before their length is checked."""
+
+    _require_root()
+    ca, key = _write_public_inputs(tmp_path)
+    key.write_bytes(payload)
+
+    result = _run_bundle(tmp_path, *_bundle_arguments(ca, key))
+
+    assert result.returncode == 0, result.stderr
+    bundle = tmp_path / "published" / "ray-99-integration"
+    assert (bundle / "license-public.key").read_bytes() == payload
+    defaults = load_packaged_cloud_defaults(bundle)
+    assert defaults is not None
+
+
+@pytest.mark.parametrize(
+    ("argument_index", "value"),
+    [(1, "https://integration.test:7443\nspoofed"), (-1, "license/one\rspoofed")],
+    ids=["api-base-url", "license-key-id"],
+)
+def test_rejects_control_characters_in_published_metadata(
+    tmp_path: Path, argument_index: int, value: str
+) -> None:
+    """Catches metadata capable of injecting extra success-summary lines."""
+
+    _require_root()
+    ca, key = _write_public_inputs(tmp_path)
+    arguments = list(_bundle_arguments(ca, key))
+    arguments[argument_index] = value
+
+    result = _run_bundle(tmp_path, *arguments)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert not (tmp_path / "published" / "ray-99-integration").exists()
+
+
+def test_rejects_control_characters_in_reported_destination(tmp_path: Path) -> None:
+    """Catches a redirected destination capable of corrupting the summary."""
+
+    _require_root()
+    ca, key = _write_public_inputs(tmp_path)
+    unsafe_root = Path(f"{tmp_path}/published\nspoofed")
+
+    result = _run_bundle(
+        tmp_path,
+        *_bundle_arguments(ca, key),
+        bundle_root=unsafe_root,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert not unsafe_root.exists()
 
 
 def test_requires_root_without_creating_bundle(tmp_path: Path) -> None:

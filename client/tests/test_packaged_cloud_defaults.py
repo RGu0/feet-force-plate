@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from client.cloud.packaged_defaults import stage_packaged_cloud_defaults
+from client.cloud.packaged_defaults import load_packaged_cloud_defaults
 from client.cloud.runtime import AccessRuntimeSettings
 
 
@@ -16,6 +17,8 @@ def _write_public_bundle(
     *,
     channel: str = "integration",
     api_base_url: str = "https://39.105.216.113:7443",
+    license_key_id: str = "license/2-key-1",
+    public_key: bytes = b"p" * 32,
 ) -> None:
     directory.mkdir()
     (directory / "cloud-default.json").write_text(
@@ -24,7 +27,7 @@ def _write_public_bundle(
                 "schema_version": "feetforceplate-client-cloud-default/1",
                 "channel": channel,
                 "api_base_url": api_base_url,
-                "license_key_id": "license/2-key-1",
+                "license_key_id": license_key_id,
                 "ca_bundle_resource": "cloud-ca.pem",
                 "license_public_key_resource": "license-public.key",
             }
@@ -32,7 +35,50 @@ def _write_public_bundle(
         encoding="utf-8",
     )
     (directory / "cloud-ca.pem").write_text("public test CA", encoding="utf-8")
-    (directory / "license-public.key").write_bytes(b"p" * 32)
+    (directory / "license-public.key").write_bytes(public_key)
+
+
+@pytest.mark.parametrize(
+    "public_key",
+    [b" " + b"p" * 31, b"p" * 31 + b"\n"],
+    ids=["leading-space-byte", "trailing-newline-byte"],
+)
+def test_loader_accepts_exact_32_raw_public_key_bytes_before_text_normalization(
+    tmp_path: Path, public_key: bytes
+) -> None:
+    """Catches the production loader stripping binary key bytes first."""
+
+    source = tmp_path / "public-bundle"
+    _write_public_bundle(source, public_key=public_key)
+
+    defaults = load_packaged_cloud_defaults(source)
+
+    assert defaults is not None
+    assert defaults.license_public_key.read_bytes() == public_key
+
+
+@pytest.mark.parametrize(
+    ("api_base_url", "license_key_id"),
+    [
+        ("https://39.105.216.113:7443\nspoofed", "license/2-key-1"),
+        ("https://39.105.216.113:7443", "license/2-key-1\rspoofed"),
+    ],
+    ids=["api-base-url", "license-key-id"],
+)
+def test_loader_rejects_control_characters_in_public_metadata(
+    tmp_path: Path, api_base_url: str, license_key_id: str
+) -> None:
+    """Catches packaged metadata that can inject terminal or log lines."""
+
+    source = tmp_path / "public-bundle"
+    _write_public_bundle(
+        source,
+        api_base_url=api_base_url,
+        license_key_id=license_key_id,
+    )
+
+    with pytest.raises(ValueError, match="control characters"):
+        load_packaged_cloud_defaults(source)
 
 
 def test_public_integration_bundle_stages_at_fixed_names_and_becomes_runtime_default(

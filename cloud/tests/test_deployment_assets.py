@@ -28,8 +28,9 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
     assert "ca_input.seek" not in text
     assert "write_from_stream" not in text
     assert 'echo "destination=$destination"' in text
-    assert 'echo "api_base_url=$api_base_url"' in text
-    assert 'echo "license_key_id=$license_key_id"' in text
+    assert 'echo "api_base_url=$normalized_api_base_url"' in text
+    assert 'echo "license_key_id=$normalized_license_key_id"' in text
+    assert 'echo "bundle=ray-99-integration"' not in text
 
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
