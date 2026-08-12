@@ -36,6 +36,10 @@ flowchart LR
 ```
 
 上传在独立后台任务中运行，读取不可变分段。采集线程不等待 HTTP，也不共享可变文件句柄。
+只有正式且硬件质量为 `VALID` 的已关闭会话可在同一 SQLite 事务中提升原始分段、加密
+`FormalUploadEnvelope` 并创建 `READY_FOR_NETWORK` handoff；`INVALID`、取消、中断、
+不完整或部分采集会话绝不创建 handoff。密封分段本身不是“立即入队上传”的承诺，网络队列
+只消费这个有效会话的原子 handoff。
 
 ## 4. 同步协议
 
@@ -51,24 +55,33 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 ```
 
 当前 seed 写请求由 `feetforceplate-tenant` audience 的 tenant access token 推导
-`tenant_id/account_id/license_id/client installation`，载荷不能自选租户；
+`tenant_id/account_id/license_id/client installation`，载荷不能自选租户；创建会话请求
+必须显式携带 `client_installation_id`，服务端与认证主体及 legacy `terminal_id` 交叉校验。
 `terminal_id` 仅保留 legacy terminal compatibility 审计字段。每个写请求还含
 `session_id`、幂等键、模式版本和内容摘要。相同索引与摘要幂等成功，不同摘要
 明确冲突，禁止静默覆盖。
 
 ## 5. 上传顺序
 
-1. 会话和受试者引用元数据；
-2. 已关闭原始分段，边采边传；
-3. 最终清单；
-4. 基础报告快照；
-5. 内部质量与运行日志。
+一次持久 handoff 的恢复严格按以下顺序执行：
+
+1. 先查询会话 `status`；已 `INGESTED` 且仍为 `VALID` 时直接本地确认，不重建对象；
+2. 幂等上传受试者元数据；
+3. 幂等上传授权记录；
+4. 幂等创建/确认会话（含显式 `client_installation_id`）；
+5. 查询已收分段，仅上传本地清单中缺失的不可变分段；
+6. 提交最终清单；
+7. 再查询 `status`，仅在服务端为 `INGESTED` 且 `VALID` 后标记 `CLOUD_CONFIRMED`。
+
+基础报告快照及内部质量/运行日志是独立的低优先级业务，不改变原始会话的确认条件。
 
 服务器可在分段到达时预解码和预处理，但最终清单确认前不得发布完整报告。
 
 ## 6. 重试和断点续传
 
-- 连接超时、5xx 和可恢复网络错误使用指数退避加随机抖动；
+- 连接超时、429、5xx 和可恢复网络错误使用持久化 equal-jitter 退避：第 `n` 次尝试的
+  上界为 `min(900 s, 5 s × 2^(n-1))`，等待时间在该上界的 50%–100% 之间随机取值；
+  `Retry-After` 更大时优先。基数为 5 秒，封顶为 900 秒；
 - 鉴权失败先刷新设备凭据，仍失败则进入需要支持的阻断状态；
 - 4xx 业务错误不无限重试，进入隔离队列并上报告警；
 - 客户端重启后从 SQLite 恢复任务，不依赖内存状态；
@@ -77,13 +90,14 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 
 ## 7. 离线与容量策略
 
-已确认默认值：
+已确认默认值（针对尚未 `CLOUD_CONFIRMED` 的 handoff，而非仅当前正在上传的任务）：
 
 - 最近成功联网不超过 24 小时；
-- 待上传会话不超过 50 次；
-- 待上传数据不超过 2 GB。
+- 非确认 handoff 会话不超过 50 次；
+- 非确认 handoff 分段数据不超过 2 GiB。
 
 任一门槛达到后禁止开始新测试，但允许：当前测试安全结束、查看既有报告、继续上传、下载已完成报告和导出诊断包。
+`CLOUD_CONFIRMED` 只改变确认状态，不自动删除本地原始分段；删除仍须由操作员显式发起。
 
 ## 8. 安全
 
