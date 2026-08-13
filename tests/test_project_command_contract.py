@@ -28,7 +28,9 @@ class ProjectCommandContractTests(unittest.TestCase):
             self.assertIn(f'    {action}: ["pwsh", "-File", "dev.ps1", "{action}"]', config)
         self.assertIn("sync --locked --extra dev", unix)
         self.assertIn("run --locked --extra dev", unix)
-        self.assertIn("centralized-project-envs", unix)
+        self.assertNotIn("centralized-project-envs", unix)
+        self.assertNotIn("export UV_PREVIEW_FEATURES", unix)
+        self.assertIn("unset UV_PROJECT_ENVIRONMENT UV_PREVIEW_FEATURES", unix)
         self.assertNotIn("export UV_PROJECT_ENVIRONMENT", unix)
         self.assertNotIn("$env:UV_PROJECT_ENVIRONMENT =", windows)
 

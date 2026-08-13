@@ -13,13 +13,9 @@ if [ -z "$uv_bin" ] || [ ! -x "$uv_bin" ]; then
     exit 127
 fi
 
-# An explicit path bypasses uv centralized project environments. Clear inherited
-# legacy settings; uv then uses its cache-backed environment when supported and
-# an isolated Worktree .venv when the preview feature is unavailable.
-unset UV_PROJECT_ENVIRONMENT
-if [[ ",${UV_PREVIEW_FEATURES:-}," != *,centralized-project-envs,* ]]; then
-    export UV_PREVIEW_FEATURES="${UV_PREVIEW_FEATURES:+${UV_PREVIEW_FEATURES},}centralized-project-envs"
-fi
+# Clear inherited legacy settings so uv selects the standard per-project
+# environment, which is supported by every governed uv runtime.
+unset UV_PROJECT_ENVIRONMENT UV_PREVIEW_FEATURES
 export PYTHONPATH="$project_root${PYTHONPATH:+:$PYTHONPATH}"
 cd "$project_root"
 
