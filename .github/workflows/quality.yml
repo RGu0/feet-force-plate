@@ -56,4 +56,4 @@ jobs:
         shell: bash
         run: |
           test_python="$(uv run --extra dev python -c 'import sys; print(sys.executable)')"
-          sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR" "$test_python" -m pytest -p no:cacheprovider cloud/tests/test_integration_public_bundle.py
+          sudo env "PATH=$PATH" "$test_python" -m pytest -p no:cacheprovider cloud/tests/test_integration_public_bundle.py

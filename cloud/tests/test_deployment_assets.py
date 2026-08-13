@@ -14,9 +14,10 @@ def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
     ).read_text(encoding="utf-8")
     assert "UV_INDEX_URL" not in workflow
     assert (
-        'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR" '
+        'sudo env "PATH=$PATH" '
         '"$test_python" -m pytest'
     ) in workflow
+    assert 'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR"' not in workflow
 
 
 def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> None:
