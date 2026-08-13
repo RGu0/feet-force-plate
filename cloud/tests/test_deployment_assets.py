@@ -12,7 +12,7 @@ def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
     workflow = (
         ROOT.parents[2] / ".github" / "workflows" / "quality.yml"
     ).read_text(encoding="utf-8")
-    assert "UV_INDEX_URL: https://pypi.org/simple" in workflow
+    assert "UV_INDEX_URL" not in workflow
     assert (
         'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR" '
         '"$test_python" -m pytest'

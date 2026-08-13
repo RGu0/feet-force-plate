@@ -15,7 +15,6 @@ jobs:
         python: ["3.11"]
     env:
       QT_QPA_PLATFORM: offscreen
-      UV_INDEX_URL: https://pypi.org/simple
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux Qt runtime
