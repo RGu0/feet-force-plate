@@ -8,10 +8,18 @@ import stat
 ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
 
 
+def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
+    workflow = (
+        ROOT.parents[2] / ".github" / "workflows" / "quality.yml"
+    ).read_text(encoding="utf-8")
+    assert 'sudo env "PATH=$PATH" "$test_python" -m pytest' in workflow
+
+
 def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> None:
     path = ROOT / "build-integration-public-bundle.sh"
     text = path.read_text(encoding="utf-8")
-    assert path.stat().st_mode & stat.S_IXUSR
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
     assert "must run as root" in text
     assert "seed.env" not in text
     assert "systemctl" not in text
@@ -37,8 +45,8 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
     repository = ROOT.parents[2]
-    project = (repository / "pyproject.toml").read_text()
-    lock = (repository / "uv.lock").read_text()
+    project = (repository / "pyproject.toml").read_text(encoding="utf-8")
+    lock = (repository / "uv.lock").read_text(encoding="utf-8")
     for package in ("alibabacloud-oss-v2", "alibabacloud-credentials"):
         assert package in project
         assert package in lock
