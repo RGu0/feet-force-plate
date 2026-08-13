@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import hashlib
 import os
@@ -134,6 +134,38 @@ def enumerate_ch340_ports(
                 ),
             )
         )
+    # A PTY cannot enumerate through macOS USB, so this opt-in development
+    # entry is deliberately injected only after normal physical discovery.
+    # The import is local because the simulator contract reuses these types.
+    from .development_simulator import (
+        VIRTUAL_CH340_PTY_BAUD_RATE,
+        virtual_ch340_candidate,
+        virtual_ch340_enabled,
+    )
+
+    if virtual_ch340_enabled():
+        candidate = virtual_ch340_candidate()
+        if probe_availability:
+            try:
+                handle = serial_factory(
+                    **_serial_options(
+                        candidate.device,
+                        0.0,
+                        baud_rate=VIRTUAL_CH340_PTY_BAUD_RATE,
+                        data_bits=data_bits,
+                        parity=parity,
+                        stop_bits=stop_bits,
+                    )
+                )
+                handle.close()
+                candidate = replace(candidate, availability=PortAvailability.AVAILABLE)
+            except Exception as exc:
+                candidate = replace(
+                    candidate,
+                    availability=PortAvailability.BUSY_OR_UNAVAILABLE,
+                    probe_error=f"{type(exc).__name__}: {exc}",
+                )
+        candidates.append(candidate)
     return sorted(candidates, key=lambda item: item.device)
 
 
@@ -175,12 +207,22 @@ class SerialByteTransport:
             raise ValueError("device is required")
         if timeout_seconds < 0:
             raise ValueError("timeout_seconds cannot be negative")
+        from .development_simulator import (
+            VIRTUAL_CH340_PTY_BAUD_RATE,
+            uses_virtual_ch340_host,
+        )
+
+        resolved_baud_rate = (
+            VIRTUAL_CH340_PTY_BAUD_RATE
+            if uses_virtual_ch340_host(device)
+            else baud_rate
+        )
         try:
             handle = serial_factory(
                 **_serial_options(
                     device,
                     timeout_seconds,
-                    baud_rate=baud_rate,
+                    baud_rate=resolved_baud_rate,
                     data_bits=data_bits,
                     parity=parity,
                     stop_bits=stop_bits,
