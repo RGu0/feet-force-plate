@@ -31,6 +31,8 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
     assert 'echo "api_base_url=$normalized_api_base_url"' in text
     assert 'echo "license_key_id=$normalized_license_key_id"' in text
     assert 'echo "bundle=ray-99-integration"' not in text
+    assert 'PYTHONPATH="$repository_root" python3 -' not in text
+    assert '"$repository_root/scripts/local-env.sh" python -' in text
 
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:

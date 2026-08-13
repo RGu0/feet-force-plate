@@ -264,7 +264,7 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 validated_summary="$(
 (
     cd "$repository_root"
-    PYTHONPATH="$repository_root" python3 - "$staging" "$api_base_url" \
+    "$repository_root/scripts/local-env.sh" python - "$staging" "$api_base_url" \
         "$license_key_id" <<'PY'
 import sys
 from pathlib import Path
