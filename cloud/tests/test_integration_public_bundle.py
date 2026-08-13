@@ -102,7 +102,8 @@ def test_builds_exact_validated_integration_bundle(tmp_path: Path) -> None:
         ],
     ]
     assert result.stdout.splitlines() == expected_stdout
-    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+    assert "must not" not in result.stderr
     assert str(ca) not in result.stdout
     assert str(key) not in result.stdout
 

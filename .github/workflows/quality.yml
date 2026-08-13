@@ -15,6 +15,7 @@ jobs:
         python: ["3.11"]
     env:
       QT_QPA_PLATFORM: offscreen
+      UV_INDEX_URL: https://pypi.org/simple
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux Qt runtime
@@ -56,4 +57,4 @@ jobs:
         shell: bash
         run: |
           test_python="$(uv run --extra dev python -c 'import sys; print(sys.executable)')"
-          sudo env "PATH=$PATH" "$test_python" -m pytest -p no:cacheprovider cloud/tests/test_integration_public_bundle.py
+          sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR" "$test_python" -m pytest -p no:cacheprovider cloud/tests/test_integration_public_bundle.py
