@@ -62,10 +62,12 @@ def test_loader_accepts_exact_32_raw_public_key_bytes_before_text_normalization(
     [
         ("https://39.105.216.113:7443\nspoofed", "license/2-key-1"),
         ("https://39.105.216.113:7443", "license/2-key-1\rspoofed"),
+        ("https://39.105.216.113:7443", "license/one\u2028spoofed"),
+        ("https://39.105.216.113:7443", "license/one\u2029spoofed"),
     ],
-    ids=["api-base-url", "license-key-id"],
+    ids=["api-base-url", "license-key-id", "line-separator", "paragraph-separator"],
 )
-def test_loader_rejects_control_characters_in_public_metadata(
+def test_loader_rejects_unsafe_unicode_in_public_metadata(
     tmp_path: Path, api_base_url: str, license_key_id: str
 ) -> None:
     """Catches packaged metadata that can inject terminal or log lines."""
@@ -77,8 +79,20 @@ def test_loader_rejects_control_characters_in_public_metadata(
         license_key_id=license_key_id,
     )
 
-    with pytest.raises(ValueError, match="control characters"):
+    with pytest.raises(ValueError, match="unsafe characters"):
         load_packaged_cloud_defaults(source)
+
+
+def test_loader_accepts_printable_unicode_license_key_id(tmp_path: Path) -> None:
+    """Printable Unicode remains valid metadata when it cannot split output."""
+
+    source = tmp_path / "public-bundle"
+    _write_public_bundle(source, license_key_id="license/授权-✓")
+
+    defaults = load_packaged_cloud_defaults(source)
+
+    assert defaults is not None
+    assert defaults.license_key_id == "license/授权-✓"
 
 
 def test_public_integration_bundle_stages_at_fixed_names_and_becomes_runtime_default(

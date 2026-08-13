@@ -82,11 +82,11 @@ def load_packaged_cloud_defaults(directory: Path) -> PackagedCloudDefaults | Non
     if not isinstance(base_url, str) or not isinstance(license_key_id, str):
         raise ValueError("packaged cloud configuration has invalid values")
     if any(
-        unicodedata.category(character) == "Cc"
+        unicodedata.category(character) in {"Cc", "Zl", "Zp"}
         for value in (base_url, license_key_id)
         for character in value
     ):
-        raise ValueError("packaged cloud configuration contains control characters")
+        raise ValueError("packaged cloud configuration contains unsafe characters")
     parsed = urlparse(base_url)
     try:
         port = parsed.port

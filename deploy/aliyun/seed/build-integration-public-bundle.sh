@@ -112,8 +112,8 @@ labels = (
     "public bundle root",
 )
 for label, value in zip(labels, sys.argv[1:], strict=True):
-    if any(unicodedata.category(character) == "Cc" for character in value):
-        raise SystemExit(f"{label} must not contain control characters")
+    if any(unicodedata.category(character) in {"Cc", "Zl", "Zp"} for character in value):
+        raise SystemExit(f"{label} must not contain unsafe characters")
 PY
 
 install -d -m 0755 "$bundle_root"
@@ -208,11 +208,11 @@ if (
     raise SystemExit("API base URL must use HTTPS with explicit port 7443")
 
 if any(
-    unicodedata.category(character) == "Cc"
+    unicodedata.category(character) in {"Cc", "Zl", "Zp"}
     for value in (api_base_url, license_key_id)
     for character in value
 ):
-    raise SystemExit("published metadata must not contain control characters")
+    raise SystemExit("published metadata must not contain unsafe characters")
 
 normalized_api_base_url = api_base_url.rstrip("/")
 normalized_license_key_id = license_key_id.strip()
