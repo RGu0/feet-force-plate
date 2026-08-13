@@ -56,6 +56,17 @@ def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> Non
         assert package in lock
 
 
+def test_locked_dependencies_use_the_ci_index_without_a_mirror_override() -> None:
+    repository = ROOT.parents[2]
+    lock = (repository / "uv.lock").read_text(encoding="utf-8")
+    config = (repository / "uv.toml").read_text(encoding="utf-8")
+    assert 'name = "pypi"' in config
+    assert 'url = "https://pypi.org/simple/"' in config
+    assert "default = true" in config
+    assert 'registry = "https://pypi.org/simple/"' in lock
+    assert "mirrors.aliyun.com" not in lock
+
+
 def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
     text = (ROOT / "feetforceplate-seed.service").read_text()
     for token in (
