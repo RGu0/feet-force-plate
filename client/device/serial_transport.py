@@ -228,6 +228,11 @@ class SerialByteTransport:
                     stop_bits=stop_bits,
                 )
             )
+            # A development PTY retains bytes produced before this client
+            # connected, unlike the physical serial stream.  Drop only that
+            # synthetic backlog so startup validation measures live cadence.
+            if uses_virtual_ch340_host(device):
+                handle.reset_input_buffer()
         except Exception as exc:
             raise TransportDisconnected(
                 f"could not open serial device {device}: {type(exc).__name__}: {exc}"

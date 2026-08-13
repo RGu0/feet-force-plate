@@ -5,6 +5,7 @@ from __future__ import annotations
 from client.device.development_simulator import (
     VIRTUAL_CH340_ENVIRONMENT_VARIABLE,
     VIRTUAL_CH340_HOST_PATH,
+    make_controlled_empty_frame,
     make_zero_frame,
     virtual_ch340_candidate,
     virtual_ch340_enabled,
@@ -20,6 +21,18 @@ def test_zero_frame_matches_observed_compact_protocol() -> None:
     assert frame[:5] == bytes.fromhex("FF AA 0C 07 01")
     assert frame[5:3_077] == b"\x00" * 3_072
     assert frame[3_077:] == bytes.fromhex("00 FA")
+
+
+def test_controlled_empty_frames_are_low_amplitude_and_vary() -> None:
+    first = make_controlled_empty_frame(0)
+    second = make_controlled_empty_frame(1)
+
+    assert len(first) == len(second) == 3_079
+    assert first[:5] == second[:5] == bytes.fromhex("FF AA 0C 07 01")
+    assert first[5:3_077] == b"\x00" * 3_072
+    assert second[5] == 1
+    assert second[6:3_077] == b"\x00" * 3_071
+    assert first[3_077:] == second[3_077:] == bytes.fromhex("00 FA")
 
 
 def test_simulated_candidate_declares_generic_ch340_metadata() -> None:
@@ -66,6 +79,11 @@ def test_virtual_host_uses_pty_compatible_baud_rate_only_in_development_mode(
     calls = []
 
     class Handle:
+        reset_calls = 0
+
+        def reset_input_buffer(self) -> None:
+            self.reset_calls += 1
+
         def close(self) -> None:
             return None
 
@@ -80,6 +98,7 @@ def test_virtual_host_uses_pty_compatible_baud_rate_only_in_development_mode(
     )
 
     assert calls[0]["baudrate"] == 115_200
+    assert transport._serial.reset_calls == 1
     transport.close()
 
 

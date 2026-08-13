@@ -26,8 +26,22 @@ def virtual_ch340_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return values.get(VIRTUAL_CH340_ENVIRONMENT_VARIABLE) == "1"
 
 
+def make_controlled_empty_frame(frame_index: int) -> bytes:
+    """Return a low-amplitude empty-board frame for development validation.
+
+    A single source cell alternates between 0 and 1.  It remains far below the
+    empty-board load threshold while avoiding a synthetic constant signal.
+    """
+
+    if frame_index < 0:
+        raise ValueError("frame_index must be non-negative")
+    payload = bytearray(3_072)
+    payload[0] = frame_index % 2
+    return b"\xff\xaa\x0c\x07\x01" + bytes(payload) + b"\x00\xfa"
+
+
 def make_zero_frame() -> bytes:
-    """Return one observed-compact-layout frame with an all-zero payload."""
+    """Return the historical all-zero development protocol fixture."""
 
     return b"\xff\xaa\x0c\x07\x01" + (b"\x00" * 3_072) + b"\x00\xfa"
 

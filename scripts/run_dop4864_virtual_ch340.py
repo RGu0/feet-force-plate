@@ -13,7 +13,7 @@ import time
 from client.device.development_simulator import (
     VIRTUAL_CH340_DEVICE_PATH,
     VIRTUAL_CH340_HOST_PATH,
-    make_zero_frame,
+    make_controlled_empty_frame,
 )
 
 
@@ -44,17 +44,18 @@ def _wait_for_endpoints(*, deadline: float) -> None:
 
 
 def _stream_zero_frames(*, duration_seconds: float | None = None) -> None:
-    frame = make_zero_frame()
     deadline = (
         None if duration_seconds is None else time.monotonic() + duration_seconds
     )
-    next_frame_at = time.monotonic()
     descriptor = os.open(VIRTUAL_CH340_DEVICE_PATH, os.O_WRONLY | os.O_NOCTTY)
     try:
+        frame_index = 0
         while deadline is None or time.monotonic() < deadline:
-            os.write(descriptor, frame)
-            next_frame_at += FRAME_INTERVAL_SECONDS
-            time.sleep(max(0.0, next_frame_at - time.monotonic()))
+            os.write(descriptor, make_controlled_empty_frame(frame_index))
+            frame_index += 1
+            # Never catch up after a delayed write: backlogged PTY bytes are
+            # not a live device cadence and can invalidate startup checks.
+            time.sleep(FRAME_INTERVAL_SECONDS)
     finally:
         os.close(descriptor)
 
