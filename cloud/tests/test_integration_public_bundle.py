@@ -185,6 +185,16 @@ def test_requires_root_without_creating_bundle(tmp_path: Path) -> None:
     assert not (tmp_path / "published").exists()
 
 
+def test_validates_the_staged_bundle_without_the_project_dependency_runtime() -> None:
+    """Catches a root-only bundle helper that requires uv's full dev environment."""
+
+    script = SCRIPT.read_text(encoding="utf-8")
+
+    assert "local-env.sh" not in script
+    assert "importlib.util" in script
+    assert "packaged_defaults.py" in script
+
+
 def test_rejects_existing_bundle_without_replace(tmp_path: Path) -> None:
     """Catches accidental overwrite of an already published public bundle."""
 

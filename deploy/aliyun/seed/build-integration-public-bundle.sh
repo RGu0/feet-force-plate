@@ -264,15 +264,23 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 validated_summary="$(
 (
     cd "$repository_root"
-    "$repository_root/scripts/local-env.sh" python - "$staging" "$api_base_url" \
+    python3 - "$repository_root/client/cloud/packaged_defaults.py" "$staging" "$api_base_url" \
         "$license_key_id" <<'PY'
+import importlib.util
 import sys
 from pathlib import Path
 
-from client.cloud.packaged_defaults import load_packaged_cloud_defaults
 
-
-staging, expected_url, expected_key_id = sys.argv[1:]
+module_path, staging, expected_url, expected_key_id = sys.argv[1:]
+spec = importlib.util.spec_from_file_location(
+    "ray_99_packaged_defaults", module_path
+)
+if spec is None or spec.loader is None:
+    raise SystemExit("packaged default loader is unavailable")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+load_packaged_cloud_defaults = module.load_packaged_cloud_defaults
 defaults = load_packaged_cloud_defaults(Path(staging))
 if defaults is None:
     raise SystemExit("staged public bundle was not loadable")
