@@ -19,3 +19,7 @@ commands:
     test: ["pwsh", "-File", "dev.ps1", "test"]
     lint: ["pwsh", "-File", "dev.ps1", "lint"]
     build: ["pwsh", "-File", "dev.ps1", "build"]
+shared_library:
+  provider: "onedrive"
+  library_id: "c527af59-9d77-4944-b6c1-ca14cd65ef5d"
+  project_path: "feet-force-plate"
