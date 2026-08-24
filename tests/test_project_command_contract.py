@@ -31,6 +31,10 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertIn("centralized-project-envs", unix)
         self.assertNotIn("export UV_PROJECT_ENVIRONMENT", unix)
         self.assertNotIn("$env:UV_PROJECT_ENVIRONMENT =", windows)
+        self.assertIn("build packages/techflex-cloud-foundation", unix)
+        self.assertIn("record_foundation_release_baseline.py", unix)
+        self.assertIn("build packages/techflex-cloud-foundation", windows)
+        self.assertIn("record_foundation_release_baseline.py", windows)
 
 
 if __name__ == "__main__":
