@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from pydantic import BaseModel, ValidationError
+from techflex_cloud_foundation import SecureTransport
 
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -64,16 +65,11 @@ class CloudAccessClient:
         transport: httpx.BaseTransport | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = SecureTransport(
+            base_url,
             verify=verify,
             transport=transport,
-            # The packaged device client connects only to the explicitly
-            # configured institution endpoint.  Ambient desktop proxy settings
-            # must not silently route access tokens or hardware leases.
-            trust_env=False,
-            timeout=timeout
-            or httpx.Timeout(connect=5.0, read=20.0, write=20.0, pool=5.0),
+            timeout=timeout,
         )
         self.last_server_time: datetime | None = None
 
