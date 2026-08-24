@@ -85,3 +85,12 @@ def test_release_workflow_uses_the_supported_noninteractive_pip_audit_option() -
     assert "uv export --locked --extra dev --no-emit-workspace" in workflow
     assert "pip-audit --strict -r audited-requirements.txt --progress-spinner off" in workflow
     assert "--no-progress-spinner" not in workflow
+
+
+def test_foundation_package_allows_the_audited_cryptography_fix_release() -> None:
+    package_project = (
+        PROJECT_ROOT / "packages/techflex-cloud-foundation/pyproject.toml"
+    ).read_text(encoding="utf-8")
+
+    assert 'version = "0.1.1"' in package_project
+    assert '"cryptography>=42,<51"' in package_project
