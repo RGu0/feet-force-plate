@@ -7,6 +7,12 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 
+[manifest]
+members = [
+    "feetforceplate",
+    "techflex-cloud-foundation",
+]
+
 [[package]]
 name = "aiofiles"
 version = "24.1.0"
@@ -2914,6 +2920,28 @@ sdist = { url = "https://mirrors.aliyun.com/pypi/packages/eb/e3/7c1dc7381d9f8ab7
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6" },
 ]
+
+[[package]]
+name = "techflex-cloud-foundation"
+version = "0.1.0"
+source = { editable = "packages/techflex-cloud-foundation" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+]
+
+[package.optional-dependencies]
+server = [
+    { name = "asyncpg" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", marker = "extra == 'server'", specifier = ">=0.30,<1" },
+    { name = "cryptography", specifier = ">=42,<50" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+]
+provides-extras = ["server"]
 
 [[package]]
 name = "typing-extensions"

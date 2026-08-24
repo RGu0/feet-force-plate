@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "techflex-cloud-foundation"
+version = "0.1.0"
+description = "Versioned secure cloud foundation interfaces for TechFlex applications."
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42,<50",
+    "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+server = ["asyncpg>=0.30,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/techflex_cloud_foundation"]
