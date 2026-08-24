@@ -16,6 +16,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
+from techflex_cloud_foundation import SecureTransport
 
 from client.spool.segments import SegmentIntegrityError, read_segment
 from client.spool.state_store import (
@@ -612,11 +613,10 @@ class HttpIngestionClient:
         verify: bool | str = True,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = SecureTransport(
+            base_url,
             verify=verify,
             transport=transport,
-            trust_env=False,
         )
         self._terminal_id = terminal_id
 

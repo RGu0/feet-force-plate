@@ -5,6 +5,7 @@ description = "足底压力力台 PC 上位机：实时采集、可视化、算�
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "techflex-cloud-foundation",
     # GUI
     "PySide6",
     "pyqtgraph",

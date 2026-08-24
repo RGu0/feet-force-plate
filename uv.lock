@@ -816,6 +816,7 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.12'" },
     { name = "sqlalchemy" },
+    { name = "techflex-cloud-foundation" },
     { name = "uvicorn" },
 ]
 
@@ -859,6 +860,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy" },
     { name = "sqlalchemy" },
+    { name = "techflex-cloud-foundation", editable = "packages/techflex-cloud-foundation" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 provides-extras = ["build", "dev"]
