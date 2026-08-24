@@ -51,6 +51,19 @@ try {
         "build" {
             if ($Command.Count -gt 0) { throw "build accepts no arguments" }
             & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud shared
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $foundationReleaseDirectory = Join-Path ([IO.Path]::GetTempPath()) ("techflex-cloud-foundation-" + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Path $foundationReleaseDirectory -Force | Out-Null
+            try {
+                & $uv.Source build packages/techflex-cloud-foundation --out-dir $foundationReleaseDirectory
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                & $uv.Source run --locked --extra dev python scripts/record_foundation_release_baseline.py `
+                    --project-root $projectRoot `
+                    --dist-dir $foundationReleaseDirectory `
+                    --output (Join-Path $foundationReleaseDirectory "release-evidence.json")
+            } finally {
+                Remove-Item -LiteralPath $foundationReleaseDirectory -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
         "run" {
             if ($Command.Count -eq 0) { throw "run requires a command" }

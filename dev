@@ -49,6 +49,13 @@ case "$action" in
         [ "$#" -eq 0 ] || { echo "build accepts no arguments" >&2; exit 2; }
         sync --extra build
         "$uv_bin" run --locked --extra dev --extra build python -m compileall -q client cloud shared
+        foundation_release_dir="$(mktemp -d "${TMPDIR:-/tmp}/techflex-cloud-foundation.XXXXXX")"
+        trap 'rm -rf "$foundation_release_dir"' EXIT
+        "$uv_bin" build packages/techflex-cloud-foundation --out-dir "$foundation_release_dir"
+        "$uv_bin" run --locked --extra dev python scripts/record_foundation_release_baseline.py \
+            --project-root "$project_root" \
+            --dist-dir "$foundation_release_dir" \
+            --output "$foundation_release_dir/release-evidence.json"
         ;;
     run)
         [ "$#" -gt 0 ] || { echo "run requires a command" >&2; exit 2; }

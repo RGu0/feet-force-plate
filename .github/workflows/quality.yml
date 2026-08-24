@@ -44,3 +44,43 @@ jobs:
           cloud/tests/test_segment_ingestion.py
           tests/cloud/analysis/test_orchestrator.py
           tests/cloud/observability/test_events.py
+          --junitxml=pytest-results.xml
+      - name: Archive test result
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.os }}-py${{ matrix.python }}
+          path: pytest-results.xml
+          if-no-files-found: error
+
+  foundation-release-baseline:
+    name: Foundation release security baseline
+    needs: foundation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          python-version: "3.11"
+      - name: Verify locked environment and dependency audit
+        run: |
+          uv sync --extra dev --locked
+          uv run --extra dev pip-audit --strict --no-progress-spinner
+      - name: Build foundation distribution
+        run: uv build packages/techflex-cloud-foundation --out-dir foundation-dist
+      - name: Record SBOM, source and performance evidence
+        run: >-
+          uv run --extra dev python scripts/record_foundation_release_baseline.py
+          --project-root .
+          --dist-dir foundation-dist
+          --output foundation-release-evidence.json
+      - name: Archive foundation release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-release-evidence
+          path: |
+            foundation-dist/
+            foundation-release-evidence.json
+          if-no-files-found: error

@@ -15,3 +15,17 @@ verification keys and policy data, but cannot install or execute code.
 The `server` extra contains only server-side dependency support.  Desktop
 applications must never install database credentials, server pools, or License
 private keys.
+
+## Release evidence
+
+The `Foundation release security baseline` CI job is required before a package
+release. It verifies the locked environment, runs the vulnerability audit,
+builds the wheel and source archive, and publishes a non-secret artifact
+containing the CycloneDX dependency inventory, source revision, lock digest,
+artifact SHA-256 values, and offline transport benchmark. The benchmark uses
+one `SecureTransport` instance; comparison with an approved baseline rejects a
+P95 regression above 5% or a peak-memory regression above 10%.
+
+The evidence records no activation codes, tokens, private keys, client data,
+or raw frames. A signed trust-bundle update may change trust material or policy
+data only; it cannot change executable package code.
