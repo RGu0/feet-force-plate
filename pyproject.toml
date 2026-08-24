@@ -52,6 +52,12 @@ dev = [
     "pre-commit>=4,<5",
 ]
 
+[tool.uv.workspace]
+members = ["packages/techflex-cloud-foundation"]
+
+[tool.uv.sources]
+techflex-cloud-foundation = { workspace = true }
+
 [tool.uv]
 # 仅安装当前项目依赖，不把项目本身作为可安装包构建
 package = false
@@ -59,6 +65,7 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["client/tests", "cloud/tests", "tests"]
 addopts = "-ra"
+pythonpath = ["packages/techflex-cloud-foundation/src"]
 
 [tool.ruff]
 target-version = "py311"
