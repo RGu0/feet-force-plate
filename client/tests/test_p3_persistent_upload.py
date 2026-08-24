@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -931,6 +932,113 @@ class HttpIngestionClientTests(unittest.TestCase):
         self.assertEqual(response.session_id, session_id)
         self.assertEqual(observed_headers["x-terminal-id"], str(terminal_id))
         self.assertEqual(observed_headers["authorization"], "Bearer access-token")
+
+    def test_session_create_retries_once_with_legacy_wire_shape_after_generic_422(self) -> None:
+        terminal_id = uuid4()
+        session_id = uuid4()
+        payloads: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payloads.append(json.loads(request.content))
+            if len(payloads) == 1:
+                return httpx.Response(
+                    422,
+                    json={
+                        "error": {
+                            "code": "E-API-422",
+                            "message": "contract mismatch",
+                            "retryable": False,
+                            "action": "FIX_REQUEST",
+                            "details": {},
+                        }
+                    },
+                )
+            return httpx.Response(
+                201,
+                json={
+                    "data": {
+                        "session_id": str(session_id),
+                        "ingest_status": "RECEIVING",
+                        "idempotent_replay": False,
+                    }
+                },
+            )
+
+        client = HttpIngestionClient(
+            "https://cloud.test",
+            terminal_id=terminal_id,
+            transport=httpx.MockTransport(handler),
+        )
+        request = SessionCreateRequest(
+            session_id=session_id,
+            subject_uuid=uuid4(),
+            consent_record_id=uuid4(),
+            site_id=None,
+            terminal_id=terminal_id,
+            client_installation_id=terminal_id,
+            device_id=uuid4(),
+            test_protocol=CloudTestProtocol(id="standard-screening", version="1.0"),
+            versions={
+                "app": "0.1.0",
+                "protocol_profile": "do-p4864/1",
+                "payload_schema": "raw-segment/1",
+                "calibration": "calibration/1",
+            },
+            started_at=datetime.now(UTC),
+        )
+        try:
+            response = client.create_session("access-token", request, "session:stable")
+        finally:
+            client.close()
+
+        self.assertEqual(response.session_id, session_id)
+        self.assertEqual(len(payloads), 2)
+        self.assertIn("client_installation_id", payloads[0])
+        self.assertNotIn("client_installation_id", payloads[1])
+
+    def test_session_create_does_not_downgrade_non_schema_422(self) -> None:
+        terminal_id = uuid4()
+        calls = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                422,
+                json={
+                    "error": {
+                        "code": "E-CLD-422",
+                        "message": "segment validation failure",
+                        "retryable": False,
+                        "action": "RESEAL_SEGMENT",
+                        "details": {},
+                    }
+                },
+            )
+
+        client = HttpIngestionClient(
+            "https://cloud.test",
+            terminal_id=terminal_id,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            with self.assertRaises(UploadBlocked):
+                client.create_session(
+                    "access-token",
+                    SessionCreateRequest(
+                        session_id=uuid4(), subject_uuid=uuid4(), consent_record_id=uuid4(),
+                        site_id=None, terminal_id=terminal_id,
+                        client_installation_id=terminal_id, device_id=uuid4(),
+                        test_protocol=CloudTestProtocol(id="standard-screening", version="1.0"),
+                        versions={"app": "0.1.0", "protocol_profile": "do-p4864/1", "payload_schema": "raw-segment/1", "calibration": "calibration/1"},
+                        started_at=datetime.now(UTC),
+                    ),
+                    "session:stable",
+                )
+        finally:
+            client.close()
+
+        self.assertEqual(calls, 1)
 
     def test_status_404_maps_to_none(self) -> None:
         client = HttpIngestionClient(
