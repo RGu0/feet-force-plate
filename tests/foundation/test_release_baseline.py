@@ -11,6 +11,9 @@ from scripts.record_foundation_release_baseline import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 def test_release_evidence_records_locked_components_artifacts_and_reused_transport(
     tmp_path: Path,
 ) -> None:
@@ -74,3 +77,10 @@ def test_performance_budget_rejects_regressions_beyond_agreed_limits() -> None:
         assert_performance_budget(
             {"p95_operation_seconds": 1.05, "peak_memory_bytes": 111}, baseline
         )
+
+
+def test_release_workflow_uses_the_supported_noninteractive_pip_audit_option() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+
+    assert "pip-audit --strict --progress-spinner off" in workflow
+    assert "--no-progress-spinner" not in workflow

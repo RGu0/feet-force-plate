@@ -67,7 +67,7 @@ jobs:
       - name: Verify locked environment and dependency audit
         run: |
           uv sync --extra dev --locked
-          uv run --extra dev pip-audit --strict --no-progress-spinner
+          uv run --extra dev pip-audit --strict --progress-spinner off
       - name: Build foundation distribution
         run: uv build packages/techflex-cloud-foundation --out-dir foundation-dist
       - name: Record SBOM, source and performance evidence
