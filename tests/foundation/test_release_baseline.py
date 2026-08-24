@@ -82,5 +82,6 @@ def test_performance_budget_rejects_regressions_beyond_agreed_limits() -> None:
 def test_release_workflow_uses_the_supported_noninteractive_pip_audit_option() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
 
-    assert "pip-audit --strict --skip-editable --progress-spinner off" in workflow
+    assert "uv export --locked --extra dev --no-emit-project" in workflow
+    assert "pip-audit --strict -r audited-requirements.txt --progress-spinner off" in workflow
     assert "--no-progress-spinner" not in workflow
