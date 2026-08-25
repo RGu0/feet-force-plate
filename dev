@@ -55,6 +55,7 @@ case "$action" in
         "$uv_bin" run --locked --extra dev python scripts/record_foundation_release_baseline.py \
             --project-root "$project_root" \
             --dist-dir "$foundation_release_dir" \
+            --baseline-strategy legacy-httpx-client/1 \
             --output "$foundation_release_dir/release-evidence.json"
         ;;
     run)

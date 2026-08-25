@@ -60,6 +60,7 @@ try {
                 & $uv.Source run --locked --extra dev python scripts/record_foundation_release_baseline.py `
                     --project-root $projectRoot `
                     --dist-dir $foundationReleaseDirectory `
+                    --baseline-strategy legacy-httpx-client/1 `
                     --output (Join-Path $foundationReleaseDirectory "release-evidence.json")
             } finally {
                 Remove-Item -LiteralPath $foundationReleaseDirectory -Recurse -Force -ErrorAction SilentlyContinue

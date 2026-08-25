@@ -7,6 +7,7 @@ from uuid import UUID
 import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import techflex_cloud_foundation.transport as transport_module
 
 from techflex_cloud_foundation import (
     AuthorizedTransport,
@@ -78,6 +79,26 @@ def test_authorized_transport_refreshes_at_most_once_after_401() -> None:
     assert response.status_code == 200
     assert tokens.refresh_count == 1
     assert seen == ["Bearer first", "Bearer second"]
+
+
+def test_secure_transport_reuses_a_supplied_correlation_id_without_generating_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def should_not_generate() -> object:
+        raise AssertionError("a supplied correlation ID must be reused")
+
+    monkeypatch.setattr(transport_module, "uuid4", should_not_generate)
+    with SecureTransport(
+        "https://foundation.test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(204, request=request)
+        ),
+    ) as transport:
+        response = transport.request(
+            "POST", "/v1/check", headers={"X-Correlation-ID": "known-id"}
+        )
+
+    assert response.request.headers["X-Correlation-ID"] == "known-id"
 
 
 def test_trust_bundle_requires_root_signature_and_monotonic_revision() -> None:
