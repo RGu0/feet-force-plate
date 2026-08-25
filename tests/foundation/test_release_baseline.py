@@ -62,6 +62,37 @@ source = { registry = "https://pypi.org/simple" }
     json.dumps(evidence)
 
 
+def test_release_evidence_compares_against_the_versioned_pre_extraction_workload(
+    tmp_path: Path,
+) -> None:
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_text("version = 1\n", encoding="utf-8")
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "foundation.whl").write_bytes(b"wheel")
+
+    evidence = build_release_evidence(
+        package_name="techflex-cloud-foundation",
+        package_version="0.1.1",
+        source_revision="b" * 40,
+        lockfile=lockfile,
+        dist_dir=dist_dir,
+        operations=4,
+    )
+
+    assert evidence["performance_baseline"]["source_revision"] == (
+        "6e76234f0ec466f4fa62f6368ea646ec8b37979e"
+    )
+    assert evidence["performance_baseline"]["workload"] == "legacy-httpx-client/1"
+    assert evidence["performance_baseline"]["performance"]["operations"] == 4
+
+
+def test_release_workflow_enforces_the_pre_extraction_performance_comparison() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+
+    assert "--baseline-strategy legacy-httpx-client/1" in workflow
+
+
 def test_performance_budget_rejects_regressions_beyond_agreed_limits() -> None:
     baseline = {"p95_operation_seconds": 1.0, "peak_memory_bytes": 100}
 

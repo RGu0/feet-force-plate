@@ -47,9 +47,9 @@ class SecureTransport:
         self._client.close()
 
     def request(self, method: str, path: str, *, headers: Mapping[str, str] | None = None, **kwargs: object) -> httpx.Response:
-        effective_headers = {"X-Correlation-ID": str(uuid4())}
-        if headers:
-            effective_headers.update(headers)
+        effective_headers = dict(headers or {})
+        if "X-Correlation-ID" not in effective_headers:
+            effective_headers["X-Correlation-ID"] = str(uuid4())
         return self._client.request(method, path, headers=effective_headers, **kwargs)
 
 

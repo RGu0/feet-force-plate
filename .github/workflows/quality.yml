@@ -76,6 +76,7 @@ jobs:
           uv run --extra dev python scripts/record_foundation_release_baseline.py
           --project-root .
           --dist-dir foundation-dist
+          --baseline-strategy legacy-httpx-client/1
           --output foundation-release-evidence.json
       - name: Archive foundation release evidence
         uses: actions/upload-artifact@v4

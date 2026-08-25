@@ -18,6 +18,12 @@ import httpx
 from techflex_cloud_foundation import SecureTransport
 
 
+PRE_EXTRACTION_BASELINE_REVISION = "6e76234f0ec466f4fa62f6368ea646ec8b37979e"
+"""Last default-branch revision before the foundation extraction (PR #8)."""
+
+LEGACY_HTTPX_WORKLOAD = "legacy-httpx-client/1"
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -32,7 +38,9 @@ def _locked_components(lockfile: Path) -> list[dict[str, str]]:
     return sorted(components, key=lambda component: (component["name"], component["version"]))
 
 
-def _run_transport_workload(operations: int) -> dict[str, float | int]:
+def _run_transport_workload(
+    operations: int, *, baseline_strategy: str | None = None
+) -> dict[str, float | int]:
     if operations < 1:
         raise ValueError("operations must be positive")
 
@@ -42,13 +50,30 @@ def _run_transport_workload(operations: int) -> dict[str, float | int]:
     durations: list[float] = []
     tracemalloc.start()
     try:
-        with SecureTransport(
-            "https://benchmark.invalid",
-            transport=httpx.MockTransport(handler),
-        ) as transport:
+        client_kwargs = {
+            "base_url": "https://benchmark.invalid",
+            "transport": httpx.MockTransport(handler),
+            "trust_env": False,
+            "timeout": httpx.Timeout(connect=5, read=20, write=20, pool=5),
+        }
+        if baseline_strategy == LEGACY_HTTPX_WORKLOAD:
+            transport = httpx.Client(**client_kwargs)
+        elif baseline_strategy is None:
+            transport = SecureTransport(
+                "https://benchmark.invalid",
+                transport=client_kwargs["transport"],
+            )
+        else:
+            raise ValueError(f"unsupported performance baseline strategy: {baseline_strategy}")
+        with transport:
             for _ in range(operations):
                 started_at = time.perf_counter()
-                response = transport.request("POST", "/v1/operation", content=b"benchmark")
+                response = transport.request(
+                    "POST",
+                    "/v1/operation",
+                    content=b"benchmark",
+                    headers={"X-Correlation-ID": "release-benchmark"},
+                )
                 response.raise_for_status()
                 durations.append(time.perf_counter() - started_at)
         _current, peak_memory = tracemalloc.get_traced_memory()
@@ -72,6 +97,7 @@ def build_release_evidence(
     lockfile: Path,
     dist_dir: Path,
     operations: int,
+    baseline_strategy: str = LEGACY_HTTPX_WORKLOAD,
 ) -> dict[str, Any]:
     artifacts = [
         {"name": artifact.name, "sha256": _sha256(artifact), "size_bytes": artifact.stat().st_size}
@@ -80,6 +106,9 @@ def build_release_evidence(
     ]
     if not artifacts:
         raise ValueError("distribution directory contains no artifacts")
+    baseline_performance = _run_transport_workload(
+        operations, baseline_strategy=baseline_strategy
+    )
     return {
         "schema_version": 1,
         "source": {"revision": source_revision, "uv_lock_sha256": _sha256(lockfile)},
@@ -89,6 +118,11 @@ def build_release_evidence(
             "specVersion": "1.5",
             "metadata": {"component": {"name": package_name, "type": "library", "version": package_version}},
             "components": _locked_components(lockfile),
+        },
+        "performance_baseline": {
+            "source_revision": PRE_EXTRACTION_BASELINE_REVISION,
+            "workload": baseline_strategy,
+            "performance": baseline_performance,
         },
         "performance": _run_transport_workload(operations),
     }
@@ -125,7 +159,11 @@ def main() -> int:
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--operations", type=int, default=200)
-    parser.add_argument("--baseline", type=Path)
+    parser.add_argument(
+        "--baseline-strategy",
+        choices=(LEGACY_HTTPX_WORKLOAD,),
+        required=True,
+    )
     arguments = parser.parse_args()
     project_root = arguments.project_root.resolve()
     package_root = (project_root / arguments.package_root).resolve()
@@ -137,10 +175,10 @@ def main() -> int:
         lockfile=project_root / "uv.lock",
         dist_dir=(project_root / arguments.dist_dir).resolve(),
         operations=arguments.operations,
+        baseline_strategy=arguments.baseline_strategy,
     )
-    if arguments.baseline:
-        baseline = json.loads(arguments.baseline.read_text(encoding="utf-8"))["performance"]
-        assert_performance_budget(evidence["performance"], baseline)
+    baseline = evidence["performance_baseline"]["performance"]
+    assert_performance_budget(evidence["performance"], baseline)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
