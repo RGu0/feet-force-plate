@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+if ($null -eq $Command) {
+    $Command = @()
+}
 
 $projectRoot = (Resolve-Path $PSScriptRoot).Path
 $uv = Get-Command ($env:UV_BIN ?? "uv") -ErrorAction SilentlyContinue
