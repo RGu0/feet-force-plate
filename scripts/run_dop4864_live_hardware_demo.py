@@ -91,7 +91,9 @@ def run_live_demo(args: argparse.Namespace) -> dict[str, object]:
     )
     baseline, baseline_summary = _baseline_reference(
         baseline_frames,
-        maximum_empty_count=args.maximum_empty_count,
+        maximum_unloaded_frame_mean=(
+            specification.startup_validation.unloaded_frame_mean_max
+        ),
         minimum_duration_ns=round(specification.baseline_min_duration_s * 1_000_000_000),
     )
 
@@ -220,7 +222,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subject-display-id", default="现场匿名演示")
     parser.add_argument("--baseline-seconds", type=float)
     parser.add_argument("--stage-seconds", type=float, default=20.0)
-    parser.add_argument("--maximum-empty-count", type=float, default=5.0)
     parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
     parser.add_argument("--storage-append-timeout-seconds", type=float, default=2.0)
     parser.add_argument("--noninteractive", action="store_true")

@@ -119,15 +119,15 @@ def _collect_baseline(
 
 
 def _baseline_reference(
-    frames: tuple[RawFrame, ...], *, maximum_empty_count: float, minimum_duration_ns: int
+    frames: tuple[RawFrame, ...], *, maximum_unloaded_frame_mean: float, minimum_duration_ns: int
 ):
     if len(frames) < 2:
         raise RuntimeError("baseline did not contain at least two frames")
     values = np.stack([frame.values.reshape(-1, order="F") for frame in frames])
-    cell_median = np.median(values, axis=0)
-    if float(cell_median.max()) > maximum_empty_count:
+    maximum_frame_mean_count = float(values.mean(axis=1).max())
+    if maximum_frame_mean_count > maximum_unloaded_frame_mean:
         raise RuntimeError(
-            "baseline is not unloaded: cell median exceeds empty-board threshold"
+            "baseline is not unloaded: frame mean exceeds empty-board threshold"
         )
     source = hashlib.sha256()
     for frame in frames:
@@ -154,7 +154,7 @@ def _baseline_reference(
     return build_baseline_reference(window, minimum_duration_ns=minimum_duration_ns), {
         "frames": len(frames),
         "duration_seconds": window.duration_ns / 1_000_000_000,
-        "maximum_cell_median_count": float(cell_median.max()),
+        "maximum_frame_mean_count": maximum_frame_mean_count,
         "source_sha256": window.source_digest,
     }
 
@@ -195,7 +195,9 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     )
     baseline, baseline_summary = _baseline_reference(
         baseline_frames,
-        maximum_empty_count=args.maximum_empty_count,
+        maximum_unloaded_frame_mean=(
+            specification.startup_validation.unloaded_frame_mean_max
+        ),
         minimum_duration_ns=round(minimum_baseline_seconds * 1_000_000_000),
     )
     store = StateStore(root / "state.sqlite3", SensitiveBlobCodec(key_provider))
@@ -327,7 +329,6 @@ def main() -> int:
     )
     parser.add_argument("--baseline-seconds", type=float)
     parser.add_argument("--capture-seconds", type=float, default=600.0)
-    parser.add_argument("--maximum-empty-count", type=float, default=5.0)
     parser.add_argument("--serial-timeout-seconds", type=float, default=0.25)
     parser.add_argument("--storage-append-timeout-seconds", type=float, default=2.0)
     parser.add_argument(

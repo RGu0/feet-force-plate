@@ -667,14 +667,29 @@ class HttpIngestionClient:
     def create_session(
         self, access_token: str, request: SessionCreateRequest, idempotency_key: str
     ) -> SessionCreateResponse:
-        return self._model_request(
-            "POST",
-            "/v1/sessions",
-            SessionCreateResponse,
-            access_token,
-            headers={"Idempotency-Key": idempotency_key},
-            json=request.model_dump(mode="json"),
-        )
+        payload = request.model_dump(mode="json")
+        try:
+            return self._model_request(
+                "POST",
+                "/v1/sessions",
+                SessionCreateResponse,
+                access_token,
+                headers={"Idempotency-Key": idempotency_key},
+                json=payload,
+            )
+        except UploadBlocked as exc:
+            if exc.error_code != "E-API-422":
+                raise
+            legacy_payload = dict(payload)
+            legacy_payload.pop("client_installation_id", None)
+            return self._model_request(
+                "POST",
+                "/v1/sessions",
+                SessionCreateResponse,
+                access_token,
+                headers={"Idempotency-Key": idempotency_key},
+                json=legacy_payload,
+            )
 
     def list_segments(
         self, access_token: str, session_id: UUID

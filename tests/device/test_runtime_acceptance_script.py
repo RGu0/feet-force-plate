@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import numpy as np
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+from client.device.protocol import RawFrame
 
 
 def _runner_module():
@@ -19,6 +22,33 @@ def _runner_module():
 
 
 class RuntimeAcceptanceScriptTests(unittest.TestCase):
+    def test_empty_baseline_uses_the_production_per_frame_mean_rule(self) -> None:
+        module = _runner_module()
+        values = np.zeros((48, 64), dtype=np.uint8)
+        values[0, 0] = 32
+        values.setflags(write=False)
+        frames = tuple(
+            RawFrame(
+                values=values,
+                host_monotonic_ns=offset,
+                host_wall_time_ns=offset,
+                source_index=index,
+                device_frame_seq=None,
+                device_timestamp_ns=None,
+                quality_flags=frozenset(),
+            )
+            for index, offset in enumerate((0, 5_000_000_000))
+        )
+
+        baseline, summary = module._baseline_reference(
+            frames,
+            maximum_unloaded_frame_mean=4.0,
+            minimum_duration_ns=5_000_000_000,
+        )
+
+        self.assertEqual(summary["maximum_frame_mean_count"], 32 / (48 * 64))
+        self.assertEqual(len(baseline.zero_offset_count), 48 * 64)
+
     def test_runtime_reason_is_collapsed_to_a_stable_safe_code(self) -> None:
         module = _runner_module()
 
