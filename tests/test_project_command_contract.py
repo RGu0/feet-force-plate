@@ -46,6 +46,14 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertFalse((PROJECT_ROOT / "scripts/record_foundation_release_baseline.py").exists())
         self.assertTrue((PROJECT_ROOT / "scripts/prepare_foundation_artifact.py").is_file())
 
+    def test_private_release_download_requires_a_dedicated_read_only_secret(self) -> None:
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "quality.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("TECHFLEX_FOUNDATION_RELEASE_TOKEN", workflow)
+        self.assertNotIn("GH_TOKEN: ${{ github.token }}", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

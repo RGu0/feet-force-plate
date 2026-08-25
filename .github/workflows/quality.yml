@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Download and verify locked private foundation artifact
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.TECHFLEX_FOUNDATION_RELEASE_TOKEN }}
         run: python scripts/prepare_foundation_artifact.py --download
       - name: Verify locked artifact environment
         run: uv sync --extra dev --locked
