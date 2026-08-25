@@ -31,12 +31,20 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertIn("centralized-project-envs", unix)
         self.assertNotIn("export UV_PROJECT_ENVIRONMENT", unix)
         self.assertNotIn("$env:UV_PROJECT_ENVIRONMENT =", windows)
-        self.assertIn("build packages/techflex-cloud-foundation", unix)
-        self.assertIn("record_foundation_release_baseline.py", unix)
-        self.assertIn("--baseline-strategy legacy-httpx-client/1", unix)
-        self.assertIn("build packages/techflex-cloud-foundation", windows)
-        self.assertIn("record_foundation_release_baseline.py", windows)
-        self.assertIn("--baseline-strategy legacy-httpx-client/1", windows)
+        self.assertIn("prepare_foundation_artifact.py --download", unix)
+        self.assertIn("--find-links .foundation-artifacts", unix)
+        self.assertNotIn("build packages/techflex-cloud-foundation", unix)
+        self.assertNotIn("record_foundation_release_baseline.py", unix)
+        self.assertIn("scripts/prepare_foundation_artifact.py", windows)
+        self.assertIn('"--download"', windows)
+        self.assertIn("--find-links", windows)
+        self.assertNotIn("build packages/techflex-cloud-foundation", windows)
+        self.assertNotIn("record_foundation_release_baseline.py", windows)
+
+    def test_redundant_foundation_source_is_not_retained_in_the_consumer(self) -> None:
+        self.assertFalse((PROJECT_ROOT / "packages/techflex-cloud-foundation").exists())
+        self.assertFalse((PROJECT_ROOT / "scripts/record_foundation_release_baseline.py").exists())
+        self.assertTrue((PROJECT_ROOT / "scripts/prepare_foundation_artifact.py").is_file())
 
 
 if __name__ == "__main__":
