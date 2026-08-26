@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 
@@ -18,7 +19,8 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertTrue(unix_entrypoint.is_file())
         self.assertTrue(windows_entrypoint.is_file())
         self.assertTrue(manifest.is_file())
-        self.assertTrue(unix_entrypoint.stat().st_mode & 0o111)
+        if os.name != "nt":
+            self.assertTrue(unix_entrypoint.stat().st_mode & 0o111)
 
         unix = unix_entrypoint.read_text(encoding="utf-8")
         windows = windows_entrypoint.read_text(encoding="utf-8")
