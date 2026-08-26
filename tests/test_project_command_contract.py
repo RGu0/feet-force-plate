@@ -3,14 +3,45 @@
 from __future__ import annotations
 
 import os
-import unittest
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectCommandContractTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
+    def test_windows_setup_accepts_no_extra_arguments_under_strict_mode(self) -> None:
+        """Catch the unbound Command parameter regression in the real entrypoint."""
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            uv_stub = Path(temporary_directory) / "uv-stub.cmd"
+            uv_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
+            python_stub = Path(temporary_directory) / "python.cmd"
+            python_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["UV_BIN"] = str(uv_stub)
+            environment["PATH"] = temporary_directory + os.pathsep + environment["PATH"]
+            result = subprocess.run(
+                ["pwsh", "-NoProfile", "-File", str(PROJECT_ROOT / "dev.ps1"), "setup"],
+                cwd=PROJECT_ROOT,
+                env=environment,
+                capture_output=True,
+                check=False,
+            )
+
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"dev.ps1 setup failed:\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        )
+
     def test_platform_entrypoints_and_manifest_use_locked_governed_commands(self) -> None:
         unix_entrypoint = PROJECT_ROOT / "dev"
         windows_entrypoint = PROJECT_ROOT / "dev.ps1"
