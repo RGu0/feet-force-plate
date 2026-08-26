@@ -34,7 +34,13 @@ if ($env:PYTHONPATH) {
 
 Push-Location $projectRoot
 try {
+    $artifactArguments = @("scripts/prepare_foundation_artifact.py")
+    if ($Action -eq "setup") { $artifactArguments += "--download" }
+    & python $artifactArguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     $syncArguments = @("sync", "--locked", "--extra", "dev")
+    $syncArguments += @("--find-links", ".foundation-artifacts")
     if ($Action -eq "build") { $syncArguments += @("--extra", "build") }
     & $uv.Source @syncArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -55,19 +61,6 @@ try {
             if ($Command.Count -gt 0) { throw "build accepts no arguments" }
             & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud shared
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $foundationReleaseDirectory = Join-Path ([IO.Path]::GetTempPath()) ("techflex-cloud-foundation-" + [guid]::NewGuid().ToString("N"))
-            New-Item -ItemType Directory -Path $foundationReleaseDirectory -Force | Out-Null
-            try {
-                & $uv.Source build packages/techflex-cloud-foundation --out-dir $foundationReleaseDirectory
-                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                & $uv.Source run --locked --extra dev python scripts/record_foundation_release_baseline.py `
-                    --project-root $projectRoot `
-                    --dist-dir $foundationReleaseDirectory `
-                    --baseline-strategy legacy-httpx-client/1 `
-                    --output (Join-Path $foundationReleaseDirectory "release-evidence.json")
-            } finally {
-                Remove-Item -LiteralPath $foundationReleaseDirectory -Recurse -Force -ErrorAction SilentlyContinue
-            }
         }
         "run" {
             if ($Command.Count -eq 0) { throw "run requires a command" }

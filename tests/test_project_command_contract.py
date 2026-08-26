@@ -21,8 +21,11 @@ class ProjectCommandContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
             uv_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
+            python_stub = Path(temporary_directory) / "python.cmd"
+            python_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
             environment = os.environ.copy()
             environment["UV_BIN"] = str(uv_stub)
+            environment["PATH"] = temporary_directory + os.pathsep + environment["PATH"]
             result = subprocess.run(
                 ["pwsh", "-NoProfile", "-File", str(PROJECT_ROOT / "dev.ps1"), "setup"],
                 cwd=PROJECT_ROOT,
@@ -47,7 +50,8 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertTrue(unix_entrypoint.is_file())
         self.assertTrue(windows_entrypoint.is_file())
         self.assertTrue(manifest.is_file())
-        self.assertTrue(unix_entrypoint.stat().st_mode & 0o111)
+        if os.name != "nt":
+            self.assertTrue(unix_entrypoint.stat().st_mode & 0o111)
 
         unix = unix_entrypoint.read_text(encoding="utf-8")
         windows = windows_entrypoint.read_text(encoding="utf-8")
@@ -60,12 +64,28 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertIn("centralized-project-envs", unix)
         self.assertNotIn("export UV_PROJECT_ENVIRONMENT", unix)
         self.assertNotIn("$env:UV_PROJECT_ENVIRONMENT =", windows)
-        self.assertIn("build packages/techflex-cloud-foundation", unix)
-        self.assertIn("record_foundation_release_baseline.py", unix)
-        self.assertIn("--baseline-strategy legacy-httpx-client/1", unix)
-        self.assertIn("build packages/techflex-cloud-foundation", windows)
-        self.assertIn("record_foundation_release_baseline.py", windows)
-        self.assertIn("--baseline-strategy legacy-httpx-client/1", windows)
+        self.assertIn("prepare_foundation_artifact.py --download", unix)
+        self.assertIn("--find-links .foundation-artifacts", unix)
+        self.assertNotIn("build packages/techflex-cloud-foundation", unix)
+        self.assertNotIn("record_foundation_release_baseline.py", unix)
+        self.assertIn("scripts/prepare_foundation_artifact.py", windows)
+        self.assertIn('"--download"', windows)
+        self.assertIn("--find-links", windows)
+        self.assertNotIn("build packages/techflex-cloud-foundation", windows)
+        self.assertNotIn("record_foundation_release_baseline.py", windows)
+
+    def test_redundant_foundation_source_is_not_retained_in_the_consumer(self) -> None:
+        self.assertFalse((PROJECT_ROOT / "packages/techflex-cloud-foundation").exists())
+        self.assertFalse((PROJECT_ROOT / "scripts/record_foundation_release_baseline.py").exists())
+        self.assertTrue((PROJECT_ROOT / "scripts/prepare_foundation_artifact.py").is_file())
+
+    def test_private_release_download_requires_a_dedicated_read_only_secret(self) -> None:
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "quality.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("TECHFLEX_FOUNDATION_RELEASE_TOKEN", workflow)
+        self.assertNotIn("GH_TOKEN: ${{ github.token }}", workflow)
 
 
 if __name__ == "__main__":
