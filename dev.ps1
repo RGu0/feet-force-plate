@@ -36,7 +36,7 @@ Push-Location $projectRoot
 try {
     $artifactArguments = @("scripts/prepare_foundation_artifact.py")
     if ($Action -eq "setup") { $artifactArguments += "--download" }
-    $managedPython = & $uv.Source python find
+    $managedPython = & $uv.Source python find (Join-Path $projectRoot ".python-version")
     if ($LASTEXITCODE -ne 0 -or -not $managedPython) {
         throw "uv could not resolve the project Python runtime"
     }

@@ -21,15 +21,23 @@ class ProjectCommandContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
             python_stub = Path(temporary_directory) / "managed-python.cmd"
+            python_version = PROJECT_ROOT / ".python-version"
             uv_stub.write_text(
-                '@if "%~1"=="python" (\r\n'
+                '@if "%~1"=="python" if "%~2"=="find" '
+                f'if "%~3"=="{python_version}" if "%~4"=="" (\r\n'
                 f'@echo {python_stub}\r\n'
                 "@exit /b 0\r\n"
                 ")\r\n"
+                "@if \"%~1\"==\"python\" @exit /b 1\r\n"
                 "@exit /b 0\r\n",
                 encoding="utf-8",
             )
-            python_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
+            python_stub.write_text(
+                '@if "%~1"=="scripts/prepare_foundation_artifact.py" '
+                'if "%~2"=="--download" if "%~3"=="" @exit /b 0\r\n'
+                "@exit /b 1\r\n",
+                encoding="utf-8",
+            )
             environment = os.environ.copy()
             environment["UV_BIN"] = str(uv_stub)
             environment["PATH"] = temporary_directory
