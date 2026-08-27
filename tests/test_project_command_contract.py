@@ -14,7 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectCommandContractTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
+    @unittest.skipUnless(
+        os.name == "nt" and shutil.which("pwsh"),
+        "requires PowerShell 7 on Windows",
+    )
     def test_windows_setup_accepts_no_extra_arguments_under_strict_mode(self) -> None:
         """Ensure setup uses uv's managed interpreter without a global Python command."""
 
