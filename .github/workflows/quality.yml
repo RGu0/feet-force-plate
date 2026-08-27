@@ -51,6 +51,12 @@ jobs:
           tests/foundation/test_versioned_foundation_consumer.py
           tests/test_project_command_contract.py
           --junitxml=pytest-results.xml
+      - name: Clean Windows managed Python bootstrap regression
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.TECHFLEX_FOUNDATION_RELEASE_TOKEN }}
+        run: ./tests/test_clean_windows_managed_python_bootstrap.ps1
       - name: Archive test result
         uses: actions/upload-artifact@v4
         with:
