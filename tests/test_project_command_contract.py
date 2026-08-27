@@ -21,10 +21,9 @@ class ProjectCommandContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
             python_stub = Path(temporary_directory) / "managed-python.cmd"
-            python_version = PROJECT_ROOT / ".python-version"
             uv_stub.write_text(
                 '@if "%~1"=="python" if "%~2"=="find" '
-                f'if "%~3"=="{python_version}" if "%~4"=="" (\r\n'
+                'if "%~3"=="--managed-python" if "%~4"=="" (\r\n'
                 f'@echo {python_stub}\r\n'
                 "@exit /b 0\r\n"
                 ")\r\n"
