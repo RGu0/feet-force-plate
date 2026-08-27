@@ -48,7 +48,6 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $syncArguments = @("sync", "--locked", "--extra", "dev")
-    $syncArguments += @("--find-links", ".foundation-artifacts")
     if ($Action -eq "build") { $syncArguments += @("--extra", "build") }
     & $uv.Source @syncArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -89,7 +89,6 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertNotIn("record_foundation_release_baseline.py", unix)
         self.assertIn("scripts/prepare_foundation_artifact.py", windows)
         self.assertIn('"--download"', windows)
-        self.assertIn("--find-links", windows)
         self.assertNotIn("build packages/techflex-cloud-foundation", windows)
         self.assertNotIn("record_foundation_release_baseline.py", windows)
 
