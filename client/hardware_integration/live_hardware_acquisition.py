@@ -36,6 +36,7 @@ class QtLiveHardwareAcquisition(QObject):
         )
         self._thread: threading.Thread | None = None
         self._thread_lock = threading.Lock()
+        self._stop_requested = threading.Event()
         self._session_id: str | None = None
         self._stage_id: str | None = None
         self._stage_duration_seconds = 0
@@ -84,6 +85,7 @@ class QtLiveHardwareAcquisition(QObject):
 
         with self._thread_lock:
             if self._thread is None:
+                self._stop_requested.clear()
                 self._thread = threading.Thread(
                     target=self._capture,
                     args=(session_id,),
@@ -104,8 +106,24 @@ class QtLiveHardwareAcquisition(QObject):
         """Cancel only the active attempt; the worker closes its owned transport."""
 
         if session_id == self._session_id:
-            if self._gate.request_cancellation():
-                self._timer.stop()
+            with self._thread_lock:
+                if self._gate.request_cancellation():
+                    self._stop_requested.set()
+                    self._timer.stop()
+
+    def wait_for_worker(self, *, timeout_seconds: float) -> bool:
+        """Wait a bounded time for the current capture worker to exit."""
+
+        if timeout_seconds < 0:
+            raise ValueError("timeout_seconds cannot be negative")
+        with self._thread_lock:
+            worker = self._thread
+        if worker is None:
+            return True
+        if worker is threading.current_thread():
+            return False
+        worker.join(timeout_seconds)
+        return not worker.is_alive()
 
     def _capture(self, session_id: str) -> None:
         try:
@@ -113,10 +131,16 @@ class QtLiveHardwareAcquisition(QObject):
         except Exception as exc:
             with self._thread_lock:
                 self._thread = None
+                stop_requested = self._stop_requested.is_set()
+            if stop_requested:
+                return
             self.capture_failed.emit(f"{type(exc).__name__}: {exc}")
             return
         with self._thread_lock:
             self._thread = None
+            stop_requested = self._stop_requested.is_set()
+        if stop_requested:
+            return
         self.capture_finished.emit(result)
 
     def _tick(self) -> None:
