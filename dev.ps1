@@ -36,7 +36,11 @@ Push-Location $projectRoot
 try {
     $artifactArguments = @("scripts/prepare_foundation_artifact.py")
     if ($Action -eq "setup") { $artifactArguments += "--download" }
-    & python $artifactArguments
+    $managedPython = & $uv.Source python find
+    if ($LASTEXITCODE -ne 0 -or -not $managedPython) {
+        throw "uv could not resolve the project Python runtime"
+    }
+    & $managedPython $artifactArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $syncArguments = @("sync", "--locked", "--extra", "dev")

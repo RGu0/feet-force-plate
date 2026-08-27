@@ -16,16 +16,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class ProjectCommandContractTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
     def test_windows_setup_accepts_no_extra_arguments_under_strict_mode(self) -> None:
-        """Catch the unbound Command parameter regression in the real entrypoint."""
+        """Ensure setup uses uv's managed interpreter without a global Python command."""
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
-            uv_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
-            python_stub = Path(temporary_directory) / "python.cmd"
+            python_stub = Path(temporary_directory) / "managed-python.cmd"
+            uv_stub.write_text(
+                '@if "%~1"=="python" (\r\n'
+                f'@echo {python_stub}\r\n'
+                "@exit /b 0\r\n"
+                ")\r\n"
+                "@exit /b 0\r\n",
+                encoding="utf-8",
+            )
             python_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
             environment = os.environ.copy()
             environment["UV_BIN"] = str(uv_stub)
-            environment["PATH"] = temporary_directory + os.pathsep + environment["PATH"]
+            environment["PATH"] = temporary_directory
             result = subprocess.run(
                 ["pwsh", "-NoProfile", "-File", str(PROJECT_ROOT / "dev.ps1"), "setup"],
                 cwd=PROJECT_ROOT,
