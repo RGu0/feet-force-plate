@@ -25,6 +25,8 @@ class ProjectCommandContractTests(unittest.TestCase):
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
             python_stub = Path(temporary_directory) / "managed-python.cmd"
             uv_stub.write_text(
+                '@if "%~1"=="python" if "%~2"=="install" '
+                'if "%~3"=="--managed-python" if "%~4"=="3.11" if "%~5"=="" @exit /b 0\r\n'
                 '@if "%~1"=="python" if "%~2"=="find" '
                 'if "%~3"=="--managed-python" if "%~4"=="" (\r\n'
                 f'@echo {python_stub}\r\n'

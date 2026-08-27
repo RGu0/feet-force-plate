@@ -36,6 +36,10 @@ Push-Location $projectRoot
 try {
     $artifactArguments = @("scripts/prepare_foundation_artifact.py")
     if ($Action -eq "setup") { $artifactArguments += "--download" }
+    & $uv.Source python install --managed-python 3.11
+    if ($LASTEXITCODE -ne 0) {
+        throw "uv could not install the project managed Python runtime"
+    }
     $managedPython = & $uv.Source python find --managed-python
     if ($LASTEXITCODE -ne 0 -or -not $managedPython) {
         throw "uv could not resolve the project Python runtime"
