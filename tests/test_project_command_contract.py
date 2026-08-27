@@ -14,18 +14,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectCommandContractTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("pwsh"), "requires PowerShell 7")
+    @unittest.skipUnless(
+        os.name == "nt" and shutil.which("pwsh"),
+        "requires PowerShell 7 on Windows",
+    )
     def test_windows_setup_accepts_no_extra_arguments_under_strict_mode(self) -> None:
-        """Catch the unbound Command parameter regression in the real entrypoint."""
+        """Ensure setup uses uv's managed interpreter without a global Python command."""
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
-            uv_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
-            python_stub = Path(temporary_directory) / "python.cmd"
-            python_stub.write_text("@exit /b 0\r\n", encoding="utf-8")
+            python_stub = Path(temporary_directory) / "managed-python.cmd"
+            uv_stub.write_text(
+                '@if "%~1"=="python" if "%~2"=="find" '
+                'if "%~3"=="--managed-python" if "%~4"=="" (\r\n'
+                f'@echo {python_stub}\r\n'
+                "@exit /b 0\r\n"
+                ")\r\n"
+                "@if \"%~1\"==\"python\" @exit /b 1\r\n"
+                "@exit /b 0\r\n",
+                encoding="utf-8",
+            )
+            python_stub.write_text(
+                '@if "%~1"=="scripts/prepare_foundation_artifact.py" '
+                'if "%~2"=="--download" if "%~3"=="" @exit /b 0\r\n'
+                "@exit /b 1\r\n",
+                encoding="utf-8",
+            )
             environment = os.environ.copy()
             environment["UV_BIN"] = str(uv_stub)
-            environment["PATH"] = temporary_directory + os.pathsep + environment["PATH"]
+            environment["PATH"] = temporary_directory
             result = subprocess.run(
                 ["pwsh", "-NoProfile", "-File", str(PROJECT_ROOT / "dev.ps1"), "setup"],
                 cwd=PROJECT_ROOT,
