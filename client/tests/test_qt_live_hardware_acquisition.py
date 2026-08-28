@@ -206,10 +206,16 @@ def test_stop_during_worker_commit_keeps_durable_completion_consistent(qtbot) ->
 
 
 def test_bridge_rejects_session_change_without_opening_another_window(qtbot) -> None:
+    worker_exited = threading.Event()
+    failed: list[str] = []
+
     def _capture(_session_id: str, gate):
-        while not gate.snapshot().cancelled:
-            time.sleep(0.001)
-        raise RuntimeError("cancelled")
+        try:
+            while not gate.snapshot().cancelled:
+                time.sleep(0.001)
+            raise RuntimeError("cancelled")
+        finally:
+            worker_exited.set()
 
     acquisition = QtLiveHardwareAcquisition(
         _capture, expected_stage_ids=("one", "two")
@@ -217,7 +223,7 @@ def test_bridge_rejects_session_change_without_opening_another_window(qtbot) -> 
     acquisition.set_callbacks(
         on_progress=lambda _elapsed: None,
         on_complete=lambda _result: None,
-        on_failure=lambda _message: None,
+        on_failure=failed.append,
     )
     acquisition.start_stage("session-1", _stage("one"))
 
@@ -225,3 +231,8 @@ def test_bridge_rejects_session_change_without_opening_another_window(qtbot) -> 
         acquisition.start_stage("session-2", _stage("two"))
 
     acquisition.stop("session-1")
+
+    assert acquisition.wait_for_worker(timeout_seconds=1.0)
+    assert worker_exited.is_set()
+    qtbot.wait(20)
+    assert failed == []
