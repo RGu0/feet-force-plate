@@ -72,7 +72,11 @@ def test_spec_stages_public_cloud_bundle_without_source_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "server-release-input"
-    _write_public_bundle(source)
+    _write_public_bundle(
+        source,
+        channel="distribution",
+        api_base_url="https://release.example.test",
+    )
     captured: dict[str, object] = {}
 
     class _Analysis:
@@ -116,4 +120,22 @@ def test_spec_stages_public_cloud_bundle_without_source_paths(
         {}, packaged_resource_root=artifact
     )
     assert settings is not None
+    assert settings.integration_mode is False
     assert str(source) not in json.dumps(captured, default=str)
+
+
+def test_spec_rejects_an_unsigned_integration_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "unsigned-integration-input"
+    _write_public_bundle(source)
+    monkeypatch.setenv("FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY", str(source))
+    monkeypatch.delenv("FEETFORCEPLATE_WINDOWS_CLOUD_DELIVERY_DIRECTORY", raising=False)
+    monkeypatch.delenv("FEETFORCEPLATE_SUPPORT_RECIPIENT_FILE", raising=False)
+    spec = Path(__file__).parents[1] / "app" / "packaging" / "FeetForcePlate.spec"
+
+    with pytest.raises(SystemExit, match="signed RAY-321 delivery"):
+        runpy.run_path(
+            str(spec),
+            init_globals={"SPECPATH": str(spec.parent), "workpath": str(tmp_path)},
+        )

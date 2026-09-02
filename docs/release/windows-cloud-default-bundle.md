@@ -1,51 +1,80 @@
-# Windows 受控 License/cloud-default 同步包
+# Windows RAY-321 受控联调配置
 
-此目录是 RAY-321 的公开客户端信任输入，只用于受控联调验收。它不是签名发行物，不得交付给客户；正式 Windows 发布、签名与升级仍按 RAY-96 执行。
+R2 只允许 `integration`、HTTPS 明确端口 `:7443`、其对应 CA 和 License
+验签公钥。它不是面向客户的发行包，也不会自动登录、激活、采集、创建会话或上传。
 
-## 内容和边界
+## 信任边界
 
-`bundle-manifest.json`、`approval.json` 和 `public-cloud-defaults/` 中的三项固定文件共同定义配置。公开材料包括 HTTPS 地址、CA 证书、License 验签公钥和 key ID；目录绝不接受私钥、账号、密码、激活码、访问令牌、数据库凭据、设备标识或筛查数据。
+同步目录仅可包含：
 
-`approval.json` 必须由 License 服务负责人以以下严格 schema 提供，且 `approval_state` 必须为 `approved`：
+- `approval.json`：负责人签署前固定的批准 payload；
+- `approval.sig`：上述文件的 Base64 Ed25519 detached signature；
+- `public-cloud-defaults/` 下固定的 `cloud-default.json`、`cloud-ca.pem`、
+  `license-public.key`。
+
+客户端源码固定批准验签公钥，校验签名后才会解析批准内容。批准 payload 固定
+`target_commit`、联调 endpoint/key ID 与三个资源的 SHA-256。启动还要求
+`ProjectRoot` 干净且 `HEAD` 恰好等于该 `target_commit`。同步目录中的脚本、
+manifest、README、额外文件、目录、符号链接或 Windows reparse point 都会被拒绝。
+
+旧的 `delivery/` 是 R1 历史证据，未带 detached signature，不能调用；R2 必须使用
+新的空目录，例如 `delivery-r2/`，绝不覆盖旧目录。
+
+## 负责人签名输入
+
+负责人使用其专用 RAY-321 Ed25519 私钥，对 UTF-8 编码的 `approval.json` 原始字节
+生成 64 字节 Ed25519 签名，再把签名 Base64 编码为 `approval.sig`。私钥不得进入
+项目目录、工作树、同步盘或命令记录。
+
+payload 必须严格为：
 
 ```json
 {
-  "schema_version": "feetforceplate-windows-cloud-approval/1",
+  "schema_version": "feetforceplate-windows-cloud-approval/2",
   "approval_state": "approved",
   "source": "License service public export",
   "approved_by": "License service owner",
-  "approved_at": "2026-08-31T00:00:00Z",
+  "approved_at": "2026-09-02T00:00:00Z",
   "environment": "integration",
-  "target_commit": "40-character lowercase Git commit SHA"
+  "target_commit": "40-character lowercase Git commit SHA",
+  "config": {
+    "api_base_url": "https://39.105.216.113:7443",
+    "channel": "integration",
+    "license_key_id": "license/1"
+  },
+  "files": {
+    "public-cloud-defaults/cloud-default.json": "SHA-256",
+    "public-cloud-defaults/cloud-ca.pem": "SHA-256",
+    "public-cloud-defaults/license-public.key": "SHA-256"
+  }
 }
 ```
 
-联调包必须使用 `integration` 与明确的 HTTPS `:7443` 端口和 CA；正式生产包必须使用 `production` 批准记录，以及标准 HTTPS 443 入口。
+只有源码已提交且工作树干净后，`target_commit` 才能固定并签名。
 
-## 准备同步目录
+## 创建同步目录
 
-在受控构建机上，从已批准的公开导出目录生成一次性同步目录。源目录只包含 `cloud-default.json`、`cloud-ca.pem` 与 `license-public.key`；批准记录由独立路径提供：
+在干净、目标提交匹配的受控源码根目录中执行：
 
 ```powershell
 .\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare `
   --source D:\controlled-input\public-cloud-defaults `
   --approval D:\controlled-input\approval.json `
-  --delivery ".project-context\evidence\ray-321\windows-cloud-default-bundle\delivery"
+  --approval-signature D:\controlled-input\approval.sig `
+  --delivery ".project-context\evidence\ray-321\windows-cloud-default-bundle\delivery-r2" `
+  --project-root .
 ```
-
-生成器检查 HTTPS、通道、有效 CA、32 字节 Ed25519 公钥、批准记录和 SHA-256。目标目录已经存在时会停止，避免覆盖旧证据。
 
 ## Windows 真机调用
 
-等待同步客户端显示所有文件已下载完成，再在 Windows 目标机执行。路径由参数提供，不依赖盘符、用户名或 OneDrive 根目录：
+只从本地、干净的 `ProjectRoot` 调用受控启动器，不运行同步目录中的任何脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "<同步目录>\Invoke-FeetForcePlateCloudClient.ps1" `
+powershell -ExecutionPolicy Bypass -File "<ProjectRoot>\scripts\Invoke-FeetForcePlateCloudClient.ps1" `
   -DeliveryDirectory "<同步目录>" `
-  -ProjectRoot "<本地 FeetForcePlate 项目目录>" `
+  -ProjectRoot "<ProjectRoot>" `
   -ValidateOnly
 ```
 
-验证成功后，移除 `-ValidateOnly` 才会启动 P-00。启动器只把公开配置传给当前进程；不会自动登录、激活、采集、创建会话或上传。任何缺失、未同步、摘要不匹配或未批准记录都会停止。
-
-若需构建仅供内部验收的 Windows 包，先验证同步目录，再将 `FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY` 设置为 `<同步目录>\public-cloud-defaults`，并按 `client/app/packaging/README.md` 执行受控构建。该步骤不等同于正式签名发行。
+启动器让 `dev.ps1` 只负责执行验证，并通过独立临时 JSON 文件读取启动设置，不解析
+`dev.ps1` 的标准输出。移除 `-ValidateOnly` 后才启动 P-00。
