@@ -10,8 +10,10 @@ from client.cloud.packaged_defaults import (
     CA_BUNDLE_NAME,
     CONFIG_NAME,
     LICENSE_PUBLIC_KEY_NAME,
+    load_packaged_cloud_defaults,
     stage_packaged_cloud_defaults,
 )
+from client.cloud.windows_bundle import materialize_validated_windows_cloud_runtime
 
 project_root = Path(SPECPATH).resolve().parents[2]
 entry_point = project_root / "main.py"
@@ -42,25 +44,35 @@ datas.append((str(device_specifications), "docs/hardware/device-specifications")
 cloud_default_source = os.environ.get(
     "FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY", ""
 ).strip()
-if cloud_default_source:
+cloud_delivery_source = os.environ.get(
+    "FEETFORCEPLATE_WINDOWS_CLOUD_DELIVERY_DIRECTORY", ""
+).strip()
+if cloud_default_source and cloud_delivery_source:
+    raise SystemExit("select either generic defaults or a signed RAY-321 delivery")
+if cloud_delivery_source:
+    staged_cloud_defaults = Path(workpath) / "r2-cloud-defaults"
+    try:
+        materialize_validated_windows_cloud_runtime(
+            Path(cloud_delivery_source),
+            project_root=project_root,
+            runtime_directory=staged_cloud_defaults,
+        )
+    except (FileExistsError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+elif cloud_default_source:
     staged_cloud_defaults = Path(workpath) / "public-cloud-defaults"
     try:
+        source_defaults = load_packaged_cloud_defaults(Path(cloud_default_source))
+        if source_defaults is not None and source_defaults.integration_mode:
+            raise SystemExit("integration packaging requires a signed RAY-321 delivery")
         stage_packaged_cloud_defaults(
             Path(cloud_default_source), staged_cloud_defaults
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    for resource_name in (
-        CONFIG_NAME,
-        CA_BUNDLE_NAME,
-        LICENSE_PUBLIC_KEY_NAME,
-    ):
-        datas.append(
-            (
-                str(staged_cloud_defaults / resource_name),
-                "client/app/resources",
-            )
-        )
+if cloud_delivery_source or cloud_default_source:
+    for resource_name in (CONFIG_NAME, CA_BUNDLE_NAME, LICENSE_PUBLIC_KEY_NAME):
+        datas.append((str(staged_cloud_defaults / resource_name), "client/app/resources"))
 
 # This optional build input is a public X25519 recipient resource.  Its source
 # path stays in the build process; only its fixed packaged basename is copied.
