@@ -29,8 +29,9 @@ pwsh -File .\dev.ps1 setup
 `ProjectRoot` 干净且 `HEAD` 恰好等于该 `target_commit`。同步目录中的脚本、
 manifest、README、额外文件、目录、符号链接或 Windows reparse point 都会被拒绝。
 
-旧的 `delivery/` 是 R1 历史证据，未带 detached signature，不能调用；R2 必须使用
-新的空目录，例如 `delivery-r2/`，绝不覆盖旧目录。
+旧的 `delivery/` 是 R1 历史证据，未带 detached signature，不能调用。`delivery-r2/`、
+`delivery-r3/` 等已签名目录都是各自目标提交的历史证据，绝不可覆盖。每个新的目标提交
+必须使用此前不存在的空目录，例如 `delivery-<target-commit-short>/`。
 
 ## 负责人签名输入
 
@@ -73,9 +74,13 @@ pwsh -File .\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare 
   --source D:\controlled-input\public-cloud-defaults `
   --approval D:\controlled-input\approval.json `
   --approval-signature D:\controlled-input\approval.sig `
-  --delivery ".project-context\evidence\ray-321\windows-cloud-default-bundle\delivery-r2" `
+  --delivery "<new-empty-delivery-directory>" `
   --project-root .
 ```
+
+将 `<new-empty-delivery-directory>` 替换为此前不存在的目录，例如
+`.project-context\evidence\ray-321\windows-cloud-default-bundle\delivery-<target-commit-short>`。
+成功后该目录即绑定该 `target_commit` 的交付证据，不可用于后续提交。
 
 ## Windows 真机调用
 
