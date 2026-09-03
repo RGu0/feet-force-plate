@@ -3,6 +3,18 @@
 R2 只允许 `integration`、HTTPS 明确端口 `:7443`、其对应 CA 和 License
 验签公钥。它不是面向客户的发行包，也不会自动登录、激活、采集、创建会话或上传。
 
+## Windows 运行前置条件（R3）
+
+只可使用 PowerShell 7 的 `pwsh`；Windows PowerShell 5.1 不能运行本项目的
+`dev.ps1`。首次在新的、干净的 Windows 工作树中操作前，先执行：
+
+```powershell
+pwsh -File .\dev.ps1 setup
+```
+
+该命令只建立项目锁定的运行环境。此后所有本指南中的 `dev.ps1` 和 Windows
+启动器调用都保持使用 `pwsh`。
+
 ## 信任边界
 
 同步目录仅可包含：
@@ -54,10 +66,10 @@ payload 必须严格为：
 
 ## 创建同步目录
 
-在干净、目标提交匹配的受控源码根目录中执行：
+在已完成上述 `setup`、提交干净且目标提交匹配的受控源码根目录中执行：
 
 ```powershell
-.\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare `
+pwsh -File .\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare `
   --source D:\controlled-input\public-cloud-defaults `
   --approval D:\controlled-input\approval.json `
   --approval-signature D:\controlled-input\approval.sig `
@@ -70,7 +82,7 @@ payload 必须严格为：
 只从本地、干净的 `ProjectRoot` 调用受控启动器，不运行同步目录中的任何脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "<ProjectRoot>\scripts\Invoke-FeetForcePlateCloudClient.ps1" `
+pwsh -File "<ProjectRoot>\scripts\Invoke-FeetForcePlateCloudClient.ps1" `
   -DeliveryDirectory "<同步目录>" `
   -ProjectRoot "<ProjectRoot>" `
   -ValidateOnly
