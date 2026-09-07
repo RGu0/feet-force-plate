@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -71,6 +73,36 @@ def test_tenant_token_has_fixed_audience_and_15_minute_expiry() -> None:
     assert context.expires_at == NOW + timedelta(minutes=15)
     with pytest.raises(AuthenticationError):
         issuer.verify(token, now=NOW + timedelta(minutes=15))
+
+
+def test_tenant_token_carries_cp03_sub_claim_for_realm_authority() -> None:
+    issuer = TenantAccessTokenIssuer(
+        secret=b"tenant-token-secret-must-be-at-least-32-bytes",
+        key_id="tenant/1",
+    )
+
+    token = issuer.issue(
+        tenant_id=TENANT_ID,
+        account_id=ACCOUNT_ID,
+        license_id=LICENSE_ID,
+        hardware_id=HARDWARE_ID,
+        client_installation_id=INSTALLATION_ID,
+        token_version=3,
+        capabilities=AccessCapabilities(
+            allow_new_test=True,
+            allow_upload=True,
+            allow_report_view=True,
+        ),
+        now=NOW,
+    )
+
+    _, encoded_payload, _ = token.split(".")
+    payload = json.loads(
+        base64.urlsafe_b64decode(encoded_payload + "=" * (-len(encoded_payload) % 4))
+    )
+    assert payload["sub"] == str(ACCOUNT_ID)
+    assert payload["account_id"] == str(ACCOUNT_ID)
+    assert payload["tenant_id"] == str(TENANT_ID)
 
 
 def test_platform_and_tenant_tokens_are_not_interchangeable() -> None:
