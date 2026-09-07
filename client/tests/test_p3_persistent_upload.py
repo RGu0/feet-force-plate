@@ -218,6 +218,10 @@ class _IngestionService:
             session_id=session_id,
             ingest_status=IngestStatus.INGESTED,
             manifest_sha256=canonical_sha256(manifest),
+            manifest_object_key="test/manifest.json",
+            eligibility_reason="test completion receipt",
+            eligibility_policy_version="test/1",
+            completed_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         self.status = self.completion_status or SessionStatusResponse(
             session_id=session_id,
@@ -570,6 +574,10 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 session_id=uuid4(),
                 ingest_status=IngestStatus.INGESTED,
                 manifest_sha256=canonical_sha256(manifest),
+                manifest_object_key="test/manifest.json",
+                eligibility_reason="test completion receipt",
+                eligibility_policy_version="test/1",
+                completed_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
 
@@ -579,6 +587,10 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 session_id=session_id,
                 ingest_status=IngestStatus.INGESTED,
                 manifest_sha256="0" * 64,
+                manifest_object_key="test/manifest.json",
+                eligibility_reason="test completion receipt",
+                eligibility_policy_version="test/1",
+                completed_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
 
@@ -588,6 +600,10 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 session_id=session_id,
                 ingest_status=IngestStatus.RECEIVING,
                 manifest_sha256=canonical_sha256(manifest),
+                manifest_object_key="test/manifest.json",
+                eligibility_reason="test completion receipt",
+                eligibility_policy_version="test/1",
+                completed_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
 

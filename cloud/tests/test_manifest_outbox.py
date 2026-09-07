@@ -158,6 +158,33 @@ class ManifestOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.repository.events("session.ingested.v1")), 1)
         self.assertEqual((await self.service.get_status(self.context, self.session_id)).ingest_status, "INGESTED")
 
+    async def test_completion_receipt_fields_replay_identically(self) -> None:
+        await self.upload(0)
+        await self.upload(1)
+        manifest = self.manifest()
+        digest = canonical_sha256(manifest)
+
+        first = await self.service.complete_session(
+            self.context, self.session_id, manifest, digest, "complete-session"
+        )
+        second = await self.service.complete_session(
+            self.context, self.session_id, manifest, digest, "complete-session"
+        )
+
+        # CP-06 receipt facts are recorded at completion and replayed
+        # identically, so the canonical receipt digest is re-derivable.
+        self.assertEqual(first.manifest_object_key, second.manifest_object_key)
+        self.assertTrue(first.manifest_object_key)
+        self.assertEqual(first.eligibility_reason, second.eligibility_reason)
+        self.assertIn("can_upload", first.eligibility_reason)
+        self.assertEqual(
+            first.eligibility_policy_version, "seed-completion-eligibility/1"
+        )
+        self.assertEqual(
+            first.eligibility_policy_version, second.eligibility_policy_version
+        )
+        self.assertEqual(first.completed_at, second.completed_at)
+
     async def test_different_manifest_digest_conflicts_without_second_event(self) -> None:
         await self.upload(0)
         await self.upload(1)

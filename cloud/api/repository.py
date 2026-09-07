@@ -128,6 +128,8 @@ class ManifestRecord:
     object_key: str
     verification_status: str
     verified_at: datetime | None
+    eligibility_reason: str = ""
+    eligibility_policy_version: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -938,6 +940,10 @@ class InMemoryPlatformRepository:
         manifest_sha256: str,
         object_key: str,
         idempotency_key: str,
+        *,
+        eligibility_reason: str,
+        eligibility_policy_version: str,
+        completed_at: datetime,
     ) -> ManifestCompletionResponse:
         session = self._session(context, session_id)
         replay = self._idempotent_result(
@@ -950,11 +956,18 @@ class InMemoryPlatformRepository:
             if existing_manifest.manifest_sha256 != manifest_sha256:
                 raise ManifestConflict("同一会话已存在不同最终清单", session_id=str(session_id))
             if existing_manifest.verification_status == "VERIFIED":
+                original_completed_at = existing_manifest.verified_at
+                if original_completed_at is None:
+                    raise RuntimeError("verified manifest record without verified_at")
                 response = ManifestCompletionResponse(
                     session_id=session_id,
                     ingest_status=IngestStatus.INGESTED,
                     manifest_sha256=manifest_sha256,
                     idempotent_replay=True,
+                    manifest_object_key=existing_manifest.object_key,
+                    eligibility_reason=existing_manifest.eligibility_reason,
+                    eligibility_policy_version=existing_manifest.eligibility_policy_version,
+                    completed_at=original_completed_at,
                 )
                 self._idempotency[(context.tenant_id, "session.complete", idempotency_key)] = (
                     IdempotencyRecord(manifest_sha256, response.model_copy(update={"idempotent_replay": False}))
@@ -991,7 +1004,7 @@ class InMemoryPlatformRepository:
                 missing_or_mismatched=mismatch,
                 extra=extra,
             )
-        verified_at = datetime.now(UTC)
+        verified_at = completed_at
         manifest_record = ManifestRecord(
             context.tenant_id,
             session_id,
@@ -1000,6 +1013,8 @@ class InMemoryPlatformRepository:
             object_key,
             "VERIFIED",
             verified_at,
+            eligibility_reason,
+            eligibility_policy_version,
         )
         next_version = session.aggregate_version + 1
         event = EventEnvelope(
@@ -1031,6 +1046,10 @@ class InMemoryPlatformRepository:
             session_id=session_id,
             ingest_status=IngestStatus.INGESTED,
             manifest_sha256=manifest_sha256,
+            manifest_object_key=object_key,
+            eligibility_reason=eligibility_reason,
+            eligibility_policy_version=eligibility_policy_version,
+            completed_at=completed_at,
         )
         self._idempotency[(context.tenant_id, "session.complete", idempotency_key)] = IdempotencyRecord(
             manifest_sha256, response
