@@ -8,10 +8,51 @@ import stat
 ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
 
 
+def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
+    workflow = (
+        ROOT.parents[2] / ".github" / "workflows" / "quality.yml"
+    ).read_text(encoding="utf-8")
+    assert "UV_INDEX_URL" not in workflow
+    assert (
+        'sudo env "PATH=$PATH" '
+        '"$test_python" -m pytest'
+    ) in workflow
+    assert 'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR"' not in workflow
+
+
+def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> None:
+    path = ROOT / "build-integration-public-bundle.sh"
+    text = path.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
+    assert "must run as root" in text
+    assert "seed.env" not in text
+    assert "systemctl" not in text
+    assert "os.O_NOFOLLOW" in text
+    assert "os.fstat" in text
+    assert "copyfile(" not in text
+    assert "copyfileobj(" not in text
+    assert "--help|-h" not in text
+    assert ".ray-99-integration.lock" in text
+    assert "mv -T" in text
+    assert 'mv -- "$backup" "$destination"' not in text
+    assert 'mv -T -n -- "$backup" "$destination"' in text
+    assert "ca_source_payload = ca_input.read()" in text
+    assert "ca_input.seek" not in text
+    assert "write_from_stream" not in text
+    assert 'echo "destination=$destination"' in text
+    assert 'echo "api_base_url=$normalized_api_base_url"' in text
+    assert 'echo "license_key_id=$normalized_license_key_id"' in text
+    assert 'echo "bundle=ray-99-integration"' not in text
+    assert '"$repository_root/scripts/local-env.sh" python -' not in text
+    assert '"$repository_root/client/cloud/packaged_defaults.py"' in text
+    assert "importlib.util.spec_from_file_location" in text
+
+
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
     repository = ROOT.parents[2]
-    project = (repository / "pyproject.toml").read_text()
-    lock = (repository / "uv.lock").read_text()
+    project = (repository / "pyproject.toml").read_text(encoding="utf-8")
+    lock = (repository / "uv.lock").read_text(encoding="utf-8")
     for package in ("alibabacloud-oss-v2", "alibabacloud-credentials"):
         assert package in project
         assert package in lock
