@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import numpy as np
 import pytest
@@ -336,3 +337,51 @@ def test_sealed_stage_attempt_cannot_be_constructed_without_verified_provenance(
             attempt_id="not-a-real-attempt",
             frames=(_frame(0),),
         )
+
+
+def test_sqlite_registration_failure_rolls_promotion_back_and_registers_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    """A failed SQLite registration must leave no promoted session and no handoff."""
+
+    keys = _KeyProvider()
+    store = StateStore(tmp_path / "state.sqlite3", SensitiveBlobCodec(keys))
+    store.put_subject_ref("subject-1", b"opaque")
+    stager = ValidSessionStager(
+        tmp_path / "data",
+        session_id="session-1",
+        key_provider=keys,
+        store=store,
+        subject_uuid="subject-1",
+        consent_id=None,
+        versions={"protocol": "test/1"},
+        started_at_ns=1,
+        expected_stage_ids=("stage-1",),
+    )
+    attempt = _attempt(tmp_path, "stage-1")
+    attempt.append(_frame(0))
+    stager.append_verified_stage(attempt.seal(), _window("stage-1", 0, 20))
+
+    original_commit = store.commit_valid_session
+    monkeypatch.setattr(
+        store,
+        "commit_valid_session",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("controlled sqlite registration failure")
+        ),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        stager.commit_valid(ended_at_ns=100)
+
+    final = tmp_path / "data" / "sessions" / "session-1"
+    assert not final.exists()
+    assert (stager.staging_directory / "registration.json").is_file()
+    with pytest.raises(KeyError):
+        store.sync_handoff_state("session-1")
+
+    monkeypatch.setattr(store, "commit_valid_session", original_commit)
+    committed = stager.commit_valid(ended_at_ns=100)
+    assert committed.session_directory == final
+    assert not (final / "registration.json").exists()
+    assert store.sync_handoff_state("session-1") == "READY_FOR_NETWORK"
