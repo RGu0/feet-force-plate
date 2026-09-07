@@ -8,7 +8,6 @@ import importlib.util
 import io
 import json
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import tempfile
@@ -54,12 +53,6 @@ class PrepareFoundationArtifactTests(unittest.TestCase):
         self.module.LOCK_PATH = lock_path
         self.module.CACHE_DIRECTORY = self.cache
 
-    def _write_gh_stub(self, script_body: str) -> str:
-        stub = self.root / "gh-stub"
-        stub.write_text("#!/usr/bin/env bash\n" + script_body, encoding="utf-8")
-        stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        return str(stub)
-
     def _write_cached_wheel(self, content: bytes) -> Path:
         self.cache.mkdir(parents=True, exist_ok=True)
         artifact = self.cache / self.wheel_name
@@ -84,24 +77,26 @@ class PrepareFoundationArtifactTests(unittest.TestCase):
         self.assertIn("./dev setup", str(context.exception))
 
     def test_download_writes_a_verified_wheel(self) -> None:
-        gh = self._write_gh_stub(
-            'directory=""\n'
-            'previous=""\n'
-            'for argument in "$@"; do\n'
-            '  if [ "$previous" = "--dir" ]; then directory="$argument"; fi\n'
-            '  previous="$argument"\n'
-            "done\n"
-            f'printf \'%s\' "foundation-wheel-bytes" > "$directory/{self.wheel_name}"\n'
-        )
-        with mock.patch("shutil.which", return_value=gh):
-            artifact = self.module.ensure_artifact(download=True)
+        recorded: list[list[str]] = []
+
+        def fake_download(argv, **kwargs):
+            recorded.append(list(argv))
+            self._write_cached_wheel(self.wheel_bytes)
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch("shutil.which", return_value="gh"):
+            with mock.patch("subprocess.run", side_effect=fake_download):
+                artifact = self.module.ensure_artifact(download=True)
         self.assertEqual(artifact.read_bytes(), self.wheel_bytes)
+        self.assertEqual(recorded[0][1:3], ["release", "download"])
+        self.assertIn("v0.1.1", recorded[0])
 
     def test_download_failure_points_to_authentication_and_setup(self) -> None:
-        gh = self._write_gh_stub("exit 4\n")
-        with mock.patch("shutil.which", return_value=gh):
-            with self.assertRaises(RuntimeError) as context:
-                self.module.ensure_artifact(download=True)
+        failure = subprocess.CalledProcessError(4, ["gh", "release", "download"])
+        with mock.patch("shutil.which", return_value="gh"):
+            with mock.patch("subprocess.run", side_effect=failure):
+                with self.assertRaises(RuntimeError) as context:
+                    self.module.ensure_artifact(download=True)
         message = str(context.exception)
         self.assertIn("gh auth login", message)
         self.assertIn("./dev setup", message)
@@ -109,18 +104,14 @@ class PrepareFoundationArtifactTests(unittest.TestCase):
         self.assertIsInstance(context.exception.__cause__, subprocess.CalledProcessError)
 
     def test_downloaded_wheel_failing_verification_is_refused(self) -> None:
-        gh = self._write_gh_stub(
-            'directory=""\n'
-            'previous=""\n'
-            'for argument in "$@"; do\n'
-            '  if [ "$previous" = "--dir" ]; then directory="$argument"; fi\n'
-            '  previous="$argument"\n'
-            "done\n"
-            f'printf \'%s\' "tampered-bytes" > "$directory/{self.wheel_name}"\n'
-        )
-        with mock.patch("shutil.which", return_value=gh):
-            with self.assertRaises(RuntimeError) as context:
-                self.module.ensure_artifact(download=True)
+        def fake_download(argv, **kwargs):
+            self._write_cached_wheel(b"tampered-bytes")
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch("shutil.which", return_value="gh"):
+            with mock.patch("subprocess.run", side_effect=fake_download):
+                with self.assertRaises(RuntimeError) as context:
+                    self.module.ensure_artifact(download=True)
         self.assertIn("SHA-256", str(context.exception))
 
     def test_missing_github_cli_is_reported(self) -> None:
