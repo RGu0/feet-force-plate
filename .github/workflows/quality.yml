@@ -50,6 +50,7 @@ jobs:
           tests/cloud/observability/test_events.py
           tests/foundation/test_versioned_foundation_consumer.py
           tests/test_project_command_contract.py
+          tests/test_prepare_foundation_artifact.py
           --junitxml=pytest-results.xml
       - name: Clean Windows managed Python bootstrap regression
         if: runner.os == 'Windows'

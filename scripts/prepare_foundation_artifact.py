@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,22 +44,29 @@ def ensure_artifact(*, download: bool) -> Path:
     if gh is None:
         raise RuntimeError("GitHub CLI is required to download the private foundation artifact")
     CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            gh,
-            "release",
-            "download",
-            lock["release"],
-            "--repo",
-            REPOSITORY,
-            "--pattern",
-            lock["wheel"],
-            "--dir",
-            str(CACHE_DIRECTORY),
-            "--clobber",
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                gh,
+                "release",
+                "download",
+                lock["release"],
+                "--repo",
+                REPOSITORY,
+                "--pattern",
+                lock["wheel"],
+                "--dir",
+                str(CACHE_DIRECTORY),
+                "--clobber",
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            "GitHub CLI could not download the locked foundation artifact from "
+            f"{REPOSITORY}; authenticate to the private repository "
+            "(gh auth login, or fix GH_TOKEN) and rerun ./dev setup"
+        ) from error
     if not artifact.is_file() or _sha256(artifact) != lock["sha256"]:
         raise RuntimeError("downloaded foundation artifact failed SHA-256 verification")
     return artifact
@@ -68,7 +76,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--download", action="store_true")
     arguments = parser.parse_args()
-    print(ensure_artifact(download=arguments.download))
+    try:
+        print(ensure_artifact(download=arguments.download))
+    except RuntimeError as error:
+        print(f"foundation artifact preparation failed: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
