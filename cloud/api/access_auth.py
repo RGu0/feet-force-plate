@@ -145,6 +145,10 @@ class TenantAccessTokenIssuer:
             payload={
                 "tenant_id": str(tenant_id),
                 "account_id": str(account_id),
+                # CP-03 realm contract: the tenant principal's operator id is
+                # carried under the canonical "sub" claim so the foundation
+                # RealmTokenAuthority can re-verify captured tokens.
+                "sub": str(account_id),
                 "license_id": str(license_id),
                 "hardware_id": hardware_id,
                 "client_installation_id": str(client_installation_id),
