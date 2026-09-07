@@ -161,6 +161,7 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0004_allow_unsigned_revoked_license.sql"
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
 apply_migration_if_column_missing sales inventory_batches activation_binding_mode "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
+apply_migration_if_column_missing screening session_manifests eligibility_reason "$release_source/cloud/migrations/0007_completion_receipt_fields.sql"
 
 role_wrapper="$install_root/roles.sql"
 {

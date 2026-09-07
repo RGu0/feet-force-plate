@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import AsyncIterable
 from uuid import UUID
 
@@ -28,6 +29,14 @@ from shared.contracts.cloud import (
 
 from .object_store import ObjectStore
 from .principal import IngestionPrincipal, coerce_ingestion_principal
+
+# CP-06 completion receipt: the eligibility decision recorded on every
+# completed manifest. Bump the policy version when the gates change.
+COMPLETION_ELIGIBILITY_POLICY_VERSION = "seed-completion-eligibility/1"
+_COMPLETION_ELIGIBILITY_REASON = (
+    "principal can_upload; manifest digest matched; schema supported; "
+    "local quality gate VALID"
+)
 
 
 class IngestionService:
@@ -189,6 +198,9 @@ class IngestionService:
                 expected_sha256,
                 stored.object_key,
                 idempotency_key,
+                eligibility_reason=_COMPLETION_ELIGIBILITY_REASON,
+                eligibility_policy_version=COMPLETION_ELIGIBILITY_POLICY_VERSION,
+                completed_at=datetime.now(UTC),
             )
         except Exception:
             if not await self._repository.object_is_referenced(

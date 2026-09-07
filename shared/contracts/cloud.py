@@ -329,6 +329,13 @@ class ManifestCompletionResponse(ContractModel):
     ingest_status: IngestStatus
     manifest_sha256: Sha256Hex
     idempotent_replay: bool = False
+    # CP-06 completion receipt facts: recorded at completion and replayed
+    # identically from the stored record, so the canonical digest of the
+    # receipt is independently re-derivable (RAY-407).
+    manifest_object_key: str
+    eligibility_reason: str
+    eligibility_policy_version: str
+    completed_at: datetime
 
 
 class SessionStatusResponse(ContractModel):

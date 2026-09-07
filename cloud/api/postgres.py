@@ -1078,6 +1078,10 @@ class PostgresPlatformRepository:
         manifest_sha256: str,
         object_key: str,
         idempotency_key: str,
+        *,
+        eligibility_reason: str,
+        eligibility_policy_version: str,
+        completed_at: datetime,
     ) -> ManifestCompletionResponse:
         failure: Exception | None = None
         response: ManifestCompletionResponse | None = None
@@ -1120,6 +1124,10 @@ class PostgresPlatformRepository:
                         ingest_status=IngestStatus.INGESTED,
                         manifest_sha256=manifest_sha256,
                         idempotent_replay=True,
+                        manifest_object_key=existing["object_key"],
+                        eligibility_reason=existing["eligibility_reason"],
+                        eligibility_policy_version=existing["eligibility_policy_version"],
+                        completed_at=existing["completed_at"],
                     )
             if response is None:
                 rows = await connection.fetch(
@@ -1186,15 +1194,18 @@ class PostgresPlatformRepository:
                     failure = ManifestIncomplete("最终清单与已接收分段集合不一致")
                 else:
                     next_version = session["aggregate_version"] + 1
-                    now = datetime.now(UTC)
+                    now = completed_at
                     if existing is None:
                         await connection.execute(
                             """
                             INSERT INTO screening.session_manifests (
                                 manifest_id, tenant_id, session_id, schema_version,
                                 manifest_sha256, object_key, segment_count, total_frames,
-                                total_bytes, manifest_json, verification_status, verified_at
-                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'VERIFIED',$11)
+                                total_bytes, manifest_json, verification_status,
+                                verified_at, eligibility_reason,
+                                eligibility_policy_version, completed_at,
+                                idempotency_key
+                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'VERIFIED',$11,$12,$13,$14,$15)
                             """,
                             uuid4(),
                             context.tenant_id,
@@ -1209,17 +1220,27 @@ class PostgresPlatformRepository:
                                 manifest.model_dump(mode="json"), separators=(",", ":")
                             ),
                             now,
+                            eligibility_reason,
+                            eligibility_policy_version,
+                            completed_at,
+                            idempotency_key,
                         )
                     else:
                         await connection.execute(
                             """
                             UPDATE screening.session_manifests
-                            SET verification_status='VERIFIED', verified_at=$3
+                            SET verification_status='VERIFIED', verified_at=$3,
+                                eligibility_reason=$4, eligibility_policy_version=$5,
+                                completed_at=$6, idempotency_key=$7
                             WHERE tenant_id=$1 AND session_id=$2
                             """,
                             context.tenant_id,
                             session_id,
                             now,
+                            eligibility_reason,
+                            eligibility_policy_version,
+                            completed_at,
+                            idempotency_key,
                         )
                     await connection.execute(
                         """
@@ -1260,6 +1281,10 @@ class PostgresPlatformRepository:
                         session_id=session_id,
                         ingest_status=IngestStatus.INGESTED,
                         manifest_sha256=manifest_sha256,
+                        manifest_object_key=object_key,
+                        eligibility_reason=eligibility_reason,
+                        eligibility_policy_version=eligibility_policy_version,
+                        completed_at=completed_at,
                     )
             if response is not None:
                 await self._store_idempotency(
