@@ -49,13 +49,16 @@ async def referenced_object_keys(backup_dsn: str) -> list[str]:
 def _read_chunks(stream: object) -> Iterable[bytes]:
     read = getattr(stream, "read", None)
     if callable(read):
-        while True:
-            chunk = read(_CHUNK)
-            if not chunk:
-                return
-            yield chunk
-    else:
-        yield from stream
+        try:
+            data = read(_CHUNK)
+        except TypeError:
+            # OSS SDK v2 StreamBodyReader.read() takes no size argument.
+            data = read()
+        if not data:
+            return
+        yield data
+        return
+    yield from stream
 
 
 def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterable[str],
@@ -71,9 +74,17 @@ def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterab
                 or "\\" in key
             ):
                 raise RuntimeError(f"object key escapes staging root: {key!r}")
+            try:
+                result = client.get_object(sdk.GetObjectRequest(bucket=bucket, key=key))
+            except Exception as exc:  # noqa: BLE001 - classified below
+                if "NoSuchKey" in str(exc):
+                    # Pre-OSS-era objects live in the legacy local tree, which
+                    # the backup already includes; keys absent from OSS are
+                    # simply not fetched from here.
+                    continue
+                raise
             target.parent.mkdir(parents=True, exist_ok=True)
             target.parent.chmod(0o700)
-            result = client.get_object(sdk.GetObjectRequest(bucket=bucket, key=key))
             digest = hashlib.sha256()
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             descriptor = os.open(target, flags, 0o600)
@@ -90,7 +101,8 @@ def export_objects(output_dir: Path, manifest_path: Path) -> int:
     settings = SeedSettings.from_env()
     if settings.object_backend != "aliyun-oss":
         raise RuntimeError("oss backup export requires the aliyun-oss backend")
-    keys = asyncio.run(referenced_object_keys(settings.backup_dsn))
+    backup_dsn = os.environ["FEETFORCEPLATE_BACKUP_DSN"]
+    keys = asyncio.run(referenced_object_keys(backup_dsn))
     client, sdk = build_aliyun_oss_sdk(settings)
     return export_bucket_objects(client, sdk, settings.oss_bucket, keys,
                                  output_dir, manifest_path)

@@ -63,6 +63,30 @@ def test_export_fetches_referenced_keys_and_records_digests(tmp_path: Path) -> N
     assert file_mode == 0o600
 
 
+def test_export_skips_keys_that_live_only_in_the_legacy_local_tree(tmp_path: Path) -> None:
+    bucket = _Bucket({"tenants/t1/segments/0-abc.ffps": b"segment-bytes"})
+
+    class _Missing:
+        def get_object(self, request: SimpleNamespace) -> SimpleNamespace:
+            if request.key not in bucket._objects:
+                raise RuntimeError(
+                    "OperationError: GetObject: Error Code: NoSuchKey. "
+                    "The specified key does not exist."
+                )
+            return bucket.get_object(request)
+
+    manifest = tmp_path / "object-manifest.sha256"
+    manifest.write_text("", encoding="utf-8")
+    count = export_bucket_objects(
+        _Missing(), _Sdk, "the-bucket",
+        ["tenants/t1/segments/0-abc.ffps", "tenants/old/manifests/legacy.json"],
+        tmp_path / "objects", manifest,
+    )
+    assert count == 1
+    assert manifest.read_text(encoding="utf-8").strip().count("\n") == 0
+    assert not (tmp_path / "objects" / "tenants" / "old").exists()
+
+
 def test_export_rejects_keys_that_escape_the_staging_root(tmp_path: Path) -> None:
     import pytest
 
