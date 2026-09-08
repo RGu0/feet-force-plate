@@ -267,6 +267,7 @@ class DaoOneP4864Parser:
         self._wall_time_ns = wall_time_ns
         self._buffer = bytearray()
         self._next_source_index = 0
+        self._previous_emitted_monotonic_ns: int | None = None
         self._next_integrity_event_index = 0
         self._integrity_events: list[ProtocolIntegrityEvent] = []
         self._max_buffer_bytes = resolved_max_buffer_bytes
@@ -420,7 +421,14 @@ class DaoOneP4864Parser:
             expected = (-sum(frame[self.profile.checksum_start : self.profile.checksum_end])) & 0xFF
             if frame[self.profile.checksum_offset] != expected:
                 quality_flags.add("CHECKSUM_MISMATCH_OBSERVED")
-        host_monotonic_ns = self._monotonic_ns()
+        observed_monotonic_ns = self._monotonic_ns()
+        previous = self._previous_emitted_monotonic_ns
+        host_monotonic_ns = (
+            observed_monotonic_ns
+            if previous is None or observed_monotonic_ns > previous
+            else previous + 1
+        )
+        self._previous_emitted_monotonic_ns = host_monotonic_ns
         decoded = RawFrame(
             values=values,
             host_monotonic_ns=host_monotonic_ns,
