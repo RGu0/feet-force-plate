@@ -74,9 +74,17 @@ def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterab
                 or "\\" in key
             ):
                 raise RuntimeError(f"object key escapes staging root: {key!r}")
+            try:
+                result = client.get_object(sdk.GetObjectRequest(bucket=bucket, key=key))
+            except Exception as exc:  # noqa: BLE001 - classified below
+                if "NoSuchKey" in str(exc):
+                    # Pre-OSS-era objects live in the legacy local tree, which
+                    # the backup already includes; keys absent from OSS are
+                    # simply not fetched from here.
+                    continue
+                raise
             target.parent.mkdir(parents=True, exist_ok=True)
             target.parent.chmod(0o700)
-            result = client.get_object(sdk.GetObjectRequest(bucket=bucket, key=key))
             digest = hashlib.sha256()
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             descriptor = os.open(target, flags, 0o600)
