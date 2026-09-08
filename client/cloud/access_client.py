@@ -10,6 +10,8 @@ import httpx
 from pydantic import BaseModel, ValidationError
 from techflex_cloud_foundation import SecureTransport
 
+from client.cloud.foundation_compat import foundation_verify
+
 from shared.contracts.access_control import (
     ActivateAccountRequest,
     ActivateAccountResponse,
@@ -67,7 +69,7 @@ class CloudAccessClient:
     ) -> None:
         self._client = SecureTransport(
             base_url,
-            verify=verify,
+            verify=foundation_verify(verify),
             transport=transport,
             timeout=timeout,
         )
