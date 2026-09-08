@@ -37,13 +37,32 @@ trap cleanup EXIT
 pg_dump --format=custom --no-owner --no-privileges \
     --file="$stage/database.dump" "$FEETFORCEPLATE_BACKUP_DSN"
 
-(
-    cd "$FEETFORCEPLATE_OBJECT_ROOT"
-    find . -type f ! -path './.staging/*' -print0 \
-        | sort -z \
-        | xargs -0 -r sha256sum
-) >"$stage/object-manifest.sha256"
-tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
+mkdir -m 0700 "$stage/objects"
+if [[ "${FEETFORCEPLATE_OBJECT_BACKEND:-}" == "aliyun-oss" ]]; then
+    # Objects live in OSS since the storage backend switched; the backup must
+    # still cover them (RAY-405).  Legacy local objects are included so a
+    # single bundle restores both eras.
+    touch "$stage/object-manifest.sha256"
+    chmod 0600 "$stage/object-manifest.sha256"
+    ./dev run python deploy/aliyun/seed/oss_backup_export.py \
+        --output-dir "$stage/objects" \
+        --manifest "$stage/object-manifest.sha256"
+    (
+        cd "$FEETFORCEPLATE_OBJECT_ROOT"
+        find . -type f ! -path './.staging/*' -print0 \
+            | sort -z \
+            | xargs -0 -r sha256sum
+    ) >>"$stage/object-manifest.sha256"
+    tar -C "$stage/objects" -cf "$stage/objects.tar" .
+else
+    (
+        cd "$FEETFORCEPLATE_OBJECT_ROOT"
+        find . -type f ! -path './.staging/*' -print0 \
+            | sort -z \
+            | xargs -0 -r sha256sum
+    ) >"$stage/object-manifest.sha256"
+    tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
+fi
 
 schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license,0005_sales_inventory_activation,0006_inventory_activation_pairing"
 printf '{"backup_id":"%s","implementation_sha":"%s","schema_versions":"%s","created_at":"%s"}\n' \
