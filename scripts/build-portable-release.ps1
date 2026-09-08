@@ -42,7 +42,7 @@ if (-not $GitCommit) {
     throw "GitCommit or FEETFORCEPLATE_BUILD_COMMIT is required"
 }
 
-& powershell -ExecutionPolicy Bypass -File $localEnvironment uv run --extra dev --extra build python -m PyInstaller `
+& pwsh -ExecutionPolicy Bypass -File $localEnvironment uv run --extra dev --extra build python -m PyInstaller `
     --noconfirm --clean `
     --distpath $distRoot `
     --workpath $buildRoot `
@@ -88,7 +88,7 @@ Compress-Archive -LiteralPath $applicationDirectory -DestinationPath $archive -C
 $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$archive.sha256" -Value "$digest  $archiveName" -NoNewline -Encoding ascii
 
-& powershell -ExecutionPolicy Bypass -File $localEnvironment python -m client.app.packaging.portable_release create `
+& pwsh -ExecutionPolicy Bypass -File $localEnvironment python -m client.app.packaging.portable_release create `
     --archive $archive `
     --app-version $appVersion `
     --git-commit $GitCommit `
