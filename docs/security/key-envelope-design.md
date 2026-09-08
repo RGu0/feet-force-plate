@@ -28,10 +28,18 @@ terminal_wrapped_dek     = Wrap(terminal_public_key, DEK)
 
 ## License 与生命周期
 
+keyset 的下发与验签权威是 foundation `TrustBundle` / `SignedTrustBundle` /
+`TrustBundleVerifier`（见[总体架构设计](../架构设计文档.md) §14.1）；本项目不另行实现
+签名信封、撤销列表或版本比较。对应关系：bundle 的 `signing_keys` 承载
+`key_id → 公钥`，`revoked_key_ids` 承载撤销，`revision` 严格单调递增以拒绝回滚，
+`policy` 承载随信任链下发的策略开关。License 状态与权益判定使用
+`LicenseState` / `LicenseRecord` / `LicenseLifecycle` / `EntitlementDecision`。
+
 1. 终端必须先通过服务器的 License 验证和终端身份验证，才可领取有效
    的服务器公钥配置（keyset）。
-2. keyset 必须带签名、`key_id`、用途、租户/终端约束、有效期和撤销策略；
-   客户端不得接受未验证或过期的 keyset。
+2. keyset 以 Ed25519 根公钥验签的 `SignedTrustBundle` 形式下发，并携带 `key_id`、用途、
+   租户/终端约束、有效期和撤销策略；客户端通过 `TrustBundleVerifier.verify(...,
+   minimum_revision=已安装 revision)` 校验，拒绝验签失败、revision 未增长或已过期的 keyset。
 3. 新工件使用当前 keyset；旧工件保留其 `key_id`，服务端保留历史私钥
    直到相应保留期结束。撤销终端会阻止新会话和新 keyset，不静默破坏已
    封存工件的受控上传与恢复。
@@ -44,9 +52,16 @@ terminal_wrapped_dek     = Wrap(terminal_public_key, DEK)
 - 不得把终端私钥传给服务器，也不得把服务器私钥发给终端。
 - 不得把长期对称根密钥写入 SQLite、配置、fixture、日志或普通文件。
 - 不得以同一长期密钥直接加密所有会话/报告数据。
+- 不得自行实现 keyset 的签名验证、撤销比对或 revision 比较，必须使用 foundation `TrustBundleVerifier`。
 
 ## 本地安全存储的角色
 
 macOS Keychain/Secure Enclave、Windows CNG/DPAPI 等仅负责保存终端私钥或
 不可导出的密钥句柄；它们不是自行生成、替代服务器治理的长期数据根
 密钥。生产适配器必须显式处理锁定、不可用、轮换和恢复失败。
+
+## 已知待对齐
+
+当前代码尚未把 keyset 下发切换到 `TrustBundleVerifier`，License 状态也未使用
+`LicenseState` / `LicenseLifecycle`；本节描述的是目标权威接口，不代表已完成。
+收敛见 RAY-428 与[总体架构设计](../架构设计文档.md) §14.3。

@@ -110,7 +110,10 @@ E-UPD-xxx  更新和配置
 
 ## 10. 测试与验收
 
-- 一次测试可通过 `session_id/correlation_id` 串联端云日志；
+- 一次测试可通过 `session_id/correlation_id` 串联端云日志；客户端的 `correlation_id` 由 foundation
+  `SecureTransport` 保证每请求存在，401 重放复用同一 ID，因此一次业务动作在端云两侧同 ID；
+- 审计与指标的出口接口是 foundation `AuditSink` / `MetricsSink`，本模块只实现具体落地端；
+  > **已知待对齐**：当前观测模块尚未通过这两个协议表达出口，见[总体架构设计](../架构设计文档.md) §14.3。
 - 日志脱敏测试覆盖所有身份字段和密钥；
 - 断网后日志可补传且不影响采集；
 - 环形缓冲满时保留高优先级错误；

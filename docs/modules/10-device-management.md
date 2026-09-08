@@ -67,7 +67,17 @@ disk_free / clock_skew / last_error_code
 
 ## 6. License 与功能开关
 
-- License 使用云端签名、本地公钥验证和缓存；
+License 与信任链的权威接口来自 foundation（见[总体架构设计](../架构设计文档.md) §14.1）：
+状态机为 `LicenseState`（`UNUSED/ACTIVE/SUSPENDED/REVOKED`）与 `LicenseLifecycle`
+（未使用的 License 才能激活，已撤销不可复活），权益判定为 `EntitlementDecision` /
+`EntitlementResolver`，签名服务器公钥集与远程策略为 `TrustBundle` / `TrustBundleVerifier`
+（Ed25519 根验签 + `revision` 单调递增 + `revoked_key_ids`）。本模块只实现租户、账号与
+硬件绑定等业务解析，不自建签名验证或状态迁移逻辑。
+
+> **已知待对齐**：当前实现仍为应用自建的签名 License 与 keyset 校验，未接入上述接口；
+> 收敛见 RAY-428 与[总体架构设计](../架构设计文档.md) §14.3。
+
+- License 由云端签名、终端以 `TrustBundleVerifier` 校验后缓存；
 - 功能开关控制商业模块，但不能覆盖数据质量和算法验证门控；
 - 超过在线宽限、终端吊销或机构停用时限制新测试；
 - 当前测试始终允许安全结束；

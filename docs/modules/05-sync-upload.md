@@ -79,10 +79,14 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 
 ## 6. 重试和断点续传
 
-- 连接超时、429、5xx 和可恢复网络错误使用持久化 equal-jitter 退避：第 `n` 次尝试的
-  上界为 `min(900 s, 5 s × 2^(n-1))`，等待时间在该上界的 50%–100% 之间随机取值；
-  `Retry-After` 更大时优先。基数为 5 秒，封顶为 900 秒；
-- 鉴权失败先刷新设备凭据，仍失败则进入需要支持的阻断状态；
+- 连接超时、429、5xx 和可恢复网络错误使用持久化退避。权威语义是 foundation `RetryPolicy`：
+  第 `n` 次间隔为 `min(cap, base × 2^(n-1))`，本项目取 `base = 5 s`、`cap = 900 s`，**不叠加 jitter**，
+  服务端 `Retry-After` **无条件优先**；
+  > **已知待对齐**：本模块当前实现（`client/sync/persistent_upload.py`）仍是 equal-jitter
+  > （上界 50%–100% 随机，且仅在 `Retry-After` 更大时优先），尚未切换到 `RetryPolicy`，
+  > 见[总体架构设计](../架构设计文档.md) §14.3。
+- 鉴权失败由 foundation `AuthorizedTransport` 刷新一次设备凭据并以同一 correlation ID 重放，
+  仍失败则进入需要支持的阻断状态；
 - 4xx 业务错误不无限重试，进入隔离队列并上报告警；
 - 客户端重启后从 SQLite 恢复任务，不依赖内存状态；
 - 会话完成前后均可查询服务端缺段，只补传缺失或摘要不一致项；
@@ -101,7 +105,7 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 
 ## 8. 安全
 
-- TLS 传输，终端使用独立设备身份；
+- 出站请求经由 foundation `SecureTransport` 建立 TLS 通道（默认强制校验证书、`trust_env=False` 忽略环境代理与环境 CA、每请求带 `X-Correlation-ID`），终端使用独立设备身份；
 - 不在日志中记录 token、身份明文和原始载荷；
 - 上传前验证本地密文摘要，服务端验证接收摘要；
 - 客户端不接受服务器要求上传任意本地路径；
