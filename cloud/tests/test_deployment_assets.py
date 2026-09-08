@@ -3,9 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import stat
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
+
+
+def _read_repository_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
@@ -47,6 +52,13 @@ def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> Non
     assert '"$repository_root/scripts/local-env.sh" python -' not in text
     assert '"$repository_root/client/cloud/packaged_defaults.py"' in text
     assert "importlib.util.spec_from_file_location" in text
+def test_repository_text_reader_uses_utf8() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        metadata = Path(directory) / "project.toml"
+        expected = 'name = "足底压力"\n'
+        metadata.write_text(expected, encoding="utf-8")
+
+        assert _read_repository_text(metadata) == expected
 
 
 def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
@@ -59,7 +71,7 @@ def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> Non
 
 
 def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
-    text = (ROOT / "feetforceplate-seed.service").read_text()
+    text = _read_repository_text(ROOT / "feetforceplate-seed.service")
     for token in (
         "User=feetforceplate", "Group=feetforceplate", "NoNewPrivileges=true",
         "PrivateTmp=true", "ProtectSystem=strict", "ProtectHome=true",
@@ -76,7 +88,7 @@ def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
 
 
 def test_nginx_7443_ingress_has_tls_limits_rates_and_no_private_static_mapping() -> None:
-    text = (ROOT / "nginx-feetforceplate-seed.conf").read_text()
+    text = _read_repository_text(ROOT / "nginx-feetforceplate-seed.conf")
     for token in (
         "listen 7443 ssl", "ssl_protocols TLSv1.2 TLSv1.3",
         "client_max_body_size", "client_header_timeout", "client_body_timeout",
@@ -92,7 +104,7 @@ def test_nginx_7443_ingress_has_tls_limits_rates_and_no_private_static_mapping()
 
 
 def test_postgres_roles_are_non_privileged_and_network_is_loopback_only() -> None:
-    text = (ROOT / "postgresql-role-grants.sql").read_text()
+    text = _read_repository_text(ROOT / "postgresql-role-grants.sql")
     for role in ("ffp_seed_tenant", "ffp_seed_activation", "ffp_seed_platform"):
         assert role in text
     assert text.count("NOSUPERUSER") >= 3
@@ -106,8 +118,8 @@ def test_postgres_roles_are_non_privileged_and_network_is_loopback_only() -> Non
 
 
 def test_managed_nginx_and_postgres_configs_expose_only_seed_loopback_boundaries() -> None:
-    nginx = (ROOT / "nginx.conf").read_text()
-    pg_hba = (ROOT / "pg_hba.conf").read_text()
+    nginx = _read_repository_text(ROOT / "nginx.conf")
+    pg_hba = _read_repository_text(ROOT / "pg_hba.conf")
     assert "include /etc/nginx/conf.d/*.conf" in nginx
     assert "listen" not in nginx
     assert "127.0.0.1/32" in pg_hba and "::1/128" in pg_hba
@@ -120,8 +132,8 @@ def test_managed_nginx_and_postgres_configs_expose_only_seed_loopback_boundaries
 
 
 def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -> None:
-    layout = (ROOT / "install-layout.sh").read_text()
-    checker = (ROOT / "check-secrets.sh").read_text()
+    layout = _read_repository_text(ROOT / "install-layout.sh")
+    checker = _read_repository_text(ROOT / "check-secrets.sh")
     for path in (
         "/opt/feetforceplate/releases", "/opt/feetforceplate/app",
         "/etc/feetforceplate/seed.env", "/var/lib/feetforceplate/objects",
@@ -139,7 +151,7 @@ def test_layout_and_secret_checker_enforce_ownership_without_printing_values() -
 
 
 def test_host_prerequisites_are_idempotent_and_do_not_cut_over_7443() -> None:
-    text = (ROOT / "host-prerequisites.sh").read_text()
+    text = _read_repository_text(ROOT / "host-prerequisites.sh")
     for token in (
         "dnf install -y nginx postgresql-server postgresql-contrib",
         "/var/lib/pgsql/data/PG_VERSION",
@@ -158,7 +170,7 @@ def test_host_prerequisites_are_idempotent_and_do_not_cut_over_7443() -> None:
 
 def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     path = ROOT / "install-seed-release.sh"
-    text = path.read_text()
+    text = _read_repository_text(path)
     for token in (
         "sha256sum", "scram-sha-256", "17443", "/health/ready",
         "uvicorn cloud.api.integration:app_from_environment", "kill -TERM \"$old_pid\"",
@@ -182,7 +194,7 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
 
 def test_oss_configuration_uses_ecs_role_without_long_lived_access_keys() -> None:
     path = ROOT / "configure-oss.sh"
-    text = path.read_text()
+    text = _read_repository_text(path)
     for token in (
         "FEETFORCEPLATE_OBJECT_BACKEND=aliyun-oss",
         "FEETFORCEPLATE_OSS_REGION",
@@ -202,13 +214,13 @@ def test_oss_configuration_uses_ecs_role_without_long_lived_access_keys() -> Non
 
 
 def test_backup_metadata_includes_sales_inventory_schema_version() -> None:
-    text = (ROOT / "backup.sh").read_text()
+    text = _read_repository_text(ROOT / "backup.sh")
     assert "0005_sales_inventory_activation" in text
     assert "0006_inventory_activation_pairing" in text
 
 
 def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
-    text = (ROOT / "feetforceplate-sales-inventory-server.sh").read_text()
+    text = _read_repository_text(ROOT / "feetforceplate-sales-inventory-server.sh")
     assert 'release_manifest="/home/rui/feetforceplate-sales-inventory-release.env"' in text
     assert 'source "$release_manifest"' in text
     assert 'release_sha="${RELEASE_SHA:?missing RELEASE_SHA}"' in text
@@ -234,7 +246,7 @@ def test_systemd_entry_scripts_are_executable() -> None:
 
 
 def test_resume_cutover_requires_persistent_readiness_before_stopping_legacy() -> None:
-    text = (ROOT / "resume-seed-cutover.sh").read_text()
+    text = _read_repository_text(ROOT / "resume-seed-cutover.sh")
     assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
     assert text.index("https://127.0.0.1:17443/health/ready") < text.index("kill -TERM")
     assert "uvicorn cloud.api.integration:app_from_environment" in text
@@ -244,7 +256,7 @@ def test_resume_cutover_requires_persistent_readiness_before_stopping_legacy() -
 
 
 def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
-    text = (ROOT / "run-live-acceptance.sh").read_text()
+    text = _read_repository_text(ROOT / "run-live-acceptance.sh")
     assert text.count("FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv") >= 3
     assert text.count("XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache") >= 3
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in text
