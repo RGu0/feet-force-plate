@@ -51,6 +51,7 @@ jobs:
           tests/cloud/analysis/test_orchestrator.py
           tests/cloud/observability/test_events.py
           tests/foundation/test_versioned_foundation_consumer.py
+          tests/foundation/test_tls_compat.py
           tests/test_project_command_contract.py
           tests/test_prepare_foundation_artifact.py
           --junitxml=pytest-results.xml
