@@ -883,7 +883,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy" },
     { name = "sqlalchemy" },
-    { name = "techflex-cloud-foundation", path = ".foundation-artifacts/techflex_cloud_foundation-0.1.1-py3-none-any.whl" },
+    { name = "techflex-cloud-foundation", path = ".foundation-artifacts/techflex_cloud_foundation-0.2.0-py3-none-any.whl" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 provides-extras = ["build", "dev"]
@@ -3103,14 +3103,14 @@ wheels = [
 
 [[package]]
 name = "techflex-cloud-foundation"
-version = "0.1.1"
-source = { path = ".foundation-artifacts/techflex_cloud_foundation-0.1.1-py3-none-any.whl" }
+version = "0.2.0"
+source = { path = ".foundation-artifacts/techflex_cloud_foundation-0.2.0-py3-none-any.whl" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
 ]
 wheels = [
-    { filename = "techflex_cloud_foundation-0.1.1-py3-none-any.whl", hash = "sha256:26a8647541398ab95c8d039c86e8b440815318960686ba94174c6043bb469107" },
+    { filename = "techflex_cloud_foundation-0.2.0-py3-none-any.whl", hash = "sha256:1dd34fb4902fb7359af346e153123e8db12befc6ae8a9de2105e11f80af74303" },
 ]
 
 [package.metadata]
@@ -3118,7 +3118,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'server'", specifier = ">=0.30,<1" },
     { name = "cryptography", specifier = ">=42,<51" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.17,<2" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.17,<3" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },

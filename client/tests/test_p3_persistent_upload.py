@@ -348,7 +348,6 @@ class PersistentUploadQueueTests(unittest.TestCase):
         remote: _IngestionService,
         *,
         clock: _Clock | None = None,
-        random_fraction=lambda: 0.0,
     ) -> PersistentUploadQueue:
         return PersistentUploadQueue(
             self.store,
@@ -356,7 +355,6 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.keys,
             remote,
             now_ns=clock or _Clock(),
-            random_fraction=random_fraction,
         )
 
     def test_restart_resumes_only_missing_segments_and_retains_acknowledged_files(
@@ -658,7 +656,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(len(remote.complete_keys), 1)
         self.assertTrue(sealed.path.exists())
 
-    def test_restart_preserves_equal_jitter_and_retry_after_deadlines(self) -> None:
+    def test_restart_preserves_foundation_backoff_and_retry_after_deadlines(self) -> None:
         """A restart must not lease durable backoff work before its due time."""
 
         sealed = self._seal(0)
@@ -671,14 +669,14 @@ class PersistentUploadQueueTests(unittest.TestCase):
         clock = _Clock()
 
         self.assertIs(
-            self._queue(remote, clock=clock, random_fraction=lambda: 0.0).upload_next(
+            self._queue(remote, clock=clock).upload_next(
                 _Tokens()
             ),
             UploadCycleOutcome.DEFERRED,
         )
         self.assertEqual(
             self.store.sync_handoff_retry_state(str(self.session_id)),
-            (1, 3_500_000_000, "E-SYN-001"),
+            (1, 6_000_000_000, "E-SYN-001"),
         )
 
         self.store.close()
@@ -693,14 +691,14 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
 
-        clock.value = 3_500_000_000
+        clock.value = 6_000_000_000
         self.assertIs(
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.DEFERRED,
         )
         self.assertEqual(
             self.store.sync_handoff_retry_state(str(self.session_id)),
-            (2, 63_500_000_000, "E-SYN-001"),
+            (2, 66_000_000_000, "E-SYN-001"),
         )
 
         self.store.close()
@@ -732,7 +730,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
             (1, 5_000_000_000, "E-SYN-001"),
         )
 
-    def test_retry_delay_uses_durable_attempt_count_and_equal_jitter_bounds(
+    def test_retry_delay_uses_durable_attempt_count_without_jitter(
         self,
     ) -> None:
         sealed = self._seal(0)
@@ -742,19 +740,17 @@ class PersistentUploadQueueTests(unittest.TestCase):
             UploadRetryable("temporary"),
             UploadRetryable("temporary"),
         ]
-        fractions = iter((0.0, 1.0))
         clock = _Clock()
         queue = self._queue(
             remote,
             clock=clock,
-            random_fraction=lambda: next(fractions),
         )
 
         self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
         attempt, due_ns, error_code = self.store.sync_handoff_retry_state(
             str(self.session_id)
         )
-        self.assertEqual((attempt, due_ns, error_code), (1, 3_500_000_000, "E-SYN-001"))
+        self.assertEqual((attempt, due_ns, error_code), (1, 6_000_000_000, "E-SYN-001"))
 
         assert due_ns is not None
         clock.value = due_ns
@@ -764,7 +760,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertEqual(
             (attempt, due_ns, error_code),
-            (2, 13_500_000_000, "E-SYN-001"),
+            (2, 16_000_000_000, "E-SYN-001"),
         )
 
     def test_retry_delay_caps_and_larger_retry_after_wins(self) -> None:
@@ -773,16 +769,16 @@ class PersistentUploadQueueTests(unittest.TestCase):
         remote = _IngestionService()
         remote.failures["status"] = [UploadRetryable("temporary")] * 12
         clock = _Clock()
-        queue = self._queue(remote, clock=clock, random_fraction=lambda: 1.0)
+        queue = self._queue(remote, clock=clock)
 
-        for _ in range(12):
+        for expected_delay in (5, 10, 20, 40, 80, 160, 320, 640, 900, 900, 900, 900):
             before = clock.value
             self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
             _attempt, due_ns, _error_code = self.store.sync_handoff_retry_state(
                 str(self.session_id)
             )
             assert due_ns is not None
-            self.assertLessEqual(due_ns - before, 900_000_000_000)
+            self.assertEqual(due_ns - before, expected_delay * 1_000_000_000)
             clock.value = due_ns
         self.assertEqual(due_ns - before, 900_000_000_000)
 
@@ -795,6 +791,135 @@ class PersistentUploadQueueTests(unittest.TestCase):
             str(self.session_id)
         )
         self.assertEqual(due_ns, before + 1_200_000_000_000)
+
+    def test_extended_offline_retry_count_stays_capped_then_recovers(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.failures["status"] = [UploadRetryable("offline")] * 100
+        clock = _Clock()
+        for attempt in range(1, 101):
+            before = clock.value
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+            count, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
+            self.assertEqual(count, attempt)
+            if attempt >= 9:
+                self.assertEqual(due_ns, before + 900_000_000_000)
+            clock.value = due_ns
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.store.recover_interrupted_state(recovered_at_ns=clock.value)
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(remote.put_calls, [0])
+        self.assertEqual(remote.received[0][1], sealed.path.read_bytes())
+
+    def test_http_retry_after_unconditionally_sets_the_durable_deadline(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        clock = _Clock()
+        # Preserve the nanosecond clock remainder when adapting datetime policy.
+        clock.value = 1_700_000_000_123_456_789
+        for header, delay in (("0", 0), ("1", 1), ("1200", 1200)):
+            with self.subTest(retry_after=header):
+                client = HttpIngestionClient(
+                    "https://cloud.test",
+                    terminal_id=uuid4(),
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(429, headers={"Retry-After": header})
+                    ),
+                )
+                try:
+                    queue = PersistentUploadQueue(
+                        self.store, self.root, self.keys, client, now_ns=clock
+                    )
+                    self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+                finally:
+                    client.close()
+                _, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
+                self.assertEqual(due_ns, clock.value + delay * 1_000_000_000)
+                clock.value = due_ns
+        self.assertIs(self._queue(_IngestionService(), clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+
+    def test_fault_sequence_reconciles_immutable_upload_after_restart(self) -> None:
+        """Virtual slow network, disconnect, reordered receipts and replayed completion."""
+        sealed = tuple(self._seal(index) for index in range(3))
+        self._commit(*sealed)
+        clock = _Clock()
+
+        class FaultyService(_IngestionService):
+            lose_put_response = True
+            replay_completion = None
+            receipt_orders = []
+
+            def _fail_if_requested(self, operation):
+                clock.value += 2_000_000_000  # elapsed response time, without wall-clock sleeps
+                super()._fail_if_requested(operation)
+
+            def put_segment(self, *args):
+                response = super().put_segment(*args)
+                if response.index == 1 and self.lose_put_response:
+                    self.lose_put_response = False
+                    raise UploadRetryable("slow response lost after server persisted segment")
+                return response
+
+            def list_segments(self, *args):
+                response = super().list_segments(*args)
+                received = tuple(reversed(response.received))
+                self.receipt_orders.append(tuple(item.index for item in received))
+                return response.model_copy(update={"received": received})
+
+            def complete_session(self, *args):
+                if self.replay_completion is not None:
+                    self.complete_keys.append(args[-1])
+                    self.status = SessionStatusResponse(
+                        session_id=args[1], validity_status=ValidityStatus.VALID,
+                        ingest_status=IngestStatus.INGESTED,
+                    )
+                    return self.replay_completion
+                self.replay_completion = super().complete_session(*args)
+                # The completion receipt is accepted, but the status read is stale.
+                self.status = SessionStatusResponse(
+                    session_id=args[1], validity_status=ValidityStatus.UNKNOWN,
+                    ingest_status=IngestStatus.RECEIVING, retry_after_seconds=1,
+                )
+                return self.replay_completion
+
+        remote = FaultyService()
+        remote.failures["status"] = [UploadRetryable("disconnected")]
+        for attempt, delay in enumerate((5, 10, 1), start=1):
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+            self.assertEqual(
+                self.store.sync_handoff_retry_state(str(self.session_id)),
+                (attempt, clock.value + delay * 1_000_000_000, "E-SYN-001"),
+            )
+            due_ns = clock.value + delay * 1_000_000_000
+            self.store.close()
+            self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+            self.store.recover_interrupted_state(recovered_at_ns=clock.value)
+            calls_before = list(remote.calls)
+            clock.value = due_ns - 1
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.IDLE)
+            self.assertEqual(remote.calls, calls_before)
+            clock.value = due_ns
+
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED")
+        self.assertEqual(remote.put_calls, [0, 1, 2])
+        self.assertIn((1, 0), remote.receipt_orders)
+        self.assertIn((2, 1, 0), remote.receipt_orders)
+        self.assertEqual(len(remote.manifests), 1)
+        self.assertEqual(len(remote.complete_keys), 2)
+        self.assertEqual(len(set(remote.complete_keys)), 1)
+        for keys in (remote.subject_keys, remote.consent_keys, remote.session_keys):
+            self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(tuple(item.index for item in remote.manifests[0].segments), (0, 1, 2))
+        for index, segment in enumerate(sealed):
+            payload = segment.path.read_bytes()
+            self.assertEqual(remote.received[index][1], payload)
+            self.assertEqual(remote.received[index][0].sha256, hashlib.sha256(payload).hexdigest())
+        calls_before = list(remote.calls)
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.IDLE)
+        self.assertEqual(remote.calls, calls_before)
 
     def test_authentication_refreshes_once_and_restarts_with_the_new_token(self) -> None:
         sealed = self._seal(0)

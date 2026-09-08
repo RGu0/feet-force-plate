@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 import hashlib
 from pathlib import Path
-import random
 import re
 import time
 from typing import Any, Protocol
@@ -16,7 +15,9 @@ from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
-from techflex_cloud_foundation import SecureTransport
+from techflex_cloud_foundation import RetryPolicy, SecureTransport
+
+from client.cloud.foundation_compat import foundation_verify
 
 from client.spool.segments import SegmentIntegrityError, read_segment
 from client.spool.state_store import (
@@ -54,8 +55,10 @@ from shared.contracts.cloud import (
 
 
 _SAFE_ERROR_CODE = re.compile(r"^E-[A-Z]{3}-[0-9]{3}$")
-_RETRY_BASE_SECONDS = 5.0
-_RETRY_CAP_SECONDS = 900.0
+_UPLOAD_RETRY_POLICY = RetryPolicy(
+    base_delay=timedelta(seconds=5),
+    cap_delay=timedelta(seconds=900),
+)
 
 
 class UploadError(RuntimeError):
@@ -233,14 +236,12 @@ class PersistentUploadQueue:
         client: IngestionClient,
         *,
         now_ns=time.time_ns,
-        random_fraction=random.random,
     ) -> None:
         self._store = store
         self._root = Path(repository_root).resolve()
         self._keys = key_provider
         self._client = client
         self._now_ns = now_ns
-        self._random_fraction = random_fraction
 
     def upload_next(
         self, token_provider: UploadTokenProvider
@@ -521,20 +522,19 @@ class PersistentUploadQueue:
         *,
         retry_after_seconds: float | None,
     ) -> float:
-        if attempt_count < 1:
-            raise ValueError("attempt_count must be positive")
-        fraction = float(self._random_fraction())
-        if not 0.0 <= fraction <= 1.0:
-            raise ValueError("random_fraction must return a value between zero and one")
-        if attempt_count >= 9:
-            exponential_cap = _RETRY_CAP_SECONDS
-        else:
-            exponential_cap = min(
-                _RETRY_CAP_SECONDS,
-                _RETRY_BASE_SECONDS * (2 ** (attempt_count - 1)),
-            )
-        equal_jitter = exponential_cap / 2 + fraction * exponential_cap / 2
-        return max(equal_jitter, retry_after_seconds or 0.0)
+        # Use a fixed origin to obtain the policy's delay, then let _defer add it
+        # to the original nanosecond clock without a lossy datetime round trip.
+        origin = datetime(1970, 1, 1, tzinfo=UTC)
+        next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
+            now=origin,
+            attempt_count=attempt_count,
+            retry_after=(
+                timedelta(seconds=retry_after_seconds)
+                if retry_after_seconds is not None
+                else None
+            ),
+        )
+        return (next_attempt - origin).total_seconds()
 
     def _block_unexpected(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         self._store.mark_sync_handoff_blocked(
@@ -615,7 +615,7 @@ class HttpIngestionClient:
     ) -> None:
         self._client = SecureTransport(
             base_url,
-            verify=verify,
+            verify=foundation_verify(verify),
             transport=transport,
         )
         self._terminal_id = terminal_id
