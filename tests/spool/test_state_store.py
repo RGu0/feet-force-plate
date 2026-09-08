@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -301,13 +302,15 @@ class StateStoreTests(unittest.TestCase):
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
         self.assertEqual(self.store.schema_version, 9)
-        with sqlite3.connect(self.db_path) as verification:
+        with closing(sqlite3.connect(self.db_path)) as verification:
             columns = {
                 row[1]
                 for row in verification.execute("PRAGMA table_info(sync_handoffs)")
             }
         self.assertIn("supporting_local_analysis", columns)
         self.assertIn("upload_envelope", columns)
+        self.store.close()
+        self.db_path.unlink()
 
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")
