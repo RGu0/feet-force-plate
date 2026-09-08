@@ -90,7 +90,8 @@ def export_objects(output_dir: Path, manifest_path: Path) -> int:
     settings = SeedSettings.from_env()
     if settings.object_backend != "aliyun-oss":
         raise RuntimeError("oss backup export requires the aliyun-oss backend")
-    keys = asyncio.run(referenced_object_keys(settings.backup_dsn))
+    backup_dsn = os.environ["FEETFORCEPLATE_BACKUP_DSN"]
+    keys = asyncio.run(referenced_object_keys(backup_dsn))
     client, sdk = build_aliyun_oss_sdk(settings)
     return export_bucket_objects(client, sdk, settings.oss_bucket, keys,
                                  output_dir, manifest_path)
