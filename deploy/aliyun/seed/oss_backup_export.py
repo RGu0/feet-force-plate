@@ -49,13 +49,16 @@ async def referenced_object_keys(backup_dsn: str) -> list[str]:
 def _read_chunks(stream: object) -> Iterable[bytes]:
     read = getattr(stream, "read", None)
     if callable(read):
-        while True:
-            chunk = read(_CHUNK)
-            if not chunk:
-                return
-            yield chunk
-    else:
-        yield from stream
+        try:
+            data = read(_CHUNK)
+        except TypeError:
+            # OSS SDK v2 StreamBodyReader.read() takes no size argument.
+            data = read()
+        if not data:
+            return
+        yield data
+        return
+    yield from stream
 
 
 def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterable[str],
