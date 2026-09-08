@@ -40,19 +40,21 @@ pg_dump --format=custom --no-owner --no-privileges \
 mkdir -m 0700 "$stage/objects"
 if [[ "${FEETFORCEPLATE_OBJECT_BACKEND:-}" == "aliyun-oss" ]]; then
     # Objects live in OSS since the storage backend switched; the backup must
-    # still cover them (RAY-405).  Legacy local objects are included so a
-    # single bundle restores both eras.
-    touch "$stage/object-manifest.sha256"
-    chmod 0600 "$stage/object-manifest.sha256"
+    # still cover them (RAY-405).  Legacy local objects are merged into the
+    # same staging tree so one manifest and one tar cover both eras.
+    if [[ -d "$FEETFORCEPLATE_OBJECT_ROOT" ]]; then
+        tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf - . \
+            | tar -C "$stage/objects" -xf -
+    fi
     ./dev run python deploy/aliyun/seed/oss_backup_export.py \
         --output-dir "$stage/objects" \
-        --manifest "$stage/object-manifest.sha256"
+        --manifest /dev/null
     (
-        cd "$FEETFORCEPLATE_OBJECT_ROOT"
+        cd "$stage/objects"
         find . -type f ! -path './.staging/*' -print0 \
             | sort -z \
             | xargs -0 -r sha256sum
-    ) >>"$stage/object-manifest.sha256"
+    ) >"$stage/object-manifest.sha256"
     tar -C "$stage/objects" -cf "$stage/objects.tar" .
 else
     (
