@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 from zipfile import ZipFile
 
 import pytest
@@ -83,7 +86,11 @@ def test_portable_release_scripts_require_signing_and_delegate_to_contract() -> 
     assert "FEETFORCEPLATE_SIGN_CERT_THUMBPRINT" in build.read_text(encoding="utf-8")
     assert "UnsignedDevelopment" in build.read_text(encoding="utf-8")
     assert "client.app.packaging.portable_release" in build.read_text(encoding="utf-8")
+    assert "& powershell " not in build.read_text(encoding="utf-8")
+    assert "& pwsh " in build.read_text(encoding="utf-8")
     assert "require-signed" in verify.read_text(encoding="utf-8")
+    assert "& powershell " not in verify.read_text(encoding="utf-8")
+    assert "& pwsh " in verify.read_text(encoding="utf-8")
 
 
 def test_portable_build_passes_named_arguments_to_the_release_verifier() -> None:
@@ -93,6 +100,94 @@ def test_portable_build_passes_named_arguments_to_the_release_verifier() -> None
 
     assert "-ReleaseDirectory $releaseRoot" in build
     assert "@verificationArguments" not in build
+
+
+def test_portable_release_uses_pwsh_for_build_and_verification_child_processes(
+    tmp_path: Path,
+) -> None:
+    """Exercise the actual release scripts with a child ``pwsh`` test double.
+
+    The outer process intentionally uses the real PowerShell 7 executable.  Its
+    child calls must resolve the test double from PATH; a Windows PowerShell 5.1
+    child would bypass it and the copied project has no usable development
+    runtime, which keeps this regression sensitive to the executable name.
+    """
+
+    pwsh = shutil.which("pwsh")
+    if os.name != "nt" or pwsh is None:
+        pytest.skip("requires Windows PowerShell 7")
+
+    project = tmp_path / "project"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    for name in (
+        "build-portable-release.ps1",
+        "verify-portable-release.ps1",
+        "local-env.ps1",
+    ):
+        shutil.copy2(ROOT / "scripts" / name, scripts / name)
+    (project / "pyproject.toml").write_text('version = "0.1.0"\n', encoding="utf-8")
+
+    child_bin = tmp_path / "child-bin"
+    child_bin.mkdir()
+    child_log = tmp_path / "child-pwsh.log"
+    output_root = tmp_path / "output"
+    child = child_bin / "pwsh.cmd"
+    child.write_text(
+        "\r\n".join(
+            (
+                "@echo off",
+                "setlocal",
+                'echo %*>> "%FEETFORCEPLATE_TEST_CHILD_LOG%"',
+                'echo %* | findstr /I /C:"PyInstaller" >nul',
+                "if not errorlevel 1 (",
+                '  mkdir "%FEETFORCEPLATE_TEST_OUTPUT_ROOT%\\dist\\FeetForcePlate" 2>nul',
+                '  > "%FEETFORCEPLATE_TEST_OUTPUT_ROOT%\\dist\\FeetForcePlate\\FeetForcePlate.exe" echo application',
+                ")",
+                'echo %* | findstr /I /C:"portable_release create" >nul',
+                "if not errorlevel 1 (",
+                '  > "%FEETFORCEPLATE_TEST_OUTPUT_ROOT%\\release\\release-manifest.json" echo {"signing_status":"unsigned-development"}',
+                ")",
+                "exit /b 0",
+            )
+        )
+        + "\r\n",
+        encoding="utf-8",
+    )
+    environment = {
+        **os.environ,
+        "PATH": str(child_bin) + os.pathsep + os.environ["PATH"],
+        "FEETFORCEPLATE_TEST_CHILD_LOG": str(child_log),
+        "FEETFORCEPLATE_TEST_OUTPUT_ROOT": str(output_root),
+    }
+
+    completed = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(scripts / "build-portable-release.ps1"),
+            "-OutputRoot",
+            str(output_root),
+            "-UnsignedDevelopment",
+            "-GitCommit",
+            "abc1234",
+        ],
+        cwd=project,
+        capture_output=True,
+        encoding="utf-8",
+        env=environment,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    release = output_root / "release"
+    assert (release / "FeetForcePlate-0.1.0-windows-x86_64.zip").is_file()
+    assert (release / "FeetForcePlate-0.1.0-windows-x86_64.zip.sha256").is_file()
+    assert (release / "release-manifest.json").is_file()
+    assert len(child_log.read_text(encoding="utf-8").splitlines()) >= 3
 
 
 def test_portable_release_documentation_exposes_build_and_delivery_boundaries() -> None:

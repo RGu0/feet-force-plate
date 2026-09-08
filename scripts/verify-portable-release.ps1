@@ -20,7 +20,7 @@ if (-not $AllowUnsignedDevelopment) {
     $arguments += "--require-signed"
 }
 
-& powershell -ExecutionPolicy Bypass -File $localEnvironment python @arguments
+& pwsh -ExecutionPolicy Bypass -File $localEnvironment python @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Portable release manifest verification failed with exit code $LASTEXITCODE"
 }
