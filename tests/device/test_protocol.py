@@ -215,6 +215,25 @@ class ProtocolSurfaceTests(unittest.TestCase):
         self.assertEqual(stats.interval_min_ns, 83_000_000)
         self.assertEqual(stats.interval_max_ns, 83_000_000)
 
+    def test_parser_makes_same_batch_clock_readings_strictly_increasing(self) -> None:
+        protocol = importlib.import_module("client.device.protocol")
+        profile = _synthetic_profile(protocol)
+        first = _frame_bytes(protocol, profile, np.zeros((48, 64), dtype=np.uint8))
+        second = _frame_bytes(protocol, profile, np.ones((48, 64), dtype=np.uint8))
+        parser = protocol.DaoOneP4864Parser(
+            profile,
+            allow_unverified=True,
+            monotonic_ns=lambda: 700,
+            wall_time_ns=lambda: 900,
+        )
+
+        decoded = parser.feed(first + second)
+
+        self.assertEqual([frame.host_monotonic_ns for frame in decoded], [700, 701])
+        self.assertEqual([frame.source_index for frame in decoded], [0, 1])
+        np.testing.assert_array_equal(decoded[0].values, 0)
+        np.testing.assert_array_equal(decoded[1].values, 1)
+
     def test_noise_and_bad_checksum_resynchronize_at_next_header(self) -> None:
         protocol = importlib.import_module("client.device.protocol")
         profile = _synthetic_profile(protocol)
