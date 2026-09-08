@@ -8,6 +8,7 @@ User=feetforceplate
 Group=feetforceplate
 WorkingDirectory=/opt/feetforceplate/app
 EnvironmentFile=/etc/feetforceplate/seed.env
+Environment=XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
 ExecStart=/opt/feetforceplate/app/deploy/aliyun/seed/backup.sh
 UMask=0077
 NoNewPrivileges=true
@@ -15,4 +16,4 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/opt/feetforceplate/app /etc/feetforceplate/seed.env
-ReadWritePaths=/var/lib/feetforceplate/backups
+ReadWritePaths=/var/lib/feetforceplate/backups /var/lib/feetforceplate/runtime
