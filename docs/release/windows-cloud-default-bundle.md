@@ -12,7 +12,7 @@ R2 只允许 `integration`、HTTPS 明确端口 `:7443`、其对应 CA 和 Licen
 pwsh -File .\dev.ps1 setup
 ```
 
-该命令只建立项目锁定的运行环境。此后所有本指南中的 `dev.ps1` 和 Windows
+该命令先按 `foundation-artifact.lock.json` 下载并校验私有 `techflex-cloud-foundation` wheel （需要对 `RGu0/techflex-cloud-foundation` 的访问权限），再建立项目锁定的运行环境。此后所有本指南中的 `dev.ps1` 和 Windows
 启动器调用都保持使用 `pwsh`。
 
 ## 信任边界
