@@ -727,7 +727,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
 
         self.assertEqual(
             self.store.sync_handoff_retry_state(str(self.session_id)),
-            (1, 5_000_000_000, "E-SYN-001"),
+            (1, 6_000_000_000, "E-SYN-001"),
         )
 
     def test_retry_delay_uses_durable_attempt_count_without_jitter(
