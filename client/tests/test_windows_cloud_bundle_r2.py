@@ -18,6 +18,13 @@ import pytest
 import client.cloud.windows_bundle as windows_bundle
 
 
+def test_delivery_approval_verifier_uses_rotated_r2_public_key() -> None:
+    assert (
+        base64.b64encode(windows_bundle._TRUSTED_APPROVAL_PUBLIC_KEY).decode("ascii")
+        == "G51wTUpMXCTfbD38W6VuXi31uItNR6ZRbkC7lgy7gP0="
+    )
+
+
 def _run_git(directory: Path, *arguments: str) -> str:
     completed = subprocess.run(
         ["git", "-C", str(directory), *arguments],
