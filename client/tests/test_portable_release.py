@@ -87,10 +87,22 @@ def test_portable_release_scripts_require_signing_and_delegate_to_contract() -> 
     assert "UnsignedDevelopment" in build.read_text(encoding="utf-8")
     assert "client.app.packaging.portable_release" in build.read_text(encoding="utf-8")
     assert "& powershell " not in build.read_text(encoding="utf-8")
-    assert "& pwsh " in build.read_text(encoding="utf-8")
+    assert "& $pwshExecutable " in build.read_text(encoding="utf-8")
+    assert "Get-Command pwsh.exe -CommandType Application" in build.read_text(
+        encoding="utf-8"
+    )
+    assert "$PSVersionTable.PSVersion.Major" in build.read_text(encoding="utf-8")
+    assert "-lt 7" in build.read_text(encoding="utf-8")
+    assert "-NoProfile" in build.read_text(encoding="utf-8")
     assert "require-signed" in verify.read_text(encoding="utf-8")
     assert "& powershell " not in verify.read_text(encoding="utf-8")
-    assert "& pwsh " in verify.read_text(encoding="utf-8")
+    assert "& $pwshExecutable " in verify.read_text(encoding="utf-8")
+    assert "Get-Command pwsh.exe -CommandType Application" in verify.read_text(
+        encoding="utf-8"
+    )
+    assert "$PSVersionTable.PSVersion.Major" in verify.read_text(encoding="utf-8")
+    assert "-lt 7" in verify.read_text(encoding="utf-8")
+    assert "-NoProfile" in verify.read_text(encoding="utf-8")
 
 
 def test_portable_build_passes_named_arguments_to_the_release_verifier() -> None:
@@ -105,12 +117,11 @@ def test_portable_build_passes_named_arguments_to_the_release_verifier() -> None
 def test_portable_release_uses_pwsh_for_build_and_verification_child_processes(
     tmp_path: Path,
 ) -> None:
-    """Exercise the actual release scripts with a child ``pwsh`` test double.
+    """Exercise the actual release scripts with a real PowerShell 7 child.
 
-    The outer process intentionally uses the real PowerShell 7 executable. Its
-    child calls must resolve the test double from PATH; a Windows PowerShell 5.1
-    child would bypass it and the copied project has no usable development
-    runtime, which keeps this regression sensitive to the executable name.
+    The copied project's ``dev.ps1`` is the only test double: it controls the
+    slow build-tool inputs while the release scripts resolve and launch the
+    installed PowerShell 7 executable themselves.
     """
 
     pwsh = shutil.which("pwsh")
@@ -130,40 +141,27 @@ def test_portable_release_uses_pwsh_for_build_and_verification_child_processes(
 
     child_log = tmp_path / "child-pwsh.log"
     output_root = tmp_path / "output"
-    child = tmp_path / "child-pwsh.ps1"
-    child.write_text(
-        """param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $ChildArguments)
-$ChildArguments -join " " | Add-Content -LiteralPath $env:FEETFORCEPLATE_TEST_CHILD_LOG
-if ($ChildArguments -contains "PyInstaller") {
-    $distIndex = [Array]::IndexOf($ChildArguments, "--distpath")
-    $applicationDirectory = Join-Path $ChildArguments[$distIndex + 1] "FeetForcePlate"
+    (project / "dev.ps1").write_text(
+        """param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $InvocationArguments)
+$InvocationArguments -join " " | Add-Content -LiteralPath $env:FEETFORCEPLATE_TEST_CHILD_LOG
+if ($InvocationArguments -contains "PyInstaller") {
+    $distIndex = [Array]::IndexOf($InvocationArguments, "--distpath")
+    $applicationDirectory = Join-Path $InvocationArguments[$distIndex + 1] "FeetForcePlate"
     New-Item -ItemType Directory -Path $applicationDirectory -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $applicationDirectory "FeetForcePlate.exe") -Value "application"
 }
-if ($ChildArguments -contains "create") {
-    $outputIndex = [Array]::IndexOf($ChildArguments, "--output")
-    $manifestPath = $ChildArguments[$outputIndex + 1]
+if ($InvocationArguments -contains "create") {
+    $outputIndex = [Array]::IndexOf($InvocationArguments, "--output")
+    $manifestPath = $InvocationArguments[$outputIndex + 1]
     Set-Content -LiteralPath $manifestPath -Value '{"signing_status":"unsigned-development"}'
 }
 exit 0
 """,
         encoding="utf-8",
     )
-    runner = tmp_path / "run-portable-build.ps1"
-    runner.write_text(
-        """function global:pwsh {
-    & $env:FEETFORCEPLATE_TEST_CHILD_PWSH @args
-}
-& $env:FEETFORCEPLATE_TEST_BUILD_SCRIPT -OutputRoot $env:FEETFORCEPLATE_TEST_OUTPUT_ROOT -UnsignedDevelopment -GitCommit abc1234
-exit $LASTEXITCODE
-""",
-        encoding="utf-8",
-    )
     environment = {
         **os.environ,
         "FEETFORCEPLATE_TEST_CHILD_LOG": str(child_log),
-        "FEETFORCEPLATE_TEST_CHILD_PWSH": str(child),
-        "FEETFORCEPLATE_TEST_BUILD_SCRIPT": str(scripts / "build-portable-release.ps1"),
         "FEETFORCEPLATE_TEST_OUTPUT_ROOT": str(output_root),
     }
 
@@ -174,7 +172,12 @@ exit $LASTEXITCODE
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(runner),
+            str(scripts / "build-portable-release.ps1"),
+            "-OutputRoot",
+            str(output_root),
+            "-UnsignedDevelopment",
+            "-GitCommit",
+            "abc1234",
         ],
         cwd=project,
         capture_output=True,
@@ -188,7 +191,11 @@ exit $LASTEXITCODE
     assert (release / "FeetForcePlate-0.1.0-windows-x86_64.zip").is_file()
     assert (release / "FeetForcePlate-0.1.0-windows-x86_64.zip.sha256").is_file()
     assert (release / "release-manifest.json").is_file()
-    assert len(child_log.read_text(encoding="utf-8").splitlines()) >= 3
+    child_calls = child_log.read_text(encoding="utf-8").splitlines()
+    assert len(child_calls) == 3
+    assert any("PyInstaller" in call for call in child_calls)
+    assert any("portable_release create" in call for call in child_calls)
+    assert any("portable_release verify" in call for call in child_calls)
 
 
 def test_portable_release_documentation_exposes_build_and_delivery_boundaries() -> None:

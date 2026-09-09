@@ -11,6 +11,12 @@ Set-StrictMode -Version Latest
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $localEnvironment = Join-Path $projectRoot "scripts\local-env.ps1"
+$pwshExecutable = (Get-Command pwsh.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$pwshMajorText = (& $pwshExecutable -NoProfile -Command '$PSVersionTable.PSVersion.Major').Trim()
+$pwshMajor = 0
+if ($LASTEXITCODE -ne 0 -or -not [int]::TryParse($pwshMajorText, [ref]$pwshMajor) -or $pwshMajor -lt 7) {
+    throw "PowerShell 7 or later is required for portable release verification"
+}
 $resolvedReleaseDirectory = (Resolve-Path -LiteralPath $ReleaseDirectory).Path
 $arguments = @(
     "-m", "client.app.packaging.portable_release", "verify",
@@ -20,7 +26,7 @@ if (-not $AllowUnsignedDevelopment) {
     $arguments += "--require-signed"
 }
 
-& pwsh -ExecutionPolicy Bypass -File $localEnvironment python @arguments
+& $pwshExecutable -NoProfile -ExecutionPolicy Bypass -File $localEnvironment python @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Portable release manifest verification failed with exit code $LASTEXITCODE"
 }

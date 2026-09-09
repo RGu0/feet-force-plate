@@ -12,6 +12,12 @@ Set-StrictMode -Version Latest
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $localEnvironment = Join-Path $projectRoot "scripts\local-env.ps1"
+$pwshExecutable = (Get-Command pwsh.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$pwshMajorText = (& $pwshExecutable -NoProfile -Command '$PSVersionTable.PSVersion.Major').Trim()
+$pwshMajor = 0
+if ($LASTEXITCODE -ne 0 -or -not [int]::TryParse($pwshMajorText, [ref]$pwshMajor) -or $pwshMajor -lt 7) {
+    throw "PowerShell 7 or later is required for portable release packaging"
+}
 $releaseRoot = Join-Path $OutputRoot "release"
 $buildRoot = Join-Path $OutputRoot "build"
 $distRoot = Join-Path $OutputRoot "dist"
@@ -42,7 +48,7 @@ if (-not $GitCommit) {
     throw "GitCommit or FEETFORCEPLATE_BUILD_COMMIT is required"
 }
 
-& pwsh -ExecutionPolicy Bypass -File $localEnvironment uv run --extra dev --extra build python -m PyInstaller `
+& $pwshExecutable -NoProfile -ExecutionPolicy Bypass -File $localEnvironment uv run --extra dev --extra build python -m PyInstaller `
     --noconfirm --clean `
     --distpath $distRoot `
     --workpath $buildRoot `
@@ -88,7 +94,7 @@ Compress-Archive -LiteralPath $applicationDirectory -DestinationPath $archive -C
 $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$archive.sha256" -Value "$digest  $archiveName" -NoNewline -Encoding ascii
 
-& pwsh -ExecutionPolicy Bypass -File $localEnvironment python -m client.app.packaging.portable_release create `
+& $pwshExecutable -NoProfile -ExecutionPolicy Bypass -File $localEnvironment python -m client.app.packaging.portable_release create `
     --archive $archive `
     --app-version $appVersion `
     --git-commit $GitCommit `
