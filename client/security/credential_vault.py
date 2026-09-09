@@ -75,12 +75,16 @@ class SystemCredentialVault:
         self._call("delete", key)
 
     def _call(self, method: str, *args: str) -> str | None:
-        try:
-            return getattr(self._vault, method)(*args)
-        except Exception as exc:
-            raise CredentialVaultUnavailable(
-                "platform credential vault is unavailable"
-            ) from exc
+        for attempt in range(2 if method == "set" else 1):
+            try:
+                return getattr(self._vault, method)(*args)
+            except Exception as exc:
+                if attempt == 0 and _is_keychain_duplicate_item(exc):
+                    continue
+                raise CredentialVaultUnavailable(
+                    "platform credential vault is unavailable"
+                ) from exc
+        raise AssertionError("duplicate-item retry must either return or raise")
 
 
 def _load_native_credential_vault(platform: str) -> CredentialVault:
@@ -97,6 +101,12 @@ def _load_native_credential_vault(platform: str) -> CredentialVault:
     if module_name != required_module:
         raise CredentialVaultUnavailable("platform credential vault is unavailable")
     return _KeyringCredentialVault(backend)
+
+
+def _is_keychain_duplicate_item(error: Exception) -> bool:
+    """Recognize only macOS's documented duplicate-generic-password status."""
+
+    return "-25299" in str(error) or "errSecDuplicateItem" in str(error)
 
 
 __all__ = ["CredentialVaultUnavailable", "SystemCredentialVault"]
