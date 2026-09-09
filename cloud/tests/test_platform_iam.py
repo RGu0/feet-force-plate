@@ -236,6 +236,142 @@ def test_sensitive_access_records_denial_when_grant_invalid() -> None:
     asyncio.run(exercise())
 
 
+def test_sensitive_identity_defers_async_loader_until_disclosure_is_authorized() -> None:
+    async def exercise() -> None:
+        repository, clock, identities, sensitive = _services()
+        tenant_id = await _seed_tenant(repository)
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        owner_context = await identities.verify_access_token(owner.access_token)
+        engineer_login = await identities.create_identity(
+            owner_context,
+            login_name="platform-engineer",
+            display_name="Engineer One",
+            password="engineer-password-long-enough",
+            roles=(PlatformRole.ENGINEER,),
+        )
+        engineer_context = await identities.verify_access_token(engineer_login.access_token)
+        calls = 0
+
+        async def loader() -> tuple[str, str]:
+            nonlocal calls
+            calls += 1
+            return ("Patient One", "masked@example.test")
+
+        with pytest.raises(PlatformPermissionDenied, match="cannot disclose"):
+            await sensitive.read_identity(
+                engineer_context,
+                grant_id=uuid4(),
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=loader,
+            )
+        with pytest.raises(PlatformPermissionDenied, match="grant is invalid"):
+            await sensitive.read_identity(
+                owner_context,
+                grant_id=uuid4(),
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=loader,
+            )
+        grant = await sensitive.issue_grant(
+            owner_context,
+            SensitiveAccessGrantRequest(
+                tenant_id=tenant_id,
+                purpose_code="SUPPORT_DIAGNOSIS",
+                ticket_reference="SUP-120",
+                requested_duration_minutes=15,
+            ),
+        )
+        response = await sensitive.read_identity(
+            owner_context,
+            grant_id=grant.grant_id,
+            tenant_id=tenant_id,
+            subject_id=uuid4(),
+            identity_loader=loader,
+        )
+        assert response.display_name == "Patient One"
+        assert calls == 1
+
+        expired_grant = await sensitive.issue_grant(
+            owner_context,
+            SensitiveAccessGrantRequest(
+                tenant_id=tenant_id,
+                purpose_code="SUPPORT_DIAGNOSIS",
+                ticket_reference="SUP-120-expired",
+                requested_duration_minutes=15,
+            ),
+        )
+        context_with_extra_minute = replace(
+            owner_context, expires_at=owner_context.expires_at + timedelta(minutes=1)
+        )
+        clock.value += timedelta(minutes=15)
+        with pytest.raises(PlatformPermissionDenied, match="grant is invalid"):
+            await sensitive.read_identity(
+                context_with_extra_minute,
+                grant_id=expired_grant.grant_id,
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=loader,
+            )
+        assert calls == 1
+        with pytest.raises(PlatformPermissionDenied, match="not active"):
+            await sensitive.read_identity(
+                owner_context,
+                grant_id=uuid4(),
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=loader,
+            )
+        assert calls == 1
+
+    asyncio.run(exercise())
+
+
+def test_sensitive_identity_records_denial_when_authorized_loader_fails() -> None:
+    async def exercise() -> None:
+        repository, _, identities, sensitive = _services()
+        tenant_id = await _seed_tenant(repository)
+        owner = await identities.bootstrap_owner(
+            login_name="platform-owner",
+            display_name="Platform Owner",
+            password="correct-horse-battery-staple",
+        )
+        owner_context = await identities.verify_access_token(owner.access_token)
+        grant = await sensitive.issue_grant(
+            owner_context,
+            SensitiveAccessGrantRequest(
+                tenant_id=tenant_id,
+                purpose_code="SUPPORT_DIAGNOSIS",
+                ticket_reference="SUP-121",
+                requested_duration_minutes=15,
+            ),
+        )
+
+        async def loader() -> tuple[str, str]:
+            raise RuntimeError("identity decryption failed")
+
+        with pytest.raises(RuntimeError, match="decryption failed"):
+            await sensitive.read_identity(
+                owner_context,
+                grant_id=grant.grant_id,
+                tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=loader,
+            )
+
+        events = await repository.audit_events(tenant_id=tenant_id)
+        denials = [event for event in events if event.action == "sensitive-access.deny"]
+        assert len(denials) == 1
+        assert dict(denials[0].details).get("reason") == "identity_load_failed"
+        assert "sensitive-access.use" not in [event.action for event in events]
+
+    asyncio.run(exercise())
+
+
 def test_cross_tenant_platform_listing_is_masked_operational_summary() -> None:
     async def exercise() -> None:
         repository, _, identities, sensitive = _services()

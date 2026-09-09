@@ -759,6 +759,11 @@ class InMemoryPlatformRepository:
     def has_identity_profile(self, tenant_id: UUID, subject_uuid: UUID) -> bool:
         return (tenant_id, subject_uuid) in self._identity_profiles
 
+    async def read_identity_profile(
+        self, tenant_id: UUID, subject_uuid: UUID
+    ) -> tuple[bytes, bytes, str] | None:
+        return self._identity_profiles.get((tenant_id, subject_uuid))
+
     def subject_count(self, tenant_id: UUID) -> int:
         return sum(1 for tenant, _ in self._subjects if tenant == tenant_id)
 
