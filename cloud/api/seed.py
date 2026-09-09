@@ -291,6 +291,7 @@ async def build_seed_app(
         lookup_hmac_key=_secret(settings.identity_lookup_hmac_key, "identity lookup key"),
         key_version=settings.identity_key_version,
     )
+    subjects = SubjectConsentService(data_repository, identity)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -298,7 +299,7 @@ async def build_seed_app(
                 supported_payload_schemas={"raw-segment/1"},
                 supported_manifest_schemas={"session-manifest/1"},
             ),
-            subjects=SubjectConsentService(data_repository, identity),
+            subjects=subjects,
             heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
@@ -307,6 +308,7 @@ async def build_seed_app(
             platform_access=platform_access,
             platform_tokens=platform_tokens,
             platform_sensitive=SensitiveAccessService(access_repository),
+            platform_subjects=subjects,
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)

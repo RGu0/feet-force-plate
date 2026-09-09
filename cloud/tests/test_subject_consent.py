@@ -150,6 +150,21 @@ class SubjectConsentTests(unittest.IsolatedAsyncioTestCase):
             self.repository.has_identity_profile(self.tenant_id, request.subject_uuid)
         )
 
+    async def test_platform_identity_reader_decrypts_only_the_requested_profile(self) -> None:
+        request = self.subject_request().model_copy(
+            update={
+                "identity_profile": IdentityProfileInput(
+                    display_name="测试姓名",
+                    contact="masked-contact@example.invalid",
+                )
+            }
+        )
+        await self.service.create_subject(self.context, request, "identity-reader")
+
+        identity = await self.service.read_identity(self.tenant_id, request.subject_uuid)
+
+        self.assertEqual(identity, ("测试姓名", "masked-contact@example.invalid"))
+
     async def test_consent_replay_is_idempotent_and_revocation_blocks_new_use(self) -> None:
         subject = await self.service.create_subject(
             self.context, self.subject_request(), "subject"
