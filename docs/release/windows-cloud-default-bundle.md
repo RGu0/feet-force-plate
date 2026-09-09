@@ -17,7 +17,7 @@ pwsh -File .\dev.ps1 setup
 
 ## 信任边界
 
-同步目录仅可包含：
+共享同步目录中的 delivery **仅作证据副本**，其内容只能包含：
 
 - `approval.json`：负责人签署前固定的批准 payload；
 - `approval.sig`：上述文件的 Base64 Ed25519 detached signature；
@@ -26,8 +26,11 @@ pwsh -File .\dev.ps1 setup
 
 客户端源码固定批准验签公钥，校验签名后才会解析批准内容。批准 payload 固定
 `target_commit`、联调 endpoint/key ID 与三个资源的 SHA-256。启动还要求
-`ProjectRoot` 干净且 `HEAD` 恰好等于该 `target_commit`。同步目录中的脚本、
+`ProjectRoot` 干净且 `HEAD` 恰好等于该 `target_commit`。delivery 输入中的脚本、
 manifest、README、额外文件、目录、符号链接或 Windows reparse point 都会被拒绝。
+因此 `.project-context`（包括其 evidence 目录）不能直接传给
+`-DeliveryDirectory`：云同步文件在 Windows 上可能带有
+`FILE_ATTRIBUTE_REPARSE_POINT`，即使文件已下载也必须 fail closed。
 
 旧的 `delivery/` 是 R1 历史证据，未带 detached signature，不能调用。`delivery-r2/`、
 `delivery-r3/` 等已签名目录都是各自目标提交的历史证据，绝不可覆盖。每个新的目标提交
@@ -65,7 +68,7 @@ payload 必须严格为：
 
 只有源码已提交且工作树干净后，`target_commit` 才能固定并签名。
 
-## 创建同步目录
+## 构建并保留同步证据副本
 
 在已完成上述 `setup`、提交干净且目标提交匹配的受控源码根目录中执行：
 
@@ -78,9 +81,33 @@ pwsh -File .\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare 
   --project-root .
 ```
 
-将 `<new-empty-delivery-directory>` 替换为此前不存在的目录，例如
+将 `<new-empty-delivery-directory>` 替换为此前不存在的共享证据目录，例如
 `.project-context\evidence\ray-321\windows-cloud-default-bundle\delivery-<target-commit-short>`。
-成功后该目录即绑定该 `target_commit` 的交付证据，不可用于后续提交。
+成功后该目录即绑定该 `target_commit` 的交付证据，不可用于后续提交，也不可作为
+Windows 启动器的 live delivery 输入。
+
+## Windows 本地 staging
+
+先验证 handoff ZIP 的发布 SHA-256，再从其中复制**恰好五项**到此前不存在的、
+非同步的本地普通目录，例如
+`D:\FeetForcePlate\delivery-<target-commit-short>\`。该路径不得位于 OneDrive、
+`project-context`、工作树或任何会创建链接/重解析点的目录下。目标树必须严格为：
+
+```text
+delivery-<target-commit-short>/
+  approval.json
+  approval.sig
+  public-cloud-defaults/
+    cloud-default.json
+    cloud-ca.pem
+    license-public.key
+```
+
+不得复制 ZIP 的 README、scope/requirement 记录、模板、校验清单或额外文件。复制后，
+目录根、`public-cloud-defaults/` 和五个文件都必须是普通本地对象，不得带 Windows
+`ReparsePoint` 属性；否则停止，不得通过删除或放宽客户端检查来继续。任何新源码提交
+（包括仅文档提交）都会改变 `target_commit`，必须由授权机重新签发这五项中的
+`approval.json` 和 `approval.sig`。
 
 ## Windows 真机调用
 
@@ -88,10 +115,11 @@ pwsh -File .\dev.ps1 run python scripts\windows_cloud_default_bundle.py prepare 
 
 ```powershell
 pwsh -File "<ProjectRoot>\scripts\Invoke-FeetForcePlateCloudClient.ps1" `
-  -DeliveryDirectory "<同步目录>" `
+  -DeliveryDirectory "D:\FeetForcePlate\delivery-<target-commit-short>" `
   -ProjectRoot "<ProjectRoot>" `
   -ValidateOnly
 ```
 
-启动器让 `dev.ps1` 只负责执行验证，并通过独立临时 JSON 文件读取启动设置，不解析
-`dev.ps1` 的标准输出。移除 `-ValidateOnly` 后才启动 P-00。
+`-DeliveryDirectory` 必须是上一节的本地 staging 目录，不能是共享证据目录。启动器让
+`dev.ps1` 只负责执行验证，并通过独立临时 JSON 文件读取启动设置，不解析 `dev.ps1`
+的标准输出。移除 `-ValidateOnly` 后才启动 P-00。
