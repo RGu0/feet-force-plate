@@ -11,6 +11,9 @@ import threading
 from typing import Protocol
 from uuid import UUID
 
+from techflex_cloud_foundation import CredentialVault
+
+from client.security.credential_vault import SystemCredentialVault
 from shared.contracts.access_control import AccessSession, SignedLicenseV2
 
 
@@ -25,47 +28,31 @@ class CredentialStore(Protocol):
     def delete_refresh_token(self, account_id: UUID) -> None: ...
 
 
-class KeyringCredentialStore:
+class CredentialVaultStore:
     def __init__(
         self,
+        vault: CredentialVault | None = None,
         *,
         service_name: str = "FeetForcePlate.access",
-        backend=None,
     ) -> None:
-        if backend is None:
-            import keyring
-
-            backend = keyring
         self._service_name = service_name
-        self._backend = backend
+        self._vault = vault or SystemCredentialVault()
 
     @staticmethod
     def _username(account_id: UUID) -> str:
         return f"refresh:{account_id}"
 
     def set_refresh_token(self, account_id: UUID, refresh_token: str) -> None:
-        self._backend.set_password(
-            self._service_name,
-            self._username(account_id),
-            refresh_token,
-        )
+        self._vault.set(self._key(account_id), refresh_token)
 
     def get_refresh_token(self, account_id: UUID) -> str | None:
-        return self._backend.get_password(
-            self._service_name,
-            self._username(account_id),
-        )
+        return self._vault.get(self._key(account_id))
 
     def delete_refresh_token(self, account_id: UUID) -> None:
-        try:
-            self._backend.delete_password(
-                self._service_name,
-                self._username(account_id),
-            )
-        except Exception as exc:
-            # keyring backends use backend-specific "not found" exceptions.
-            if "not found" not in str(exc).lower():
-                raise
+        self._vault.delete(self._key(account_id))
+
+    def _key(self, account_id: UUID) -> str:
+        return f"{self._service_name}/{self._username(account_id)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,8 +264,8 @@ def _decode_datetime(value: str | None) -> datetime | None:
 
 __all__ = [
     "ClientAccessStore",
+    "CredentialVaultStore",
     "CredentialStore",
-    "KeyringCredentialStore",
     "LOCK_TIMEOUT_OPTIONS",
     "StoredAccessState",
 ]

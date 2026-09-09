@@ -19,7 +19,9 @@ import uuid
 from collections.abc import Callable
 
 from platformdirs import user_data_path
+from techflex_cloud_foundation import CredentialVault
 
+from client.security.credential_vault import SystemCredentialVault
 from client.reporting.models import BasicReportDocument
 from client.spool.state_store import (
     KeyProvider,
@@ -58,13 +60,12 @@ class KeyringAesKeyProvider:
     _SERVICE = "FeetForcePlate.institution-storage"
     _ACCOUNT = "aes256-v1"
 
+    def __init__(self, vault: CredentialVault | None = None) -> None:
+        self._vault = vault or SystemCredentialVault()
+
     def get_key(self) -> bytes:
         try:
-            import keyring
-        except ImportError as exc:  # pragma: no cover - packaging contract
-            raise KeyProviderUnavailable("system credential storage is required") from exc
-        try:
-            encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
+            encoded = self._vault.get(self._vault_key())
         except Exception as exc:
             raise KeyProviderUnavailable(
                 "system credential storage is temporarily unavailable"
@@ -72,9 +73,7 @@ class KeyringAesKeyProvider:
         if encoded is None:
             key = os.urandom(32)
             try:
-                keyring.set_password(
-                    self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode()
-                )
+                self._vault.set(self._vault_key(), base64.b64encode(key).decode())
             except Exception as exc:
                 raise KeyProviderUnavailable(
                     "system credential storage is temporarily unavailable"
@@ -88,10 +87,16 @@ class KeyringAesKeyProvider:
             raise ValueError("stored institution data key is not AES-256")
         return key
 
+    def _vault_key(self) -> str:
+        return f"{self._SERVICE}/{self._ACCOUNT}"
+
 
 class KeyringConsentEvidenceSigner:
     _SERVICE = "FeetForcePlate.institution-storage"
     _ACCOUNT = "consent-evidence-hmac-sha256-v1"
+
+    def __init__(self, vault: CredentialVault | None = None) -> None:
+        self._vault = vault or SystemCredentialVault()
 
     def sign(
         self,
@@ -117,18 +122,23 @@ class KeyringConsentEvidenceSigner:
 
     def _key(self) -> bytes:
         try:
-            import keyring
-        except ImportError as exc:  # pragma: no cover - packaging contract
+            encoded = self._vault.get(self._vault_key())
+        except Exception as exc:
             raise RuntimeError("system credential storage is required") from exc
-        encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
         if encoded is None:
             key = os.urandom(32)
-            keyring.set_password(self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode())
+            try:
+                self._vault.set(self._vault_key(), base64.b64encode(key).decode())
+            except Exception as exc:
+                raise RuntimeError("system credential storage is required") from exc
             return key
         key = base64.b64decode(encoded.encode("ascii"), validate=True)
         if len(key) != 32:
             raise RuntimeError("stored consent evidence key is not SHA-256 sized")
         return key
+
+    def _vault_key(self) -> str:
+        return f"{self._SERVICE}/{self._ACCOUNT}"
 
 
 class InstitutionLocalStore:
@@ -167,16 +177,17 @@ class InstitutionLocalStore:
         query_index_key: bytes | None = None,
         now: Callable[[], datetime] | None = None,
         consent_signer: ConsentEvidenceSigner | None = None,
+        credential_vault: CredentialVault | None = None,
     ) -> "InstitutionLocalStore":
         storage_root = Path(root) if root is not None else Path(
             user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True)
         )
         return cls(
             storage_root,
-            key_provider=key_provider or KeyringAesKeyProvider(),
-            query_index_key=query_index_key or _load_query_index_key(),
+            key_provider=key_provider or KeyringAesKeyProvider(credential_vault),
+            query_index_key=query_index_key or _load_query_index_key(credential_vault),
             now=now or _utc_now,
-            consent_signer=consent_signer or KeyringConsentEvidenceSigner(),
+            consent_signer=consent_signer or KeyringConsentEvidenceSigner(credential_vault),
         )
 
     def close(self) -> None:
@@ -557,20 +568,16 @@ class _InstitutionConsentPort:
         return self._store.create_consent(request)
 
 
-def _load_query_index_key() -> bytes:
-    try:
-        import keyring
-    except ImportError as exc:  # pragma: no cover - packaging contract
-        raise RuntimeError("system credential storage is required") from exc
-    encoded = keyring.get_password(
-        InstitutionLocalStore._QUERY_KEY_SERVICE, InstitutionLocalStore._QUERY_KEY_ACCOUNT
+def _load_query_index_key(vault: CredentialVault | None = None) -> bytes:
+    vault = vault or SystemCredentialVault()
+    key_name = (
+        f"{InstitutionLocalStore._QUERY_KEY_SERVICE}/"
+        f"{InstitutionLocalStore._QUERY_KEY_ACCOUNT}"
     )
+    encoded = vault.get(key_name)
     if encoded is None:
         key = os.urandom(32)
-        keyring.set_password(
-            InstitutionLocalStore._QUERY_KEY_SERVICE, InstitutionLocalStore._QUERY_KEY_ACCOUNT,
-            base64.b64encode(key).decode("ascii"),
-        )
+        vault.set(key_name, base64.b64encode(key).decode("ascii"))
         return key
     key = base64.b64decode(encoded.encode("ascii"), validate=True)
     if len(key) != 32:

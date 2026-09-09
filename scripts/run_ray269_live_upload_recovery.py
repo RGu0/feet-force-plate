@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from client.cloud.access_store import ClientAccessStore, KeyringCredentialStore
+from client.cloud.access_store import ClientAccessStore, CredentialVaultStore
 from client.cloud.runtime import AccessRuntimeSettings, build_client_access_runtime
 from client.device.protocol import RawFrame
 from client.spool.segments import ImmutableSegmentWriter
@@ -166,7 +166,7 @@ def _failure_evidence(
 
 def _stored_license_key_id(data_root: Path) -> str:
     store = ClientAccessStore(
-        data_root / "database" / "access.sqlite3", KeyringCredentialStore()
+        data_root / "database" / "access.sqlite3", CredentialVaultStore()
     )
     try:
         state = store.load()

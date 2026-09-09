@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
-import sys
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -39,19 +37,69 @@ class _Signer:
         return self.value
 
 
+class _MemoryVault:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
+
+
 def test_keyring_aes_key_provider_maps_backend_exception_to_retryable_boundary(
-    monkeypatch,
 ) -> None:
-    class BackendUnavailable(Exception):
-        pass
+    class UnavailableVault:
+        def get(self, _key: str) -> str | None:
+            raise RuntimeError("credential daemon unavailable")
 
-    def unavailable(_service: str, _account: str) -> str | None:
-        raise BackendUnavailable("credential daemon unavailable")
+        def set(self, _key: str, _value: str) -> None:
+            raise AssertionError("writes are not reached after a failed read")
 
-    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(get_password=unavailable))
+        def delete(self, _key: str) -> None:
+            raise AssertionError("deletes are not used by the key provider")
 
     with pytest.raises(KeyProviderUnavailable):
-        KeyringAesKeyProvider().get_key()
+        KeyringAesKeyProvider(UnavailableVault()).get_key()
+
+
+def test_institution_aes_key_uses_the_foundation_credential_vault() -> None:
+    """Fails if an institution data key bypasses the shared vault port."""
+
+    vault = _MemoryVault()
+    provider = KeyringAesKeyProvider(vault)
+
+    first = provider.get_key()
+
+    assert len(first) == 32
+    assert provider.get_key() == first
+    assert set(vault.values) == {
+        "FeetForcePlate.institution-storage/aes256-v1"
+    }
+
+
+def test_institution_store_uses_one_foundation_vault_for_local_encryption_keys(tmp_path) -> None:
+    """Fails if local persistence reintroduces a direct keyring dependency."""
+
+    vault = _MemoryVault()
+    store = InstitutionLocalStore.open(tmp_path, credential_vault=vault)
+    try:
+        store.create(
+            CreateSubjectRequest(
+                tenant_id="tenant-1", analysis_profile=AnalysisProfile.unknown()
+            )
+        )
+    finally:
+        store.close()
+
+    assert set(vault.values) == {
+        "FeetForcePlate.institution-storage/aes256-v1",
+        "FeetForcePlate.institution-storage/hmac-sha256-v1",
+    }
 
 
 def _subject_with_external_profile_and_identity() -> CreateSubjectRequest:

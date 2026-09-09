@@ -9,6 +9,9 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 from platformdirs import user_data_path
+from techflex_cloud_foundation import CredentialVault
+
+from client.security.credential_vault import SystemCredentialVault
 from client.security.key_envelope import (
     DualEnvelopeBlobCodec,
     KeyringTerminalKeyHandle,
@@ -39,12 +42,13 @@ class LocalReplayStore:
         *,
         codec: DualEnvelopeBlobCodec | None = None,
         query_index_key: bytes | None = None,
+        credential_vault: CredentialVault | None = None,
     ):
         self.root = root or Path(user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True))
         self.root.mkdir(parents=True, exist_ok=True)
-        self.codec = codec or _local_replay_development_codec()
+        self.codec = codec or _local_replay_development_codec(credential_vault)
         self.db = sqlite3.connect(self.root / "local-replay.sqlite3")
-        self._query_index_key = query_index_key or _load_local_query_index_key()
+        self._query_index_key = query_index_key or _load_local_query_index_key(credential_vault)
         self._migrate_subject_index()
         self._migrate_consent_store()
         self.db.execute(
@@ -384,7 +388,9 @@ class LocalReplayStore:
     def support_snapshot(self): return SupportSnapshot("回放 fixture 已校验", "未连接云端", f"本地记录：{len(self.recent_records())} 次", "v1-replay-debug")
 
 
-def _local_replay_development_codec() -> DualEnvelopeBlobCodec:
+def _local_replay_development_codec(
+    credential_vault: CredentialVault | None = None,
+) -> DualEnvelopeBlobCodec:
     """Explicit local-only fallback until License validation supplies a signed keyset."""
 
     server = generate_test_keypair()
@@ -393,28 +399,23 @@ def _local_replay_development_codec() -> DualEnvelopeBlobCodec:
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.local-replay",
             account_name="terminal-p256",
+            credential_vault=credential_vault,
         ),
     )
 
 
-def _load_local_query_index_key() -> bytes:
+def _load_local_query_index_key(vault: CredentialVault | None = None) -> bytes:
     """Load a stable local secret from the OS credential vault, never SQLite."""
 
-    try:
-        import keyring
-    except ImportError as exc:  # pragma: no cover - packaging contract
-        raise RuntimeError("system credential storage is required for replay lookup") from exc
-    encoded = keyring.get_password(
-        LocalReplayStore._QUERY_KEY_SERVICE,
-        LocalReplayStore._QUERY_KEY_ACCOUNT,
+    vault = vault or SystemCredentialVault()
+    key_name = (
+        f"{LocalReplayStore._QUERY_KEY_SERVICE}/"
+        f"{LocalReplayStore._QUERY_KEY_ACCOUNT}"
     )
+    encoded = vault.get(key_name)
     if encoded is None:
         key = os.urandom(32)
-        keyring.set_password(
-            LocalReplayStore._QUERY_KEY_SERVICE,
-            LocalReplayStore._QUERY_KEY_ACCOUNT,
-            base64.b64encode(key).decode("ascii"),
-        )
+        vault.set(key_name, base64.b64encode(key).decode("ascii"))
         return key
     return base64.b64decode(encoded.encode("ascii"), validate=True)
 
