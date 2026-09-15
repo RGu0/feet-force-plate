@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -231,3 +232,29 @@ def test_local_lab_wraps_persistent_seed_composition(tmp_path: Path) -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="https://127.0.0.1") as client:
             return (await client.get("/health/ready")).status_code
     assert asyncio.run(exercise()) == 200
+
+
+def test_local_lab_rejects_non_loopback_seed_endpoint(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        paths = LocalLabPaths.create(tmp_path / "local-lab")
+        settings = SeedSettings(
+            migration_dsn="postgresql://migration@127.0.0.1/ffp",
+            tenant_dsn="postgresql://tenant@127.0.0.1/ffp",
+            activation_dsn="postgresql://activation@127.0.0.1/ffp",
+            platform_dsn="postgresql://platform@127.0.0.1/ffp",
+            tenant_token_secret="t" * 40, platform_token_secret="p" * 40,
+            tenant_refresh_hmac_key="r" * 40, platform_refresh_hmac_key="q" * 40,
+            tenant_login_hmac_key="l" * 40, platform_login_hmac_key="o" * 40,
+            activation_hmac_key="a" * 40, identity_lookup_hmac_key="i" * 40,
+            identity_encryption_key_b64=base64.b64encode(b"e" * 32).decode(),
+            license_private_key_b64=base64.b64encode(b"p" * 32).decode(), license_key_id="local-lab/1",
+            object_root=paths.objects, public_base_url="https://127.0.0.1:8743",
+            trusted_proxies=("127.0.0.1",),
+        )
+        with pytest.raises(ValueError, match="loopback"):
+            await build_local_lab_app(
+                replace(settings, public_base_url="https://integration.example.test"),
+                "local-control-token", paths.audit,
+            )
+
+    asyncio.run(exercise())

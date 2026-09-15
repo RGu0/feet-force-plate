@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import secrets
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 from uuid import uuid4
 
 
@@ -30,6 +31,18 @@ def validate_loopback_host(host: str) -> str:
     if not address.is_loopback:
         raise ValueError("local lab must bind to a loopback address")
     return str(address)
+
+
+def validate_local_seed_endpoint(seed_settings: Any) -> None:
+    """Refuse to install the fault boundary in front of a remote seed endpoint."""
+
+    endpoint = urlparse(str(seed_settings.public_base_url))
+    if endpoint.scheme != "https" or endpoint.hostname is None:
+        raise ValueError("local lab seed endpoint must be HTTPS on a loopback address")
+    try:
+        validate_loopback_host(endpoint.hostname)
+    except ValueError as exc:
+        raise ValueError("local lab seed endpoint must use a loopback address") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +125,7 @@ async def build_local_lab_app(
 
     from cloud.api.seed import build_seed_app
 
+    validate_local_seed_endpoint(seed_settings)
     seed_app = await build_seed_app(seed_settings, pool_factory=pool_factory)
     return FaultInjectingApp(seed_app, FaultController(control_token, audit_root))
 
@@ -378,5 +392,6 @@ __all__ = [
     "build_local_lab_app",
     "LocalLabPaths",
     "LocalLabSettings",
+    "validate_local_seed_endpoint",
     "validate_loopback_host",
 ]
