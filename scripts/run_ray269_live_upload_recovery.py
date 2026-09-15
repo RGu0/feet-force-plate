@@ -286,7 +286,7 @@ def run_live_recovery(*, settings, data_root: Path) -> dict[str, object]:
                 )
                 offline = PersistentUploadQueue(
                     store, root / "spool", key, _OfflineClient(),
-                    now_ns=clock, random_fraction=lambda: 0.0,
+                    now_ns=clock,
                 )
                 if offline.upload_next(runtime) is not UploadCycleOutcome.DEFERRED:
                     raise RuntimeError("offline handoff was not persisted for retry")
@@ -304,7 +304,7 @@ def run_live_recovery(*, settings, data_root: Path) -> dict[str, object]:
                 response_loss = _ResponseLossAfterCompletion(client)
                 interrupted = PersistentUploadQueue(
                     store, root / "spool", key, response_loss,
-                    now_ns=clock, random_fraction=lambda: 0.0,
+                    now_ns=clock,
                 )
                 interrupted_outcome = interrupted.upload_next(runtime)
                 if interrupted_outcome is not UploadCycleOutcome.DEFERRED:
@@ -331,7 +331,7 @@ def run_live_recovery(*, settings, data_root: Path) -> dict[str, object]:
                 resumed_client = _RecordingClient(client)
                 resumed = PersistentUploadQueue(
                     store, root / "spool", key, resumed_client,
-                    now_ns=clock, random_fraction=lambda: 0.0,
+                    now_ns=clock,
                 )
                 if resumed.upload_next(runtime) is not UploadCycleOutcome.CONFIRMED:
                     raise RuntimeError("restart did not confirm the completed handoff")

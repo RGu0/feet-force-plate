@@ -5,7 +5,7 @@ description = "足底压力力台 PC 上位机：实时采集、可视化、算�
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "techflex-cloud-foundation==0.1.1",
+    "techflex-cloud-foundation==0.2.0",
     # GUI
     "PySide6",
     "pyqtgraph",
@@ -59,7 +59,7 @@ dev = [
 package = false
 
 [tool.uv.sources]
-techflex-cloud-foundation = { path = ".foundation-artifacts/techflex_cloud_foundation-0.1.1-py3-none-any.whl" }
+techflex-cloud-foundation = { path = ".foundation-artifacts/techflex_cloud_foundation-0.2.0-py3-none-any.whl" }
 
 [tool.pytest.ini_options]
 testpaths = ["client/tests", "cloud/tests", "tests"]
