@@ -170,3 +170,15 @@ upload and report access continue.
 The seed object adapter is a private filesystem object store. The public 7443
 endpoint is controlled integration only; commercial ingress requires
 domain + public CA + 443.
+
+## Local controlled fault lab
+
+RAY-428 may run `cloud.api.seed` on a Windows loopback TLS endpoint to exercise
+retry behavior that the remote integration endpoint cannot inject. Its
+PostgreSQL data, object root, certificates, control token, test account and
+License material must remain in a non-synchronised local directory outside the
+repository and `project-context`. The local ASGI boundary accepts a finite,
+audited rule only with its generated loopback control token. Supported rules
+cover 503, latency/throttle, execute-then-drop completion responses and exact
+path targeting; none are present on the remote endpoint. Store only redacted
+scenario results in delivery evidence.
