@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -86,10 +87,20 @@ class HardwareRuntime:
         *,
         enumerate_ports: Callable[..., Sequence[SerialPortCandidate]] = enumerate_ch340_ports,
         transport_open: Callable[..., ByteTransport] = SerialByteTransport.open,
+        connection_open_attempts: int = 3,
+        retry_delay_seconds: float = 0.15,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if connection_open_attempts <= 0:
+            raise ValueError("connection open attempts must be positive")
+        if retry_delay_seconds < 0:
+            raise ValueError("connection retry delay must not be negative")
         self._adapter = adapter or DoP4864StandardizationAdapter.observed_compact_8bit()
         self._enumerate_ports = enumerate_ports
         self._transport_open = transport_open
+        self._connection_open_attempts = connection_open_attempts
+        self._retry_delay_seconds = retry_delay_seconds
+        self._sleep = sleep
 
     @property
     def display_geometry(self) -> HardwareDisplayGeometry:
@@ -213,10 +224,20 @@ class HardwareRuntime:
                     "connected pressure device does not match the active License",
                 )
             candidate = matching[0]
-        try:
-            transport = self._transport_open(candidate.device, **serial_options)
-        except Exception as error:
-            raise HardwareConnectionUnavailable("BUSY", "supported pressure device could not be opened") from error
+        transport = None
+        last_error: Exception | None = None
+        for attempt in range(self._connection_open_attempts):
+            try:
+                transport = self._transport_open(candidate.device, **serial_options)
+                break
+            except Exception as error:
+                last_error = error
+                if attempt + 1 < self._connection_open_attempts:
+                    self._sleep(self._retry_delay_seconds)
+        if transport is None:
+            raise HardwareConnectionUnavailable(
+                "BUSY", "supported pressure device could not be opened"
+            ) from last_error
         profile = ProtocolProfile.observed_compact_8bit(
             version=self._adapter.specification.source_schema_version
         )
