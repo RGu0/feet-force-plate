@@ -9,7 +9,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from scripts.verify_seed_live import AcceptanceState, Api, _after
+from scripts.verify_seed_live import AcceptanceState, Api, _after, _verify_d10_identity_access
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,6 +83,68 @@ def test_api_waits_for_auth_rate_limit_and_retries_the_request() -> None:
     assert payload == {"status": "ok"}
     assert attempts == 2
     assert delays == [13.0]
+
+
+def test_d10_probe_records_only_redacted_endpoint_outcomes() -> None:
+    calls: list[tuple[str, str, object]] = []
+
+    class RecordingApi:
+        def request(self, method: str, path: str, **kwargs):
+            calls.append((method, path, kwargs.get("expected")))
+            if method == "POST" and path == "/v1/platform/sensitive-access-grants":
+                return object(), {"grant_id": str(uuid4())}
+            if method == "GET" and "grant_id=" in path:
+                if len([item for item in calls if item[0] == "GET"]) == 1:
+                    return object(), None
+                return object(), {
+                    "display_name": "synthetic-only-name",
+                    "contact": "synthetic-only-contact",
+                }
+            raise AssertionError(f"unexpected request: {method} {path}")
+
+    result = _verify_d10_identity_access(
+        RecordingApi(),
+        tenant_id=uuid4(),
+        subject_id=uuid4(),
+        platform_token="private-platform-token",
+        identity_marker="synthetic-only-name",
+    )
+
+    assert result == {
+        "invalid_grant_denied": True,
+        "valid_grant_disclosed": True,
+    }
+    assert calls[0][2] == 403
+    assert calls[1][2] == 201
+    assert calls[2][2] == 200
+    assert "synthetic-only-name" not in json.dumps(result)
+    assert "private-platform-token" not in json.dumps(result)
+
+
+def test_d10_probe_rejects_denial_response_that_carries_identity_data() -> None:
+    class LeakingDenialApi:
+        def __init__(self) -> None:
+            self.get_calls = 0
+
+        def request(self, method: str, path: str, **_kwargs):
+            if method == "GET":
+                self.get_calls += 1
+                if self.get_calls == 1:
+                    return object(), {"display_name": "must-not-disclose"}
+                return object(), {"display_name": "synthetic-only-name"}
+            if method == "POST":
+                assert path == "/v1/platform/sensitive-access-grants"
+                return object(), {"grant_id": str(uuid4())}
+            raise AssertionError(f"unexpected request: {method} {path}")
+
+    with pytest.raises(RuntimeError, match="identity data"):
+        _verify_d10_identity_access(
+            LeakingDenialApi(),
+            tenant_id=uuid4(),
+            subject_id=uuid4(),
+            platform_token="private-platform-token",
+            identity_marker="must-not-disclose",
+        )
 
 
 @requires_bash
