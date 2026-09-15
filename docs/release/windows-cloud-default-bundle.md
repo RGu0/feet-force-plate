@@ -44,6 +44,13 @@ approval pair 只能由受保护的离线签发机生成。签发机运行已审
 密钥位置；策略显式指定私钥文件，并在签发前验证其导出的公钥恰好等于客户端源码内置的
 RAY-448 trust anchor。策略、私钥和审计日志均不得复制到 delivery 或 evidence。
 
+`D:\FeetForcePlate\protected-signer\policy.json` 只是以下命令中使用的**示例**路径；
+它不是仓库、安装程序或签发脚本创建、发现或保证存在的约定位置。受保护签发机管理员必须
+先在不受同步的普通本地目录中 provision 策略文件、与 RAY-448 trust anchor 匹配的原始
+32-byte Ed25519 私钥，以及审计日志位置；该目录不得位于 OneDrive、仓库或
+`project-context`。私钥不得发送、提交或写入 evidence。只有管理员完成该外部 provisioning
+后，才将实际的策略路径显式传给 `--signer-policy`。
+
 批准请求是 UTF-8 JSON，必须严格为：
 
 ```json
@@ -69,6 +76,7 @@ approval pair。成功输出只会在此前不存在的新目录中创建 `appro
 在干净的受控源码根目录中执行：
 
 ```powershell
+# 此处路径仅为示例；替换为管理员已 provision 的本地策略路径。
 pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py sign `
   --request D:\controlled-input\approved-request.json `
   --signer-policy D:\FeetForcePlate\protected-signer\policy.json `
@@ -80,14 +88,33 @@ pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py sign `
 只读审计可按目标提交查询，输出不含私钥、私钥路径或策略内容：
 
 ```powershell
+# 此处路径仅为示例；替换为管理员已 provision 的本地策略路径。
 pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py audit `
   --signer-policy D:\FeetForcePlate\protected-signer\policy.json `
   --target-commit <40-character-lowercase-Git-commit-SHA>
 ```
 
-若签发机或其密钥不可用，停止交付且不要复用旧 pair；恢复受保护签发机后，对当前干净
-提交重新发起批准请求。密钥轮换或撤销需要先发布更新后的客户端 trust anchor，再在新的
+若签发机、策略或其密钥尚未由管理员 provision，停止交付且不要复用旧 pair；这不是
+`ValidateOnly` 或 approval verifier 的故障。完成外部 provisioning 后，对当前干净提交
+重新发起批准请求。密钥轮换或撤销需要先发布更新后的客户端 trust anchor，再在新的
 受保护签发机上 provision 与该 anchor 匹配的策略和密钥，并为每个当前提交重新签发。
+
+### RAY-448 当前恢复步骤
+
+对当前 `master` 的 `bfd4f4cf68da1c63154aa2a62d11245c1ff3fbe9`，管理员依次执行：
+
+1. 在上述受保护的普通本地目录 provision policy、匹配 RAY-448 trust anchor 的 32-byte
+   Ed25519 私钥和审计日志位置。policy 必须绑定签发人、私钥文件、审计日志和不超过
+   3600 秒的请求有效期。
+2. 在该 SHA 的干净工作树中创建短时有效且已批准的请求，并用显式传入的
+   `--signer-policy` 签发新的 approval pair。
+3. 将 pair 和三个 public defaults 组成严格的五文件交付树，复制到非同步、无 reparse point
+   的本地 staging 目录，再运行 Windows `ValidateOnly`。
+4. 仅保留脱敏 audit 结果、approval pair 的哈希和 `ValidateOnly` 结果作为 RAY-448 evidence。
+
+旧 scope 曾在 `0124f4be…` 完成 Windows 验证，但该 pair 不能用于当前 SHA。RAY-448
+保持 In Progress，直到管理员完成上述当前 SHA 的 Windows 验证。
+
 ## 构建并保留同步证据副本
 
 在已完成上述 `setup`、提交干净且目标提交匹配的受控源码根目录中执行：

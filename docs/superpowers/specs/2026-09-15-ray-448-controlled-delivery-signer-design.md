@@ -14,6 +14,13 @@ Ed25519 private-key file held outside the repository, worktree and shared
 key and requires an exact match with the fixed RAY-448 verifier trust anchor in
 `client.cloud.windows_bundle`.
 
+The program does not provision that policy, its private key, or an audit-log
+location. Any path shown in release instructions, including
+`D:\FeetForcePlate\protected-signer\policy.json`, is an operator-provisioned
+example rather than an existing convention. The protected-signer administrator
+must create those local-only materials outside synchronized storage before
+passing the actual policy path to the program.
+
 The policy file is local-only and is never copied to delivery evidence. It
 contains `source`, `approved_by`, `private_key_file`, `audit_log_file` and a
 maximum request lifetime. The key bytes, policy path and key path are never
