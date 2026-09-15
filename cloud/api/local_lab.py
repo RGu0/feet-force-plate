@@ -101,6 +101,21 @@ def _is_reparse_point(path: Path) -> bool:
     return path.is_symlink() or bool(getattr(stat, "st_file_attributes", 0) & _REPARSE_POINT)
 
 
+async def build_local_lab_app(
+    seed_settings: Any,
+    control_token: str,
+    audit_root: Path,
+    *,
+    pool_factory: Callable[..., Any] | None = None,
+) -> "FaultInjectingApp":
+    """Compose the existing persistent seed app behind the local fault boundary."""
+
+    from cloud.api.seed import build_seed_app
+
+    seed_app = await build_seed_app(seed_settings, pool_factory=pool_factory)
+    return FaultInjectingApp(seed_app, FaultController(control_token, audit_root))
+
+
 class FaultKind(StrEnum):
     """Finite failures that may be enabled only in the local fault lab."""
 
@@ -352,6 +367,7 @@ __all__ = [
     "FaultInjectingApp",
     "FaultKind",
     "FaultRule",
+    "build_local_lab_app",
     "LocalLabPaths",
     "LocalLabSettings",
     "validate_loopback_host",

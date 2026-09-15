@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from cloud.api.local_lab import (
+    build_local_lab_app,
     FaultController,
     FaultInjectingApp,
     FaultKind,
@@ -17,6 +19,7 @@ from cloud.api.local_lab import (
     LocalLabSettings,
     validate_loopback_host,
 )
+from cloud.api.seed import SeedSettings
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -157,3 +160,36 @@ def test_control_route_requires_token_and_enables_a_finite_rule(tmp_path: Path) 
     assert denied == 403
     assert enabled == 201
     assert faulted == 503
+
+
+def test_local_lab_wraps_persistent_seed_composition(tmp_path: Path) -> None:
+    async def exercise() -> int:
+        settings = SeedSettings(
+            migration_dsn="postgresql://migration@127.0.0.1/ffp",
+            tenant_dsn="postgresql://tenant@127.0.0.1/ffp",
+            activation_dsn="postgresql://activation@127.0.0.1/ffp",
+            platform_dsn="postgresql://platform@127.0.0.1/ffp",
+            tenant_token_secret="t" * 40, platform_token_secret="p" * 40,
+            tenant_refresh_hmac_key="r" * 40, platform_refresh_hmac_key="q" * 40,
+            tenant_login_hmac_key="l" * 40, platform_login_hmac_key="o" * 40,
+            activation_hmac_key="a" * 40,
+            identity_lookup_hmac_key="i" * 40,
+            identity_encryption_key_b64=base64.b64encode(b"e" * 32).decode(),
+            license_private_key_b64=base64.b64encode(b"p" * 32).decode(), license_key_id="local-lab/1",
+            object_root=tmp_path / "objects", public_base_url="https://127.0.0.1:8743",
+            trusted_proxies=("127.0.0.1",),
+        )
+        class Pool:
+            def acquire(self): return self
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_): return None
+            async def fetchval(self, _): return 1
+            async def close(self): return None
+        async def pool_factory(**_): return Pool()
+        app = await build_local_lab_app(
+            settings, "local-control-token", LocalLabPaths.create(tmp_path / "lab").audit,
+            pool_factory=pool_factory,
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://127.0.0.1") as client:
+            return (await client.get("/health/ready")).status_code
+    assert asyncio.run(exercise()) == 200
