@@ -121,7 +121,7 @@ R6 规划时的 `bfd4f4cf68da1c63154aa2a62d11245c1ff3fbe9` 已被 PR #36 的
 4. 仅保留脱敏 audit 结果、approval pair 的哈希和 `ValidateOnly` 结果作为 RAY-448 evidence。
 
 旧 scope 曾在 `0124f4be…` 完成 Windows 验证，但该 pair 不能用于签发时解析出的目标
-SHA。RAY-448 保持 In Progress，直到管理员完成该目标 SHA 的 Windows 验证。
+SHA。对该目标 SHA 成功完成 Windows `ValidateOnly` 是 RAY-448 完成治理核对的前提。
 
 ## 构建并保留同步证据副本
 
