@@ -1,7 +1,7 @@
 # RAY-448 controlled delivery signer design
 
-**Date:** 2026-09-15  
-**Scope:** `controlled-delivery-signer`  
+**Date:** 2026-09-15
+**Scope:** `controlled-delivery-signer`
 **Requirement revision:** R5
 
 ## Decision
