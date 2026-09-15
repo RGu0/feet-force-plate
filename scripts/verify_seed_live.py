@@ -25,6 +25,7 @@ from shared.contracts.cloud import (
     HeartbeatDevice,
     HeartbeatHealth,
     HeartbeatRequest,
+    IdentityProfileInput,
     HeartbeatSync,
     ManifestSegment,
     SegmentMetadata,
@@ -177,6 +178,61 @@ def _heartbeat(installation_id: UUID, hardware_asset_id: UUID) -> dict:
     ).model_dump(mode="json")
 
 
+def _verify_d10_identity_access(
+    api: Api,
+    *,
+    tenant_id: UUID,
+    subject_id: UUID,
+    platform_token: str,
+    identity_marker: str,
+) -> dict[str, bool]:
+    """Probe deployed D10 endpoint behavior without serializing identity data."""
+
+    path = f"/v1/platform/tenants/{tenant_id}/subjects/{subject_id}/identity"
+    denied_response, denied_payload = api.request(
+        "GET",
+        f"{path}?grant_id={uuid4()}",
+        expected=403,
+        token=platform_token,
+    )
+    denied_text = str(getattr(denied_response, "text", ""))
+    denied_json = json.dumps(denied_payload, sort_keys=True)
+    if (
+        identity_marker in denied_text
+        or identity_marker in denied_json
+        or (
+            isinstance(denied_payload, dict)
+            and {"display_name", "contact"}.intersection(denied_payload)
+        )
+    ):
+        raise RuntimeError("D10 denial response contained identity data")
+    _, grant = api.request(
+        "POST",
+        "/v1/platform/sensitive-access-grants",
+        expected=201,
+        token=platform_token,
+        json_body={
+            "tenant_id": str(tenant_id),
+            "purpose_code": "SUPPORT_DIAGNOSIS",
+            "ticket_reference": f"D10-LIVE-{uuid4().hex[:16]}",
+            "requested_duration_minutes": 15,
+        },
+    )
+    assert isinstance(grant, dict)
+    _, identity = api.request(
+        "GET",
+        f"{path}?grant_id={grant['grant_id']}",
+        expected=200,
+        token=platform_token,
+    )
+    if not isinstance(identity, dict) or not identity.get("display_name"):
+        raise RuntimeError("D10 identity disclosure response was incomplete")
+    return {
+        "invalid_grant_denied": True,
+        "valid_grant_disclosed": True,
+    }
+
+
 def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str) -> None:
     _, ready = api.request("GET", "/health/ready", expected=200)
     platform_password = asyncio.run(_platform_password(platform_login))
@@ -243,6 +299,7 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         },
     )
     assert isinstance(logged_in, dict)
+    identity_marker = f"seed-d10-{unique[:8]}"
     api.request(
         "POST",
         "/v1/access/hardware-lease",
@@ -291,7 +348,20 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         expected=201,
         token=str(logged_in["access_token"]),
         headers={"Idempotency-Key": f"subject-{unique}"},
-        json_body=SubjectCreateRequest(subject_uuid=subject_id).model_dump(mode="json"),
+        json_body=SubjectCreateRequest(
+            subject_uuid=subject_id,
+            identity_profile=IdentityProfileInput(
+                display_name=identity_marker,
+                contact=f"d10-{unique[:8]}@example.invalid",
+            ),
+        ).model_dump(mode="json"),
+    )
+    d10_outcomes = _verify_d10_identity_access(
+        api,
+        tenant_id=UUID(str(provisioned["tenant_id"])),
+        subject_id=subject_id,
+        platform_token=platform_token,
+        identity_marker=identity_marker,
     )
     api.request(
         "POST",
@@ -488,6 +558,7 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         "license_restored": True,
         "invalid_login_safe": True,
         "platform_token_rejected_by_tenant_api": True,
+        "d10_identity_probe": d10_outcomes,
         "restart_persistence_verified": False,
         "postgres_role_parity_verified": False,
     }

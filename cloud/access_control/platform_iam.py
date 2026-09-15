@@ -6,6 +6,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import inspect
+from typing import Awaitable, cast
 from uuid import UUID, uuid4
 
 from cloud.api.access_auth import (
@@ -374,7 +376,11 @@ class SensitiveAccessService:
         grant_id: UUID,
         tenant_id: UUID,
         subject_id: UUID,
-        identity_loader: Callable[[], tuple[str | None, str | None]],
+        identity_loader: Callable[
+            [],
+            tuple[str | None, str | None]
+            | Awaitable[tuple[str | None, str | None]],
+        ],
     ) -> SensitiveIdentityResponse:
         if context.expires_at <= self._now() or not context.roles:
             await self._append_denial(
@@ -411,7 +417,20 @@ class SensitiveAccessService:
                 details=(("grant_id", str(grant_id)),),
             )
             raise PlatformPermissionDenied("sensitive access grant is invalid") from exc
-        display_name, contact = identity_loader()
+        try:
+            identity = identity_loader()
+            if inspect.isawaitable(identity):
+                identity = await identity
+        except Exception:
+            await self._append_denial(
+                context=context,
+                tenant_id=tenant_id,
+                resource_id=subject_id,
+                reason="identity_load_failed",
+                details=(("grant_id", str(grant_id)),),
+            )
+            raise
+        display_name, contact = cast(tuple[str | None, str | None], identity)
         response = SensitiveIdentityResponse(
             grant_id=grant.grant_id,
             tenant_id=tenant_id,

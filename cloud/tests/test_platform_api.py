@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -24,6 +24,15 @@ from shared.contracts.access_control import (
     ActivateAccountRequest,
     PlatformRole,
 )
+
+
+class CountingPlatformSubjects:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, object]] = []
+
+    async def read_identity(self, tenant_id, subject_id) -> tuple[str, str]:
+        self.calls.append((tenant_id, subject_id))
+        return ("Patient One", "patient@example.test")
 
 
 class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
@@ -77,6 +86,7 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
             license_signer=signer,
             now=lambda: self.now,
         )
+        self.platform_subjects = CountingPlatformSubjects()
         app = create_app(
             ServiceContainer(
                 platform_identities=self.identities,
@@ -86,6 +96,7 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
                     self.repository,
                     now=lambda: self.now,
                 ),
+                platform_subjects=self.platform_subjects,
             )
         )
         self.client = AsyncClient(
@@ -153,6 +164,58 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(suspended.status_code, 200, suspended.text)
         self.assertEqual(grant.status_code, 201, grant.text)
+
+    async def test_identity_rejection_does_not_load_profile_before_grant_validation(self) -> None:
+        created = await self.client.post(
+            "/v1/platform/tenants",
+            headers=self.owner_headers,
+            json=self.tenant_body(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        tenant_id = created.json()["data"]["tenant_id"]
+        subject_id = uuid4()
+
+        response = await self.client.get(
+            f"/v1/platform/tenants/{tenant_id}/subjects/{subject_id}/identity",
+            headers=self.owner_headers,
+            params={"grant_id": str(uuid4())},
+        )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(self.platform_subjects.calls, [])
+
+    async def test_identity_disclosure_loads_profile_once_after_valid_grant(self) -> None:
+        created = await self.client.post(
+            "/v1/platform/tenants",
+            headers=self.owner_headers,
+            json=self.tenant_body(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        tenant_id = created.json()["data"]["tenant_id"]
+        grant = await self.client.post(
+            "/v1/platform/sensitive-access-grants",
+            headers=self.owner_headers,
+            json={
+                "tenant_id": tenant_id,
+                "purpose_code": "SUPPORT_DIAGNOSIS",
+                "ticket_reference": "SUP-120",
+                "requested_duration_minutes": 15,
+            },
+        )
+        self.assertEqual(grant.status_code, 201, grant.text)
+        subject_id = uuid4()
+
+        response = await self.client.get(
+            f"/v1/platform/tenants/{tenant_id}/subjects/{subject_id}/identity",
+            headers=self.owner_headers,
+            params={"grant_id": grant.json()["data"]["grant_id"]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        parsed_tenant_id = UUID(tenant_id)
+        self.assertEqual(self.platform_subjects.calls, [(parsed_tenant_id, subject_id)])
+        events = await self.repository.audit_events(tenant_id=parsed_tenant_id)
+        self.assertIn("sensitive-access.use", [event.action for event in events])
 
     async def test_support_cannot_provision_and_tenant_token_cannot_call_platform(self) -> None:
         owner = await self.identities.verify_access_token(self.owner_login.access_token)

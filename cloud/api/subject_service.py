@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
+    IdentityProfileInput,
     SubjectCreateRequest,
     SubjectResolveRequest,
     SubjectSummary,
@@ -95,11 +97,47 @@ class IdentityProtector:
         )
         return ProtectedIdentityProfile(ciphertext, nonce, self.key_version)
 
+    def reveal_identity_profile(
+        self,
+        protected: ProtectedIdentityProfile,
+        *,
+        tenant_id: str,
+        subject_uuid: str,
+    ) -> tuple[str | None, str | None]:
+        if protected.key_version != self.key_version:
+            raise ValueError("identity profile key version is unavailable")
+        associated_data = f"{tenant_id}\x1f{subject_uuid}\x1fidentity-profile".encode(
+            "utf-8"
+        )
+        profile = IdentityProfileInput.model_validate(
+            json.loads(
+                self._cipher.decrypt(
+                    protected.nonce,
+                    protected.ciphertext,
+                    associated_data,
+                )
+            )
+        )
+        return profile.display_name, profile.contact
+
 
 class SubjectConsentService:
     def __init__(self, repository, identity_protector: IdentityProtector) -> None:
         self._repository = repository
         self._identity = identity_protector
+
+    async def read_identity(
+        self, tenant_id, subject_uuid
+    ) -> tuple[str | None, str | None]:
+        protected = await self._repository.read_identity_profile(tenant_id, subject_uuid)
+        if protected is None:
+            return (None, None)
+        ciphertext, nonce, key_version = protected
+        return self._identity.reveal_identity_profile(
+            ProtectedIdentityProfile(ciphertext, nonce, key_version),
+            tenant_id=str(tenant_id),
+            subject_uuid=str(subject_uuid),
+        )
 
     async def resolve(
         self, context: IngestionPrincipal | TerminalContext, request: SubjectResolveRequest

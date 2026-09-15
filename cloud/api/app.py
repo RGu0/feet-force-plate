@@ -500,16 +500,15 @@ def create_app(container: ServiceContainer) -> FastAPI:
             grant_id: UUID,
             context: PlatformAccessDependency,
         ):
-            identity = await container.platform_subjects.read_identity(
-                tenant_id,
-                subject_id,
-            )
             result = await container.platform_sensitive.read_identity(
                 context,
                 grant_id=grant_id,
                 tenant_id=tenant_id,
                 subject_id=subject_id,
-                identity_loader=lambda: identity,
+                identity_loader=lambda: container.platform_subjects.read_identity(
+                    tenant_id,
+                    subject_id,
+                ),
             )
             return _data_response(request, result)
 
