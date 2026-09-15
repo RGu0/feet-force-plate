@@ -132,6 +132,7 @@ class FaultRule:
     method: str
     path_prefix: str
     expires_at: datetime
+    path_exact: str | None = None
     delay_seconds: float = 0.0
     throttle_bytes_per_second: int | None = None
     applications: int = 1
@@ -144,6 +145,7 @@ class FaultRule:
         method: str,
         path_prefix: str,
         expires_at: datetime,
+        path_exact: str | None = None,
         delay_seconds: float = 0.0,
         throttle_bytes_per_second: int | None = None,
         applications: int = 1,
@@ -153,6 +155,8 @@ class FaultRule:
             raise ValueError("fault rule method is required")
         if not path_prefix.startswith("/"):
             raise ValueError("fault rule path prefix must start with /")
+        if path_exact is not None and not path_exact.startswith("/"):
+            raise ValueError("fault rule exact path must start with /")
         if expires_at.tzinfo is None or expires_at <= datetime.now(UTC):
             raise ValueError("fault rule expiry must be in the future")
         if delay_seconds < 0:
@@ -167,6 +171,7 @@ class FaultRule:
             method=normalized_method,
             path_prefix=path_prefix,
             expires_at=expires_at,
+            path_exact=path_exact,
             delay_seconds=delay_seconds,
             throttle_bytes_per_second=throttle_bytes_per_second,
             applications=applications,
@@ -203,6 +208,8 @@ class FaultController:
                 self._record("expired", rule, scope)
                 continue
             if rule.method != method or not path.startswith(rule.path_prefix):
+                continue
+            if rule.path_exact is not None and path != rule.path_exact:
                 continue
             if rule.applications == 1:
                 self._rules.pop(rule_id)
@@ -285,6 +292,7 @@ class FaultInjectingApp:
                 method=str(payload["method"]),
                 path_prefix=str(payload["path_prefix"]),
                 expires_at=expires,
+                path_exact=(str(payload["path_exact"]) if payload.get("path_exact") else None),
                 delay_seconds=float(payload.get("delay_seconds", 0)),
                 throttle_bytes_per_second=payload.get("throttle_bytes_per_second"),
                 applications=int(payload.get("applications", 1)),

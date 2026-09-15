@@ -127,6 +127,44 @@ def test_drop_after_upstream_executes_once_then_allows_retry(tmp_path: Path) -> 
     assert calls == 2
 
 
+def test_exact_path_rule_does_not_match_a_shared_prefix(tmp_path: Path) -> None:
+    async def exercise() -> tuple[int, int]:
+        app = FastAPI()
+
+        @app.post("/v1/sessions/one/complete")
+        async def complete() -> dict[str, str]:
+            return {"status": "INGESTED"}
+
+        @app.post("/v1/sessions/one/segments")
+        async def segment() -> dict[str, str]:
+            return {"status": "stored"}
+
+        paths = LocalLabPaths.create(tmp_path / "local-lab")
+        controller = FaultController("local-control-token", paths.audit)
+        controller.apply(
+            "local-control-token",
+            FaultRule.create(
+                kind=FaultKind.UNAVAILABLE,
+                method="POST",
+                path_prefix="/v1/sessions/one",
+                path_exact="/v1/sessions/one/complete",
+                expires_at=datetime.now(UTC) + timedelta(minutes=1),
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=FaultInjectingApp(app, controller)),
+            base_url="https://127.0.0.1:8743",
+        ) as client:
+            stored = await client.post("/v1/sessions/one/segments")
+            faulted = await client.post("/v1/sessions/one/complete")
+        return stored.status_code, faulted.status_code
+
+    stored, faulted = asyncio.run(exercise())
+
+    assert stored == 200
+    assert faulted == 503
+
+
 def test_control_route_requires_token_and_enables_a_finite_rule(tmp_path: Path) -> None:
     async def exercise() -> tuple[int, int, int]:
         app = FastAPI()
