@@ -36,38 +36,58 @@ manifest、README、额外文件、目录、符号链接或 Windows reparse poin
 `delivery-r3/` 等已签名目录都是各自目标提交的历史证据，绝不可覆盖。每个新的目标提交
 必须使用此前不存在的空目录，例如 `delivery-<target-commit-short>/`。
 
-## 负责人签名输入
+## RAY-448 受控离线签发
 
-负责人使用其专用 RAY-321 Ed25519 私钥，对 UTF-8 编码的 `approval.json` 原始字节
-生成 64 字节 Ed25519 签名，再把签名 Base64 编码为 `approval.sig`。私钥不得进入
-项目目录、工作树、同步盘或命令记录。
+approval pair 只能由受保护的离线签发机生成。签发机运行已审核的
+`scripts\sign_windows_cloud_delivery.py`，私钥、签发策略和审计日志均保留在本机
+受保护目录，不能位于项目目录、工作树、`.project-context` 或同步盘。脚本不会扫描
+密钥位置；策略显式指定私钥文件，并在签发前验证其导出的公钥恰好等于客户端源码内置的
+RAY-448 trust anchor。策略、私钥和审计日志均不得复制到 delivery 或 evidence。
 
-payload 必须严格为：
+批准请求是 UTF-8 JSON，必须严格为：
 
 ```json
 {
-  "schema_version": "feetforceplate-windows-cloud-approval/2",
+  "schema_version": "feetforceplate-controlled-delivery-signing-request/1",
   "approval_state": "approved",
-  "source": "License service public export",
-  "approved_by": "License service owner",
-  "approved_at": "2026-09-02T00:00:00Z",
-  "environment": "integration",
-  "target_commit": "40-character lowercase Git commit SHA",
-  "config": {
-    "api_base_url": "https://39.105.216.113:7443",
-    "channel": "integration",
-    "license_key_id": "license/1"
-  },
-  "files": {
-    "public-cloud-defaults/cloud-default.json": "SHA-256",
-    "public-cloud-defaults/cloud-ca.pem": "SHA-256",
-    "public-cloud-defaults/license-public.key": "SHA-256"
-  }
+  "approved_by": "Release owner",
+  "requested_at": "2026-09-15T04:00:00Z",
+  "expires_at": "2026-09-15T04:15:00Z",
+  "target_commit": "40-character lowercase Git commit SHA"
 }
 ```
 
-只有源码已提交且工作树干净后，`target_commit` 才能固定并签名。
+签发策略也是本机文件，严格包含 `schema_version`
+`feetforceplate-controlled-delivery-signer-policy/1`、`source`、`approved_by`、
+`private_key_file`、`audit_log_file` 和不超过 3600 秒的
+`maximum_request_ttl_seconds`。签发器拒绝未批准、非同一负责人、过期、超时、目标提交
+不匹配、工作树不干净、资源不合法、密钥不可用或公钥不匹配的请求；这些请求不能产生
+approval pair。成功输出只会在此前不存在的新目录中创建 `approval.json` 与
+`approval.sig`。批准 payload 的联调 endpoint/key ID 和三个资源 SHA-256 均由签发器从
+`--source` 直接导出，调用方不能声明或覆盖它们。
 
+在干净的受控源码根目录中执行：
+
+```powershell
+pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py sign `
+  --request D:\controlled-input\approved-request.json `
+  --signer-policy D:\FeetForcePlate\protected-signer\policy.json `
+  --source D:\controlled-input\public-cloud-defaults `
+  --project-root . `
+  --output D:\controlled-input\approval-<target-commit-short>
+```
+
+只读审计可按目标提交查询，输出不含私钥、私钥路径或策略内容：
+
+```powershell
+pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py audit `
+  --signer-policy D:\FeetForcePlate\protected-signer\policy.json `
+  --target-commit <40-character-lowercase-Git-commit-SHA>
+```
+
+若签发机或其密钥不可用，停止交付且不要复用旧 pair；恢复受保护签发机后，对当前干净
+提交重新发起批准请求。密钥轮换或撤销需要先发布更新后的客户端 trust anchor，再在新的
+受保护签发机上 provision 与该 anchor 匹配的策略和密钥，并为每个当前提交重新签发。
 ## 构建并保留同步证据副本
 
 在已完成上述 `setup`、提交干净且目标提交匹配的受控源码根目录中执行：
