@@ -211,6 +211,9 @@ class ApplicationController:
             "SKIP_PROFILE": self._coordinator.complete_profile,
             "RECHECK": self._coordinator.run_preflight,
             "ENTER_POSITION": self._coordinator.enter_position_guidance,
+            "CANCEL_POSITION_GUIDANCE": (
+                lambda: self._coordinator.cancel_position_guidance()
+            ),
             "START_ACQUISITION": self._coordinator.start_acquisition,
             "STOP_SCREENING": self._coordinator.stop_acquisition,
             "START_NEXT_SCREENING": self._start_next_screening,
