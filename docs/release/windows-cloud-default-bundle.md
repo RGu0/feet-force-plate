@@ -99,21 +99,29 @@ pwsh -File .\dev.ps1 run python scripts\sign_windows_cloud_delivery.py audit `
 重新发起批准请求。密钥轮换或撤销需要先发布更新后的客户端 trust anchor，再在新的
 受保护签发机上 provision 与该 anchor 匹配的策略和密钥，并为每个当前提交重新签发。
 
-### RAY-448 当前恢复步骤
+### RAY-448 恢复步骤：在签发时确定目标提交
 
-对当前 `master` 的 `bfd4f4cf68da1c63154aa2a62d11245c1ff3fbe9`，管理员依次执行：
+签发前，管理员必须在干净的 `master` 工作树中解析**当时**的精确 Git commit，并将该
+40-character lowercase SHA 同时写入短时有效的批准请求、签发命令的 `--project-root` 所在
+工作树和随后 Windows `ValidateOnly` 的工作树。不得把本指南中的任何规划期 SHA 当作仍然
+有效的签发目标；在工作树准备和签发之间 `master` 若前进，旧请求和 pair 都必须作废并按
+新的精确提交重新开始。
+
+R6 规划时的 `bfd4f4cf68da1c63154aa2a62d11245c1ff3fbe9` 已被 PR #36 的
+`ccf23afbb437b54cb60b73783dea066ffd1f5fd6` 取代；前者仅保留为历史上下文，不可用于
+当前签发。管理员按如下步骤操作：
 
 1. 在上述受保护的普通本地目录 provision policy、匹配 RAY-448 trust anchor 的 32-byte
    Ed25519 私钥和审计日志位置。policy 必须绑定签发人、私钥文件、审计日志和不超过
    3600 秒的请求有效期。
-2. 在该 SHA 的干净工作树中创建短时有效且已批准的请求，并用显式传入的
+2. 在上述签发时解析出的 SHA 的干净工作树中创建短时有效且已批准的请求，并用显式传入的
    `--signer-policy` 签发新的 approval pair。
 3. 将 pair 和三个 public defaults 组成严格的五文件交付树，复制到非同步、无 reparse point
    的本地 staging 目录，再运行 Windows `ValidateOnly`。
 4. 仅保留脱敏 audit 结果、approval pair 的哈希和 `ValidateOnly` 结果作为 RAY-448 evidence。
 
-旧 scope 曾在 `0124f4be…` 完成 Windows 验证，但该 pair 不能用于当前 SHA。RAY-448
-保持 In Progress，直到管理员完成上述当前 SHA 的 Windows 验证。
+旧 scope 曾在 `0124f4be…` 完成 Windows 验证，但该 pair 不能用于签发时解析出的目标
+SHA。RAY-448 保持 In Progress，直到管理员完成该目标 SHA 的 Windows 验证。
 
 ## 构建并保留同步证据副本
 
