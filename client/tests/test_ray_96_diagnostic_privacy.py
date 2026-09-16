@@ -78,6 +78,15 @@ def safe_event_payload() -> dict[str, object]:
     }
 
 
+def test_safe_event_store_accepts_the_existing_report_failure_event_name() -> None:
+    payload = safe_event_payload()
+    payload["name"] = "REPORT_GENERATION_FAILED"
+
+    event = SafeClientEvent.model_validate(payload)
+
+    assert event.name is SafeClientEventName.REPORT_GENERATION_FAILED
+
+
 def test_client_support_package_exports_only_the_safe_event_api() -> None:
     """Removing a package export must not force consumers onto the implementation module."""
     assert support.__all__ == [
