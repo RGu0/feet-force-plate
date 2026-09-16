@@ -114,6 +114,14 @@ class RetryableStageCaptureError(RuntimeError):
     """The current stage was discarded while earlier verified stages remain."""
 
 
+class _CaptureInitializationError(RuntimeError):
+    """Marks one safe, fixed initialization boundary without retaining its cause text."""
+
+    def __init__(self, boundary: str) -> None:
+        super().__init__(boundary)
+        self.boundary = boundary
+
+
 @dataclass(slots=True)
 class _LiveCaptureState:
     gate: StageRecordingGate
@@ -245,8 +253,13 @@ class LivePhysicalCapture:
                 )
             except Exception as exc:
                 gate.cancel_current_stage()
+                boundary = (
+                    exc.boundary
+                    if isinstance(exc, _CaptureInitializationError)
+                    else type(exc).__name__
+                )
                 raise RetryableStageCaptureError(
-                    f"capture initialization failed: {type(exc).__name__}"
+                    f"capture initialization failed: {boundary}"
                 ) from exc
             return self._capture_connection(
                 session_id,
@@ -283,6 +296,12 @@ class LivePhysicalCapture:
         parser,
         reference,
     ) -> _LiveCaptureState:
+        def initialize(boundary: str, operation):
+            try:
+                return operation()
+            except Exception as exc:
+                raise _CaptureInitializationError(boundary) from exc
+
         with self._state_lock:
             existing = self._states.get(session_id)
             if existing is not None:
@@ -291,17 +310,23 @@ class LivePhysicalCapture:
                     raise RuntimeError("reconnected parser profile changed during the session")
                 return existing
 
-            metadata = self._sessions.metadata(session_id)
+            metadata = initialize(
+                "metadata", lambda: self._sessions.metadata(session_id)
+            )
             started_at_ns = self._wall_time_ns()
-            self._physical_store.put_subject_ref(
-                metadata.subject_uuid, metadata.subject_uuid.encode()
-            )
-            self._physical_store.put_consent_record(
-                metadata.consent_record_id,
-                metadata.subject_uuid,
-                metadata.consent_record_id.encode(),
-                recorded_at_ns=started_at_ns,
-            )
+
+            def store_local_identity() -> None:
+                self._physical_store.put_subject_ref(
+                    metadata.subject_uuid, metadata.subject_uuid.encode()
+                )
+                self._physical_store.put_consent_record(
+                    metadata.consent_record_id,
+                    metadata.subject_uuid,
+                    metadata.consent_record_id.encode(),
+                    recorded_at_ns=started_at_ns,
+                )
+
+            initialize("local-identity", store_local_identity)
             quality_gate = DoP4864HardwareQualityGate(
                 baseline_reference=reference
             )
@@ -326,35 +351,44 @@ class LivePhysicalCapture:
                 else self._formal_upload.payload_schema
             )
             versions["payload_schema"] = payload_schema
-            upload_envelope = self._formal_upload_envelope(
-                session_id=session_id,
-                metadata=metadata,
-                protocol_profile=parser.profile.version,
-                started_at_ns=started_at_ns,
+            upload_envelope = initialize(
+                "formal-envelope",
+                lambda: self._formal_upload_envelope(
+                    session_id=session_id,
+                    metadata=metadata,
+                    protocol_profile=parser.profile.version,
+                    started_at_ns=started_at_ns,
+                ),
             )
             stager_versions = {
                 "institution_live": versions["institution_live"],
                 "protocol": versions["protocol"],
                 "payload_schema": payload_schema,
             }
-            stager = ValidSessionStager(
-                self._spool_root,
-                session_id=session_id,
-                key_provider=self._key_provider,
-                store=self._physical_store,
-                subject_uuid=metadata.subject_uuid,
-                consent_id=metadata.consent_record_id,
-                versions=stager_versions,
-                started_at_ns=started_at_ns,
-                upload_envelope=upload_envelope,
-                expected_stage_ids=gate.expected_stage_ids,
+            stager = initialize(
+                "session-stager",
+                lambda: ValidSessionStager(
+                    self._spool_root,
+                    session_id=session_id,
+                    key_provider=self._key_provider,
+                    store=self._physical_store,
+                    subject_uuid=metadata.subject_uuid,
+                    consent_id=metadata.consent_record_id,
+                    versions=stager_versions,
+                    started_at_ns=started_at_ns,
+                    upload_envelope=upload_envelope,
+                    expected_stage_ids=gate.expected_stage_ids,
+                ),
             )
-            stager.freeze_versions(
-                {
-                    key: value
-                    for key, value in versions.items()
-                    if key not in stager_versions
-                }
+            initialize(
+                "session-stager",
+                lambda: stager.freeze_versions(
+                    {
+                        key: value
+                        for key, value in versions.items()
+                        if key not in stager_versions
+                    }
+                ),
             )
             state = _LiveCaptureState(
                 gate=gate,

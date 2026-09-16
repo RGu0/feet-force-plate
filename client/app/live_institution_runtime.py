@@ -44,6 +44,14 @@ class _Telemetry:
         if code == "E-ACQ-004":
             if "capture connection failed:" in technical_detail:
                 event_name = SafeClientEventName.LIVE_CAPTURE_CONNECTION_FAILED
+            elif "capture initialization failed: metadata" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_METADATA_FAILED
+            elif "capture initialization failed: local-identity" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_LOCAL_IDENTITY_FAILED
+            elif "capture initialization failed: formal-envelope" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_FAILED
+            elif "capture initialization failed: session-stager" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SESSION_STAGER_FAILED
             elif "capture initialization failed:" in technical_detail:
                 event_name = SafeClientEventName.LIVE_CAPTURE_INITIALIZATION_FAILED
             elif technical_detail.startswith("RetryableStageCaptureError:"):

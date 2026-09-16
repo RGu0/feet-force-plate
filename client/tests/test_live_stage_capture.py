@@ -410,7 +410,7 @@ def test_capture_identifies_state_initialization_failures_without_exposing_detai
 
     with pytest.raises(
         RetryableStageCaptureError,
-        match="capture initialization failed: RuntimeError$",
+        match="capture initialization failed: metadata$",
     ):
         capture.capture("session-1", gate)
 
