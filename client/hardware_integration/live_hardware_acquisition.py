@@ -21,11 +21,13 @@ class QtLiveHardwareAcquisition(QObject):
         self,
         capture_session: Callable[[str, StageRecordingGate], object],
         *,
+        prepare_session: Callable[[str], None] | None = None,
         expected_stage_ids: tuple[str, ...] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._capture_session = capture_session
+        self._prepare_session = prepare_session or (lambda _session_id: None)
         self._expected_stage_ids = (
             tuple(stage.stage_id for stage in default_standard_protocol().stages)
             if expected_stage_ids is None
@@ -67,6 +69,7 @@ class QtLiveHardwareAcquisition(QObject):
 
     def start_stage(self, session_id: str, stage) -> None:
         if self._session_id is None:
+            self._prepare_session(session_id)
             self._session_id = session_id
             self._gate.bind_session(session_id)
         elif self._session_id != session_id:

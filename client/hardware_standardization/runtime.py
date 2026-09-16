@@ -118,6 +118,10 @@ class HardwareRuntime:
         return self._adapter.specification.specification_id
 
     @property
+    def capture_profile_version(self) -> str:
+        return self._adapter.specification.source_schema_version
+
+    @property
     def startup_metadata(self) -> HardwareStartupMetadata:
         specification = self._adapter.specification
         validation = specification.startup_validation

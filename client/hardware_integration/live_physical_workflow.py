@@ -146,6 +146,14 @@ class _LiveCaptureState:
     reconstructed_frames: list[RawFrame]
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedCaptureSession:
+    metadata: LiveSessionMetadata
+    started_at_ns: int
+    protocol_profile: str
+    upload_envelope: FormalUploadEnvelope | None
+
+
 class InstitutionLiveSessions:
     """One local workflow session maps to one physical encrypted capture."""
 
@@ -232,11 +240,34 @@ class LivePhysicalCapture:
         self._storage_append_timeout_s = storage_append_timeout_s
         self._read_size = read_size
         self._formal_upload = formal_upload
+        self._prepared_sessions: dict[str, _PreparedCaptureSession] = {}
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
         self._states: dict[str, _LiveCaptureState] = {}
         self._active_workers: set[str] = set()
         self._state_lock = threading.Lock()
+
+    def prepare_session(self, session_id: str) -> None:
+        """Freeze upload metadata on the caller thread before device I/O starts."""
+
+        with self._state_lock:
+            if session_id in self._states or session_id in self._prepared_sessions:
+                return
+            metadata = self._sessions.metadata(session_id)
+            started_at_ns = self._wall_time_ns()
+            protocol_profile = self._hardware.capture_profile_version
+            upload_envelope = self._formal_upload_envelope(
+                session_id=session_id,
+                metadata=metadata,
+                protocol_profile=protocol_profile,
+                started_at_ns=started_at_ns,
+            )
+            self._prepared_sessions[session_id] = _PreparedCaptureSession(
+                metadata=metadata,
+                started_at_ns=started_at_ns,
+                protocol_profile=protocol_profile,
+                upload_envelope=upload_envelope,
+            )
 
     def capture(
         self, session_id: str, gate: StageRecordingGate
@@ -268,7 +299,11 @@ class LivePhysicalCapture:
             except Exception as exc:
                 gate.cancel_current_stage()
                 boundary = (
-                    exc.marker
+                    (
+                        exc.marker
+                        if exc.boundary == "formal-envelope"
+                        else exc.boundary
+                    )
                     if isinstance(exc, _CaptureInitializationError)
                     else type(exc).__name__
                 )
@@ -324,10 +359,22 @@ class LivePhysicalCapture:
                     raise RuntimeError("reconnected parser profile changed during the session")
                 return existing
 
-            metadata = initialize(
-                "metadata", lambda: self._sessions.metadata(session_id)
-            )
-            started_at_ns = self._wall_time_ns()
+            prepared = self._prepared_sessions.get(session_id)
+            if self._formal_upload is not None and prepared is None:
+                raise _CaptureInitializationError(
+                    "formal-envelope",
+                    RuntimeError("formal upload session was not prepared"),
+                )
+            if prepared is None:
+                metadata = initialize(
+                    "metadata", lambda: self._sessions.metadata(session_id)
+                )
+                started_at_ns = self._wall_time_ns()
+            else:
+                metadata = prepared.metadata
+                started_at_ns = prepared.started_at_ns
+                if parser.profile.version != prepared.protocol_profile:
+                    raise RuntimeError("prepared parser profile changed before capture")
 
             def store_local_identity() -> None:
                 self._physical_store.put_subject_ref(
@@ -365,14 +412,18 @@ class LivePhysicalCapture:
                 else self._formal_upload.payload_schema
             )
             versions["payload_schema"] = payload_schema
-            upload_envelope = initialize(
-                "formal-envelope",
-                lambda: self._formal_upload_envelope(
-                    session_id=session_id,
-                    metadata=metadata,
-                    protocol_profile=parser.profile.version,
-                    started_at_ns=started_at_ns,
-                ),
+            upload_envelope = (
+                prepared.upload_envelope
+                if prepared is not None
+                else initialize(
+                    "formal-envelope",
+                    lambda: self._formal_upload_envelope(
+                        session_id=session_id,
+                        metadata=metadata,
+                        protocol_profile=parser.profile.version,
+                        started_at_ns=started_at_ns,
+                    ),
+                )
             )
             stager_versions = {
                 "institution_live": versions["institution_live"],

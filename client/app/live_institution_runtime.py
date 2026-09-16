@@ -150,7 +150,10 @@ def build_live_institution_runtime(
         latest_frames=raw_mailbox,
         formal_upload=formal_upload,
     )
-    acquisition = QtLiveHardwareAcquisition(capture.capture)
+    acquisition = QtLiveHardwareAcquisition(
+        capture.capture,
+        prepare_session=capture.prepare_session,
+    )
     processor = LivePhysicalProcessor(
         sessions=sessions,
         physical_store=physical_store,

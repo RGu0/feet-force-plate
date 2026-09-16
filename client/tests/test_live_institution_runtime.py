@@ -182,9 +182,13 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         def capture(self, session_id: str, gate: object) -> object:
             return SimpleNamespace(session_id=session_id, gate=gate)
 
+        def prepare_session(self, _session_id: str) -> None:
+            pass
+
     class Acquisition:
-        def __init__(self, capture_session) -> None:
+        def __init__(self, capture_session, *, prepare_session) -> None:
             self.capture_session = capture_session
+            self.prepare_session = prepare_session
             self.callbacks: dict[str, object] = {}
 
         def set_callbacks(self, **callbacks) -> None:
@@ -218,9 +222,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         baseline = object()
         return baseline
 
-    def make_acquisition(capture_session):
+    def make_acquisition(capture_session, *, prepare_session):
         nonlocal acquisition
-        acquisition = Acquisition(capture_session)
+        acquisition = Acquisition(capture_session, prepare_session=prepare_session)
         return acquisition
 
     def make_processor(**kwargs):
@@ -305,6 +309,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         and baseline is not None
     )
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
+    assert acquisition.prepare_session == capture.prepare_session
     assert events.index("processor") < events.index("callbacks")
     formal_upload = capture_kwargs["formal_upload"]
     assert formal_upload.client_installation_id == (
