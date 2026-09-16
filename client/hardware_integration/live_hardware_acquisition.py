@@ -1,4 +1,4 @@
-"""Qt bridge for operator-started stages on one persistent device loop."""
+"""Qt bridge for operator-started stages on one supervised capture worker."""
 
 from __future__ import annotations
 

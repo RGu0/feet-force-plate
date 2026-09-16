@@ -62,6 +62,21 @@ class _Telemetry:
                 event_name = SafeClientEventName.LIVE_CAPTURE_SESSION_STAGER_FAILED
             elif "capture initialization failed:" in technical_detail:
                 event_name = SafeClientEventName.LIVE_CAPTURE_INITIALIZATION_FAILED
+            elif "transport disconnected:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_TRANSPORT_DISCONNECTED
+            elif "no valid decoded signal" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SIGNAL_TIMEOUT
+            elif "stage capture failed at DECODE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DECODE_FAILED
+            elif "stage capture failed at GATE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_GATE_FAILED
+            elif "stage capture failed at DISPLAY:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DISPLAY_HANDOFF_FAILED
+            elif (
+                "storage handoff failed:" in technical_detail
+                or "stage capture failed at STAGE_" in technical_detail
+            ):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STAGE_STORAGE_FAILED
             elif technical_detail.startswith("RetryableStageCaptureError:"):
                 event_name = SafeClientEventName.LIVE_CAPTURE_STREAM_FAILED
         self._recorder.record(

@@ -277,56 +277,77 @@ class LivePhysicalCapture:
             raise RuntimeError("P-05 empty-board baseline is required before capture")
         gate.bind_session(session_id)
         self._claim_worker(session_id, gate)
-        connection = None
         try:
-            try:
-                connect_capture = getattr(
-                    self._hardware, "connect_capture", self._hardware.connect_startup
-                )
-                connection = connect_capture()
-            except Exception as exc:
-                gate.cancel_current_stage()
-                raise RetryableStageCaptureError(
-                    f"capture connection failed: {type(exc).__name__}"
-                ) from exc
-            try:
-                state = self._state_for_connection(
-                    session_id,
-                    gate=gate,
-                    parser=connection.parser,
-                    reference=reference,
-                )
-            except Exception as exc:
-                gate.cancel_current_stage()
-                boundary = (
-                    (
-                        exc.marker
-                        if exc.boundary == "formal-envelope"
-                        else exc.boundary
-                    )
-                    if isinstance(exc, _CaptureInitializationError)
-                    else type(exc).__name__
-                )
-                raise RetryableStageCaptureError(
-                    f"capture initialization failed: {boundary}"
-                ) from exc
-            return self._capture_connection(
-                session_id,
-                gate=gate,
-                state=state,
-                transport=connection.transport,
-                parser=connection.parser,
-            )
-        finally:
-            try:
-                if connection is not None:
+            first_connection = True
+            while True:
+                if not first_connection:
+                    self._wait_for_open_stage(gate)
+                first_connection = False
+                connection = None
+                try:
                     try:
-                        connection.transport.close()
-                    except Exception:
-                        pass
-            finally:
-                with self._state_lock:
-                    self._active_workers.discard(session_id)
+                        connect_capture = getattr(
+                            self._hardware,
+                            "connect_capture",
+                            self._hardware.connect_startup,
+                        )
+                        connection = connect_capture()
+                    except Exception as exc:
+                        gate.cancel_current_stage()
+                        raise RetryableStageCaptureError(
+                            f"capture connection failed: {type(exc).__name__}"
+                        ) from exc
+                    try:
+                        state = self._state_for_connection(
+                            session_id,
+                            gate=gate,
+                            parser=connection.parser,
+                            reference=reference,
+                        )
+                    except Exception as exc:
+                        gate.cancel_current_stage()
+                        boundary = (
+                            (
+                                exc.marker
+                                if exc.boundary == "formal-envelope"
+                                else exc.boundary
+                            )
+                            if isinstance(exc, _CaptureInitializationError)
+                            else type(exc).__name__
+                        )
+                        raise RetryableStageCaptureError(
+                            f"capture initialization failed: {boundary}"
+                        ) from exc
+                    result = self._capture_connection(
+                        session_id,
+                        gate=gate,
+                        state=state,
+                        transport=connection.transport,
+                        parser=connection.parser,
+                    )
+                    if result is not None:
+                        return result
+                finally:
+                    if connection is not None:
+                        try:
+                            connection.transport.close()
+                        except Exception:
+                            pass
+        finally:
+            with self._state_lock:
+                self._active_workers.discard(session_id)
+
+    @staticmethod
+    def _wait_for_open_stage(gate: StageRecordingGate) -> None:
+        """Release the CH340 while the operator prepares the next position."""
+
+        while True:
+            snapshot = gate.snapshot()
+            if snapshot.cancelled:
+                raise RetryableStageCaptureError("current stage capture was cancelled")
+            if snapshot.stage_id is not None and not snapshot.stage_complete:
+                return
+            time.sleep(0.01)
 
     def _claim_worker(self, session_id: str, gate: StageRecordingGate) -> None:
         with self._state_lock:
@@ -514,7 +535,7 @@ class LivePhysicalCapture:
         state: _LiveCaptureState,
         transport,
         parser,
-    ) -> LiveHardwareSessionResult:
+    ) -> LiveHardwareSessionResult | None:
         attempt: StageAttemptSpool | None = None
         current_stage_id: str | None = None
         previous_frame: RawFrame | None = None
@@ -522,6 +543,7 @@ class LivePhysicalCapture:
         pending_events: list[ProtocolIntegrityEvent] = []
         stage_integrity_events: list[AcquisitionIntegrityEvent] = []
         stage_reconstructed_frames: list[RawFrame] = []
+        operation = "WAITING_FOR_STAGE"
 
         def reset_stage_continuity_state() -> None:
             nonlocal previous_frame, last_valid_observed_ns, pending_events
@@ -546,6 +568,7 @@ class LivePhysicalCapture:
                 elif not active and current_stage_id is None:
                     reset_stage_continuity_state()
 
+                operation = "READ"
                 chunk = transport.read(self._read_size)
                 now_ns = self._monotonic_ns()
                 if not chunk:
@@ -569,12 +592,15 @@ class LivePhysicalCapture:
                         "no valid decoded signal for five seconds"
                     )
 
+                operation = "DECODE"
                 decoded = parser.feed(chunk)
                 pending_events.extend(parser.take_integrity_events())
                 if not decoded and current_stage_id is None:
                     pending_events = []
                 for frame in decoded:
+                    operation = "GATE"
                     decision = gate.observe(frame)
+                    operation = "DISPLAY"
                     self._latest_frames.publish(frame)
                     if not decision.record:
                         if gate.snapshot().cancelled:
@@ -592,6 +618,7 @@ class LivePhysicalCapture:
                     if current_stage_id != decision.stage_id:
                         raise RuntimeError("recording gate changed stages mid-frame")
                     if attempt is None:
+                        operation = "STAGE_SPOOL"
                         attempt = StageAttemptSpool(
                             self._spool_root,
                             session_id=session_id,
@@ -617,6 +644,7 @@ class LivePhysicalCapture:
                         if event.valid_frames_before > frame.source_index
                     ]
                     try:
+                        operation = "STAGE_APPEND"
                         attempt.append(frame)
                     except Exception as exc:
                         raise RetryableStageCaptureError(
@@ -628,13 +656,16 @@ class LivePhysicalCapture:
                         continue
                     if decision.window is None:
                         raise RuntimeError("completed stage is missing its captured window")
+                    operation = "STAGE_SEAL"
                     sealed_attempt = attempt.seal()
                     if not gate.begin_stage_commit(decision.window):
                         raise RetryableStageCaptureError(
                             "current stage was cancelled before durable merge"
                         )
+                    operation = "STAGE_DISCARD"
                     attempt.discard(reason="sealed for final session merge")
                     attempt = None
+                    operation = "STAGE_MERGE"
                     state.stager.append_verified_stage(
                         sealed_attempt, decision.window
                     )
@@ -646,7 +677,9 @@ class LivePhysicalCapture:
                     current_stage_id = None
                     reset_stage_continuity_state()
                     if decision.session_complete:
+                        operation = "FINALIZE"
                         return self._finalize_session(session_id, state)
+                    return None
         except TransportDisconnected as exc:
             reason = f"transport disconnected: {exc}"
             self._discard_retryable_attempt(
@@ -683,7 +716,10 @@ class LivePhysicalCapture:
                 self._states.pop(session_id, None)
             raise
         except Exception as exc:
-            reason = f"stage capture failed: {type(exc).__name__}: {exc}"
+            reason = (
+                f"stage capture failed at {operation}: "
+                f"{type(exc).__name__}: {exc}"
+            )
             self._discard_retryable_attempt(
                 gate,
                 attempt=attempt,
