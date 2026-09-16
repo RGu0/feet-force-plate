@@ -134,6 +134,11 @@ class _Sessions:
         )
 
 
+class _StateInitializationFailureSessions(_Sessions):
+    def metadata(self, _session_id: str) -> LiveSessionMetadata:
+        raise RuntimeError("controlled state initialization failure")
+
+
 class _Baseline:
     def __init__(self) -> None:
         adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
@@ -393,6 +398,23 @@ def test_connect_failure_cancels_open_stage_and_allows_same_stage_retry(tmp_path
 
     assert not isinstance(second_outcome, BaseException)
     assert second_outcome.committed
+
+
+def test_capture_identifies_state_initialization_failures_without_exposing_detail(
+    tmp_path,
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    capture._sessions = _StateInitializationFailureSessions()
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+
+    with pytest.raises(
+        RetryableStageCaptureError,
+        match="capture initialization failed: metadata$",
+    ):
+        capture.capture("session-1", gate)
+
+    assert hardware.connections[0].closed
 
 
 def test_close_failure_cannot_override_stage_error_or_keep_worker_claimed(tmp_path) -> None:

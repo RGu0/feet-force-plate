@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -7,6 +8,7 @@ from client.app.institution_store import InstitutionLocalStore
 from client.device.stage_windows import StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_integration import live_physical_workflow
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
     InstitutionLiveSessions,
@@ -66,7 +68,7 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
         )
         metadata = sessions.metadata(session_id)
         capture = LivePhysicalCapture(
-            hardware=None,
+            hardware=SimpleNamespace(capture_profile_version="do-p4864/1"),
             sessions=sessions,
             baseline=None,
             physical_store=physical_store,
@@ -95,14 +97,17 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             source_digest="a" * 64,
         )
 
-        state = capture._state_for_connection(
-            session_id,
-            gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
-            parser=SimpleNamespace(
-                profile=SimpleNamespace(version="do-p4864/1")
-            ),
-            reference=reference,
-        )
+        capture.prepare_session(session_id)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            state = executor.submit(
+                capture._state_for_connection,
+                session_id,
+                gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
+                parser=SimpleNamespace(
+                    profile=SimpleNamespace(version="do-p4864/1")
+                ),
+                reference=reference,
+            ).result()
 
         assert state.stager.subject_uuid == metadata.subject_uuid
         assert state.stager.subject_uuid != session_id
@@ -124,6 +129,14 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
     finally:
         physical_store.close()
         institution.close()
+
+
+def test_capture_initialization_error_uses_a_safe_missing_record_category() -> None:
+    error = live_physical_workflow._CaptureInitializationError(
+        "formal-envelope", KeyError("private record")
+    )
+
+    assert error.marker == "formal-envelope/missing-local-record"
 
 
 def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator_attestations(tmp_path) -> None:

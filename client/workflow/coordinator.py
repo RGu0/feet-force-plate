@@ -189,6 +189,20 @@ class ScreeningCoordinator:
         self._position_guidance.reset()
         return True
 
+    def cancel_position_guidance(self) -> bool:
+        """Leave P-06 before a session is created, without recording a result."""
+
+        if (
+            self._machine.step is not ScreeningStep.POSITION_GUIDANCE
+            or self._session_id is not None
+        ):
+            return False
+        self._machine.cancel_position_guidance()
+        self._position_guidance.reset()
+        self._notice = None
+        self._error = None
+        return True
+
     def observe_position(
         self,
         *,

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from client.app import live_institution_runtime as live_runtime
+from client.support import SafeClientEventName, SafeClientEventOutcome
 
 
 class _FakeWindow:
@@ -34,6 +35,122 @@ class _FakeController:
 
     def on_live_hardware_capture_failed(self, detail: str) -> None:
         self.failures.append(detail)
+
+
+def test_live_capture_telemetry_records_only_safe_failure_metadata() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail="RuntimeError: private transport diagnostic",
+    )
+
+    assert recorder.calls == [
+        (
+            SafeClientEventName.LIVE_CAPTURE_FAILED,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
+def test_live_capture_telemetry_records_the_initialization_failure_boundary() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail=(
+            "RetryableStageCaptureError: capture initialization failed: "
+            "RuntimeError: private storage diagnostic"
+        ),
+    )
+
+    assert [
+        (name.value, outcome.value, kwargs)
+        for name, outcome, kwargs in recorder.calls
+    ] == [
+        (
+            "LIVE_CAPTURE_INITIALIZATION_FAILED",
+            "FAILED",
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
+def test_live_capture_telemetry_records_the_metadata_initialization_boundary() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail="RetryableStageCaptureError: capture initialization failed: metadata",
+    )
+
+    assert [
+        (name.value, outcome.value, kwargs)
+        for name, outcome, kwargs in recorder.calls
+    ] == [
+        (
+            "LIVE_CAPTURE_METADATA_FAILED",
+            "FAILED",
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
+def test_live_capture_telemetry_records_the_formal_envelope_failure_category() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail=(
+            "RetryableStageCaptureError: capture initialization failed: "
+            "formal-envelope/missing-local-record"
+        ),
+    )
+
+    assert recorder.calls == [
+        (
+            SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_LOCAL_RECORD_MISSING,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
 
 
 def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
@@ -65,9 +182,13 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         def capture(self, session_id: str, gate: object) -> object:
             return SimpleNamespace(session_id=session_id, gate=gate)
 
+        def prepare_session(self, _session_id: str) -> None:
+            pass
+
     class Acquisition:
-        def __init__(self, capture_session) -> None:
+        def __init__(self, capture_session, *, prepare_session) -> None:
             self.capture_session = capture_session
+            self.prepare_session = prepare_session
             self.callbacks: dict[str, object] = {}
 
         def set_callbacks(self, **callbacks) -> None:
@@ -101,9 +222,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         baseline = object()
         return baseline
 
-    def make_acquisition(capture_session):
+    def make_acquisition(capture_session, *, prepare_session):
         nonlocal acquisition
-        acquisition = Acquisition(capture_session)
+        acquisition = Acquisition(capture_session, prepare_session=prepare_session)
         return acquisition
 
     def make_processor(**kwargs):
@@ -188,6 +309,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         and baseline is not None
     )
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
+    assert acquisition.prepare_session == capture.prepare_session
     assert events.index("processor") < events.index("callbacks")
     formal_upload = capture_kwargs["formal_upload"]
     assert formal_upload.client_installation_id == (
