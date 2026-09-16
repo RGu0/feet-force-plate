@@ -153,6 +153,65 @@ def test_live_capture_telemetry_records_the_formal_envelope_failure_category() -
     ]
 
 
+@pytest.mark.parametrize(
+    ("technical_detail", "expected_name"),
+    [
+        (
+            "RetryableStageCaptureError: transport disconnected: private driver detail",
+            SafeClientEventName.LIVE_CAPTURE_TRANSPORT_DISCONNECTED,
+        ),
+        (
+            "RetryableStageCaptureError: no valid decoded signal for five seconds",
+            SafeClientEventName.LIVE_CAPTURE_SIGNAL_TIMEOUT,
+        ),
+        (
+            "RetryableStageCaptureError: stage capture failed at DECODE: private detail",
+            SafeClientEventName.LIVE_CAPTURE_DECODE_FAILED,
+        ),
+        (
+            "RetryableStageCaptureError: stage capture failed at GATE: private detail",
+            SafeClientEventName.LIVE_CAPTURE_GATE_FAILED,
+        ),
+        (
+            "RetryableStageCaptureError: stage capture failed at DISPLAY: private detail",
+            SafeClientEventName.LIVE_CAPTURE_DISPLAY_HANDOFF_FAILED,
+        ),
+        (
+            "RetryableStageCaptureError: storage handoff failed: private path",
+            SafeClientEventName.LIVE_CAPTURE_STAGE_STORAGE_FAILED,
+        ),
+        (
+            "RetryableStageCaptureError: stage capture failed at STAGE_SEAL: private path",
+            SafeClientEventName.LIVE_CAPTURE_STAGE_STORAGE_FAILED,
+        ),
+    ],
+)
+def test_live_capture_telemetry_records_safe_stream_failure_categories(
+    technical_detail: str, expected_name: SafeClientEventName
+) -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    live_runtime._Telemetry(recorder).record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail=technical_detail,
+    )
+
+    assert recorder.calls == [
+        (
+            expected_name,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
 def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     monkeypatch, tmp_path: Path
 ) -> None:
