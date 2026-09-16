@@ -48,6 +48,14 @@ class _Telemetry:
                 event_name = SafeClientEventName.LIVE_CAPTURE_METADATA_FAILED
             elif "capture initialization failed: local-identity" in technical_detail:
                 event_name = SafeClientEventName.LIVE_CAPTURE_LOCAL_IDENTITY_FAILED
+            elif "capture initialization failed: formal-envelope/missing-local-record" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_LOCAL_RECORD_MISSING
+            elif "capture initialization failed: formal-envelope/invalid-contract-value" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_VALUE_INVALID
+            elif "capture initialization failed: formal-envelope/invalid-contract-type" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_TYPE_INVALID
+            elif "capture initialization failed: formal-envelope/unexpected" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_UNEXPECTED
             elif "capture initialization failed: formal-envelope" in technical_detail:
                 event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_FAILED
             elif "capture initialization failed: session-stager" in technical_detail:

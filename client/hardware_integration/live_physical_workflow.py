@@ -117,9 +117,23 @@ class RetryableStageCaptureError(RuntimeError):
 class _CaptureInitializationError(RuntimeError):
     """Marks one safe, fixed initialization boundary without retaining its cause text."""
 
-    def __init__(self, boundary: str) -> None:
-        super().__init__(boundary)
+    def __init__(self, boundary: str, cause: Exception) -> None:
+        category = _safe_initialization_failure_category(cause)
+        super().__init__(f"{boundary}/{category}")
         self.boundary = boundary
+        self.marker = f"{boundary}/{category}"
+
+
+def _safe_initialization_failure_category(cause: Exception) -> str:
+    """Return a fixed category without retaining private exception text."""
+
+    if isinstance(cause, KeyError):
+        return "missing-local-record"
+    if isinstance(cause, ValueError):
+        return "invalid-contract-value"
+    if isinstance(cause, TypeError):
+        return "invalid-contract-type"
+    return "unexpected"
 
 
 @dataclass(slots=True)
@@ -254,7 +268,7 @@ class LivePhysicalCapture:
             except Exception as exc:
                 gate.cancel_current_stage()
                 boundary = (
-                    exc.boundary
+                    exc.marker
                     if isinstance(exc, _CaptureInitializationError)
                     else type(exc).__name__
                 )
@@ -300,7 +314,7 @@ class LivePhysicalCapture:
             try:
                 return operation()
             except Exception as exc:
-                raise _CaptureInitializationError(boundary) from exc
+                raise _CaptureInitializationError(boundary, exc) from exc
 
         with self._state_lock:
             existing = self._states.get(session_id)

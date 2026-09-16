@@ -124,6 +124,35 @@ def test_live_capture_telemetry_records_the_metadata_initialization_boundary() -
     ]
 
 
+def test_live_capture_telemetry_records_the_formal_envelope_failure_category() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail=(
+            "RetryableStageCaptureError: capture initialization failed: "
+            "formal-envelope/missing-local-record"
+        ),
+    )
+
+    assert recorder.calls == [
+        (
+            SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_LOCAL_RECORD_MISSING,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
 def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     monkeypatch, tmp_path: Path
 ) -> None:

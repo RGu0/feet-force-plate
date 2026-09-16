@@ -7,6 +7,7 @@ from client.app.institution_store import InstitutionLocalStore
 from client.device.stage_windows import StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_integration import live_physical_workflow
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
     InstitutionLiveSessions,
@@ -124,6 +125,14 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
     finally:
         physical_store.close()
         institution.close()
+
+
+def test_capture_initialization_error_uses_a_safe_missing_record_category() -> None:
+    error = live_physical_workflow._CaptureInitializationError(
+        "formal-envelope", KeyError("private record")
+    )
+
+    assert error.marker == "formal-envelope/missing-local-record"
 
 
 def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator_attestations(tmp_path) -> None:
