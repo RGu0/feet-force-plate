@@ -22,14 +22,28 @@ from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
+from client.support import SafeClientEventName, SafeClientEventOutcome
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
 
 
 class _Telemetry:
-    def record_error(self, **_event) -> None:
-        pass
+    """Record only allow-listed live-capture failure metadata."""
+
+    _LIVE_CAPTURE_CODES = frozenset({"E-ACQ-001", "E-ACQ-004", "E-DEV-002"})
+
+    def __init__(self, recorder=None) -> None:
+        self._recorder = recorder
+
+    def record_error(self, *, code: str, **_event) -> None:
+        if code not in self._LIVE_CAPTURE_CODES or self._recorder is None:
+            return
+        self._recorder.record(
+            SafeClientEventName.LIVE_CAPTURE_FAILED,
+            SafeClientEventOutcome.FAILED,
+            error_code=code,
+        )
 
 
 class _Print:
@@ -68,6 +82,7 @@ def build_live_institution_runtime(
     export_destination,
     app_version: str,
     payload_schema: str,
+    event_recorder=None,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
@@ -136,7 +151,7 @@ def build_live_institution_runtime(
         processor=processor,
         delivery=ReportDeliveryService(BasicReportPdfRenderer()),
         spooler=_Print(),
-        telemetry=_Telemetry(),
+        telemetry=_Telemetry(event_recorder),
         display_refresh=DisplayRefreshController(
             display_mailbox,
             maximum_refresh_hz=hardware.display_geometry.maximum_refresh_hz,
