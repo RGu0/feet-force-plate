@@ -227,7 +227,10 @@ class LivePhysicalCapture:
         connection = None
         try:
             try:
-                connection = self._hardware.connect_startup()
+                connect_capture = getattr(
+                    self._hardware, "connect_capture", self._hardware.connect_startup
+                )
+                connection = connect_capture()
                 state = self._state_for_connection(
                     session_id,
                     gate=gate,

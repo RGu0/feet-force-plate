@@ -40,3 +40,31 @@ def test_connect_startup_retries_a_transient_serial_open_failure() -> None:
     assert connection.transport is transport
     assert attempts == 2
     assert pauses == [0.15]
+
+
+def test_connect_capture_skips_the_probe_open_close_cycle() -> None:
+    probes: list[bool] = []
+    transport = object()
+
+    def enumerate_ports(**options: object):
+        probes.append(bool(options["probe_availability"]))
+        return (
+            SerialPortCandidate(
+                device="COM-TEST",
+                vid=0x1A86,
+                pid=0x7523,
+                description="CH340 test device",
+                hwid="USB\\VID_1A86&PID_7523",
+                availability=PortAvailability.UNKNOWN,
+            ),
+        )
+
+    runtime = HardwareRuntime(
+        enumerate_ports=enumerate_ports,
+        transport_open=lambda _device, **_options: transport,
+    )
+
+    connection = runtime.connect_capture()
+
+    assert connection.transport is transport
+    assert probes == [False]

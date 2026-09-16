@@ -192,6 +192,30 @@ class HardwareRuntime:
     def connect_startup(
         self, *, expected_hardware_identity: str | None = None
     ) -> HardwareStartupConnection:
+        return self._connect(
+            expected_hardware_identity=expected_hardware_identity,
+            probe_availability=True,
+        )
+
+    def connect_capture(self) -> HardwareStartupConnection:
+        """Open the selected board once for a live capture after preflight.
+
+        P-05 already proved this hardware can be opened.  Re-probing a CH340
+        here would open and close the same Windows COM device immediately
+        before the capture worker opens it, which can race driver release.
+        """
+
+        return self._connect(
+            expected_hardware_identity=None,
+            probe_availability=False,
+        )
+
+    def _connect(
+        self,
+        *,
+        expected_hardware_identity: str | None,
+        probe_availability: bool,
+    ) -> HardwareStartupConnection:
         specification = self._adapter.specification
         serial_options = {
             "baud_rate": specification.serial_baud_rate,
@@ -200,13 +224,21 @@ class HardwareRuntime:
             "stop_bits": specification.serial_stop_bits,
         }
         try:
-            candidates = tuple(self._enumerate_ports(**serial_options))
+            candidates = tuple(
+                self._enumerate_ports(
+                    **serial_options, probe_availability=probe_availability
+                )
+            )
         except Exception as error:
             raise HardwareConnectionUnavailable("NOT_FOUND", "device discovery failed") from error
         available = tuple(
             candidate
             for candidate in candidates
             if candidate.availability is PortAvailability.AVAILABLE
+            or (
+                not probe_availability
+                and candidate.availability is PortAvailability.UNKNOWN
+            )
         )
         if not available:
             code = "BUSY" if candidates else "NOT_FOUND"
