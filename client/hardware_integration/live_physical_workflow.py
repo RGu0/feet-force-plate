@@ -231,6 +231,12 @@ class LivePhysicalCapture:
                     self._hardware, "connect_capture", self._hardware.connect_startup
                 )
                 connection = connect_capture()
+            except Exception as exc:
+                gate.cancel_current_stage()
+                raise RetryableStageCaptureError(
+                    f"capture connection failed: {type(exc).__name__}"
+                ) from exc
+            try:
                 state = self._state_for_connection(
                     session_id,
                     gate=gate,
@@ -240,7 +246,7 @@ class LivePhysicalCapture:
             except Exception as exc:
                 gate.cancel_current_stage()
                 raise RetryableStageCaptureError(
-                    f"device startup failed: {type(exc).__name__}: {exc}"
+                    f"capture initialization failed: {type(exc).__name__}"
                 ) from exc
             return self._capture_connection(
                 session_id,

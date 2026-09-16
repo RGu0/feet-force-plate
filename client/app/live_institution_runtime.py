@@ -39,8 +39,17 @@ class _Telemetry:
     def record_error(self, *, code: str, **_event) -> None:
         if code not in self._LIVE_CAPTURE_CODES or self._recorder is None:
             return
+        technical_detail = str(_event.get("technical_detail", ""))
+        event_name = SafeClientEventName.LIVE_CAPTURE_FAILED
+        if code == "E-ACQ-004":
+            if "capture connection failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_CONNECTION_FAILED
+            elif "capture initialization failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_INITIALIZATION_FAILED
+            elif technical_detail.startswith("RetryableStageCaptureError:"):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STREAM_FAILED
         self._recorder.record(
-            SafeClientEventName.LIVE_CAPTURE_FAILED,
+            event_name,
             SafeClientEventOutcome.FAILED,
             error_code=code,
         )

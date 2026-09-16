@@ -63,6 +63,38 @@ def test_live_capture_telemetry_records_only_safe_failure_metadata() -> None:
     ]
 
 
+def test_live_capture_telemetry_records_the_initialization_failure_boundary() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    telemetry = live_runtime._Telemetry(recorder)
+
+    telemetry.record_error(
+        code="E-ACQ-004",
+        session_id="private-session-id",
+        technical_detail=(
+            "RetryableStageCaptureError: capture initialization failed: "
+            "RuntimeError: private storage diagnostic"
+        ),
+    )
+
+    assert [
+        (name.value, outcome.value, kwargs)
+        for name, outcome, kwargs in recorder.calls
+    ] == [
+        (
+            "LIVE_CAPTURE_INITIALIZATION_FAILED",
+            "FAILED",
+            {"error_code": "E-ACQ-004"},
+        )
+    ]
+
+
 def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     monkeypatch, tmp_path: Path
 ) -> None:
