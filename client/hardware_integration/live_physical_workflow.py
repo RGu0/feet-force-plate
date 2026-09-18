@@ -648,7 +648,8 @@ class LivePhysicalCapture:
                         attempt.append(frame)
                     except Exception as exc:
                         raise RetryableStageCaptureError(
-                            f"storage handoff failed: {type(exc).__name__}: {exc}"
+                            "stage capture failed at STAGE_APPEND: "
+                            f"{type(exc).__name__}: {exc}"
                         ) from exc
                     previous_frame = frame
                     last_valid_observed_ns = self._monotonic_ns()
