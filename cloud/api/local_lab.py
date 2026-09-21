@@ -120,6 +120,7 @@ async def build_local_lab_app(
     audit_root: Path,
     *,
     pool_factory: Callable[..., Any] | None = None,
+    restart_callback: Callable[[], None] | None = None,
 ) -> "FaultInjectingApp":
     """Compose the existing persistent seed app behind the local fault boundary."""
 
@@ -127,7 +128,11 @@ async def build_local_lab_app(
 
     validate_local_seed_endpoint(seed_settings)
     seed_app = await build_seed_app(seed_settings, pool_factory=pool_factory)
-    return FaultInjectingApp(seed_app, FaultController(control_token, audit_root))
+    return FaultInjectingApp(
+        seed_app,
+        FaultController(control_token, audit_root),
+        restart_callback=restart_callback,
+    )
 
 
 class FaultKind(StrEnum):
@@ -233,6 +238,18 @@ class FaultController:
             return rule
         return None
 
+    def record_restart(self, token: str) -> None:
+        """Authorize and audit an operator-requested local supervisor restart."""
+
+        self.authorize(token)
+        restart = FaultRule.create(
+            kind=FaultKind.UNAVAILABLE,
+            method="POST",
+            path_prefix="/__local_lab/control/restart",
+            expires_at=datetime.now(UTC) + timedelta(seconds=1),
+        )
+        self._record("restart_requested", restart, None)
+
     def _record(self, event: str, rule: FaultRule, scope: dict[str, Any] | None) -> None:
         correlation = _header(scope, b"x-correlation-id") if scope else None
         safe = {
@@ -251,9 +268,16 @@ class FaultController:
 class FaultInjectingApp:
     """Applies one controlled local rule before returning an ASGI response."""
 
-    def __init__(self, app: ASGIApp, controller: FaultController) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        controller: FaultController,
+        *,
+        restart_callback: Callable[[], None] | None = None,
+    ) -> None:
         self._app = app
         self._controller = controller
+        self._restart_callback = restart_callback
 
     async def __call__(
         self,
@@ -266,6 +290,9 @@ class FaultInjectingApp:
             return
         if scope["path"] == "/__local_lab/control/rules":
             await self._control(scope, receive, send)
+            return
+        if scope["path"] == "/__local_lab/control/restart":
+            await self._restart(scope, send)
             return
         rule = self._controller.match(scope)
         if rule is None:
@@ -319,6 +346,25 @@ class FaultInjectingApp:
             await _json_response(send, 400, {"error": "invalid_fault_rule"})
             return
         await _json_response(send, 201, {"rule_id": rule_id})
+
+    async def _restart(
+        self,
+        scope: dict[str, Any],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        if scope["method"] != "POST":
+            await _json_response(send, 405, {"error": "method_not_allowed"})
+            return
+        if self._restart_callback is None:
+            await _json_response(send, 409, {"error": "supervisor_restart_unavailable"})
+            return
+        try:
+            self._controller.record_restart(_header(scope, b"x-local-lab-control-token") or "")
+        except PermissionError:
+            await _json_response(send, 403, {"error": "forbidden"})
+            return
+        await _json_response(send, 202, {"status": "restart_requested"})
+        self._restart_callback()
 
 
 async def _service_unavailable(send: Callable[[dict[str, Any]], Awaitable[None]]) -> None:

@@ -182,3 +182,17 @@ audited rule only with its generated loopback control token. Supported rules
 cover 503, latency/throttle, execute-then-drop completion responses and exact
 path targeting; none are present on the remote endpoint. Store only redacted
 scenario results in delivery evidence.
+
+Use `scripts/local_controlled_integration_lab.py` only with an
+operator-created PostgreSQL database bound to a literal loopback address and a
+private runtime root outside the repository, `project-context`, OneDrive, and
+reparse points. Run `bootstrap` once, start `serve` in a separate local
+process, then run `exercise` with the same private root and loopback
+administration DSN. The exercise creates disposable local tenant, account,
+License, hardware, and object state; applies finite 503, latency, throttle,
+and execute-then-drop rules; requests a token-protected local supervisor
+restart; and writes its redacted result to
+`<runtime-root>/audit/local-lab-acceptance.json`. Copy only that redacted
+summary and the redacted fault audit into delivery evidence. The private root
+retains certificates, control token, platform password, and test state and
+must never be committed or synced.

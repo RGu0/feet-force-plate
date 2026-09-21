@@ -201,6 +201,66 @@ def test_control_route_requires_token_and_enables_a_finite_rule(tmp_path: Path) 
     assert faulted == 503
 
 
+def test_throttle_rule_preserves_the_complete_response_body(tmp_path: Path) -> None:
+    async def exercise() -> bytes:
+        app = FastAPI()
+
+        @app.get("/healthy")
+        async def healthy() -> dict[str, str]:
+            return {"status": "ok"}
+
+        paths = LocalLabPaths.create(tmp_path / "local-lab")
+        controller = FaultController("local-control-token", paths.audit)
+        controller.apply(
+            "local-control-token",
+            FaultRule.create(
+                kind=FaultKind.THROTTLE,
+                method="GET",
+                path_prefix="/healthy",
+                expires_at=datetime.now(UTC) + timedelta(minutes=1),
+                throttle_bytes_per_second=100,
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=FaultInjectingApp(app, controller)),
+            base_url="https://127.0.0.1:8743",
+        ) as client:
+            return (await client.get("/healthy")).content
+
+    assert asyncio.run(exercise()) == b'{"status":"ok"}'
+
+
+def test_control_restart_requires_token_and_calls_local_supervisor(tmp_path: Path) -> None:
+    async def exercise() -> tuple[int, int, bool]:
+        restarted = False
+
+        def request_restart() -> None:
+            nonlocal restarted
+            restarted = True
+
+        paths = LocalLabPaths.create(tmp_path / "local-lab")
+        wrapped = FaultInjectingApp(
+            FastAPI(),
+            FaultController("local-control-token", paths.audit),
+            restart_callback=request_restart,
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=wrapped), base_url="https://127.0.0.1:8743"
+        ) as client:
+            denied = await client.post("/__local_lab/control/restart")
+            accepted = await client.post(
+                "/__local_lab/control/restart",
+                headers={"X-Local-Lab-Control-Token": "local-control-token"},
+            )
+        return denied.status_code, accepted.status_code, restarted
+
+    denied, accepted, restarted = asyncio.run(exercise())
+
+    assert denied == 403
+    assert accepted == 202
+    assert restarted is True
+
+
 def test_local_lab_wraps_persistent_seed_composition(tmp_path: Path) -> None:
     async def exercise() -> int:
         settings = SeedSettings(
