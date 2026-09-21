@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import time
 from urllib.parse import quote, urlparse, urlunparse
+from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -249,7 +250,12 @@ def _control_request(
     path: str,
     payload: dict[str, object] | None = None,
 ) -> httpx.Response:
-    with httpx.Client(base_url=base_url, verify=str(certificate), timeout=30) as client:
+    with httpx.Client(
+        base_url=base_url,
+        verify=str(certificate),
+        timeout=30,
+        trust_env=False,
+    ) as client:
         return client.post(
             path,
             headers={"X-Local-Lab-Control-Token": token},
@@ -299,7 +305,7 @@ def _server_completion_evidence(administration_dsn: str, state_path: Path) -> di
     """Read only the redacted completion facts for the private test session."""
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    session_id = str(state["session_id"])
+    session_id = str(UUID(str(state["session_id"])))
     status = _psql_output(
         administration_dsn,
         "--command",
