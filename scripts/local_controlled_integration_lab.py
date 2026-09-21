@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
@@ -301,6 +302,41 @@ def _wait_ready(api: Api, *, timeout_seconds: float = 30) -> None:
     raise RuntimeError("local supervisor did not restore readiness after restart")
 
 
+def _loopback_get(base_url: str, certificate: Path, path: str) -> tuple[int, float]:
+    with httpx.Client(
+        base_url=base_url,
+        verify=str(certificate),
+        timeout=30,
+        trust_env=False,
+    ) as client:
+        response = client.get(path)
+    return response.status_code, time.monotonic()
+
+
+def _assert_delayed_ack_reorders_responses(
+    base_url: str,
+    certificate: Path,
+    token: str,
+) -> bool:
+    """Delay one loopback response and prove a later request is acknowledged first."""
+
+    _enable_rule(
+        base_url,
+        certificate,
+        token,
+        kind="latency",
+        method="GET",
+        path="/health/live",
+        delay_seconds=0.2,
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        delayed = executor.submit(_loopback_get, base_url, certificate, "/health/live")
+        time.sleep(0.05)
+        second_status, second_finished = _loopback_get(base_url, certificate, "/health/live")
+        first_status, first_finished = delayed.result(timeout=30)
+    return first_status == 200 and second_status == 200 and second_finished < first_finished
+
+
 def _server_completion_evidence(administration_dsn: str, state_path: Path) -> dict[str, bool]:
     """Read only the redacted completion facts for the private test session."""
 
@@ -359,6 +395,11 @@ def exercise(paths: LocalLabPaths, host: str, port: int, administration_dsn: str
         started = time.monotonic()
         delayed, _ = api.request("GET", "/health/live", expected=200)
         latency_ms = round((time.monotonic() - started) * 1000)
+        delayed_out_of_order_ack = _assert_delayed_ack_reorders_responses(
+            base_url,
+            certificate,
+            token,
+        )
         api.close()
         api = Api(base_url, certificate, trust_env=False)
         _enable_rule(
@@ -413,6 +454,7 @@ def exercise(paths: LocalLabPaths, host: str, port: int, administration_dsn: str
         "recovered_200": recovered.status_code == 200,
         "latency_ms": latency_ms,
         "latency_injected": latency_ms >= 150 and delayed.status_code == 200,
+        "delayed_out_of_order_ack_observed": delayed_out_of_order_ack,
         "throttle_observed": throttled.status_code == 200,
         "completion_response_dropped_then_retried": lifecycle[
             "completion_response_dropped_then_retried"
