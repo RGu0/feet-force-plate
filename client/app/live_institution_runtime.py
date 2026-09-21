@@ -22,14 +22,68 @@ from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
+from client.support import SafeClientEventName, SafeClientEventOutcome
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
 
 
 class _Telemetry:
-    def record_error(self, **_event) -> None:
-        pass
+    """Record only allow-listed live-capture failure metadata."""
+
+    _LIVE_CAPTURE_CODES = frozenset({"E-ACQ-001", "E-ACQ-004", "E-DEV-002"})
+
+    def __init__(self, recorder=None) -> None:
+        self._recorder = recorder
+
+    def record_error(self, *, code: str, **_event) -> None:
+        if code not in self._LIVE_CAPTURE_CODES or self._recorder is None:
+            return
+        technical_detail = str(_event.get("technical_detail", ""))
+        event_name = SafeClientEventName.LIVE_CAPTURE_FAILED
+        if code == "E-ACQ-004":
+            if "capture connection failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_CONNECTION_FAILED
+            elif "capture initialization failed: metadata" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_METADATA_FAILED
+            elif "capture initialization failed: local-identity" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_LOCAL_IDENTITY_FAILED
+            elif "capture initialization failed: formal-envelope/missing-local-record" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_LOCAL_RECORD_MISSING
+            elif "capture initialization failed: formal-envelope/invalid-contract-value" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_VALUE_INVALID
+            elif "capture initialization failed: formal-envelope/invalid-contract-type" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_TYPE_INVALID
+            elif "capture initialization failed: formal-envelope/unexpected" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_UNEXPECTED
+            elif "capture initialization failed: formal-envelope" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_FAILED
+            elif "capture initialization failed: session-stager" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SESSION_STAGER_FAILED
+            elif "capture initialization failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_INITIALIZATION_FAILED
+            elif "transport disconnected:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_TRANSPORT_DISCONNECTED
+            elif "no valid decoded signal" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SIGNAL_TIMEOUT
+            elif "stage capture failed at DECODE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DECODE_FAILED
+            elif "stage capture failed at GATE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_GATE_FAILED
+            elif "stage capture failed at DISPLAY:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DISPLAY_HANDOFF_FAILED
+            elif (
+                "storage handoff failed:" in technical_detail
+                or "stage capture failed at STAGE_" in technical_detail
+            ):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STAGE_STORAGE_FAILED
+            elif technical_detail.startswith("RetryableStageCaptureError:"):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STREAM_FAILED
+        self._recorder.record(
+            event_name,
+            SafeClientEventOutcome.FAILED,
+            error_code=code,
+        )
 
 
 class _Print:
@@ -68,6 +122,7 @@ def build_live_institution_runtime(
     export_destination,
     app_version: str,
     payload_schema: str,
+    event_recorder=None,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
@@ -110,7 +165,10 @@ def build_live_institution_runtime(
         latest_frames=raw_mailbox,
         formal_upload=formal_upload,
     )
-    acquisition = QtLiveHardwareAcquisition(capture.capture)
+    acquisition = QtLiveHardwareAcquisition(
+        capture.capture,
+        prepare_session=capture.prepare_session,
+    )
     processor = LivePhysicalProcessor(
         sessions=sessions,
         physical_store=physical_store,
@@ -136,7 +194,7 @@ def build_live_institution_runtime(
         processor=processor,
         delivery=ReportDeliveryService(BasicReportPdfRenderer()),
         spooler=_Print(),
-        telemetry=_Telemetry(),
+        telemetry=_Telemetry(event_recorder),
         display_refresh=DisplayRefreshController(
             display_mailbox,
             maximum_refresh_hz=hardware.display_geometry.maximum_refresh_hz,

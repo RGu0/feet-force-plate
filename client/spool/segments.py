@@ -98,6 +98,7 @@ class ImmutableSegmentWriter:
         segment_duration_seconds: float,
         target_plaintext_bytes: int = 8 * 1024 * 1024,
         starting_segment_index: int = 0,
+        storage_directory_name: str | None = None,
     ) -> None:
         if not 5.0 <= segment_duration_seconds <= 10.0:
             raise ValueError("segment duration must be between 5 and 10 seconds")
@@ -105,8 +106,17 @@ class ImmutableSegmentWriter:
             raise ValueError("target_plaintext_bytes must be positive")
         if not session_id or not versions or any(not key or not value for key, value in versions.items()):
             raise ValueError("session_id and explicit versions are required")
+        directory_name = storage_directory_name or session_id
+        if (
+            not directory_name
+            or directory_name in {".", ".."}
+            or "/" in directory_name
+            or "\\" in directory_name
+        ):
+            raise ValueError("storage directory name must be one safe path component")
         self._root = Path(root)
         self._session_id = session_id
+        self._storage_directory_name = directory_name
         self._key_provider = key_provider
         self._versions = dict(versions)
         self._duration_ns = round(segment_duration_seconds * 1_000_000_000)
@@ -220,7 +230,7 @@ class ImmutableSegmentWriter:
                 TAIL,
             )
         )
-        session_dir = self._root / self._session_id
+        session_dir = self._root / self._storage_directory_name
         session_dir.mkdir(parents=True, exist_ok=True)
         stem = f"segment-{self._segment_index:06d}-{segment_id}"
         temporary = session_dir / f"{stem}.tmp"
