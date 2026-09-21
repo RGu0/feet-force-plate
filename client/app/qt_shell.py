@@ -69,6 +69,7 @@ _ACTION_LABELS = {
     "SKIP_PROFILE": "跳过",
     "CONFIRM_CONSENT": "同意并继续",
     "RECHECK": "重新检查",
+    "CANCEL_POSITION_GUIDANCE": "← 取消",
     "START_ACQUISITION": "开始本段",
     "STOP_SCREENING": "停止检测",
     "VIEW_BASIC_REPORT": "查看基础报告",
@@ -1586,7 +1587,14 @@ class ScreeningWindow(QMainWindow):
 
     def _build_position_page(self) -> QWidget:
         page, layout = self._new_page(PageId.POSITION_GUIDANCE)
-        layout.addWidget(self._wizard_header("站位引导", None, "← 取消"))
+        layout.addWidget(
+            self._wizard_header(
+                "站位引导",
+                None,
+                "← 取消",
+                back_action="CANCEL_POSITION_GUIDANCE",
+            )
+        )
         body = QWidget()
         body.setObjectName("pageCanvas")
         body_layout = QVBoxLayout(body)
@@ -2020,12 +2028,21 @@ class ScreeningWindow(QMainWindow):
         layout.addWidget(content, 1)
         return page
 
-    def _wizard_header(self, title: str, step: int | None, back_text: str = "← 返回") -> QFrame:
+    def _wizard_header(
+        self,
+        title: str,
+        step: int | None,
+        back_text: str = "← 返回",
+        *,
+        back_action: str = "BACK",
+    ) -> QFrame:
         header = QFrame()
         header.setObjectName("wizardHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(32, 0, 32, 0)
-        back = self._action_button("BACK", primary=False, ghost=True, label=back_text)
+        back = self._action_button(
+            back_action, primary=False, ghost=True, label=back_text
+        )
         header_layout.addWidget(back)
         title_label = self._label(title, "wizardTitle", alignment=Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 20px; font-weight: 600;")

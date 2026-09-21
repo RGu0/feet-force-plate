@@ -937,6 +937,7 @@ def compose_authenticated_session(
                 export_destination=_choose_diagnostic_destination,
                 app_version=APP_VERSION,
                 payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
+                event_recorder=composition.recorder,
             )
             references["live_runtime"] = live_runtime
             return live_runtime.controller.window

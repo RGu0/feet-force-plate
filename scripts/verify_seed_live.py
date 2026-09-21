@@ -408,7 +408,10 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
     api.request(
         "POST",
         "/v1/sessions",
-        expected=403,
+        # The data plane permits creating the server-side record while a
+        # suspended License retains upload continuity.  The client-side
+        # capability blocks beginning a new measurement.
+        expected=201,
         token=str(suspended["access_token"]),
         headers={"Idempotency-Key": f"suspended-{unique}"},
         json_body=denied_session.model_dump(mode="json"),

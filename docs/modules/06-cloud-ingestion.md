@@ -109,3 +109,11 @@ staging + fsync + atomic rename 和不可变键；接口保持可替换，规模
 分布式对象存储。License 状态只阻止新会话；既有会话的
 **upload and report access continue**。IP:7443 不是正式商业入口，后者需要
 **domain + public CA + 443**。
+
+## 本机可控联调
+
+RAY-428 的 Windows 本机联调使用独立 PostgreSQL、私有文件对象根和回环 TLS。
+测试 tenant、账号、License、硬件绑定、证书和故障控制令牌均不进入仓库、OneDrive
+或共享证据。控制面只在 `127.0.0.1` 接受有限期规则，用于验证临时 503、延迟/限速、
+服务重启、完成响应丢失后重试以及确认乱序；远端 integration endpoint 不提供此能力。
+验收记录仅保留队列结果、最终 `INGESTED`/`VALID` 状态、幂等事件计数和脱敏审计摘要。

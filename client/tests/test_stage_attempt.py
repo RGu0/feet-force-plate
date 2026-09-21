@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sqlite3
 
 import numpy as np
@@ -144,9 +144,37 @@ def test_stage_attempt_seals_verified_encrypted_frames_in_a_unique_directory(tmp
     sealed = first.seal()
 
     assert first.staging_directory != second.staging_directory
-    assert first.staging_directory.parent.name == "stage-1"
+    assert first.staging_directory.parent.name.startswith("stage-")
     assert [frame.source_index for frame in sealed.frames] == [0]
     assert len(tuple(first.staging_directory.rglob("*.ffps"))) == 1
+
+
+def test_stage_attempt_does_not_repeat_session_id_below_longest_stage_directory(
+    tmp_path,
+):
+    session_id = "0" * 32
+    attempt = _attempt(
+        tmp_path,
+        "SEMI_TANDEM_RIGHT_FORWARD",
+        session_id=session_id,
+    )
+    attempt.append(_frame(0, seconds=0))
+    attempt.append(_frame(1, seconds=6))
+
+    sealed = attempt.seal()
+
+    assert sealed.segment_ids
+    segments = tuple(attempt.staging_directory.glob("segment-*.ffps"))
+    assert segments
+    assert not (attempt.staging_directory / session_id).exists()
+    relative_segment = segments[0].relative_to(tmp_path)
+    representative_root = PureWindowsPath(
+        "C:/Users/"
+        + ("u" * 32)
+        + "/AppData/Local/TechFlex/FeetForcePlate/spool"
+    )
+    representative_path = representative_root.joinpath(*relative_segment.parts)
+    assert len(str(representative_path)) <= 240
 
 
 def test_final_stager_merges_four_sealed_attempts_in_stage_order(tmp_path):
