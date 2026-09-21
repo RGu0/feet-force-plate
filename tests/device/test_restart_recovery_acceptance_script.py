@@ -30,13 +30,14 @@ class RestartRecoveryAcceptanceScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             key_file = Path(temporary) / "acceptance.aes256"
             short_writing_os = SimpleNamespace(
+                O_BINARY=getattr(os, "O_BINARY", 0),
                 O_CREAT=os.O_CREAT,
                 O_EXCL=os.O_EXCL,
                 O_WRONLY=os.O_WRONLY,
                 close=os.close,
                 fsync=os.fsync,
                 open=os.open,
-                urandom=os.urandom,
+                urandom=lambda length: b"a" * 7 + b"\n" + b"b" * (length - 8),
                 write=lambda descriptor, data: os.write(descriptor, data[:7]),
             )
 
