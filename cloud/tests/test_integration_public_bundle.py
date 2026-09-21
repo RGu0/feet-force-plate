@@ -12,6 +12,12 @@ import pytest
 from client.cloud.packaged_defaults import load_packaged_cloud_defaults
 
 
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="the public integration bundle publisher is a POSIX root-only bash workflow",
+)
+
+
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "deploy" / "aliyun" / "seed" / "build-integration-public-bundle.sh"
 _BUNDLE_ARGUMENTS = (

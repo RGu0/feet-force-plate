@@ -2,6 +2,22 @@
 
 本清单用于每一次对机构交付的 Windows x86_64 便携 ZIP。任何未勾选项都意味着该 ZIP 不得交付。
 
+## RAY-99 R5 内部验收追踪（2026-09-21）
+
+本节记录 `windows-packaged-acceptance` scope 对 `8c354862b964ce0aa6eee7b6b3682429452dfbd4` 的内部测试，不构成客户交付放行。
+
+| 项目 | 结果 | 受控证据 |
+| --- | --- | --- |
+| Windows x86_64 ZIP 完整性 | 通过；`FeetForcePlate-0.1.0-windows-x86_64.zip` SHA-256 为 `92f451a9bd87934f21b075ff393afaeca71efb01e8165da31173f8fc2c881a07` | `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-21-r5-windows-acceptance-progress.json` |
+| Windows 完整自动化验证 | 通过；`1174 passed, 28 skipped`；受限项均为 POSIX 或未配置的外部服务 | 同上 |
+| 真实 CH340 强制中断与 SQLite 恢复 | 通过；中断后清理 1 个 staging 会话，正式会话、分段、产物均为 0 | 同上 |
+| 实际联调服务的响应丢失恢复 | 通过；离线队列持久化，服务完成后重启不产生重复变更 | 同上 |
+| 本地受控联调服务重启 | 通过；loopback TLS 服务重启后完成写入保持幂等，状态为 `INGESTED`/`VALID` | 同上 |
+| 24 小时、50 会话、2 GiB 边界 | 由真实 SQLite 边界测试覆盖；到达门槛时禁止新测试，保留完成当前测试、查看历史和补传权限 | `client/tests/test_ray_99_capacity_boundaries.py` |
+| 已打包 GUI 进程的四项人工验收 | 未执行；本机自动执行策略拒绝启动已构建 GUI 包，因而不能把上述源码/服务级结果表述为已打包 GUI 验收 | 同上 |
+
+该 ZIP 的 `signing_status` 是 `unsigned-development`，只能用于内部验证。它不能填入下方的客户放行结论，也不能作为已签名机构交付包。
+
 ## 发布标识
 
 - [ ] 应用版本：`________________`
