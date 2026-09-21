@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 import shutil
 import uuid
@@ -15,6 +16,12 @@ from .state_store import KeyProvider
 
 _SEALED_ATTEMPT_PROVENANCE = object()
 _SEALED_ATTEMPT_FACTORY_CAPABILITY = object()
+
+
+def _storage_identity(prefix: str, value: str) -> str:
+    """Keep private temporary paths short and independent of identifier length."""
+
+    return f"{prefix}-{hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]}"
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -92,21 +99,22 @@ class StageAttemptSpool:
             raise ValueError("stage-attempt identity and versions are required")
         self._session_id = session_id
         self._stage_id = stage_id
-        self._attempt_id = str(uuid.uuid4())
+        self._attempt_id = uuid.uuid4().hex
         self._key_provider = key_provider
         self._staging_directory = (
             Path(root)
             / ".stage-attempts"
-            / session_id
-            / stage_id
+            / _storage_identity("session", session_id)
+            / _storage_identity("stage", stage_id)
             / self._attempt_id
         )
         self._writer = ImmutableSegmentWriter(
-            self._staging_directory,
+            self._staging_directory.parent,
             session_id=session_id,
             key_provider=key_provider,
             versions=versions,
             segment_duration_seconds=segment_duration_seconds,
+            storage_directory_name=self._attempt_id,
         )
         self._sealed_segments: list[SealedSegment] = []
         self._has_open_frames = False
