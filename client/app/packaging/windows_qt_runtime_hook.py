@@ -14,7 +14,11 @@ from pathlib import Path
 
 if sys.platform == "win32" and hasattr(sys, "_MEIPASS"):
     _bundle_root = Path(sys._MEIPASS)
-    _directories = (_bundle_root / "PySide6", _bundle_root / "shiboken6")
+    _directories = (
+        _bundle_root,
+        _bundle_root / "PySide6",
+        _bundle_root / "shiboken6",
+    )
     _missing = [str(directory) for directory in _directories if not directory.is_dir()]
     if _missing:
         raise RuntimeError(

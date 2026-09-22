@@ -31,8 +31,12 @@ def test_frozen_windows_hook_registers_dll_directories_before_importing_client(
     namespace = runpy.run_path(str(hook))
 
     assert "client.app" not in sys.modules
-    assert registered == [tmp_path / "PySide6", tmp_path / "shiboken6"]
-    assert len(namespace["_WINDOWS_QT_DLL_DIRECTORIES"]) == 2
+    assert registered == [
+        tmp_path,
+        tmp_path / "PySide6",
+        tmp_path / "shiboken6",
+    ]
+    assert len(namespace["_WINDOWS_QT_DLL_DIRECTORIES"]) == 3
 
 def test_frozen_windows_hook_rejects_a_package_without_qt_directories(
     monkeypatch, tmp_path: Path
@@ -62,8 +66,19 @@ def test_portable_spec_registers_the_standalone_windows_qt_runtime_hook(
             captured.update(kwargs)
             self.pure = []
             self.scripts = []
-            self.binaries = []
+            self.binaries = [
+                ("icuuc.dll", "C:/external-runtime/icuuc.dll", "BINARY"),
+                ("icudt78.dll", "C:/external-runtime/icudt78.dll", "BINARY"),
+                ("PySide6/Qt6Core.dll", "C:/PySide6/Qt6Core.dll", "BINARY"),
+            ]
             self.datas = []
+
+    analysis: _Analysis | None = None
+
+    def create_analysis(*args, **kwargs) -> _Analysis:
+        nonlocal analysis
+        analysis = _Analysis(*args, **kwargs)
+        return analysis
 
     monkeypatch.delenv("FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY", raising=False)
     monkeypatch.delenv("FEETFORCEPLATE_WINDOWS_CLOUD_DELIVERY_DIRECTORY", raising=False)
@@ -75,7 +90,7 @@ def test_portable_spec_registers_the_standalone_windows_qt_runtime_hook(
         init_globals={
             "SPECPATH": str(spec.parent),
             "workpath": str(tmp_path),
-            "Analysis": _Analysis,
+            "Analysis": create_analysis,
             "PYZ": lambda *_args: object(),
             "EXE": lambda *_args, **_kwargs: object(),
             "COLLECT": lambda *_args, **_kwargs: object(),
@@ -85,4 +100,8 @@ def test_portable_spec_registers_the_standalone_windows_qt_runtime_hook(
     assert captured["hiddenimports"] == []
     assert captured["runtime_hooks"] == [
         str(ROOT / "client" / "app" / "packaging" / "windows_qt_runtime_hook.py")
+    ]
+    assert analysis is not None
+    assert analysis.binaries == [
+        ("PySide6/Qt6Core.dll", "C:/PySide6/Qt6Core.dll", "BINARY")
     ]
