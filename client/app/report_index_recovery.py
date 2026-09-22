@@ -57,22 +57,23 @@ def recover_missing_screening_records(
                 payload,
                 expected_session_id=candidate.session_id,
             )
+            if subject_uuid != candidate.subject_uuid:
+                raise ValueError("physical and institution subject identity mismatch")
+            report = build_basic_report_document(
+                result,
+                report_id=_recovered_report_id(candidate.session_id),
+                version=version,
+                session_id=candidate.session_id,
+                analysis_result_id=analysis_result_id,
+                subject_display_id=f"匿名 {subject_uuid[-6:]}",
+                captured_at=datetime.fromtimestamp(
+                    started_at_ns / 1_000_000_000, tz=UTC
+                ),
+                generated_at=clock(),
+            )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             unavailable += 1
             continue
-        if subject_uuid != candidate.subject_uuid:
-            unavailable += 1
-            continue
-        report = build_basic_report_document(
-            result,
-            report_id=_recovered_report_id(candidate.session_id),
-            version=version,
-            session_id=candidate.session_id,
-            analysis_result_id=analysis_result_id,
-            subject_display_id=f"匿名 {subject_uuid[-6:]}",
-            captured_at=datetime.fromtimestamp(started_at_ns / 1_000_000_000, tz=UTC),
-            generated_at=clock(),
-        )
         institution.save_report(report)
         recovered += 1
     return RecordRecoveryResult(len(candidates), recovered, unavailable)
