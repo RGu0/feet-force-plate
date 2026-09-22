@@ -8,6 +8,7 @@ from client.app.qt_shell import ScreeningWindow
 from client.workflow.models import (
     ClientAction,
     ClientError,
+    ReportStatus,
     SessionValidity,
     WorkflowState,
 )
@@ -153,6 +154,7 @@ def test_report_generation_failure_replaces_processing_result_state(qtbot) -> No
         step=ScreeningStep.FAILED,
         session_id="session-1",
         validity=SessionValidity.VALID,
+        report_status=ReportStatus.BASIC_READY,
         error=ClientError(
             code="E-RPT-001",
             operator_message="暂时无法生成基础报告，请联系技术支持",
@@ -169,3 +171,6 @@ def test_report_generation_failure_replaces_processing_result_state(qtbot) -> No
     assert "处理中" not in page.findChild(QLabel, "resultTitle").text()
     assert "处理中" not in page.findChild(QLabel, "resultSummary").text()
     assert not page.findChild(QPushButton, "RETURN_WORKBENCH").isHidden()
+    assert page.findChild(QPushButton, "VIEW_BASIC_REPORT").isHidden()
+    assert page.findChild(QPushButton, "START_NEXT_SCREENING").isHidden()
+    assert page.findChild(QPushButton, "RETRY_SCREENING").isHidden()

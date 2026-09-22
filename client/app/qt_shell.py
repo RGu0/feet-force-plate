@@ -2532,9 +2532,12 @@ class ScreeningWindow(QMainWindow):
 
     def _present_result_state(self, state: WorkflowState) -> None:
         page = self._pages[PageId.RESULT]
-        report_ready = state.report_status is ReportStatus.BASIC_READY
         report_generation_failed = (
             state.error is not None and state.error.code == "E-RPT-001"
+        )
+        report_ready = (
+            state.report_status is ReportStatus.BASIC_READY
+            and not report_generation_failed
         )
         retry_required = state.validity in {SessionValidity.INVALID, SessionValidity.INCOMPLETE, SessionValidity.FAILED}
         retry_allowed = (
