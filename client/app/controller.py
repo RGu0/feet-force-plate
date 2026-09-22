@@ -214,7 +214,7 @@ class ApplicationController:
             "CANCEL_POSITION_GUIDANCE": (
                 lambda: self._coordinator.cancel_position_guidance()
             ),
-            "START_ACQUISITION": self._coordinator.start_acquisition,
+            "START_ACQUISITION": self._start_acquisition,
             "STOP_SCREENING": self._coordinator.stop_acquisition,
             "START_NEXT_SCREENING": self._start_next_screening,
         }
@@ -368,6 +368,21 @@ class ApplicationController:
             return
         self._live_display.poll()
         self.on_display_tick(time.monotonic())
+
+    def _start_acquisition(self) -> bool:
+        """Start an accepted stage with an empty, stage-local display pipeline."""
+
+        started = self._coordinator.start_acquisition()
+        if started:
+            self._reset_live_display_for_stage()
+        return started
+
+    def _reset_live_display_for_stage(self) -> None:
+        if self._live_display is not None:
+            self._live_display.reset()
+        if self._display_refresh is not None:
+            self._display_refresh.reset()
+        self.window.clear_display_frame()
 
     def _run_preflight(self) -> None:
         self._coordinator.run_preflight()
