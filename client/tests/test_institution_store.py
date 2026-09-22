@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 from uuid import UUID
@@ -9,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from client.app.institution_store import (
+    CompletedSessionRecordCandidate,
     InstitutionLocalStore,
     KeyringAesKeyProvider,
 )
@@ -108,7 +110,7 @@ def test_institution_store_keeps_subject_consent_session_and_report_out_of_repla
     store.finalize(session_id)
 
     assert store.schema_names() == {
-        "institution_consents", "institution_reports", "institution_sessions",
+        "institution_consents", "institution_reports", "institution_screening_records", "institution_sessions",
         "institution_stage_completions", "institution_subject_audit", "institution_subjects",
     }
     assert store.session_status(session_id) == "CLOSED"
@@ -228,3 +230,155 @@ def test_institution_report_round_trip_is_encrypted(tmp_path) -> None:
 
     assert "report-1" not in (tmp_path / "institution.sqlite3").read_text(errors="ignore")
     assert BasicReportDocument.from_json(store.load_report("report-1", 1)) == report
+
+
+def test_completed_report_is_listed_only_for_its_tenant_after_restart(tmp_path) -> None:
+    captured_at = datetime(2026, 9, 22, 8, 30, tzinfo=UTC)
+    store = InstitutionLocalStore.open(
+        tmp_path,
+        key_provider=_Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_Signer("signed-consent-evidence"),
+    )
+
+    def save_for_tenant(tenant_id: str, suffix: str) -> BasicReportDocument:
+        subject = store.create(
+            CreateSubjectRequest(
+                tenant_id=tenant_id,
+                analysis_profile=AnalysisProfile.unknown(),
+            )
+        )
+        consent = store.create_consent(
+            ConsentRequest(
+                tenant_id=tenant_id,
+                terminal_id="terminal-1",
+                subject_uuid=subject.subject_uuid,
+                policy_version="consent/1",
+                purpose_codes=("SCREENING",),
+                data_categories=("SCREENING",),
+                evidence_type="OPERATOR_CONFIRMED",
+            )
+        )
+        session_id = store.create_session(
+            ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+            default_standard_protocol().snapshot(),
+        )
+        store.finalize(session_id)
+        report = BasicReportDocument(
+            report_id=f"report-{suffix}",
+            version=1,
+            status=ReportStatus.BASIC_READY,
+            kind="BASIC",
+            session_id=session_id,
+            analysis_result_id=f"analysis-{suffix}",
+            subject_display_id=f"匿名 {suffix}",
+            captured_at=captured_at,
+            generated_at=captured_at,
+            protocol_id="static-balance-screening",
+            protocol_version="1",
+            metrics=(),
+            relative_heatmap=((0.0,),),
+            summary="summary",
+            disclaimer="disclaimer",
+            provenance=("v1",),
+        )
+        store.save_report(report)
+        return report
+
+    own = save_for_tenant("tenant-1", "own")
+    save_for_tenant("tenant-2", "other")
+    store.close()
+
+    reopened = InstitutionLocalStore.open(
+        tmp_path,
+        key_provider=_Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_Signer("signed-consent-evidence"),
+    )
+    try:
+        rows = reopened.recent_records(tenant_id="tenant-1")
+    finally:
+        reopened.close()
+
+    assert len(rows) == 1
+    assert rows[0].subject_display_id == "匿名 own"
+    assert rows[0].screening_label == "静态平衡筛查"
+    assert rows[0].report_status_label == "基础报告"
+    assert rows[0].performed_at_label == "09-22 08:30"
+    assert rows[0].performed_on == captured_at.date()
+    assert (rows[0].report_id, rows[0].report_version) == (own.report_id, 1)
+    database_bytes = (tmp_path / "institution.sqlite3").read_bytes()
+    assert b"report-own" not in database_bytes
+    assert "匿名 own".encode("utf-8") not in database_bytes
+
+
+def test_completed_session_record_candidates_are_tenant_scoped_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    store = InstitutionLocalStore.open(
+        tmp_path,
+        key_provider=_Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_Signer("signed-consent-evidence"),
+    )
+
+    def closed_session(tenant_id: str) -> tuple[str, str]:
+        subject = store.create(
+            CreateSubjectRequest(
+                tenant_id=tenant_id,
+                analysis_profile=AnalysisProfile.unknown(),
+            )
+        )
+        consent = store.create_consent(
+            ConsentRequest(
+                tenant_id=tenant_id,
+                terminal_id="terminal-1",
+                subject_uuid=subject.subject_uuid,
+                policy_version="consent/1",
+                purpose_codes=("SCREENING",),
+                data_categories=("SCREENING",),
+                evidence_type="OPERATOR_CONFIRMED",
+            )
+        )
+        session_id = store.create_session(
+            ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+            default_standard_protocol().snapshot(),
+        )
+        store.finalize(session_id)
+        return session_id, subject.subject_uuid
+
+    own_session, own_subject = closed_session("tenant-1")
+    other_session, _ = closed_session("tenant-2")
+
+    assert store.completed_sessions_missing_records(tenant_id="tenant-1") == (
+        CompletedSessionRecordCandidate(own_session, own_subject),
+    )
+    assert all(
+        candidate.session_id != other_session
+        for candidate in store.completed_sessions_missing_records(tenant_id="tenant-1")
+    )
+
+    captured_at = datetime(2026, 9, 22, 8, 30, tzinfo=UTC)
+    store.save_report(
+        BasicReportDocument(
+            report_id="report-own",
+            version=1,
+            status=ReportStatus.BASIC_READY,
+            kind="BASIC",
+            session_id=own_session,
+            analysis_result_id="analysis-own",
+            subject_display_id="匿名 own",
+            captured_at=captured_at,
+            generated_at=captured_at,
+            protocol_id="standard-static-balance",
+            protocol_version="1",
+            metrics=(),
+            relative_heatmap=((0.0,),),
+            summary="summary",
+            disclaimer="disclaimer",
+            provenance=("v1",),
+        )
+    )
+
+    assert store.completed_sessions_missing_records(tenant_id="tenant-1") == ()
+    store.close()

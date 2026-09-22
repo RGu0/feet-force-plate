@@ -8,7 +8,7 @@ collecting and waiting for the cloud handoff.
 from __future__ import annotations
 
 import base64
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import hmac
 import json
@@ -21,6 +21,7 @@ from collections.abc import Callable
 from platformdirs import user_data_path
 
 from client.reporting.models import BasicReportDocument
+from client.app.ui_models import ScreeningRecordRow
 from client.spool.state_store import (
     KeyProvider,
     KeyProviderUnavailable,
@@ -50,6 +51,12 @@ from shared.contracts.cloud import (
     ProfileValue,
     SubjectCreateRequest,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedSessionRecordCandidate:
+    session_id: str
+    subject_uuid: str
 
 
 class KeyringAesKeyProvider:
@@ -220,6 +227,15 @@ class InstitutionLocalStore:
                 report_lookup BLOB PRIMARY KEY,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS institution_screening_records (
+                report_lookup BLOB PRIMARY KEY
+                    REFERENCES institution_reports(report_lookup),
+                tenant_id TEXT NOT NULL,
+                captured_at TEXT NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS institution_screening_records_by_tenant
+                ON institution_screening_records(tenant_id, captured_at DESC);
             CREATE TABLE IF NOT EXISTS institution_subject_audit (
                 event_id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
@@ -487,14 +503,135 @@ class InstitutionLocalStore:
 
     def save_report(self, report: BasicReportDocument) -> None:
         context = f"report:{report.report_id}:{report.version}"
+        report_lookup = self._lookup("report", report.report_id, str(report.version))
+        tenant_row = self.db.execute(
+            """SELECT subjects.tenant_id
+            FROM institution_sessions AS sessions
+            JOIN institution_subjects AS subjects
+                ON subjects.subject_uuid=sessions.subject_uuid
+            WHERE sessions.session_id=? AND sessions.lifecycle_status='CLOSED'""",
+            (report.session_id,),
+        ).fetchone()
         with self.db:
             self.db.execute(
                 "INSERT OR REPLACE INTO institution_reports VALUES (?,?)",
                 (
-                    self._lookup("report", report.report_id, str(report.version)),
+                    report_lookup,
                     self.codec.encrypt(report.to_json().encode("utf-8"), context=context),
                 ),
             )
+            if tenant_row is not None:
+                record_payload = _json({
+                    "session_id": report.session_id,
+                    "report_id": report.report_id,
+                    "report_version": report.version,
+                    "subject_display_id": report.subject_display_id,
+                    "screening_label": _screening_label(report.protocol_id),
+                    "report_status_label": _report_status_label(report),
+                    "captured_at": report.captured_at.isoformat(),
+                })
+                self.db.execute(
+                    """INSERT OR REPLACE INTO institution_screening_records
+                    VALUES (?,?,?,?)""",
+                    (
+                        report_lookup,
+                        str(tenant_row[0]),
+                        report.captured_at.isoformat(),
+                        self.codec.encrypt(
+                            record_payload,
+                            context=f"screening-record:{report_lookup.hex()}",
+                        ),
+                    ),
+                )
+
+    def completed_sessions_missing_records(
+        self,
+        *,
+        tenant_id: str,
+        limit: int = 100,
+    ) -> tuple[CompletedSessionRecordCandidate, ...]:
+        """Find closed tenant sessions that do not yet have a readable record row."""
+
+        if not tenant_id or limit <= 0:
+            raise ValueError("tenant ID and positive record limit are required")
+        indexed_session_ids: set[str] = set()
+        record_rows = self.db.execute(
+            """SELECT report_lookup, payload
+            FROM institution_screening_records
+            WHERE tenant_id=?""",
+            (tenant_id,),
+        ).fetchall()
+        for report_lookup, encrypted in record_rows:
+            value = json.loads(
+                self.codec.decrypt(
+                    encrypted,
+                    context=f"screening-record:{bytes(report_lookup).hex()}",
+                ).decode("utf-8")
+            )
+            session_id = value.get("session_id")
+            if isinstance(session_id, str) and session_id:
+                indexed_session_ids.add(session_id)
+
+        rows = self.db.execute(
+            """SELECT sessions.session_id, sessions.subject_uuid
+            FROM institution_sessions AS sessions
+            JOIN institution_subjects AS subjects
+                ON subjects.subject_uuid=sessions.subject_uuid
+            WHERE subjects.tenant_id=? AND sessions.lifecycle_status='CLOSED'
+            ORDER BY sessions.rowid DESC
+            LIMIT ?""",
+            (tenant_id, limit),
+        ).fetchall()
+        return tuple(
+            CompletedSessionRecordCandidate(str(session_id), str(subject_uuid))
+            for session_id, subject_uuid in rows
+            if str(session_id) not in indexed_session_ids
+        )
+
+    def recent_records(
+        self,
+        *,
+        tenant_id: str,
+        query: str = "",
+        limit: int = 100,
+    ) -> tuple[ScreeningRecordRow, ...]:
+        """Return the newest decryptable report rows for exactly one tenant."""
+
+        if not tenant_id or limit <= 0:
+            raise ValueError("tenant ID and positive record limit are required")
+        rows = self.db.execute(
+            """SELECT report_lookup, payload
+            FROM institution_screening_records
+            WHERE tenant_id=?
+            ORDER BY captured_at DESC
+            LIMIT ?""",
+            (tenant_id, limit),
+        ).fetchall()
+        needle = query.strip().casefold()
+        records: list[ScreeningRecordRow] = []
+        for report_lookup, encrypted in rows:
+            value = json.loads(
+                self.codec.decrypt(
+                    encrypted,
+                    context=f"screening-record:{bytes(report_lookup).hex()}",
+                ).decode("utf-8")
+            )
+            subject_display_id = str(value["subject_display_id"])
+            if needle and needle not in subject_display_id.casefold():
+                continue
+            captured_at = datetime.fromisoformat(str(value["captured_at"]))
+            records.append(
+                ScreeningRecordRow(
+                    subject_display_id=subject_display_id,
+                    performed_at_label=captured_at.strftime("%m-%d %H:%M"),
+                    screening_label=str(value["screening_label"]),
+                    report_status_label=str(value["report_status_label"]),
+                    performed_on=captured_at.date(),
+                    report_id=str(value["report_id"]),
+                    report_version=int(value["report_version"]),
+                )
+            )
+        return tuple(records)
 
     def load_report(self, report_id: str, version: int) -> str:
         row = self.db.execute(
@@ -601,6 +738,20 @@ def _external_identifier_upload_request(
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _screening_label(protocol_id: str) -> str:
+    if protocol_id in {
+        "standard-static-balance",
+        "static-balance-screening",
+        "static-balance",
+    }:
+        return "静态平衡筛查"
+    return "足底压力筛查"
+
+
+def _report_status_label(report: BasicReportDocument) -> str:
+    return "完整报告" if report.kind.upper() == "FULL" else "基础报告"
 
 
 def _json(value: object) -> bytes:

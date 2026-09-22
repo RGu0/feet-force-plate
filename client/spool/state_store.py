@@ -1170,6 +1170,21 @@ class StateStore:
             raise KeyError(session_id)
         return str(row[0]), str(row[1]), row[2]
 
+    def completed_valid_session_identity(self, session_id: str) -> tuple[str, int]:
+        """Return the minimal identity needed to restore a missing local record."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT subject_uuid, started_at_ns
+                FROM sessions
+                WHERE session_id=? AND lifecycle_status='CLOSED'
+                    AND validity_status='VALID'""",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return str(row[0]), int(row[1])
+
     def upload_state(self, task_id: str) -> str:
         with self._lock:
             row = self._connection.execute(
