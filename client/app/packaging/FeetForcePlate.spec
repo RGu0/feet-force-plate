@@ -31,7 +31,7 @@ with (project_root / "pyproject.toml").open("rb") as project_file:
 
 # PySide6's PyInstaller hooks follow the application's explicit Qt imports;
 # collecting every PySide6 submodule would also bundle development tools.
-hiddenimports = ["client.app.packaging.windows_qt_runtime"]
+hiddenimports = []
 datas = [(str(assets), "client/app/assets")]
 datas.append(
     (str(device_specification), "docs/hardware/device-specifications/do-p4864")
