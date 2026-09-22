@@ -112,10 +112,22 @@ analysis = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=[],
+    runtime_hooks=[
+        str(project_root / "client" / "app" / "packaging" / "windows_qt_runtime_hook.py")
+    ],
     excludes=[],
     noarchive=False,
 )
+# Qt6Core uses the Windows ICU implementation.  The PySide6 wheel does not
+# provide ICU binaries, but PyInstaller can discover same-named files through
+# the builder's PATH.  Those foreign DLLs shadow Windows' ICU and make QtCore
+# fail to load.  Do not place externally discovered ICU files in the package.
+_foreign_icu_basenames = {"icudt78.dll", "icuin.dll", "icuuc.dll"}
+analysis.binaries = [
+    binary
+    for binary in analysis.binaries
+    if Path(binary[0]).name.lower() not in _foreign_icu_basenames
+]
 pyz = PYZ(analysis.pure)
 exe = EXE(
     pyz,
