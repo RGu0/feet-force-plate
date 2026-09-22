@@ -87,6 +87,12 @@ class LatestDisplayFrameMailbox:
                 return None
             return self._latest
 
+    def reset(self) -> None:
+        """Forget the prior capture-stage frame before a sequence restart."""
+
+        with self._lock:
+            self._latest = None
+
 
 class DisplayRefreshController:
     def __init__(
@@ -114,3 +120,9 @@ class DisplayRefreshController:
         if frame is not None:
             self.last_sequence = frame.sequence
         return frame
+
+    def reset(self) -> None:
+        """Accept the next frame from a newly opened hardware connection."""
+
+        self._next_allowed = 0.0
+        self.last_sequence = -1

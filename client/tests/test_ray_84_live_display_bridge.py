@@ -4,6 +4,7 @@ import numpy as np
 from PySide6.QtWidgets import QLabel
 
 from client.app.controller import ApplicationController
+from client.app.heatmap import HeatmapWidget
 from client.app.live_display import LiveDisplayProjection
 from client.app.pages import PageId
 from client.device.acquisition import LatestFrameMailbox
@@ -86,6 +87,47 @@ class _AcquiringCoordinator:
         _ = destination
 
     def print_current_report(self) -> None: ...
+
+
+def test_starting_next_stage_accepts_reconnected_frame_sequence_and_clears_stale_image(
+    qtbot,
+) -> None:
+    class _StageCoordinator(_AcquiringCoordinator):
+        def start_acquisition(self) -> bool:
+            return True
+
+    hardware = LatestFrameMailbox()
+    display = LatestDisplayFrameMailbox()
+    controller = ApplicationController(
+        _StageCoordinator(),
+        display_refresh=DisplayRefreshController(display, maximum_refresh_hz=30.0),
+        live_display=LiveDisplayProjection(
+            source=hardware, destination=display, standardizer=_standardizer()
+        ),
+    )
+    qtbot.addWidget(controller.window)
+    controller.window.show()
+    hardware.publish(_raw_frame(12, left=160, right=40))
+    controller._on_live_display_timer()
+
+    page = controller.window.page_widget(PageId.ACQUIRING)
+    heatmap = page.findChild(HeatmapWidget, "heatmapHost")
+    assert heatmap is not None and heatmap.display_frame is not None
+    assert heatmap.display_frame.sequence == 12
+
+    assert controller._start_acquisition()
+
+    assert heatmap.display_frame is None
+    controller._on_live_display_timer()
+    assert heatmap.display_frame is None
+    hardware.publish(_raw_frame(0, left=0, right=200))
+    qtbot.wait(40)
+    controller._on_live_display_timer()
+
+    assert heatmap.display_frame is not None
+    assert heatmap.display_frame.sequence == 0
+    assert "设备帧 #0" in page.findChild(QLabel, "frameFreshness").text()
+    assert "左 0.0% / 右 100.0%" in page.findChild(QLabel, "loadSummary").text()
 
 
 def test_qt_timer_projects_hardware_latest_frame_into_p07(qtbot) -> None:

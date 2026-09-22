@@ -802,6 +802,15 @@ class ScreeningWindow(QMainWindow):
             f"设备帧 #{frame.sequence}；显示只取最新帧"
         )
 
+    def clear_display_frame(self) -> None:
+        """Clear visual state while the next stage waits for its first device frame."""
+
+        page = self._pages[PageId.ACQUIRING]
+        page.findChild(HeatmapWidget, "heatmapHost").clear_display_frame()
+        page.findChild(QLabel, "copSummary").setText("COP：等待当前段设备帧")
+        page.findChild(QLabel, "loadSummary").setText("相对负重：等待当前段设备帧")
+        page.findChild(QLabel, "frameFreshness").setText("等待当前段设备帧")
+
     def present_dashboard(self, snapshot: DashboardSnapshot) -> None:
         self.findChild(QLabel, "organizationName").setText(snapshot.organization_name)
         self._set_pill_text("deviceStatusBadge", snapshot.device_status)
