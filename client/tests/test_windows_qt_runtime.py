@@ -34,8 +34,6 @@ def test_frozen_windows_hook_registers_dll_directories_before_importing_client(
     assert registered == [tmp_path / "PySide6", tmp_path / "shiboken6"]
     assert len(namespace["_WINDOWS_QT_DLL_DIRECTORIES"]) == 2
 
-
-
 def test_frozen_windows_hook_rejects_a_package_without_qt_directories(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -70,6 +68,7 @@ def test_portable_spec_registers_the_standalone_windows_qt_runtime_hook(
     monkeypatch.delenv("FEETFORCEPLATE_CLOUD_DEFAULT_DIRECTORY", raising=False)
     monkeypatch.delenv("FEETFORCEPLATE_WINDOWS_CLOUD_DELIVERY_DIRECTORY", raising=False)
     monkeypatch.delenv("FEETFORCEPLATE_SUPPORT_RECIPIENT_FILE", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
     spec = ROOT / "client" / "app" / "packaging" / "FeetForcePlate.spec"
     runpy.run_path(
         str(spec),
