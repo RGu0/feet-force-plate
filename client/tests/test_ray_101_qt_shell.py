@@ -5,7 +5,12 @@ from PySide6.QtWidgets import QAbstractItemView, QLabel, QPushButton, QTableWidg
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
-from client.workflow.models import ClientAction, ClientError, WorkflowState
+from client.workflow.models import (
+    ClientAction,
+    ClientError,
+    SessionValidity,
+    WorkflowState,
+)
 from client.workflow.state_machine import ScreeningStep
 
 
@@ -137,3 +142,30 @@ def test_nonblocking_sync_notice_keeps_basic_report_available(qtbot) -> None:
     assert window.global_navigation_enabled
     assert "基础报告已生成" in window.notice_text
     assert window.error_text == ""
+
+
+def test_report_generation_failure_replaces_processing_result_state(qtbot) -> None:
+    """A valid session without a report must not remain visibly processing."""
+
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    state = WorkflowState(
+        step=ScreeningStep.FAILED,
+        session_id="session-1",
+        validity=SessionValidity.VALID,
+        error=ClientError(
+            code="E-RPT-001",
+            operator_message="暂时无法生成基础报告，请联系技术支持",
+            action=ClientAction.CONTACT_SUPPORT,
+        ),
+    )
+
+    window.present_state(state)
+
+    page = window.page_widget(PageId.RESULT)
+    assert page.findChild(QLabel, "resultTitle").text() == "基础报告暂不可用"
+    assert "暂时无法生成基础报告" in page.findChild(QLabel, "resultSummary").text()
+    assert page.findChild(QLabel, "basicReportStatusText").text() == "基础报告未生成"
+    assert "处理中" not in page.findChild(QLabel, "resultTitle").text()
+    assert "处理中" not in page.findChild(QLabel, "resultSummary").text()
+    assert not page.findChild(QPushButton, "RETURN_WORKBENCH").isHidden()
