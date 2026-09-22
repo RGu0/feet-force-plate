@@ -44,6 +44,7 @@ from client.local_analysis.service import (
     ProcessingStatus,
     process_committed_physical_session,
 )
+from client.local_analysis.models import LocalQualityStatus
 from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
@@ -956,5 +957,11 @@ class LivePhysicalProcessor:
             captured_at=metadata.captured_at,
             generated_at=datetime.now(UTC),
         )
+        if outcome.result.quality_status is not LocalQualityStatus.VALID:
+            if outcome.report is not None:
+                raise RuntimeError("degraded local analysis cannot carry a report")
+            return ProcessingOutcome(ProcessingStatus.RETRY_REQUIRED, None, None)
+        if outcome.report is None:
+            raise RuntimeError("valid local analysis requires a report")
         self._reports.save_report(outcome.report)
         return ProcessingOutcome(ProcessingStatus.BASIC_READY, None, outcome.report)

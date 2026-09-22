@@ -282,6 +282,36 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.supporting_local_analysis("session-1"), payload)
         self.assertNotIn(payload, self.db_path.read_bytes())
 
+    def test_cloud_confirmed_handoff_accepts_late_supporting_local_analysis(
+        self,
+    ) -> None:
+        self.store.put_subject_ref("subject-uuid", b"opaque")
+        self.store.commit_valid_session(
+            "session-1",
+            subject_uuid="subject-uuid",
+            consent_id=None,
+            versions_json=b'{"protocol":"static-balance/1"}',
+            started_at_ns=10,
+            ended_at_ns=20,
+            manifest_sha256="a" * 64,
+            segments=(
+                ValidSegmentRecord(
+                    segment_id="segment-1",
+                    relative_path="sessions/session-1/segment-1.ffps",
+                    byte_count=128,
+                    sealed_at_ns=20,
+                ),
+            ),
+        )
+        self.store.mark_cloud_confirmed("session-1", confirmed_at_ns=30)
+        payload = b'{"authority":"SUPPORTING_NON_AUTHORITATIVE"}'
+
+        self.store.attach_supporting_local_analysis("session-1", payload)
+
+        self.assertEqual(self.store.sync_handoff_state("session-1"), "CLOUD_CONFIRMED")
+        self.assertEqual(self.store.supporting_local_analysis("session-1"), payload)
+        self.assertNotIn(payload, self.db_path.read_bytes())
+
     def test_schema_five_database_upgrades_to_encrypted_analysis_handoff(self) -> None:
         self.store.close()
         connection = sqlite3.connect(self.db_path)

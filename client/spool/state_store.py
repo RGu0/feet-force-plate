@@ -782,7 +782,7 @@ class StateStore:
         session_id: str,
         plaintext: bytes,
     ) -> None:
-        """Attach a non-authoritative local result to an existing upload handoff."""
+        """Attach a local result without coupling it to the upload state."""
 
         encrypted = self._codec.encrypt(
             plaintext,
@@ -791,7 +791,7 @@ class StateStore:
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs SET supporting_local_analysis=?
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING')""",
+                WHERE session_id=?""",
                 (encrypted, session_id),
             ).rowcount
         if not changed:
