@@ -473,17 +473,12 @@ def test_relative_basic_projection_does_not_treat_low_load_as_missing_hardware_d
     assert result.relative_heatmap is not None
 
 
-def test_relative_basic_projection_accepts_one_jittered_missing_sample() -> None:
+def test_relative_basic_projection_accepts_one_isolated_150ms_transport_gap() -> None:
     source = _physical_session()
     frames = tuple(
-        PhysicalPressureFrame(
-            timestamp_s=65.064,
-            estimated_force_n=frame.estimated_force_n,
-        )
-        if frame.timestamp_s == 65.05
-        else frame
+        frame
         for frame in source.frames
-        if frame.timestamp_s != 65.0
+        if frame.timestamp_s not in {65.0, 65.05}
     )
     session = PhysicalPressureSession(
         session_id=source.session_id,
@@ -503,6 +498,35 @@ def test_relative_basic_projection_accepts_one_jittered_missing_sample() -> None
 
     assert result.quality_status is LocalQualityStatus.VALID
     assert result.relative_heatmap is not None
+
+
+def test_relative_basic_projection_rejects_repeated_150ms_transport_gaps() -> None:
+    source = _physical_session()
+    omitted = {
+        timestamp
+        for start in (61.0, 63.0, 65.0, 67.0, 69.0)
+        for timestamp in (start, start + 0.05)
+    }
+    session = PhysicalPressureSession(
+        session_id=source.session_id,
+        points=source.points,
+        frames=tuple(
+            frame for frame in source.frames if frame.timestamp_s not in omitted
+        ),
+    )
+
+    result = analyze_physical_session(
+        session,
+        _protocol(),
+        FeatureParameters(
+            version="physical-features/repeated-jittered-missing-samples",
+            despike_window_samples=1,
+            lowpass_cutoff_hz=0.0,
+        ),
+    )
+
+    assert result.quality_status is LocalQualityStatus.DEGRADED
+    assert result.withheld_reason_map["left_load_percent"] == "GAP_TOO_LARGE"
 
 
 def test_valid_physical_result_builds_nondiagnostic_basic_ready_report() -> None:
