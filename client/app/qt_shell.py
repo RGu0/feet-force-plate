@@ -2532,7 +2532,13 @@ class ScreeningWindow(QMainWindow):
 
     def _present_result_state(self, state: WorkflowState) -> None:
         page = self._pages[PageId.RESULT]
-        report_ready = state.report_status is ReportStatus.BASIC_READY
+        report_generation_failed = (
+            state.error is not None and state.error.code == "E-RPT-001"
+        )
+        report_ready = (
+            state.report_status is ReportStatus.BASIC_READY
+            and not report_generation_failed
+        )
         retry_required = state.validity in {SessionValidity.INVALID, SessionValidity.INCOMPLETE, SessionValidity.FAILED}
         retry_allowed = (
             retry_required
@@ -2543,7 +2549,9 @@ class ScreeningWindow(QMainWindow):
         )
         page.findChild(QPushButton, "VIEW_BASIC_REPORT").setVisible(report_ready)
         page.findChild(QPushButton, "START_NEXT_SCREENING").setVisible(report_ready)
-        page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(retry_required)
+        page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(
+            retry_required or report_generation_failed
+        )
         page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_allowed)
         title = page.findChild(QLabel, "resultTitle")
         summary = page.findChild(QLabel, "resultSummary")
@@ -2564,6 +2572,20 @@ class ScreeningWindow(QMainWindow):
             basic_pill.hide()
             full.show()
             note.show()
+        elif report_generation_failed:
+            page.findChild(QFrame, "resultStatusIcon").setStyleSheet(
+                "background: #FDF6E6; border: 1px solid #F2DFAE; border-radius: 36px;"
+            )
+            page.findChild(QSvgWidget, "resultSuccessIcon").load(
+                str(self._icon_asset("status-warning.svg"))
+            )
+            title.setText("基础报告暂不可用")
+            summary.setText(state.error.operator_message)
+            basic.setText("基础报告未生成")
+            self._set_pill_tone(basic_pill, "warning")
+            basic_pill.show()
+            full.hide()
+            note.hide()
         elif retry_required:
             page.findChild(QFrame, "resultStatusIcon").setStyleSheet(
                 "background: #FDF6E6; border: 1px solid #F2DFAE; border-radius: 36px;"
