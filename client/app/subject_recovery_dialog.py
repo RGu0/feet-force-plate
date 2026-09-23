@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
@@ -78,8 +80,14 @@ class SubjectRecoveryDialog(QDialog):
         self._invalidate_preview()
         try:
             preview = self._service.prepare(session_id)
-        except Exception:
-            self._comparison.setText("云端核对未完成；待传数据仍保留在本机。")
+        except Exception as exc:
+            detail = ""
+            if os.environ.get("FEETFORCEPLATE_INTEGRATION_MODE") == "1":
+                code = getattr(exc, "error_code", None)
+                detail = f"（{type(exc).__name__}{f' / {code}' if code else ''}）"
+            self._comparison.setText(
+                f"云端核对未完成{detail}；待传数据仍保留在本机。"
+            )
             return
         self._preview = preview
         self._comparison.setText(

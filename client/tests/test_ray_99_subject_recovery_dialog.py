@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QPushButton, QWidget
 
 from client.app.subject_recovery_dialog import SubjectRecoveryDialog
+from client.sync.persistent_upload import UploadBlocked
 from client.sync.subject_recovery import RecoveryCandidate, RecoveryPreview
 
 
@@ -50,3 +51,22 @@ def test_switching_candidate_revokes_previous_operator_confirmation(qtbot):
     assert not confirm.isEnabled()
     assert not boxes[0].isChecked()
     assert not boxes[1].isChecked()
+
+
+def test_integration_lookup_failure_shows_only_safe_diagnostic(qtbot, monkeypatch):
+    monkeypatch.setenv("FEETFORCEPLATE_INTEGRATION_MODE", "1")
+
+    class FailingService(_Service):
+        def prepare(self, session_id):
+            raise UploadBlocked("private server detail", error_code="E-AUT-403")
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    dialog = SubjectRecoveryDialog(FailingService(), parent)
+    qtbot.addWidget(dialog)
+    dialog._prepare()
+
+    text = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "UploadBlocked / E-AUT-403" in text
+    assert "private server detail" not in text
+    assert all(not box.isEnabled() for box in dialog.findChildren(QCheckBox))
