@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QAbstractItemView, QLabel, QPushButton, QTableWidget, QWidget
 
@@ -109,6 +110,9 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
 def test_subject_match_card_wraps_detail_without_obscuring_primary_action(qtbot) -> None:
     window = ScreeningWindow()
     qtbot.addWidget(window)
+    window.set_subject_match_summary(
+        "已找到唯一档案：编号 **2781 · 年龄 64 岁 · 性别 女 · 上次检测 07-12"
+    )
     window.show_page(PageId.SUBJECT_IDENTIFICATION)
     window.resize(1280, 900)
     window.show()
@@ -174,3 +178,19 @@ def test_report_generation_failure_replaces_processing_result_state(qtbot) -> No
     assert page.findChild(QPushButton, "VIEW_BASIC_REPORT").isHidden()
     assert page.findChild(QPushButton, "START_NEXT_SCREENING").isHidden()
     assert page.findChild(QPushButton, "RETRY_SCREENING").isHidden()
+
+
+def test_incomplete_screen_return_dispatches_the_same_workbench_reset_action(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    window.present_state(WorkflowState(step=ScreeningStep.INCOMPLETE))
+
+    qtbot.mouseClick(
+        window.page_widget(PageId.RESULT).findChild(
+            QPushButton, "RETURN_WORKBENCH"
+        ),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert actions == ["RETURN_TO_WORKBENCH"]
