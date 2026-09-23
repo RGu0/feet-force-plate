@@ -55,7 +55,9 @@ class FileAesKeyProvider:
         self._key_file.parent.mkdir(parents=True, exist_ok=True)
         key = os.urandom(32)
         descriptor = os.open(
-            self._key_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            self._key_file,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0),
+            0o600,
         )
         try:
             written = 0

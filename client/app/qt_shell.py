@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIntValidator, QPainter, QPen, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -69,6 +69,7 @@ _ACTION_LABELS = {
     "SKIP_PROFILE": "跳过",
     "CONFIRM_CONSENT": "同意并继续",
     "RECHECK": "重新检查",
+    "CANCEL_POSITION_GUIDANCE": "← 取消",
     "START_ACQUISITION": "开始本段",
     "STOP_SCREENING": "停止检测",
     "VIEW_BASIC_REPORT": "查看基础报告",
@@ -682,40 +683,86 @@ class ScreeningWindow(QMainWindow):
         self._error_banner.setText(message)
         self._error_banner.show()
 
-    def set_subject_match_summary(self, message: str) -> None:
+    def _show_subject_resolution(
+        self,
+        *,
+        eyebrow: str,
+        subject_id: str,
+        summary: str,
+        note: str,
+        confirm_label: str,
+    ) -> None:
         page = self._pages[PageId.SUBJECT_IDENTIFICATION]
         conflict = page.findChild(QFrame, "subjectConflictView")
         match = page.findChild(QFrame, "matchCard")
-        is_conflict = any(
+        page.findChild(QLabel, "matchEyebrow").setText(eyebrow)
+        page.findChild(QLabel, "subjectMatchId").setText(subject_id)
+        page.findChild(QLabel, "subjectMatchSummary").setText(summary)
+        page.findChild(QLabel, "matchNote").setText(note)
+        confirm = page.findChild(QPushButton, "CONFIRM_SUBJECT")
+        confirm.setText(confirm_label)
+        confirm.setAccessibleName(confirm_label)
+        conflict.hide()
+        match.show()
+        page.findChild(QFrame, "wizardStepBar").show()
+        page.findChild(QLabel, "wizardTitle").setText("受试者信息")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回工作台")
+
+    def show_subject_found(self, masked_external_id: str) -> None:
+        self._show_subject_resolution(
+            eyebrow="已找到匹配档案",
+            subject_id=f"编号 {masked_external_id.replace('**', '＊＊')}",
+            summary="已找到唯一档案，请确认后继续",
+            note="请核对是否为本人，避免同名或错号档案；如信息不符请返回重新查找。",
+            confirm_label="确认并继续",
+        )
+
+    def show_subject_not_found(self, external_id: str) -> None:
+        self._show_subject_resolution(
+            eyebrow="未找到档案",
+            subject_id=f"机构编号 {external_id}",
+            summary="未找到档案；确认后将按此机构编号建档",
+            note="请核对机构编号，确认后将创建新档案。",
+            confirm_label="按此编号建档",
+        )
+
+    def set_subject_match_summary(self, message: str) -> None:
+        """Compatibility path for demo projections that provide one display string."""
+        if any(
             marker in message
             for marker in ("多个", "多条", "不能自动", "不会自动合并")
-        )
-        if not is_conflict:
-            subject_id = page.findChild(QLabel, "subjectMatchId")
-            details = page.findChild(QLabel, "subjectMatchSummary")
-            parts = [
-                part.strip()
-                for part in message.removeprefix("已找到唯一档案：").split("·")
-                if part.strip()
-            ]
-            if parts and parts[0].startswith("编号"):
-                subject_id.setText(parts[0].replace("**", "＊＊"))
-                details.setText("　".join(parts[1:]))
-            else:
-                details.setText(message)
-        conflict.setVisible(is_conflict)
-        match.setVisible(not is_conflict)
-        page.findChild(QFrame, "wizardStepBar").setVisible(not is_conflict)
-        page.findChild(QLabel, "wizardTitle").setText(
-            "档案冲突确认" if is_conflict else "受试者信息"
-        )
-        page.findChild(QPushButton, "BACK").setText(
-            "← 返回" if is_conflict else "← 返回工作台"
-        )
+        ):
+            self.show_subject_conflict()
+            return
+        parts = [
+            part.strip()
+            for part in message.removeprefix("已找到唯一档案：").split("·")
+            if part.strip()
+        ]
+        masked_id = parts[0].removeprefix("编号").strip() if parts else ""
+        self.show_subject_found(masked_id)
+        if len(parts) > 1:
+            self._pages[PageId.SUBJECT_IDENTIFICATION].findChild(
+                QLabel, "subjectMatchSummary"
+            ).setText("　".join(parts[1:]))
 
     def show_subject_conflict(self) -> None:
         """Expose the design's controlled, never-auto-merge conflict state."""
-        self.set_subject_match_summary("同一机构编号存在多条档案，系统不会自动合并。")
+        page = self._pages[PageId.SUBJECT_IDENTIFICATION]
+        page.findChild(QFrame, "matchCard").hide()
+        page.findChild(QFrame, "subjectConflictView").show()
+        page.findChild(QFrame, "wizardStepBar").hide()
+        page.findChild(QLabel, "wizardTitle").setText("档案冲突确认")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回")
+
+    def clear_subject_resolution(self) -> None:
+        page = self._pages[PageId.SUBJECT_IDENTIFICATION]
+        page.findChild(QLineEdit, "subjectExternalIdInput").clear()
+        page.findChild(QFrame, "matchCard").hide()
+        page.findChild(QFrame, "subjectConflictView").hide()
+        page.findChild(QFrame, "wizardStepBar").show()
+        page.findChild(QLabel, "wizardTitle").setText("受试者信息")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回工作台")
 
     def subject_identifier(self) -> tuple[str, str]:
         page = self._pages[PageId.SUBJECT_IDENTIFICATION]
@@ -800,6 +847,15 @@ class ScreeningWindow(QMainWindow):
         page.findChild(QLabel, "frameFreshness").setText(
             f"设备帧 #{frame.sequence}；显示只取最新帧"
         )
+
+    def clear_display_frame(self) -> None:
+        """Clear visual state while the next stage waits for its first device frame."""
+
+        page = self._pages[PageId.ACQUIRING]
+        page.findChild(HeatmapWidget, "heatmapHost").clear_display_frame()
+        page.findChild(QLabel, "copSummary").setText("COP：等待当前段设备帧")
+        page.findChild(QLabel, "loadSummary").setText("相对负重：等待当前段设备帧")
+        page.findChild(QLabel, "frameFreshness").setText("等待当前段设备帧")
 
     def present_dashboard(self, snapshot: DashboardSnapshot) -> None:
         self.findChild(QLabel, "organizationName").setText(snapshot.organization_name)
@@ -1308,7 +1364,14 @@ class ScreeningWindow(QMainWindow):
 
     def _build_subject_page(self) -> QWidget:
         page, layout = self._new_page(PageId.SUBJECT_IDENTIFICATION)
-        layout.addWidget(self._wizard_header("受试者信息", 0, "← 返回工作台"))
+        layout.addWidget(
+            self._wizard_header(
+                "受试者信息",
+                0,
+                "← 返回工作台",
+                back_action="RETURN_TO_WORKBENCH",
+            )
+        )
         layout.addWidget(self._stepbar(0))
         body, body_layout = self._wizard_body()
         lookup_row = QHBoxLayout()
@@ -1355,6 +1418,7 @@ class ScreeningWindow(QMainWindow):
         body_layout.addWidget(create, alignment=Qt.AlignmentFlag.AlignLeft)
         match = QFrame()
         match.setObjectName("matchCard")
+        match.setVisible(False)
         match_layout = QHBoxLayout(match)
         match_layout.setContentsMargins(24, 20, 24, 20)
         text_column = QVBoxLayout()
@@ -1457,11 +1521,17 @@ class ScreeningWindow(QMainWindow):
         grid.setVerticalSpacing(24)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        age = self._profile_combo("ageBandInput", "年龄段（选填）", (("60–69", "60-69"), ("请选择 / 不提供", None)))
+        age = QLineEdit("60")
+        age.setObjectName("ageBandInput")
+        age.setAccessibleName("年龄（岁）")
+        age.setAccessibleDescription("请输入 1 到 120 之间的整数年龄")
+        age.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
+        age.setMaxLength(3)
+        age.setValidator(QIntValidator(1, 120, age))
         sex = self._profile_combo("sexInput", "性别（选填）", (("请选择 / 不提供", None), ("女", "female"), ("男", "male")))
         height = self._field_with_unit("heightInput", "身高", "cm", "162")
         weight = self._field_with_unit("weightInput", "体重", "kg", "58")
-        grid.addWidget(self._field_group("年龄段", age), 0, 0)
+        grid.addWidget(self._field_group("年龄（岁）", age), 0, 0)
         grid.addWidget(self._field_group("性别", sex), 0, 1)
         grid.addWidget(height, 1, 0)
         grid.addWidget(weight, 1, 1)
@@ -1506,6 +1576,8 @@ class ScreeningWindow(QMainWindow):
         body_layout.addSpacing(8)
         body_layout.addLayout(chips)
         hidden_fields = self._hidden_profile_controls()
+        age_state = hidden_fields.findChild(QComboBox, "ageBandState")
+        age_state.setCurrentIndex(age_state.findData("PROVIDED"))
         body_layout.addWidget(hidden_fields)
         body_layout.addStretch(1)
         layout.addWidget(body, 1)
@@ -1586,7 +1658,14 @@ class ScreeningWindow(QMainWindow):
 
     def _build_position_page(self) -> QWidget:
         page, layout = self._new_page(PageId.POSITION_GUIDANCE)
-        layout.addWidget(self._wizard_header("站位引导", None, "← 取消"))
+        layout.addWidget(
+            self._wizard_header(
+                "站位引导",
+                None,
+                "← 取消",
+                back_action="CANCEL_POSITION_GUIDANCE",
+            )
+        )
         body = QWidget()
         body.setObjectName("pageCanvas")
         body_layout = QVBoxLayout(body)
@@ -1815,7 +1894,9 @@ class ScreeningWindow(QMainWindow):
         return_button.setObjectName("RETURN_WORKBENCH")
         return_button.setAccessibleName("返回工作台")
         return_button.setMinimumHeight(48)
-        return_button.clicked.connect(lambda: self.show_page(PageId.WORKBENCH))
+        return_button.clicked.connect(
+            lambda: self._dispatch("RETURN_TO_WORKBENCH")
+        )
         return_button.hide()
         retry_button = self._action_button("RETRY_SCREENING", primary=True)
         retry_button.hide()
@@ -2020,12 +2101,21 @@ class ScreeningWindow(QMainWindow):
         layout.addWidget(content, 1)
         return page
 
-    def _wizard_header(self, title: str, step: int | None, back_text: str = "← 返回") -> QFrame:
+    def _wizard_header(
+        self,
+        title: str,
+        step: int | None,
+        back_text: str = "← 返回",
+        *,
+        back_action: str = "BACK",
+    ) -> QFrame:
         header = QFrame()
         header.setObjectName("wizardHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(32, 0, 32, 0)
-        back = self._action_button("BACK", primary=False, ghost=True, label=back_text)
+        back = self._action_button(
+            back_action, primary=False, ghost=True, label=back_text
+        )
         header_layout.addWidget(back)
         title_label = self._label(title, "wizardTitle", alignment=Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 20px; font-weight: 600;")
@@ -2515,7 +2605,13 @@ class ScreeningWindow(QMainWindow):
 
     def _present_result_state(self, state: WorkflowState) -> None:
         page = self._pages[PageId.RESULT]
-        report_ready = state.report_status is ReportStatus.BASIC_READY
+        report_generation_failed = (
+            state.error is not None and state.error.code == "E-RPT-001"
+        )
+        report_ready = (
+            state.report_status is ReportStatus.BASIC_READY
+            and not report_generation_failed
+        )
         retry_required = state.validity in {SessionValidity.INVALID, SessionValidity.INCOMPLETE, SessionValidity.FAILED}
         retry_allowed = (
             retry_required
@@ -2526,7 +2622,9 @@ class ScreeningWindow(QMainWindow):
         )
         page.findChild(QPushButton, "VIEW_BASIC_REPORT").setVisible(report_ready)
         page.findChild(QPushButton, "START_NEXT_SCREENING").setVisible(report_ready)
-        page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(retry_required)
+        page.findChild(QPushButton, "RETURN_WORKBENCH").setVisible(
+            retry_required or report_generation_failed
+        )
         page.findChild(QPushButton, "RETRY_SCREENING").setVisible(retry_allowed)
         title = page.findChild(QLabel, "resultTitle")
         summary = page.findChild(QLabel, "resultSummary")
@@ -2547,6 +2645,20 @@ class ScreeningWindow(QMainWindow):
             basic_pill.hide()
             full.show()
             note.show()
+        elif report_generation_failed:
+            page.findChild(QFrame, "resultStatusIcon").setStyleSheet(
+                "background: #FDF6E6; border: 1px solid #F2DFAE; border-radius: 36px;"
+            )
+            page.findChild(QSvgWidget, "resultSuccessIcon").load(
+                str(self._icon_asset("status-warning.svg"))
+            )
+            title.setText("基础报告暂不可用")
+            summary.setText(state.error.operator_message)
+            basic.setText("基础报告未生成")
+            self._set_pill_tone(basic_pill, "warning")
+            basic_pill.show()
+            full.hide()
+            note.hide()
         elif retry_required:
             page.findChild(QFrame, "resultStatusIcon").setStyleSheet(
                 "background: #FDF6E6; border: 1px solid #F2DFAE; border-radius: 36px;"

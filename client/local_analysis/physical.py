@@ -38,6 +38,8 @@ _RELATIVE_BASIC_VERSION = "physical-relative-basic/2.0"
 _MINIMUM_RELATIVE_SAMPLE_RATE_HZ = 10.0
 _MINIMUM_RELATIVE_DURATION_S = 10.0
 _MAXIMUM_RELATIVE_GAP_INTERVALS = 2.5
+_MAXIMUM_RELATIVE_GAP_S = 0.25
+_MAXIMUM_RELATIVE_EXCESS_GAP_FRACTION = 0.01
 _NON_SCALAR_STAGE_FIELDS = frozenset(
     {
         "stage_id",
@@ -220,16 +222,23 @@ def _relative_release_failure(
         sample_rate = 1.0 / nominal_interval if nominal_interval > 0 else 0.0
         if sample_rate < _MINIMUM_RELATIVE_SAMPLE_RATE_HZ:
             return "SAMPLE_RATE_TOO_LOW"
-        maximum_gap_intervals = (
-            float(np.max(deltas) / nominal_interval)
-            if nominal_interval > 0 and deltas.size
-            else float("inf")
-        )
-        if maximum_gap_intervals > _MAXIMUM_RELATIVE_GAP_INTERVALS:
-            return "GAP_TOO_LARGE"
         observed_duration = (
             float(timestamps[-1] - timestamps[0]) if timestamps.size > 1 else 0.0
         )
+        if nominal_interval <= 0 or not deltas.size or observed_duration <= 0:
+            return "GAP_TOO_LARGE"
+        oversized_gaps = deltas[
+            deltas > nominal_interval * _MAXIMUM_RELATIVE_GAP_INTERVALS
+        ]
+        excess_gap_duration = float(
+            np.sum(oversized_gaps - nominal_interval, dtype=np.float64)
+        )
+        if (
+            float(np.max(deltas)) > _MAXIMUM_RELATIVE_GAP_S
+            or excess_gap_duration / observed_duration
+            > _MAXIMUM_RELATIVE_EXCESS_GAP_FRACTION
+        ):
+            return "GAP_TOO_LARGE"
         if observed_duration < _MINIMUM_RELATIVE_DURATION_S:
             return "DURATION_TOO_SHORT"
     return None

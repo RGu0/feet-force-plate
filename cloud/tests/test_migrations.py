@@ -4,6 +4,18 @@ from pathlib import Path
 
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0003_seed_mvp_access_control.sql"
+ACTIVATION_PROJECTION_GRANTS = (
+    Path(__file__).parents[1] / "migrations" / "0008_activation_projection_grants.sql"
+)
+
+
+def test_activation_role_can_write_its_data_plane_projection() -> None:
+    sql = ACTIVATION_PROJECTION_GRANTS.read_text()
+
+    assert (
+        "GRANT SELECT, INSERT, UPDATE ON device.devices, device.terminals, "
+        "device.terminal_device_bindings TO ffp_activation_app;" in sql
+    )
 REVOKED_LICENSE_MIGRATION = (
     Path(__file__).parents[1]
     / "migrations"

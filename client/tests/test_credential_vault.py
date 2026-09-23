@@ -3,8 +3,10 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
+from keyring.errors import PasswordDeleteError
 
 from client.security import credential_vault
 from client.security.credential_vault import (
@@ -126,3 +128,26 @@ def test_refresh_tokens_use_the_foundation_credential_vault_not_sqlite_or_keyrin
     assert backend.values == {
         "FeetForcePlate.access/refresh:11111111-1111-1111-1111-111111111111": "synthetic-refresh-token"
     }
+
+
+def test_windows_port_rejects_non_vault_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend_type = type("OtherKeyring", (), {"__module__": "keyring.backends.Windows"})
+    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(get_keyring=backend_type))
+
+    with pytest.raises(CredentialVaultUnavailable, match="platform credential vault is unavailable"):
+        credential_vault._load_native_credential_vault("win32")
+
+
+def test_port_delete_treats_only_keyring_missing_error_as_idempotent() -> None:
+    class Backend:
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+
+        def delete_password(self, _service: str, _key: str) -> None:
+            raise self.error
+
+    credential_vault._KeyringCredentialVault(Backend(PasswordDeleteError("missing"))).delete("key")
+    with pytest.raises(OSError, match="not found"):
+        credential_vault._KeyringCredentialVault(
+            Backend(OSError("backend unavailable; target not found"))
+        ).delete("key")

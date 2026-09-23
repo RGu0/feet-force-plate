@@ -82,9 +82,8 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 - 连接超时、429、5xx 和可恢复网络错误使用持久化退避。权威语义是 foundation `RetryPolicy`：
   第 `n` 次间隔为 `min(cap, base × 2^(n-1))`，本项目取 `base = 5 s`、`cap = 900 s`，**不叠加 jitter**，
   服务端 `Retry-After` **无条件优先**；
-  > **已知待对齐**：本模块当前实现（`client/sync/persistent_upload.py`）仍是 equal-jitter
-  > （上界 50%–100% 随机，且仅在 `Retry-After` 更大时优先），尚未切换到 `RetryPolicy`，
-  > 见[总体架构设计](../架构设计文档.md) §14.3。
+  `client/sync/persistent_upload.py` 已使用该公开 API，重试次数与截止时间继续持久化在应用 SQLite 中。
+  依赖锁定 foundation `0.2.0`，以保留长时间断网后的上限保证（`0.1.1` 在第 45 次重试会发生时长溢出）。
 - 鉴权失败由 foundation `AuthorizedTransport` 刷新一次设备凭据并以同一 correlation ID 重放，
   仍失败则进入需要支持的阻断状态；
 - 4xx 业务错误不无限重试，进入隔离队列并上报告警；

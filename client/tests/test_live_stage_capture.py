@@ -134,6 +134,11 @@ class _Sessions:
         )
 
 
+class _StateInitializationFailureSessions(_Sessions):
+    def metadata(self, _session_id: str) -> LiveSessionMetadata:
+        raise RuntimeError("controlled state initialization failure")
+
+
 class _Baseline:
     def __init__(self) -> None:
         adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
@@ -240,7 +245,7 @@ def _read_committed_raw_values(tmp_path, key_provider: _KeyProvider) -> list[int
     return [int(frame.values[0, 0]) for frame in frames]
 
 
-def test_capture_keeps_one_connection_and_never_stages_preparation_frames(tmp_path) -> None:
+def test_capture_reopens_between_stages_and_never_stages_preparation_frames(tmp_path) -> None:
     capture, hardware, key_provider, mailbox = _capture_fixture(tmp_path)
     gate = StageRecordingGate(expected_stage_ids=("one", "two"))
     thread, results = _start_capture(capture, gate)
@@ -254,19 +259,15 @@ def test_capture_keeps_one_connection_and_never_stages_preparation_frames(tmp_pa
         transport, start_s=10, first_value=10, first_source_index=1
     )
     _wait_until(lambda: gate.snapshot().stage_complete)
-
-    transport.push(
-        _frame_at(35, 250, 9),
-        events=(ProtocolIntegrityEvent(7, 9, "TAIL", 1, 3079),),
-    )
-    _wait_until(lambda: mailbox.publish_count == 10)
+    _wait_until(lambda: transport.closed)
     gate.open_stage("two", duration_seconds=20)
+    _wait_until(lambda: len(hardware.connections) == 2)
+    second_transport = hardware.connections[1]
     _push_stage(
-        transport,
+        second_transport,
         start_s=60,
         first_value=20,
-        first_source_index=10,
-        integrity_event_offset=1,
+        first_source_index=0,
     )
 
     result = results.get(timeout=3)
@@ -277,14 +278,14 @@ def test_capture_keeps_one_connection_and_never_stages_preparation_frames(tmp_pa
         CapturedStageWindow("one", 0.0, 20.0, 8),
         CapturedStageWindow("two", 50.0, 70.0, 8),
     )
-    assert [event.event_index for event in result.acquisition.integrity_events] == [8]
-    assert len(result.acquisition.reconstructed_frames) == 1
+    assert result.acquisition.integrity_events == ()
+    assert result.acquisition.reconstructed_frames == ()
     assert _read_committed_raw_values(tmp_path, key_provider) == [
         10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26, 27
     ]
-    assert 250 not in _read_committed_raw_values(tmp_path, key_provider)
-    assert len(hardware.connections) == 1
+    assert len(hardware.connections) == 2
     assert transport.closed
+    assert second_transport.closed
 
     derived_path = next(
         (tmp_path / "spool" / "sessions" / "session-1").glob("derived-*.ffpd")
@@ -294,10 +295,42 @@ def test_capture_keeps_one_connection_and_never_stages_preparation_frames(tmp_pa
         {"stage_id": "one", "start_s": 0.0, "end_s": 20.0, "frame_count": 8},
         {"stage_id": "two", "start_s": 50.0, "end_s": 70.0, "frame_count": 8},
     ]
-    assert [
-        event["event_index"]
-        for event in derived["hardware_processing"]["communication_integrity"]["events"]
-    ] == [8]
+    assert derived["hardware_processing"]["communication_integrity"]["events"] == []
+
+
+def test_capture_reopens_device_between_all_four_stages(tmp_path) -> None:
+    capture, hardware, _key_provider, _mailbox = _capture_fixture(tmp_path)
+    gate = StageRecordingGate(expected_stage_ids=("one", "two", "three", "four"))
+    thread, results = _start_capture(capture, gate)
+
+    for stage_index, stage_id in enumerate(gate.expected_stage_ids):
+        gate.open_stage(stage_id, duration_seconds=20)
+        _wait_until(lambda: len(hardware.connections) == stage_index + 1)
+        transport = hardware.connections[stage_index]
+        _push_stage(
+            transport,
+            start_s=stage_index * 30,
+            first_value=10 + stage_index * 10,
+            first_source_index=0,
+        )
+        if stage_id != "four":
+            _wait_until(lambda: gate.snapshot().stage_complete)
+            _wait_until(lambda: transport.closed)
+
+    result = results.get(timeout=3)
+    thread.join(timeout=1)
+
+    assert not isinstance(result, BaseException)
+    assert result.committed
+    assert [window.stage_id for window in result.stage_windows] == [
+        "one",
+        "two",
+        "three",
+        "four",
+    ]
+    assert result.stage_windows[-1].end_s - result.stage_windows[-1].start_s == 20
+    assert len(hardware.connections) == 4
+    assert all(transport.closed for transport in hardware.connections)
 
 
 def test_cancel_before_first_stage_frame_stops_worker_and_allows_retry(tmp_path) -> None:
@@ -330,20 +363,23 @@ def test_retry_discards_only_failed_stage_and_reuses_completed_stage(tmp_path) -
         first_transport, start_s=10, first_value=10, first_source_index=0
     )
     _wait_until(lambda: gate.snapshot().stage_complete)
+    _wait_until(lambda: first_transport.closed)
     gate.open_stage("two", duration_seconds=20)
-    first_transport.push(_frame_at(60, 99, 8))
-    first_transport.disconnect()
+    _wait_until(lambda: len(hardware.connections) == 2)
+    failed_transport = hardware.connections[1]
+    failed_transport.push(_frame_at(60, 99, 8))
+    failed_transport.disconnect()
 
     first_outcome = first_results.get(timeout=3)
     first_thread.join(timeout=1)
     assert isinstance(first_outcome, RetryableStageCaptureError)
     assert gate.snapshot().cancelled
-    assert first_transport.closed
+    assert failed_transport.closed
 
     gate.open_stage("two", duration_seconds=20)
     second_thread, second_results = _start_capture(capture, gate)
-    _wait_until(lambda: len(hardware.connections) == 2)
-    second_transport = hardware.connections[1]
+    _wait_until(lambda: len(hardware.connections) == 3)
+    second_transport = hardware.connections[2]
     _push_stage(
         second_transport, start_s=70, first_value=20, first_source_index=0
     )
@@ -360,7 +396,7 @@ def test_retry_discards_only_failed_stage_and_reuses_completed_stage(tmp_path) -
         10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26, 27
     ]
     assert 99 not in _read_committed_raw_values(tmp_path, key_provider)
-    assert len(hardware.connections) == 2
+    assert len(hardware.connections) == 3
     assert second_transport.closed
 
 
@@ -393,6 +429,23 @@ def test_connect_failure_cancels_open_stage_and_allows_same_stage_retry(tmp_path
 
     assert not isinstance(second_outcome, BaseException)
     assert second_outcome.committed
+
+
+def test_capture_identifies_state_initialization_failures_without_exposing_detail(
+    tmp_path,
+) -> None:
+    capture, hardware, _keys, _mailbox = _capture_fixture(tmp_path)
+    capture._sessions = _StateInitializationFailureSessions()
+    gate = StageRecordingGate(expected_stage_ids=("one",))
+    gate.open_stage("one", duration_seconds=20)
+
+    with pytest.raises(
+        RetryableStageCaptureError,
+        match="capture initialization failed: metadata$",
+    ):
+        capture.capture("session-1", gate)
+
+    assert hardware.connections[0].closed
 
 
 def test_close_failure_cannot_override_stage_error_or_keep_worker_claimed(tmp_path) -> None:

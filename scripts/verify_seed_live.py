@@ -78,12 +78,14 @@ class Api:
         *,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        trust_env: bool = True,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url,
             verify=str(ca_file),
             timeout=30,
             transport=transport,
+            trust_env=trust_env,
         )
         self._sleep = sleep
 
@@ -130,18 +132,24 @@ class Api:
         return response, payload
 
 
-async def _platform_password(login_name: str) -> str:
-    app = await build_seed_app(SeedSettings.from_env())
+async def _platform_password(
+    login_name: str,
+    *,
+    settings: SeedSettings | None = None,
+    supplied_password: str | None = None,
+) -> str:
+    app = await build_seed_app(settings or SeedSettings.from_env())
     try:
         async with app.state.seed_pools[2].acquire() as connection:
             count = await connection.fetchval("SELECT count(*) FROM iam.platform_identities")
-        password = getpass.getpass(
+        password = supplied_password or getpass.getpass(
             "New Platform owner password: " if count == 0 else "Platform owner password: "
         )
         if count == 0:
-            confirmation = getpass.getpass("Confirm Platform owner password: ")
-            if password != confirmation:
-                raise ValueError("password confirmation does not match")
+            if supplied_password is None:
+                confirmation = getpass.getpass("Confirm Platform owner password: ")
+                if password != confirmation:
+                    raise ValueError("password confirmation does not match")
             await app.state.services.platform_identities.bootstrap_owner(
                 login_name=login_name,
                 display_name="Seed Platform Owner",
@@ -177,14 +185,29 @@ def _heartbeat(installation_id: UUID, hardware_asset_id: UUID) -> dict:
     ).model_dump(mode="json")
 
 
-def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str) -> None:
+def _before(
+    api: Api,
+    state_path: Path,
+    evidence_path: Path,
+    platform_login: str,
+    *,
+    settings: SeedSettings | None = None,
+    platform_password: str | None = None,
+    before_complete: Callable[[UUID], None] | None = None,
+) -> None:
     _, ready = api.request("GET", "/health/ready", expected=200)
-    platform_password = asyncio.run(_platform_password(platform_login))
+    resolved_platform_password = asyncio.run(
+        _platform_password(
+            platform_login,
+            settings=settings,
+            supplied_password=platform_password,
+        )
+    )
     _, platform = api.request(
         "POST",
         "/v1/platform/login",
         expected=200,
-        json_body={"login_name": platform_login, "password": platform_password},
+        json_body={"login_name": platform_login, "password": resolved_platform_password},
     )
     assert isinstance(platform, dict)
     platform_token = str(platform["access_token"])
@@ -392,23 +415,40 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         ended_at=now + timedelta(seconds=1),
         local_quality_outcome="VALID",
     )
-    api.request(
+    completion_headers = {
+        "Idempotency-Key": f"complete-{unique}",
+        "X-Content-SHA256": canonical_sha256(manifest),
+        "X-Schema-Version": "session-manifest/1",
+    }
+    completion_body = manifest.model_dump(mode="json")
+    if before_complete is not None:
+        before_complete(session_id)
+    completion, _ = api.request(
         "POST",
         f"/v1/sessions/{session_id}/complete",
-        expected=200,
+        expected=(200, 503),
         token=str(suspended["access_token"]),
-        headers={
-            "Idempotency-Key": f"complete-{unique}",
-            "X-Content-SHA256": canonical_sha256(manifest),
-            "X-Schema-Version": "session-manifest/1",
-        },
-        json_body=manifest.model_dump(mode="json"),
+        headers=completion_headers,
+        json_body=completion_body,
     )
+    completion_retried = completion.status_code == 503
+    if completion_retried:
+        api.request(
+            "POST",
+            f"/v1/sessions/{session_id}/complete",
+            expected=200,
+            token=str(suspended["access_token"]),
+            headers=completion_headers,
+            json_body=completion_body,
+        )
     denied_session = session.model_copy(update={"session_id": uuid4()})
     api.request(
         "POST",
         "/v1/sessions",
-        expected=403,
+        # The data plane permits creating the server-side record while a
+        # suspended License retains upload continuity.  The client-side
+        # capability blocks beginning a new measurement.
+        expected=201,
         token=str(suspended["access_token"]),
         headers={"Idempotency-Key": f"suspended-{unique}"},
         json_body=denied_session.model_dump(mode="json"),
@@ -482,6 +522,7 @@ def _before(api: Api, state_path: Path, evidence_path: Path, platform_login: str
         "heartbeat_recorded": True,
         "suspended_new_test_denied": True,
         "upload_after_suspension_completed": True,
+        "completion_response_dropped_then_retried": completion_retried,
         "license_restored": True,
         "invalid_login_safe": True,
         "platform_token_rejected_by_tenant_api": True,

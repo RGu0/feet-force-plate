@@ -53,6 +53,10 @@ class _Coordinator:
         self._state = WorkflowState(step=ScreeningStep.POSITION_GUIDANCE)
         return True
 
+    def cancel_position_guidance(self) -> bool:
+        self._state = WorkflowState(step=ScreeningStep.PREFLIGHT)
+        return True
+
     def start_acquisition(self) -> bool:
         self._state = WorkflowState(step=ScreeningStep.ACQUIRING)
         return True
@@ -145,6 +149,21 @@ def test_controller_drives_the_operator_path_and_deferred_preflight(qtbot) -> No
     controller.dispatch("RETRY_SCREENING")
     assert controller.window.current_page_id == PageId.PREFLIGHT
     qtbot.waitUntil(lambda: controller._coordinator.state.preflight_ready)
+    assert controller.window.current_page_id == PageId.PREFLIGHT
+
+
+def test_position_guidance_cancel_returns_to_preflight(qtbot) -> None:
+    controller = ApplicationController(_Coordinator())
+    qtbot.addWidget(controller.window)
+
+    controller.dispatch("START_NEW_SCREENING")
+    controller.dispatch("CONFIRM_SUBJECT")
+    controller.dispatch("SKIP_PROFILE")
+    controller.dispatch("CONFIRM_CONSENT")
+    qtbot.waitUntil(lambda: controller._coordinator.state.preflight_ready)
+    controller.dispatch("ENTER_POSITION")
+    controller.dispatch("CANCEL_POSITION_GUIDANCE")
+
     assert controller.window.current_page_id == PageId.PREFLIGHT
 
 

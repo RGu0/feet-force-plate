@@ -100,7 +100,7 @@ class _KeyringCredentialVault:
         try:
             self._backend.delete_password("FeetForcePlate", key)
         except Exception as exc:
-            if "not found" not in str(exc).lower():
+            if not _is_missing_credential(exc):
                 raise
 
 
@@ -164,9 +164,19 @@ def _load_native_credential_vault(platform: str) -> CredentialVault:
         "darwin": "keyring.backends.macOS",
         "win32": "keyring.backends.Windows",
     }[platform]
-    if module_name != required_module:
+    if module_name != required_module or (
+        platform == "win32" and type(backend).__name__ != "WinVaultKeyring"
+    ):
         raise CredentialVaultUnavailable("platform credential vault is unavailable")
     return _KeyringCredentialVault(backend)
+
+
+def _is_missing_credential(error: Exception) -> bool:
+    try:
+        from keyring.errors import PasswordDeleteError
+    except ImportError:
+        return False
+    return isinstance(error, PasswordDeleteError)
 
 
 def _is_keychain_duplicate_item(error: Exception) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from .models import (
     AnalysisStatus,
@@ -30,6 +31,28 @@ from .protocol import (
     default_standard_protocol,
 )
 from .state_machine import ScreeningStep, SessionStateMachine
+
+
+_SAFE_EXCEPTION_TYPE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))(?:[:\s]|$)"
+)
+_SAFE_CAPTURE_OPERATION = re.compile(r"stage capture failed at ([A-Z_]+):")
+_SAFE_WINDOWS_ERROR = re.compile(r"\[WinError\s+(\d+)\]")
+
+
+def _stage_failure_diagnostic_code(technical_detail: str) -> str:
+    """Return a support-safe code without sensor, participant, or path data."""
+
+    operation = _SAFE_CAPTURE_OPERATION.search(technical_detail)
+    windows_error = _SAFE_WINDOWS_ERROR.search(technical_detail)
+    if operation is not None and windows_error is not None:
+        return (
+            "E-ACQ-004-"
+            f"{operation.group(1)}-WINERROR-{windows_error.group(1)}"
+        )
+    causes = _SAFE_EXCEPTION_TYPE.findall(technical_detail)
+    cause = causes[-1].upper() if causes else "UNKNOWN"
+    return f"E-ACQ-004-{cause[:32]}"
 
 
 class ScreeningCoordinator:
@@ -135,6 +158,16 @@ class ScreeningCoordinator:
             self._reset_for_new_screening()
         self._transition(ScreeningStep.SUBJECT_IDENTIFICATION)
 
+    def return_to_workbench(self) -> None:
+        if self._machine.step not in {
+            ScreeningStep.SUBJECT_IDENTIFICATION,
+            ScreeningStep.INCOMPLETE,
+            ScreeningStep.RETRY_REQUIRED,
+            ScreeningStep.FAILED,
+        }:
+            return
+        self._reset_for_new_screening()
+
     def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None:
         if not subject_uuid.strip() or not consent_record_id.strip():
             raise ValueError("subject and consent identifiers are required")
@@ -187,6 +220,20 @@ class ScreeningCoordinator:
         self._transition(ScreeningStep.POSITION_GUIDANCE)
         self._position_guidance.set_stage(self._current_stage)
         self._position_guidance.reset()
+        return True
+
+    def cancel_position_guidance(self) -> bool:
+        """Leave P-06 before a session is created, without recording a result."""
+
+        if (
+            self._machine.step is not ScreeningStep.POSITION_GUIDANCE
+            or self._session_id is not None
+        ):
+            return False
+        self._machine.cancel_position_guidance()
+        self._position_guidance.reset()
+        self._notice = None
+        self._error = None
         return True
 
     def observe_position(
@@ -319,7 +366,10 @@ class ScreeningCoordinator:
         self._position_guidance.set_stage(self._current_stage)
         self._position_guidance.reset()
         self._error = None
-        self._notice = "本段采集中断，请重新连接设备并重测本段"
+        self._notice = (
+            "本段采集中断，请重新连接设备并重测本段"
+            f"（诊断代码：{_stage_failure_diagnostic_code(technical_detail)}）"
+        )
 
     def handle_hardware_failure(self, *, error: ClientError) -> None:
         """Close only an active capture from the typed hardware/UI boundary."""

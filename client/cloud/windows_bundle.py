@@ -43,10 +43,10 @@ _RESOURCE_FILES = {
 _DELIVERY_FILES = {"approval.json", "approval.sig"}
 _COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 
-# Dedicated RAY-321 approval verifier. Never load this trust anchor from sync
+# Dedicated RAY-448 approval verifier. Never load this trust anchor from sync
 # storage or substitute the License verification key.
 _TRUSTED_APPROVAL_PUBLIC_KEY = base64.b64decode(
-    "dp6+fAoMoq0hwyaL5O2ZMMORrjgRE5PbKiXgvHdQcUQ=", validate=True
+    "G51wTUpMXCTfbD38W6VuXi31uItNR6ZRbkC7lgy7gP0=", validate=True
 )
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

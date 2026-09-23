@@ -29,6 +29,8 @@ class CredentialStore(Protocol):
 
 
 class CredentialVaultStore:
+    """Refresh tokens through Foundation's target-system CredentialVault port."""
+
     def __init__(
         self,
         vault: CredentialVault | None = None,
@@ -42,6 +44,9 @@ class CredentialVaultStore:
     def _username(account_id: UUID) -> str:
         return f"refresh:{account_id}"
 
+    def _key(self, account_id: UUID) -> str:
+        return f"{self._service_name}/{self._username(account_id)}"
+
     def set_refresh_token(self, account_id: UUID, refresh_token: str) -> None:
         self._vault.set(self._key(account_id), refresh_token)
 
@@ -50,9 +55,6 @@ class CredentialVaultStore:
 
     def delete_refresh_token(self, account_id: UUID) -> None:
         self._vault.delete(self._key(account_id))
-
-    def _key(self, account_id: UUID) -> str:
-        return f"{self._service_name}/{self._username(account_id)}"
 
 
 @dataclass(frozen=True, slots=True)
