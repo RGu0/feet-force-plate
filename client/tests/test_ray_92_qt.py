@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
+from PySide6.QtGui import QValidator
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QPushButton
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -51,6 +52,25 @@ def test_profile_fields_each_have_an_explicit_missing_state_selector(qtbot) -> N
         assert {
             selector.itemData(index) for index in range(selector.count())
         } == expected_states
+
+
+def test_profile_age_is_an_integer_input_defaulting_to_60(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    page = window.page_widget(PageId.PROFILE)
+    age = page.findChild(QLineEdit, "ageBandInput")
+    age_state = page.findChild(QComboBox, "ageBandState")
+
+    assert age is not None
+    assert age.text() == "60"
+    assert age_state.currentData() == "PROVIDED"
+    assert window.profile_form_values()["ageBand"] == ("PROVIDED", "60")
+    validator = age.validator()
+    assert validator is not None
+    assert validator.validate("1", 1)[0] is QValidator.State.Acceptable
+    assert validator.validate("120", 3)[0] is QValidator.State.Acceptable
+    assert validator.validate("0", 1)[0] is not QValidator.State.Acceptable
+    assert validator.validate("121", 3)[0] is not QValidator.State.Acceptable
 
 
 def test_profile_condition_chips_are_selectable_and_persist_their_state(qtbot) -> None:

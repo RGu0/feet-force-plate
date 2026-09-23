@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIntValidator, QPainter, QPen, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -1467,11 +1467,17 @@ class ScreeningWindow(QMainWindow):
         grid.setVerticalSpacing(24)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        age = self._profile_combo("ageBandInput", "年龄段（选填）", (("60–69", "60-69"), ("请选择 / 不提供", None)))
+        age = QLineEdit("60")
+        age.setObjectName("ageBandInput")
+        age.setAccessibleName("年龄（岁）")
+        age.setAccessibleDescription("请输入 1 到 120 之间的整数年龄")
+        age.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
+        age.setMaxLength(3)
+        age.setValidator(QIntValidator(1, 120, age))
         sex = self._profile_combo("sexInput", "性别（选填）", (("请选择 / 不提供", None), ("女", "female"), ("男", "male")))
         height = self._field_with_unit("heightInput", "身高", "cm", "162")
         weight = self._field_with_unit("weightInput", "体重", "kg", "58")
-        grid.addWidget(self._field_group("年龄段", age), 0, 0)
+        grid.addWidget(self._field_group("年龄（岁）", age), 0, 0)
         grid.addWidget(self._field_group("性别", sex), 0, 1)
         grid.addWidget(height, 1, 0)
         grid.addWidget(weight, 1, 1)
@@ -1516,6 +1522,8 @@ class ScreeningWindow(QMainWindow):
         body_layout.addSpacing(8)
         body_layout.addLayout(chips)
         hidden_fields = self._hidden_profile_controls()
+        age_state = hidden_fields.findChild(QComboBox, "ageBandState")
+        age_state.setCurrentIndex(age_state.findData("PROVIDED"))
         body_layout.addWidget(hidden_fields)
         body_layout.addStretch(1)
         layout.addWidget(body, 1)
