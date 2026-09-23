@@ -59,7 +59,7 @@ class _Signer:
         return "fresh-terminal-signature"
 
 
-def _service():
+def _service(*, verified_identity=True):
     local = uuid4()
     cloud = uuid4()
     envelope = FormalUploadEnvelope(
@@ -95,9 +95,22 @@ def _service():
         store=store, client=client, tokens=_Tokens(), signer=signer,
         tenant_id=str(uuid4()), terminal_id=str(envelope.client_installation_id),
         operator_account_id=str(uuid4()),
+        identity_evidence_verifier=(
+            (lambda envelope, summary: "controlled-test-evidence")
+            if verified_identity else None
+        ),
         now=lambda: datetime(2026, 9, 23, 12, tzinfo=UTC),
     )
     return service, store, client, signer
+
+
+def test_masked_identifier_without_independent_identity_evidence_fails_closed():
+    service, store, _, signer = _service(verified_identity=False)
+    with pytest.raises(RecoveryLookupError) as blocked:
+        service.prepare(store.envelope.session_id)
+    assert blocked.value.error_code == "independent-identity-evidence-unavailable"
+    assert store.authorization is None
+    assert signer.requests == []
 
 
 def test_operator_must_reconfirm_identity_and_necessary_processing():

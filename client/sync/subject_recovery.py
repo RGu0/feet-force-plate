@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from client.spool.state_store import StateStore
 from client.workflow.consent import ConsentEvidenceSigner, ConsentRequest
 from shared.contracts.client_sync import (
+    FormalUploadEnvelope,
     SubjectRecoveryAuthorization,
     canonical_sha256,
 )
@@ -64,6 +65,9 @@ class SubjectRecoveryService:
         tenant_id: str,
         terminal_id: str,
         operator_account_id: str,
+        identity_evidence_verifier: Callable[
+            [FormalUploadEnvelope, SubjectSummary], str | None
+        ] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
@@ -73,6 +77,7 @@ class SubjectRecoveryService:
         self._tenant_id = tenant_id
         self._terminal_id = terminal_id
         self._operator_account_id = UUID(operator_account_id)
+        self._identity_evidence_verifier = identity_evidence_verifier
         self._now = now
 
     def candidates(self) -> tuple[RecoveryCandidate, ...]:
@@ -104,6 +109,10 @@ class SubjectRecoveryService:
             raise RecoveryLookupError("cloud-not-found")
         if summary.subject_uuid == envelope.subject.subject_uuid:
             raise RecoveryLookupError("cloud-already-matches-local")
+        if self._identity_evidence_verifier is None or not self._identity_evidence_verifier(
+            envelope, summary
+        ):
+            raise RecoveryLookupError("independent-identity-evidence-unavailable")
         return RecoveryPreview(
             session_id=session_id,
             local_subject_uuid=envelope.subject.subject_uuid,

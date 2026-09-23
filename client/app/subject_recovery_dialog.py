@@ -82,6 +82,13 @@ class SubjectRecoveryDialog(QDialog):
         try:
             preview = self._service.prepare(session_id)
         except Exception as exc:
+            if getattr(exc, "error_code", None) == "independent-identity-evidence-unavailable":
+                self._comparison.setText(
+                    "云端仅提供机构编号掩码，当前终端没有经授权的受试者身份核对凭据。"
+                    "机构名称和编号后四位不足以确认同一人；已禁止签发新同意和补传。"
+                    "请由有权限的人员核对双方原始身份档案，数据会保留在本机。"
+                )
+                return
             detail = ""
             if os.environ.get("FEETFORCEPLATE_INTEGRATION_MODE") == "1":
                 code = getattr(exc, "error_code", None)

@@ -7,7 +7,9 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QPushButton, QWidget
 
 from client.app.subject_recovery_dialog import SubjectRecoveryDialog
 from client.sync.persistent_upload import UploadBlocked
-from client.sync.subject_recovery import RecoveryCandidate, RecoveryPreview
+from client.sync.subject_recovery import (
+    RecoveryCandidate, RecoveryLookupError, RecoveryPreview,
+)
 
 
 class _Service:
@@ -71,3 +73,23 @@ def test_integration_lookup_failure_shows_only_safe_diagnostic(qtbot, monkeypatc
     assert "test_ray_99_subject_recovery_dialog.py:" in text
     assert "private server detail" not in text
     assert all(not box.isEnabled() for box in dialog.findChildren(QCheckBox))
+
+
+def test_missing_independent_identity_evidence_disables_confirmation(qtbot):
+    class MaskedOnlyService(_Service):
+        def prepare(self, session_id):
+            raise RecoveryLookupError("independent-identity-evidence-unavailable")
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    dialog = SubjectRecoveryDialog(MaskedOnlyService(), parent)
+    qtbot.addWidget(dialog)
+    dialog._prepare()
+
+    text = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "编号后四位不足以确认同一人" in text
+    assert all(not box.isEnabled() for box in dialog.findChildren(QCheckBox))
+    assert all(
+        not button.isEnabled() for button in dialog.findChildren(QPushButton)
+        if button.text().startswith("确认核对")
+    )
