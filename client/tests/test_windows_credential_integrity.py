@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from keyring.errors import PasswordDeleteError
 
+import client.app.windows_credential_integrity as windows_credential_integrity
 import client.cloud.access_store as access_store
 from client.cloud.access_store import KeyringCredentialStore
 from client.app.windows_credential_integrity import require_standard_user_process
@@ -65,6 +66,34 @@ def test_indeterminate_elevation_probe_is_rejected_without_native_detail() -> No
 
     with pytest.raises(RuntimeError) as raised:
         require_standard_user_process(is_elevated=failed_probe)
+
+    assert str(raised.value) == "unable to verify Windows process integrity"
+
+
+def test_native_elevation_probe_failure_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(windows_credential_integrity.os, "name", "nt")
+    reported_error = [0]
+
+    def failed_probe_library(*_args, **_kwargs):
+        reported_error[0] = 5
+        return SimpleNamespace(IsUserAnAdmin=lambda: False)
+
+    monkeypatch.setattr(
+        windows_credential_integrity.ctypes, "WinDLL", failed_probe_library
+    )
+    monkeypatch.setattr(
+        windows_credential_integrity.ctypes,
+        "windll",
+        SimpleNamespace(shell32=SimpleNamespace(IsUserAnAdmin=lambda: False)),
+    )
+    monkeypatch.setattr(
+        windows_credential_integrity.ctypes, "get_last_error", lambda: reported_error[0]
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        require_standard_user_process()
 
     assert str(raised.value) == "unable to verify Windows process integrity"
 

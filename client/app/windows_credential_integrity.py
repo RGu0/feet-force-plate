@@ -27,7 +27,8 @@ def _is_windows_process_elevated() -> bool:
     if os.name != "nt":
         return False
     ctypes.set_last_error(0)
-    elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    elevated = bool(shell32.IsUserAnAdmin())
     if elevated:
         return True
     if ctypes.get_last_error() != 0:
