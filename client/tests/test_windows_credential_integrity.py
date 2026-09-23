@@ -74,10 +74,11 @@ def test_indeterminate_elevation_probe_is_rejected_without_native_detail() -> No
 def test_native_token_elevation_open_failure_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FailingKernel32:
+    class Kernel32:
         def GetCurrentProcess(self) -> int:
             return -1
 
+    class FailingAdvapi32:
         def OpenProcessToken(self, *_args) -> bool:
             return False
 
@@ -85,8 +86,8 @@ def test_native_token_elevation_open_failure_is_rejected(
 
     with pytest.raises(RuntimeError, match="Windows token elevation query failed"):
         windows_credential_integrity._is_windows_process_elevated(
-            kernel32=FailingKernel32(),
-            advapi32=object(),
+            kernel32=Kernel32(),
+            advapi32=FailingAdvapi32(),
         )
 
 
@@ -109,9 +110,9 @@ def test_native_token_query_configures_pointer_sized_win32_signatures(
         handle._obj.value = 1
         return True
 
-    kernel32.OpenProcessToken = Function(open_process_token)
     kernel32.CloseHandle = Function(lambda _handle: True)
     advapi32 = SimpleNamespace()
+    advapi32.OpenProcessToken = Function(open_process_token)
 
     def get_token_information(_token, _kind, elevation, size, returned):
         elevation._obj.TokenIsElevated = 0
@@ -129,7 +130,7 @@ def test_native_token_query_configures_pointer_sized_win32_signatures(
 
     assert windows_credential_integrity._is_windows_process_elevated() is False
     assert kernel32.GetCurrentProcess.restype is wintypes.HANDLE
-    assert kernel32.OpenProcessToken.restype is wintypes.BOOL
+    assert advapi32.OpenProcessToken.restype is wintypes.BOOL
     assert advapi32.GetTokenInformation.restype is wintypes.BOOL
     assert kernel32.CloseHandle.restype is wintypes.BOOL
 

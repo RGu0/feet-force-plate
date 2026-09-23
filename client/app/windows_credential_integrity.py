@@ -40,7 +40,7 @@ def _is_windows_process_elevated(*, kernel32=None, advapi32=None) -> bool:
         kernel32 = kernel32 or default_kernel32
         advapi32 = advapi32 or default_advapi32
     token = wintypes.HANDLE()
-    if not kernel32.OpenProcessToken(
+    if not advapi32.OpenProcessToken(
         kernel32.GetCurrentProcess(), _TOKEN_QUERY, ctypes.byref(token)
     ):
         raise RuntimeError("Windows token elevation query failed")
@@ -65,12 +65,12 @@ def _windows_token_apis():
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcessToken.argtypes = [
+    advapi32.OpenProcessToken.argtypes = [
         wintypes.HANDLE,
         wintypes.DWORD,
         ctypes.POINTER(wintypes.HANDLE),
     ]
-    kernel32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     advapi32.GetTokenInformation.argtypes = [
