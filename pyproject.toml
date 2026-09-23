@@ -59,7 +59,7 @@ dev = [
 package = false
 
 [tool.uv.sources]
-techflex-cloud-foundation = { path = ".foundation-artifacts/techflex_cloud_foundation-0.2.0-py3-none-any.whl" }
+techflex-cloud-foundation = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.2.0/techflex_cloud_foundation-0.2.0-py3-none-any.whl" }
 
 [tool.pytest.ini_options]
 testpaths = ["client/tests", "cloud/tests", "tests"]
