@@ -34,8 +34,6 @@ if ($env:PYTHONPATH) {
 
 Push-Location $projectRoot
 try {
-    $artifactArguments = @("scripts/prepare_foundation_artifact.py")
-    if ($Action -eq "setup") { $artifactArguments += "--download" }
     & $uv.Source python install --managed-python 3.11.9
     if ($LASTEXITCODE -ne 0) {
         throw "uv could not install the project managed Python runtime"
@@ -44,9 +42,6 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $managedPython) {
         throw "uv could not resolve the project Python runtime"
     }
-    & $managedPython $artifactArguments
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
     $syncArguments = @("sync", "--locked", "--extra", "dev")
     if ($Action -eq "build") { $syncArguments += @("--extra", "build") }
     & $uv.Source @syncArguments

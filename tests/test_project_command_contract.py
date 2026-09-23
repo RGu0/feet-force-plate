@@ -23,23 +23,16 @@ class ProjectCommandContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             uv_stub = Path(temporary_directory) / "uv-stub.cmd"
-            python_stub = Path(temporary_directory) / "managed-python.cmd"
             uv_stub.write_text(
                 '@if "%~1"=="python" if "%~2"=="install" '
                 'if "%~3"=="--managed-python" if "%~4"=="3.11.9" if "%~5"=="" @exit /b 0\r\n'
                 '@if "%~1"=="python" if "%~2"=="find" '
                 'if "%~3"=="--managed-python" if "%~4"=="" (\r\n'
-                f'@echo {python_stub}\r\n'
+                f'@echo {uv_stub}\r\n'
                 "@exit /b 0\r\n"
                 ")\r\n"
                 "@if \"%~1\"==\"python\" @exit /b 1\r\n"
                 "@exit /b 0\r\n",
-                encoding="utf-8",
-            )
-            python_stub.write_text(
-                '@if "%~1"=="scripts/prepare_foundation_artifact.py" '
-                'if "%~2"=="--download" if "%~3"=="" @exit /b 0\r\n'
-                "@exit /b 1\r\n",
                 encoding="utf-8",
             )
             environment = os.environ.copy()
@@ -74,6 +67,9 @@ class ProjectCommandContractTests(unittest.TestCase):
 
         unix = unix_entrypoint.read_text(encoding="utf-8")
         windows = windows_entrypoint.read_text(encoding="utf-8")
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "quality.yml").read_text(
+            encoding="utf-8"
+        )
         config = manifest.read_text(encoding="utf-8")
         for action in ("setup", "test", "lint", "build"):
             self.assertIn(f'    {action}: ["./dev", "{action}"]', config)
@@ -83,27 +79,37 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertIn("centralized-project-envs", unix)
         self.assertNotIn("export UV_PROJECT_ENVIRONMENT", unix)
         self.assertNotIn("$env:UV_PROJECT_ENVIRONMENT =", windows)
-        self.assertIn("prepare_foundation_artifact.py --download", unix)
-        self.assertIn("--find-links .foundation-artifacts", unix)
+        self.assertIn('"$uv_bin" sync --locked --extra dev', unix)
+        self.assertIn('"sync", "--locked", "--extra", "dev"', windows)
+        self.assertIn("test_clean_windows_managed_python_bootstrap.ps1", workflow)
+        for obsolete in (
+            "prepare_foundation_artifact.py",
+            ".foundation-artifacts",
+            "--find-links",
+            "TECHFLEX_FOUNDATION_RELEASE_TOKEN",
+        ):
+            self.assertNotIn(obsolete, unix + windows + workflow)
         self.assertNotIn("build packages/techflex-cloud-foundation", unix)
         self.assertNotIn("record_foundation_release_baseline.py", unix)
-        self.assertIn("scripts/prepare_foundation_artifact.py", windows)
-        self.assertIn('"--download"', windows)
+        self.assertIn("python install --managed-python 3.11.9", windows)
+        self.assertIn("python find --managed-python", windows)
         self.assertNotIn("build packages/techflex-cloud-foundation", windows)
         self.assertNotIn("record_foundation_release_baseline.py", windows)
 
     def test_redundant_foundation_source_is_not_retained_in_the_consumer(self) -> None:
         self.assertFalse((PROJECT_ROOT / "packages/techflex-cloud-foundation").exists())
         self.assertFalse((PROJECT_ROOT / "scripts/record_foundation_release_baseline.py").exists())
-        self.assertTrue((PROJECT_ROOT / "scripts/prepare_foundation_artifact.py").is_file())
+        self.assertFalse((PROJECT_ROOT / "scripts/prepare_foundation_artifact.py").exists())
+        self.assertFalse((PROJECT_ROOT / "foundation-artifact.lock.json").exists())
 
-    def test_private_release_download_requires_a_dedicated_read_only_secret(self) -> None:
+    def test_public_release_install_needs_no_dedicated_secret(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "quality.yml").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("TECHFLEX_FOUNDATION_RELEASE_TOKEN", workflow)
-        self.assertNotIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertIn("uv sync --extra dev --locked", workflow)
+        self.assertNotIn("TECHFLEX_FOUNDATION_RELEASE_TOKEN", workflow)
+        self.assertNotIn("GH_TOKEN:", workflow)
 
 
 if __name__ == "__main__":
