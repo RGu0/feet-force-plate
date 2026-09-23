@@ -159,7 +159,12 @@ class ScreeningCoordinator:
         self._transition(ScreeningStep.SUBJECT_IDENTIFICATION)
 
     def return_to_workbench(self) -> None:
-        if self._machine.step is not ScreeningStep.SUBJECT_IDENTIFICATION:
+        if self._machine.step not in {
+            ScreeningStep.SUBJECT_IDENTIFICATION,
+            ScreeningStep.INCOMPLETE,
+            ScreeningStep.RETRY_REQUIRED,
+            ScreeningStep.FAILED,
+        }:
             return
         self._reset_for_new_screening()
 

@@ -714,6 +714,29 @@ class CoordinatorPreflightTests(unittest.TestCase):
         self.assertIsNone(coordinator.state.report_id)
         self.assertIsNone(coordinator.state.report_version)
 
+    def test_return_to_workbench_clears_an_incomplete_screening(self) -> None:
+        preflight = _PreflightPort(
+            PreflightSummary(checks=(PreflightCheck(key="device", ready=True),))
+        )
+        sessions = _SessionPort()
+        coordinator = _coordinator(preflight=preflight, sessions=sessions)
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+        coordinator.run_preflight()
+        self.assertTrue(_start_acquisition(coordinator))
+        coordinator.stop_acquisition()
+        self.assertEqual(coordinator.state.step, ScreeningStep.INCOMPLETE)
+
+        coordinator.return_to_workbench()
+
+        self.assertEqual(coordinator.state.step, ScreeningStep.HOME)
+        self.assertIsNone(coordinator.state.session_id)
+        self.assertEqual(coordinator.state.validity, SessionValidity.UNKNOWN)
+        self.assertEqual(coordinator.state.report_status, ReportStatus.NOT_AVAILABLE)
+        self.assertIsNone(coordinator.state.error)
+
 
 if __name__ == "__main__":
     unittest.main()

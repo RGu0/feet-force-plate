@@ -234,6 +234,10 @@ def test_subject_page_return_clears_lookup_and_returns_to_workbench(qtbot) -> No
 
     assert coordinator.state.step is ScreeningStep.HOME
     assert controller.window.current_page_id is PageId.WORKBENCH
+    participant_state = controller._participant.state
+    assert participant_state.selected_subject is None
+    assert participant_state.last_lookup is None
+    assert participant_state.resolution_status is None
     controller.dispatch("START_NEW_SCREENING")
     assert page.findChild(QFrame, "matchCard").isHidden()
     assert page.findChild(QLineEdit, "subjectExternalIdInput").text() == ""

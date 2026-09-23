@@ -1894,7 +1894,9 @@ class ScreeningWindow(QMainWindow):
         return_button.setObjectName("RETURN_WORKBENCH")
         return_button.setAccessibleName("返回工作台")
         return_button.setMinimumHeight(48)
-        return_button.clicked.connect(lambda: self.show_page(PageId.WORKBENCH))
+        return_button.clicked.connect(
+            lambda: self._dispatch("RETURN_TO_WORKBENCH")
+        )
         return_button.hide()
         retry_button = self._action_button("RETRY_SCREENING", primary=True)
         retry_button.hide()

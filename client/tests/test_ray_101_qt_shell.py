@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QAbstractItemView, QLabel, QPushButton, QTableWidget, QWidget
 
@@ -177,3 +178,19 @@ def test_report_generation_failure_replaces_processing_result_state(qtbot) -> No
     assert page.findChild(QPushButton, "VIEW_BASIC_REPORT").isHidden()
     assert page.findChild(QPushButton, "START_NEXT_SCREENING").isHidden()
     assert page.findChild(QPushButton, "RETRY_SCREENING").isHidden()
+
+
+def test_incomplete_screen_return_dispatches_the_same_workbench_reset_action(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    window.present_state(WorkflowState(step=ScreeningStep.INCOMPLETE))
+
+    qtbot.mouseClick(
+        window.page_widget(PageId.RESULT).findChild(
+            QPushButton, "RETURN_WORKBENCH"
+        ),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert actions == ["RETURN_TO_WORKBENCH"]
