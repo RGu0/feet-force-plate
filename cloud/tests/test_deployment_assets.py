@@ -228,6 +228,13 @@ def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
     assert 'archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"' in text
 
 
+def test_remote_release_deploy_reads_sudo_password_from_its_tty() -> None:
+    text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
+    assert "ssh -tt" in text
+    assert "sudo -v < /dev/tty" in text
+    assert text.index("sudo -v < /dev/tty") < text.index("sudo -n /bin/bash -s")
+
+
 def test_systemd_entry_scripts_are_executable() -> None:
     for relative in (
         "cloud/api/run-seed.sh",

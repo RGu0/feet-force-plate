@@ -22,7 +22,7 @@ release_sha="$2"
 archive_sha="$3"
 work_root="/tmp/feetforceplate-release-$release_sha"
 
-sudo -v
+sudo -v < /dev/tty
 sudo -n /bin/bash -s -- "$archive" "$release_sha" "$archive_sha" "$work_root" <<'ROOT'
 set -euo pipefail
 archive="$1"
