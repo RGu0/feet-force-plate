@@ -9,13 +9,79 @@ write a fallback file or database value.
 from __future__ import annotations
 
 import sys
+import os
+import stat
+import threading
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Callable
 
+from platformdirs import user_data_path
 from techflex_cloud_foundation import CredentialVault
 
 
 class CredentialVaultUnavailable(RuntimeError):
     """The required native credential service cannot safely be used."""
+
+
+_initialization_thread_lock = threading.Lock()
+
+
+@contextmanager
+def _credential_initialization_lock():
+    """Serialize first-use reads and writes across processes without storing secrets."""
+
+    path = Path(user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True))
+    path = path / ".credential-initialization.lock"
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise CredentialVaultUnavailable("credential initialization lock is invalid")
+        if os.name != "nt":
+            if info.st_uid != os.getuid():
+                raise CredentialVaultUnavailable("credential initialization lock is invalid")
+            os.fchmod(descriptor, 0o600)
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            unlock = lambda: fcntl.flock(descriptor, fcntl.LOCK_UN)
+        else:
+            import msvcrt
+
+            if info.st_size == 0:
+                os.write(descriptor, b"\0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            unlock = lambda: msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        try:
+            yield
+        finally:
+            unlock()
+    except OSError as exc:
+        raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
+    finally:
+        os.close(descriptor)
+
+
+def get_or_create_credential(
+    vault: CredentialVault, key: str, create: Callable[[], str]
+) -> str:
+    """Return one stable first-use value shared by all cooperating clients."""
+
+    with _initialization_thread_lock, _credential_initialization_lock():
+        saved = vault.get(key)
+        if saved is not None:
+            return saved
+        value = create()
+        vault.set(key, value)
+        if vault.get(key) != value:
+            raise CredentialVaultUnavailable("credential initialization was not retained")
+        return value
 
 
 class _KeyringCredentialVault:
@@ -109,4 +175,4 @@ def _is_keychain_duplicate_item(error: Exception) -> bool:
     return "-25299" in str(error) or "errSecDuplicateItem" in str(error)
 
 
-__all__ = ["CredentialVaultUnavailable", "SystemCredentialVault"]
+__all__ = ["CredentialVaultUnavailable", "SystemCredentialVault", "get_or_create_credential"]

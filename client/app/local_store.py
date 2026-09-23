@@ -11,7 +11,7 @@ from pathlib import Path
 from platformdirs import user_data_path
 from techflex_cloud_foundation import CredentialVault
 
-from client.security.credential_vault import SystemCredentialVault
+from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
 from client.security.key_envelope import (
     DualEnvelopeBlobCodec,
     KeyringTerminalKeyHandle,
@@ -412,11 +412,9 @@ def _load_local_query_index_key(vault: CredentialVault | None = None) -> bytes:
         f"{LocalReplayStore._QUERY_KEY_SERVICE}/"
         f"{LocalReplayStore._QUERY_KEY_ACCOUNT}"
     )
-    encoded = vault.get(key_name)
-    if encoded is None:
-        key = os.urandom(32)
-        vault.set(key_name, base64.b64encode(key).decode("ascii"))
-        return key
+    encoded = get_or_create_credential(
+        vault, key_name, lambda: base64.b64encode(os.urandom(32)).decode("ascii")
+    )
     return base64.b64decode(encoded.encode("ascii"), validate=True)
 
 

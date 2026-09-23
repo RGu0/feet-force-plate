@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from techflex_cloud_foundation import CredentialVault
 
-from client.security.credential_vault import SystemCredentialVault
+from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
 
 
 _ENVELOPE_VERSION = "dual-envelope/1"
@@ -184,18 +184,17 @@ class KeyringTerminalKeyHandle:
 
     def _private_key(self) -> ec.EllipticCurvePrivateKey:
         if self._private_key_pem is None:
-            saved = self._vault.get(self._vault_key())
-            if saved is None:
+            def generate() -> str:
                 generated = ec.generate_private_key(ec.SECP256R1())
                 pem = generated.private_bytes(
                     serialization.Encoding.PEM,
                     serialization.PrivateFormat.PKCS8,
                     serialization.NoEncryption(),
                 )
-                self._vault.set(self._vault_key(), base64.b64encode(pem).decode("ascii"))
-                self._private_key_pem = pem
-            else:
-                self._private_key_pem = base64.b64decode(saved.encode("ascii"), validate=True)
+                return base64.b64encode(pem).decode("ascii")
+
+            saved = get_or_create_credential(self._vault, self._vault_key(), generate)
+            self._private_key_pem = base64.b64decode(saved.encode("ascii"), validate=True)
         loaded = serialization.load_pem_private_key(self._private_key_pem, password=None)
         if not isinstance(loaded, ec.EllipticCurvePrivateKey) or not isinstance(
             loaded.curve, ec.SECP256R1

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import time
+
 import pytest
 
+from client.security import credential_vault
 from client.security.credential_vault import (
     CredentialVaultUnavailable,
     SystemCredentialVault,
@@ -71,6 +76,42 @@ def test_system_credential_vault_recovers_one_keychain_duplicate_item_race() -> 
     vault.set("FeetForcePlate.access/refresh:account-1", "synthetic-refresh-token")
 
     assert backend.get("FeetForcePlate.access/refresh:account-1") == "synthetic-refresh-token"
+
+
+def test_credential_initialization_lock_blocks_another_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A second process cannot enter the first-use critical section early."""
+
+    monkeypatch.setattr(credential_vault, "user_data_path", lambda *_a, **_k: tmp_path)
+    started = tmp_path / "started"
+    acquired = tmp_path / "acquired"
+    child = """
+import sys
+from pathlib import Path
+from client.security import credential_vault
+root = Path(sys.argv[1])
+credential_vault.user_data_path = lambda *_a, **_k: root
+(root / 'started').touch()
+with credential_vault._credential_initialization_lock():
+    (root / 'acquired').touch()
+"""
+
+    with credential_vault._credential_initialization_lock():
+        process = subprocess.Popen([sys.executable, "-c", child, str(tmp_path)])
+        try:
+            deadline = time.monotonic() + 5
+            while not started.exists() and time.monotonic() < deadline:
+                assert process.poll() is None
+                time.sleep(0.01)
+            assert started.exists()
+            time.sleep(0.1)
+            assert not acquired.exists()
+        finally:
+            if process.poll() is not None:
+                process.wait()
+    assert process.wait(timeout=5) == 0
+    assert acquired.exists()
 
 
 def test_refresh_tokens_use_the_foundation_credential_vault_not_sqlite_or_keyring() -> None:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import base64
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
@@ -80,6 +83,49 @@ def test_institution_aes_key_uses_the_foundation_credential_vault() -> None:
     assert set(vault.values) == {
         "FeetForcePlate.institution-storage/aes256-v1"
     }
+
+
+def test_concurrent_first_use_returns_the_one_persisted_aes_key() -> None:
+    """Both callers must use the key that survives a simultaneous first use."""
+
+    class OverlappingVault(_MemoryVault):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first_read = threading.Event()
+            self.second_read = threading.Event()
+            self.release_first = threading.Event()
+            self.read_count = 0
+            self.guard = threading.Lock()
+
+        def get(self, key: str) -> str | None:
+            with self.guard:
+                saved = self.values.get(key)
+                self.read_count += 1
+                read_count = self.read_count
+            if read_count == 1:
+                self.first_read.set()
+                assert self.release_first.wait(timeout=5)
+            elif read_count == 2:
+                self.second_read.set()
+            return saved
+
+        def set(self, key: str, value: str) -> None:
+            with self.guard:
+                self.values[key] = value
+
+    vault = OverlappingVault()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(KeyringAesKeyProvider(vault).get_key)
+        assert vault.first_read.wait(timeout=5)
+        second = executor.submit(KeyringAesKeyProvider(vault).get_key)
+        vault.second_read.wait(timeout=0.2)
+        vault.release_first.set()
+        keys = (first.result(timeout=5), second.result(timeout=5))
+
+    saved = base64.b64decode(
+        vault.values["FeetForcePlate.institution-storage/aes256-v1"]
+    )
+    assert all(key == saved for key in keys)
 
 
 def test_institution_store_uses_one_foundation_vault_for_local_encryption_keys(tmp_path) -> None:

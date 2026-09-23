@@ -21,7 +21,7 @@ from collections.abc import Callable
 from platformdirs import user_data_path
 from techflex_cloud_foundation import CredentialVault
 
-from client.security.credential_vault import SystemCredentialVault
+from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
 from client.reporting.models import BasicReportDocument
 from client.spool.state_store import (
     KeyProvider,
@@ -65,20 +65,15 @@ class KeyringAesKeyProvider:
 
     def get_key(self) -> bytes:
         try:
-            encoded = self._vault.get(self._vault_key())
+            encoded = get_or_create_credential(
+                self._vault,
+                self._vault_key(),
+                lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
+            )
         except Exception as exc:
             raise KeyProviderUnavailable(
                 "system credential storage is temporarily unavailable"
             ) from exc
-        if encoded is None:
-            key = os.urandom(32)
-            try:
-                self._vault.set(self._vault_key(), base64.b64encode(key).decode())
-            except Exception as exc:
-                raise KeyProviderUnavailable(
-                    "system credential storage is temporarily unavailable"
-                ) from exc
-            return key
         try:
             key = base64.b64decode(encoded.encode("ascii"), validate=True)
         except (UnicodeEncodeError, ValueError) as exc:
@@ -122,16 +117,13 @@ class KeyringConsentEvidenceSigner:
 
     def _key(self) -> bytes:
         try:
-            encoded = self._vault.get(self._vault_key())
+            encoded = get_or_create_credential(
+                self._vault,
+                self._vault_key(),
+                lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
+            )
         except Exception as exc:
             raise RuntimeError("system credential storage is required") from exc
-        if encoded is None:
-            key = os.urandom(32)
-            try:
-                self._vault.set(self._vault_key(), base64.b64encode(key).decode())
-            except Exception as exc:
-                raise RuntimeError("system credential storage is required") from exc
-            return key
         key = base64.b64decode(encoded.encode("ascii"), validate=True)
         if len(key) != 32:
             raise RuntimeError("stored consent evidence key is not SHA-256 sized")
@@ -574,11 +566,9 @@ def _load_query_index_key(vault: CredentialVault | None = None) -> bytes:
         f"{InstitutionLocalStore._QUERY_KEY_SERVICE}/"
         f"{InstitutionLocalStore._QUERY_KEY_ACCOUNT}"
     )
-    encoded = vault.get(key_name)
-    if encoded is None:
-        key = os.urandom(32)
-        vault.set(key_name, base64.b64encode(key).decode("ascii"))
-        return key
+    encoded = get_or_create_credential(
+        vault, key_name, lambda: base64.b64encode(os.urandom(32)).decode("ascii")
+    )
     key = base64.b64decode(encoded.encode("ascii"), validate=True)
     if len(key) != 32:
         raise RuntimeError("stored institution query key is not SHA-256 sized")
