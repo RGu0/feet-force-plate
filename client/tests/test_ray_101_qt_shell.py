@@ -109,6 +109,9 @@ def test_each_page_exposes_the_required_operator_controls(qtbot) -> None:
 def test_subject_match_card_wraps_detail_without_obscuring_primary_action(qtbot) -> None:
     window = ScreeningWindow()
     qtbot.addWidget(window)
+    window.set_subject_match_summary(
+        "已找到唯一档案：编号 **2781 · 年龄 64 岁 · 性别 女 · 上次检测 07-12"
+    )
     window.show_page(PageId.SUBJECT_IDENTIFICATION)
     window.resize(1280, 900)
     window.show()

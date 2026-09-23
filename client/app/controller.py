@@ -43,6 +43,8 @@ class _CoordinatorPort(Protocol):
 
     def start_new_screening(self) -> None: ...
 
+    def return_to_workbench(self) -> None: ...
+
     def confirm_subject(self) -> None: ...
 
     def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None: ...
@@ -148,6 +150,9 @@ class ApplicationController:
         self.refresh()
 
     def dispatch(self, action: str) -> None:
+        if action == "RETURN_TO_WORKBENCH":
+            self._return_to_workbench()
+            return
         if self._participant is not None and action in {
             "LOOKUP_SUBJECT",
             "CONFIRM_SUBJECT",
@@ -449,15 +454,23 @@ class ApplicationController:
             ExternalIdType(id_type),
             external_id,
         )
-        summaries = {
-            SubjectResolutionStatus.FOUND: "已找到唯一档案，请确认后继续",
-            SubjectResolutionStatus.NOT_FOUND: "未找到档案；确认后将按此机构编号建档",
-            SubjectResolutionStatus.CONFLICT: "找到多个可能档案，无法自动选择，请核对编号",
-        }
         if resolution.status is SubjectResolutionStatus.CONFLICT:
             self.window.show_subject_conflict()
+        elif resolution.status is SubjectResolutionStatus.FOUND:
+            self.window.show_subject_found(
+                resolution.candidates[0].masked_external_id or external_id
+            )
         else:
-            self.window.set_subject_match_summary(summaries[resolution.status])
+            self.window.show_subject_not_found(external_id.strip())
+
+    def _return_to_workbench(self) -> None:
+        if self._participant is not None:
+            self._participant.reset()
+        if self._consent is not None:
+            self._consent.reset()
+        self.window.clear_subject_resolution()
+        self._coordinator.return_to_workbench()
+        self.refresh()
 
     def _confirm_selected_subject(self) -> None:
         participant_state = self._participant.state

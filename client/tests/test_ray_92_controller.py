@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QLineEdit, QLabel, QPushButton
 
 from client.app.controller import ApplicationController
 from client.app.pages import PageId
@@ -29,6 +30,9 @@ class _Coordinator:
 
     def start_new_screening(self) -> None:
         self._state = WorkflowState(ScreeningStep.SUBJECT_IDENTIFICATION)
+
+    def return_to_workbench(self) -> None:
+        self._state = WorkflowState(ScreeningStep.HOME)
 
     def confirm_subject(self) -> None:
         self._state = WorkflowState(ScreeningStep.PROFILE_DETAILS)
@@ -189,6 +193,50 @@ def test_found_subject_profile_and_consent_are_bound_before_preflight(qtbot) -> 
     assert controller.window.current_page_id == PageId.PREFLIGHT
     controller.dispatch("ENTER_POSITION")
     assert controller.window.current_page_id == PageId.POSITION_GUIDANCE
+
+
+def test_second_not_found_lookup_replaces_the_previous_found_result(qtbot) -> None:
+    subject = SubjectSummary("subject-1", "tenant-a", "**2781")
+    controller, _, subjects, _ = _controller(
+        SubjectResolution(SubjectResolutionStatus.FOUND, (subject,))
+    )
+    qtbot.addWidget(controller.window)
+    controller.dispatch("START_NEW_SCREENING")
+    page = controller.window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+    identifier = page.findChild(QLineEdit, "subjectExternalIdInput")
+    identifier.setText("2024-0731")
+    controller.dispatch("LOOKUP_SUBJECT")
+
+    subjects.resolution = SubjectResolution(SubjectResolutionStatus.NOT_FOUND)
+    identifier.setText("2024-1")
+    controller.dispatch("LOOKUP_SUBJECT")
+
+    assert page.findChild(QLabel, "matchEyebrow").text() == "未找到档案"
+    assert page.findChild(QLabel, "subjectMatchId").text() == "机构编号 2024-1"
+    assert "按此机构编号建档" in page.findChild(QLabel, "subjectMatchSummary").text()
+
+
+def test_subject_page_return_clears_lookup_and_returns_to_workbench(qtbot) -> None:
+    subject = SubjectSummary("subject-1", "tenant-a", "**2781")
+    controller, coordinator, _, _ = _controller(
+        SubjectResolution(SubjectResolutionStatus.FOUND, (subject,))
+    )
+    qtbot.addWidget(controller.window)
+    controller.dispatch("START_NEW_SCREENING")
+    page = controller.window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+    page.findChild(QLineEdit, "subjectExternalIdInput").setText("2024-0731")
+    controller.dispatch("LOOKUP_SUBJECT")
+
+    qtbot.mouseClick(
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH"),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert coordinator.state.step is ScreeningStep.HOME
+    assert controller.window.current_page_id is PageId.WORKBENCH
+    controller.dispatch("START_NEW_SCREENING")
+    assert page.findChild(QFrame, "matchCard").isHidden()
+    assert page.findChild(QLineEdit, "subjectExternalIdInput").text() == ""
 
 
 def test_profile_rejects_age_outside_supported_range(qtbot) -> None:

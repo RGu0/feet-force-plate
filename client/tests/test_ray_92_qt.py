@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QValidator
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QPushButton
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPushButton
 
 from client.app.pages import PageId
 from client.app.qt_shell import ScreeningWindow
@@ -25,6 +25,36 @@ def test_subject_page_exposes_id_types_and_lookup_action(qtbot) -> None:
     }
     qtbot.mouseClick(lookup, Qt.MouseButton.LeftButton)
     assert actions == ["LOOKUP_SUBJECT"]
+
+
+def test_subject_page_return_button_dispatches_workbench_action(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    page = window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+
+    qtbot.mouseClick(
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH"),
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert actions == ["RETURN_TO_WORKBENCH"]
+
+
+def test_subject_lookup_result_replaces_every_field_from_previous_result(qtbot) -> None:
+    window = ScreeningWindow()
+    qtbot.addWidget(window)
+    page = window.page_widget(PageId.SUBJECT_IDENTIFICATION)
+
+    window.show_subject_found("**2781")
+    window.show_subject_not_found("2024-1")
+
+    assert not page.findChild(QFrame, "matchCard").isHidden()
+    assert page.findChild(QLabel, "matchEyebrow").text() == "未找到档案"
+    assert page.findChild(QLabel, "subjectMatchId").text() == "机构编号 2024-1"
+    assert "按此机构编号建档" in page.findChild(QLabel, "subjectMatchSummary").text()
+    assert "创建新档案" in page.findChild(QLabel, "matchNote").text()
+    assert page.findChild(QPushButton, "CONFIRM_SUBJECT").text() == "按此编号建档"
 
 
 def test_profile_fields_each_have_an_explicit_missing_state_selector(qtbot) -> None:

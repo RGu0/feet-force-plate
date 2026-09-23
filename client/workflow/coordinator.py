@@ -158,6 +158,11 @@ class ScreeningCoordinator:
             self._reset_for_new_screening()
         self._transition(ScreeningStep.SUBJECT_IDENTIFICATION)
 
+    def return_to_workbench(self) -> None:
+        if self._machine.step is not ScreeningStep.SUBJECT_IDENTIFICATION:
+            return
+        self._reset_for_new_screening()
+
     def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None:
         if not subject_uuid.strip() or not consent_record_id.strip():
             raise ValueError("subject and consent identifiers are required")

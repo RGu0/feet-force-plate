@@ -683,40 +683,86 @@ class ScreeningWindow(QMainWindow):
         self._error_banner.setText(message)
         self._error_banner.show()
 
-    def set_subject_match_summary(self, message: str) -> None:
+    def _show_subject_resolution(
+        self,
+        *,
+        eyebrow: str,
+        subject_id: str,
+        summary: str,
+        note: str,
+        confirm_label: str,
+    ) -> None:
         page = self._pages[PageId.SUBJECT_IDENTIFICATION]
         conflict = page.findChild(QFrame, "subjectConflictView")
         match = page.findChild(QFrame, "matchCard")
-        is_conflict = any(
+        page.findChild(QLabel, "matchEyebrow").setText(eyebrow)
+        page.findChild(QLabel, "subjectMatchId").setText(subject_id)
+        page.findChild(QLabel, "subjectMatchSummary").setText(summary)
+        page.findChild(QLabel, "matchNote").setText(note)
+        confirm = page.findChild(QPushButton, "CONFIRM_SUBJECT")
+        confirm.setText(confirm_label)
+        confirm.setAccessibleName(confirm_label)
+        conflict.hide()
+        match.show()
+        page.findChild(QFrame, "wizardStepBar").show()
+        page.findChild(QLabel, "wizardTitle").setText("受试者信息")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回工作台")
+
+    def show_subject_found(self, masked_external_id: str) -> None:
+        self._show_subject_resolution(
+            eyebrow="已找到匹配档案",
+            subject_id=f"编号 {masked_external_id.replace('**', '＊＊')}",
+            summary="已找到唯一档案，请确认后继续",
+            note="请核对是否为本人，避免同名或错号档案；如信息不符请返回重新查找。",
+            confirm_label="确认并继续",
+        )
+
+    def show_subject_not_found(self, external_id: str) -> None:
+        self._show_subject_resolution(
+            eyebrow="未找到档案",
+            subject_id=f"机构编号 {external_id}",
+            summary="未找到档案；确认后将按此机构编号建档",
+            note="请核对机构编号，确认后将创建新档案。",
+            confirm_label="按此编号建档",
+        )
+
+    def set_subject_match_summary(self, message: str) -> None:
+        """Compatibility path for demo projections that provide one display string."""
+        if any(
             marker in message
             for marker in ("多个", "多条", "不能自动", "不会自动合并")
-        )
-        if not is_conflict:
-            subject_id = page.findChild(QLabel, "subjectMatchId")
-            details = page.findChild(QLabel, "subjectMatchSummary")
-            parts = [
-                part.strip()
-                for part in message.removeprefix("已找到唯一档案：").split("·")
-                if part.strip()
-            ]
-            if parts and parts[0].startswith("编号"):
-                subject_id.setText(parts[0].replace("**", "＊＊"))
-                details.setText("　".join(parts[1:]))
-            else:
-                details.setText(message)
-        conflict.setVisible(is_conflict)
-        match.setVisible(not is_conflict)
-        page.findChild(QFrame, "wizardStepBar").setVisible(not is_conflict)
-        page.findChild(QLabel, "wizardTitle").setText(
-            "档案冲突确认" if is_conflict else "受试者信息"
-        )
-        page.findChild(QPushButton, "BACK").setText(
-            "← 返回" if is_conflict else "← 返回工作台"
-        )
+        ):
+            self.show_subject_conflict()
+            return
+        parts = [
+            part.strip()
+            for part in message.removeprefix("已找到唯一档案：").split("·")
+            if part.strip()
+        ]
+        masked_id = parts[0].removeprefix("编号").strip() if parts else ""
+        self.show_subject_found(masked_id)
+        if len(parts) > 1:
+            self._pages[PageId.SUBJECT_IDENTIFICATION].findChild(
+                QLabel, "subjectMatchSummary"
+            ).setText("　".join(parts[1:]))
 
     def show_subject_conflict(self) -> None:
         """Expose the design's controlled, never-auto-merge conflict state."""
-        self.set_subject_match_summary("同一机构编号存在多条档案，系统不会自动合并。")
+        page = self._pages[PageId.SUBJECT_IDENTIFICATION]
+        page.findChild(QFrame, "matchCard").hide()
+        page.findChild(QFrame, "subjectConflictView").show()
+        page.findChild(QFrame, "wizardStepBar").hide()
+        page.findChild(QLabel, "wizardTitle").setText("档案冲突确认")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回")
+
+    def clear_subject_resolution(self) -> None:
+        page = self._pages[PageId.SUBJECT_IDENTIFICATION]
+        page.findChild(QLineEdit, "subjectExternalIdInput").clear()
+        page.findChild(QFrame, "matchCard").hide()
+        page.findChild(QFrame, "subjectConflictView").hide()
+        page.findChild(QFrame, "wizardStepBar").show()
+        page.findChild(QLabel, "wizardTitle").setText("受试者信息")
+        page.findChild(QPushButton, "RETURN_TO_WORKBENCH").setText("← 返回工作台")
 
     def subject_identifier(self) -> tuple[str, str]:
         page = self._pages[PageId.SUBJECT_IDENTIFICATION]
@@ -1318,7 +1364,14 @@ class ScreeningWindow(QMainWindow):
 
     def _build_subject_page(self) -> QWidget:
         page, layout = self._new_page(PageId.SUBJECT_IDENTIFICATION)
-        layout.addWidget(self._wizard_header("受试者信息", 0, "← 返回工作台"))
+        layout.addWidget(
+            self._wizard_header(
+                "受试者信息",
+                0,
+                "← 返回工作台",
+                back_action="RETURN_TO_WORKBENCH",
+            )
+        )
         layout.addWidget(self._stepbar(0))
         body, body_layout = self._wizard_body()
         lookup_row = QHBoxLayout()
@@ -1365,6 +1418,7 @@ class ScreeningWindow(QMainWindow):
         body_layout.addWidget(create, alignment=Qt.AlignmentFlag.AlignLeft)
         match = QFrame()
         match.setObjectName("matchCard")
+        match.setVisible(False)
         match_layout = QHBoxLayout(match)
         match_layout.setContentsMargins(24, 20, 24, 20)
         text_column = QVBoxLayout()
