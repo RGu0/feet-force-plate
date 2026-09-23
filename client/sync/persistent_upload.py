@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
@@ -48,6 +48,7 @@ from shared.contracts.cloud import (
     SessionStatusResponse,
     SessionVersions,
     SubjectCreateRequest,
+    SubjectResolveRequest,
     SubjectSummary,
     TestProtocol,
     ValidityStatus,
@@ -131,6 +132,10 @@ class IngestionClient(Protocol):
         request: SubjectCreateRequest,
         idempotency_key: str,
     ) -> SubjectSummary: ...
+
+    def resolve_subject(
+        self, access_token: str, request: SubjectResolveRequest
+    ) -> SubjectSummary | None: ...
 
     def create_consent(
         self,
@@ -314,16 +319,10 @@ class PersistentUploadQueue:
                 return self._confirm(handoff)
             self._require_continuable(status)
 
-        subject_lookup_key = (
-            subject_key(envelope) if recovery is None else
-            f"subject-recovery:{canonical_sha256(envelope.subject)}:{uuid4().hex}"
-        )
-        subject = self._client.create_subject(
-            access_token,
-            envelope.subject,
-            subject_lookup_key,
-        )
         if recovery is None:
+            subject = self._client.create_subject(
+                access_token, envelope.subject, subject_key(envelope),
+            )
             if subject.subject_uuid != envelope.subject.subject_uuid:
                 raise UploadConflict(
                     "cloud subject differs from the immutable local consent subject",
@@ -332,12 +331,19 @@ class PersistentUploadQueue:
             consent = envelope.consent
             session_request = envelope.session_request()
         else:
+            external = envelope.subject.external_identifier
+            if external is None:
+                raise UploadConflict("recovered subject has no institution identifier")
+            subject = self._client.resolve_subject(
+                access_token, SubjectResolveRequest.model_validate(external.model_dump()),
+            )
             if (
-                recovery.session_id != envelope.session_id
+                subject is None
+                or subject.subject_uuid == envelope.subject.subject_uuid
+                or recovery.session_id != envelope.session_id
                 or recovery.original_envelope_sha256 != canonical_sha256(envelope)
                 or recovery.original_subject_uuid != envelope.subject.subject_uuid
                 or recovery.cloud_subject_uuid != subject.subject_uuid
-                or not subject.conflict
             ):
                 raise UploadConflict("cloud subject no longer matches recovery authorization")
             consent = recovery.replacement_consent
@@ -683,6 +689,14 @@ class HttpIngestionClient:
             access_token,
             headers={"Idempotency-Key": idempotency_key},
             json=request.model_dump(mode="json"),
+        )
+
+    def resolve_subject(
+        self, access_token: str, request: SubjectResolveRequest
+    ) -> SubjectSummary | None:
+        return self._model_request(
+            "POST", "/v1/subjects/resolve", SubjectSummary, access_token,
+            json=request.model_dump(mode="json"), not_found_none=True,
         )
 
     def create_consent(

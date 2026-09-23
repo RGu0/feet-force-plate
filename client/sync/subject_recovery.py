@@ -13,7 +13,7 @@ from shared.contracts.client_sync import (
     SubjectRecoveryAuthorization,
     canonical_sha256,
 )
-from shared.contracts.cloud import SubjectSummary
+from shared.contracts.cloud import SubjectResolveRequest, SubjectSummary
 
 from .persistent_upload import (
     IngestionClient,
@@ -89,7 +89,7 @@ class SubjectRecoveryService:
         if external is None:
             raise ValueError("session has no institution identifier for verification")
         summary = self._resolve_subject(envelope)
-        if not summary.conflict or summary.subject_uuid == envelope.subject.subject_uuid:
+        if summary is None or summary.subject_uuid == envelope.subject.subject_uuid:
             raise ValueError("cloud does not report a recoverable subject collision")
         return RecoveryPreview(
             session_id=session_id,
@@ -158,16 +158,17 @@ class SubjectRecoveryService:
         self._store.authorize_subject_recovery(authorization)
         return authorization
 
-    def _resolve_subject(self, envelope) -> SubjectSummary:
-        # A new key forces a current lookup; the normal upload key could replay
-        # the result cached when the collision was first detected.
-        lookup_key = f"subject-recovery:{canonical_sha256(envelope.subject)}:{uuid4().hex}"
+    def _resolve_subject(self, envelope) -> SubjectSummary | None:
+        external = envelope.subject.external_identifier
+        if external is None:
+            raise ValueError("institution identifier is required for recovery")
+        request = SubjectResolveRequest.model_validate(external.model_dump())
         try:
-            return self._client.create_subject(
-                self._tokens.current_access_token(), envelope.subject, lookup_key
+            return self._client.resolve_subject(
+                self._tokens.current_access_token(), request
             )
         except UploadAuthenticationRequired:
             self._tokens.refresh()
-            return self._client.create_subject(
-                self._tokens.current_access_token(), envelope.subject, lookup_key
+            return self._client.resolve_subject(
+                self._tokens.current_access_token(), request
             )

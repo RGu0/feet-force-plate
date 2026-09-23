@@ -33,10 +33,9 @@ class _Client:
     def __init__(self, cloud_uuid):
         self.cloud_uuid = cloud_uuid
 
-    def create_subject(self, token, request, key):
+    def resolve_subject(self, token, request):
         assert token == "access"
-        assert request.external_identifier.external_id == "2024-0731"
-        assert key.startswith("subject-recovery:")
+        assert request.external_id == "2024-0731"
         return SubjectSummary(
             subject_uuid=self.cloud_uuid, external_id_masked="***0731", conflict=True
         )

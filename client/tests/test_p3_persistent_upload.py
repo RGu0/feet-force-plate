@@ -33,6 +33,7 @@ from shared.contracts.client_sync import (
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
+    ExternalIdentifierInput,
     IngestStatus,
     ManifestCompletionResponse,
     ManifestSegment,
@@ -46,6 +47,7 @@ from shared.contracts.cloud import (
     SessionStatusResponse,
     SessionVersions,
     SubjectCreateRequest,
+    SubjectResolveRequest,
     SubjectSummary,
     TestProtocol as CloudTestProtocol,
     ValidityStatus,
@@ -121,6 +123,11 @@ class _IngestionService:
             subject_uuid=request.subject_uuid,
             analysis_profile=request.analysis_profile,
         )
+
+    def resolve_subject(self, _access_token, request):
+        self.calls.append("resolve-subject")
+        self._fail_if_requested("resolve-subject")
+        return self.subject_response
 
     def create_consent(
         self,
@@ -467,6 +474,15 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertTrue(sealed.path.exists())
 
     def test_operator_authorized_recovery_uploads_original_raw_session_after_restart(self) -> None:
+        self.envelope = self.envelope.model_copy(update={
+            "subject": SubjectCreateRequest(
+                subject_uuid=self.subject_id,
+                external_identifier=ExternalIdentifierInput(
+                    issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER",
+                    external_id="test-2781",
+                ),
+            ),
+        })
         sealed = self._seal(0)
         self._commit(sealed)
         cloud_subject = uuid4()
@@ -1123,6 +1139,29 @@ class PersistentUploadQueueTests(unittest.TestCase):
 
 
 class HttpIngestionClientTests(unittest.TestCase):
+    def test_subject_resolution_uses_read_only_lookup_without_idempotency_key(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(404, json={"error": {"code": "E-SUB-404"}})
+
+        client = HttpIngestionClient(
+            "https://cloud.test", terminal_id=uuid4(),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            result = client.resolve_subject(
+                "access-token",
+                SubjectResolveRequest(issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER", external_id="test-123"),
+            )
+        finally:
+            client.close()
+
+        self.assertIsNone(result)
+        self.assertEqual(seen[0].url.path, "/v1/subjects/resolve")
+        self.assertNotIn("idempotency-key", seen[0].headers)
+
     def test_http_client_ignores_environment_proxy_and_certificate_overrides(self) -> None:
         terminal_id = uuid4()
         with patch("client.sync.persistent_upload.httpx.Client") as constructor:
