@@ -70,6 +70,7 @@ from .app_icon import application_icon
 from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
 from .live_institution_runtime import build_live_institution_runtime
+from .windows_credential_integrity import require_standard_user_process
 
 
 APP_VERSION = "0.1.0"
@@ -980,6 +981,7 @@ def compose_authenticated_session(
 def main() -> int:
     """Start the package at P-00 institution access."""
 
+    require_standard_user_process()
     app = QApplication(sys.argv)
     app.setWindowIcon(application_icon())
     settings = AccessRuntimeSettings.from_environment()
