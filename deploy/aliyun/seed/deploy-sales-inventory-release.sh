@@ -7,45 +7,17 @@ server="${1:-aliyun-agentic}"
 release_sha="$(git -C "$repo_root" rev-parse HEAD)"
 archive="${TMPDIR:-/private/tmp}/feetforceplate-${release_sha}.tar.gz"
 remote_archive="/home/rui/$(basename "$archive")"
+remote_wrapper_source="$repo_root/deploy/aliyun/seed/feetforceplate-seed-release-server.sh"
+remote_wrapper="/home/rui/$(basename "$remote_wrapper_source")"
 
 git -C "$repo_root" diff --quiet
 git -C "$repo_root" diff --cached --quiet
 git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha"
 archive_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
 
-scp "$archive" "$server:$remote_archive"
+scp "$archive" "$remote_wrapper_source" "$server:/home/rui/"
 
-ssh -tt "$server" /bin/bash -s -- "$remote_archive" "$release_sha" "$archive_sha" <<'REMOTE'
-set -euo pipefail
-archive="$1"
-release_sha="$2"
-archive_sha="$3"
-work_root="/tmp/feetforceplate-release-$release_sha"
-
-sudo -v < /dev/tty
-sudo -n /bin/bash -s -- "$archive" "$release_sha" "$archive_sha" "$work_root" <<'ROOT'
-set -euo pipefail
-archive="$1"
-release_sha="$2"
-archive_sha="$3"
-work_root="$4"
-
-actual_sha="$(sha256sum "$archive" | awk '{print $1}')"
-if [[ "$actual_sha" != "$archive_sha" ]]; then
-    echo "release archive checksum mismatch" >&2
-    exit 1
-fi
-install -d -m 0700 "$work_root"
-tar -xzf "$archive" -C "$work_root"
-source /etc/feetforceplate/seed.env
-bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
-    "$archive" "$release_sha" "$archive_sha" \
-    /etc/feetforceplate/tls/seed.crt \
-    /etc/feetforceplate/tls/seed.key \
-    "$FEETFORCEPLATE_PUBLIC_BASE_URL" \
-    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT"
-rm -rf -- "$work_root"
-ROOT
-REMOTE
+ssh -tt "$server" sudo /bin/bash "$remote_wrapper" \
+    "$remote_archive" "$release_sha" "$archive_sha"
 
 printf 'release=%s archive_sha256=%s deployment=completed\n' "$release_sha" "$archive_sha"

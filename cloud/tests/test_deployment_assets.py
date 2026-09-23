@@ -228,11 +228,24 @@ def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
     assert 'archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"' in text
 
 
-def test_remote_release_deploy_reads_sudo_password_from_its_tty() -> None:
+def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
     text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
+    assert 'remote_wrapper_source="$repo_root/deploy/aliyun/seed/feetforceplate-seed-release-server.sh"' in text
+    assert 'remote_wrapper="/home/rui/$(basename "$remote_wrapper_source")"' in text
     assert "ssh -tt" in text
-    assert "sudo -v < /dev/tty" in text
-    assert text.index("sudo -v < /dev/tty") < text.index("sudo -n /bin/bash -s")
+    assert 'scp "$archive" "$remote_wrapper_source" "$server:/home/rui/"' in text
+    assert 'ssh -tt "$server" sudo /bin/bash "$remote_wrapper"' in text
+    assert "/bin/bash -s" not in text
+
+
+def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -> None:
+    text = _read_repository_text(ROOT / "feetforceplate-seed-release-server.sh")
+    assert '[[ "${EUID}" -ne 0 ]]' in text
+    assert 'archive must be located under /home/rui' in text
+    assert 'release archive checksum mismatch' in text
+    assert 'source /etc/feetforceplate/seed.env' in text
+    assert 'install-seed-release.sh' in text
+    assert 'secrets=not-printed' in text
 
 
 def test_systemd_entry_scripts_are_executable() -> None:
