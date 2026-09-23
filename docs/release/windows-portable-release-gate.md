@@ -22,7 +22,7 @@
 
 使用 Windows x86_64 内部候选包（源提交 `94bae58437c111e892b48900b5ae3a571cec0d7d`，ZIP SHA-256 `23a1f87ab369b11e57e930395f309a5d0ad30dbb068bf749d3a1aa766dfc7910`，`unsigned-development`）和隔离本地数据目录。操作员登录、空载准备后完成真机四段检测。SQLite 中确认 1 个 `CLOSED` / `VALID` 会话、16 个 `READY_FOR_NETWORK` 分段和 1 条持久化上传交接；重启客户端后这些本地记录仍在。
 
-受控 WLAN 中断后已自动恢复。验收监控脚本误读 `client.sqlite3`，实际会话存于 `institution-live.sqlite3`，导致它未在离线交接出现时自动重启客户端；脚本已在本机更正，不能将此项记为通过。恢复网络后的交接处于 `BLOCKED`，最后错误码为 `E-AUT-403`，尚无云端确认。原因仍需进一步确认，本次不把服务器的拒绝归因于断网、License 或客户端实现中的某一项。联调服务重启及其最终一致性未在本次执行。详见共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-23-packaged-gui-offline-restart-attempt.json`。RAY-99 的打包 GUI 验收和客户交付放行仍未完成。
+受控 WLAN 中断后已自动恢复。验收监控脚本误读 `client.sqlite3`，实际会话存于 `institution-live.sqlite3`，导致它未在离线交接出现时自动重启客户端；脚本已在本机更正，不能将此项记为通过。恢复网络后的交接处于 `BLOCKED`，最后错误码为 `E-AUT-403`，尚无云端确认。后续脱敏请求探针确认：登录刷新与 License 查询成功，令牌允许上传；云端 `create_subject` 因相同外部编号返回已有受试者（`conflict=true`），其 UUID 与本地不可变上传信封中的新 UUID 不同；队列忽略该返回值，仍以本地 UUID 创建同意记录，服务端以“受试者不属于当前租户”拒绝。不可直接把已封存的同意证据静默改绑到云端受试者。联调服务重启及其最终一致性未在本次执行。详见共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-23-packaged-gui-offline-restart-attempt.json`。RAY-99 的打包 GUI 验收和客户交付放行仍未完成。
 
 ## 发布标识
 

@@ -90,6 +90,7 @@ class _IngestionService:
             Callable[[UUID, SessionManifest], ManifestCompletionResponse] | None
         ) = None
         self.completion_status: SessionStatusResponse | None = None
+        self.subject_response: SubjectSummary | None = None
 
     def _fail_if_requested(self, operation: str) -> None:
         failures = self.failures.get(operation, [])
@@ -112,7 +113,7 @@ class _IngestionService:
         self.calls.append("subject")
         self.subject_keys.append(idempotency_key)
         self._fail_if_requested("subject")
-        return SubjectSummary(
+        return self.subject_response or SubjectSummary(
             subject_uuid=request.subject_uuid,
             analysis_profile=request.analysis_profile,
         )
@@ -444,6 +445,22 @@ class PersistentUploadQueueTests(unittest.TestCase):
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+
+    def test_existing_cloud_subject_with_different_uuid_stops_before_consent(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(
+            subject_uuid=uuid4(),
+            conflict=True,
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(remote.calls, ["status:first-access-token", "subject"])
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertTrue(sealed.path.exists())
 
     def test_wrong_segment_list_session_identity_never_progresses_handoff(self) -> None:
         sealed = self._seal(0)

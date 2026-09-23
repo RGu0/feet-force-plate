@@ -313,11 +313,15 @@ class PersistentUploadQueue:
                 return self._confirm(handoff)
             self._require_continuable(status)
 
-        self._client.create_subject(
+        subject = self._client.create_subject(
             access_token,
             envelope.subject,
             subject_key(envelope),
         )
+        if subject.subject_uuid != envelope.subject.subject_uuid:
+            raise UploadConflict(
+                "cloud subject differs from the immutable local consent subject"
+            )
         self._client.create_consent(
             access_token,
             envelope.consent,
