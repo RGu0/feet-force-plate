@@ -18,6 +18,12 @@
 
 该 ZIP 的 `signing_status` 是 `unsigned-development`，只能用于内部验证。它不能填入下方的客户放行结论，也不能作为已签名机构交付包。
 
+## RAY-99 R5 打包 GUI 真机验收进展（2026-09-23）
+
+使用 Windows x86_64 内部候选包（源提交 `94bae58437c111e892b48900b5ae3a571cec0d7d`，ZIP SHA-256 `23a1f87ab369b11e57e930395f309a5d0ad30dbb068bf749d3a1aa766dfc7910`，`unsigned-development`）和隔离本地数据目录。操作员登录、空载准备后完成真机四段检测。SQLite 中确认 1 个 `CLOSED` / `VALID` 会话、16 个 `READY_FOR_NETWORK` 分段和 1 条持久化上传交接；重启客户端后这些本地记录仍在。
+
+受控 WLAN 中断后已自动恢复。验收监控脚本误读 `client.sqlite3`，实际会话存于 `institution-live.sqlite3`，导致它未在离线交接出现时自动重启客户端；脚本已在本机更正，不能将此项记为通过。恢复网络后的交接处于 `BLOCKED`，最后错误码为 `E-AUT-403`，尚无云端确认。原因仍需进一步确认，本次不把服务器的拒绝归因于断网、License 或客户端实现中的某一项。联调服务重启及其最终一致性未在本次执行。详见共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-23-packaged-gui-offline-restart-attempt.json`。RAY-99 的打包 GUI 验收和客户交付放行仍未完成。
+
 ## 发布标识
 
 - [ ] 应用版本：`________________`
