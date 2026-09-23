@@ -124,6 +124,28 @@ def test_terminal_handle_refuses_decryption_after_vault_access_is_denied() -> No
         decrypt_for_terminal_handle(artifact, handle)
 
 
+def test_terminal_decryption_does_not_replace_a_missing_vault_key() -> None:
+    vault = _MemoryVault()
+    handle = KeyringTerminalKeyHandle(
+        service_name="FeetForcePlate.test",
+        account_name="terminal-missing",
+        credential_vault=vault,
+    )
+    server = generate_test_keypair()
+    artifact = encrypt_for_dual_recovery(
+        b"sealed local record",
+        context="record:missing",
+        server_keyset=ServerKeyset("server-v1", server.public_key_pem),
+        terminal_key_id=handle.key_id,
+        terminal_public_key_pem=handle.public_key_pem,
+    )
+    vault.delete("FeetForcePlate.test/terminal-missing")
+
+    with pytest.raises(RuntimeError, match="terminal credential is missing"):
+        decrypt_for_terminal_handle(artifact, handle)
+    assert vault.values == {}
+
+
 def test_dual_envelope_blob_codec_keeps_plaintext_out_of_sqlite_value() -> None:
     vault = _MemoryVault()
     terminal = KeyringTerminalKeyHandle(

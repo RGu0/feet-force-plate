@@ -22,7 +22,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from techflex_cloud_foundation import CredentialVault
 
-from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
+from client.security.credential_vault import (
+    CredentialVaultUnavailable,
+    SystemCredentialVault,
+    get_or_create_credential,
+)
 
 
 _ENVELOPE_VERSION = "dual-envelope/1"
@@ -171,17 +175,13 @@ class KeyringTerminalKeyHandle:
         return "terminal-p256-" + hashlib.sha256(self.public_key_pem).hexdigest()[:16]
 
     def unwrap_dek(self, wrapped: WrappedDataKey, *, context: str) -> bytes:
-        return _unwrap_dek(
+        return _unwrap_dek_with_key(
             wrapped,
-            self._private_key().private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            ),
+            self._private_key(create_if_missing=False),
             context.encode("utf-8"),
         )
 
-    def _private_key(self) -> ec.EllipticCurvePrivateKey:
+    def _private_key(self, *, create_if_missing: bool = True) -> ec.EllipticCurvePrivateKey:
         def generate() -> str:
             generated = ec.generate_private_key(ec.SECP256R1())
             pem = generated.private_bytes(
@@ -191,7 +191,12 @@ class KeyringTerminalKeyHandle:
             )
             return base64.b64encode(pem).decode("ascii")
 
-        saved = get_or_create_credential(self._vault, self._vault_key(), generate)
+        if create_if_missing:
+            saved = get_or_create_credential(self._vault, self._vault_key(), generate)
+        else:
+            saved = self._vault.get(self._vault_key())
+            if saved is None:
+                raise CredentialVaultUnavailable("terminal credential is missing")
         pem = base64.b64decode(saved.encode("ascii"), validate=True)
         loaded = serialization.load_pem_private_key(pem, password=None)
         if not isinstance(loaded, ec.EllipticCurvePrivateKey) or not isinstance(
@@ -360,6 +365,12 @@ def _wrap_dek(dek: bytes, recipient_public_key_pem: bytes, aad: bytes) -> Wrappe
 
 def _unwrap_dek(wrapped: WrappedDataKey, private_key_pem: bytes, aad: bytes) -> bytes:
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    return _unwrap_dek_with_key(wrapped, private_key, aad)
+
+
+def _unwrap_dek_with_key(
+    wrapped: WrappedDataKey, private_key: object, aad: bytes
+) -> bytes:
     ephemeral = serialization.load_der_public_key(wrapped.ephemeral_public_key_der)
     if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(
         private_key.curve, ec.SECP256R1
