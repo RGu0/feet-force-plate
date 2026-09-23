@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from ctypes import wintypes
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -70,32 +71,67 @@ def test_indeterminate_elevation_probe_is_rejected_without_native_detail() -> No
     assert str(raised.value) == "unable to verify Windows process integrity"
 
 
-def test_native_elevation_probe_failure_is_rejected(
+def test_native_token_elevation_open_failure_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FailingKernel32:
+        def GetCurrentProcess(self) -> int:
+            return -1
+
+        def OpenProcessToken(self, *_args) -> bool:
+            return False
+
     monkeypatch.setattr(windows_credential_integrity.os, "name", "nt")
-    reported_error = [0]
 
-    def failed_probe_library(*_args, **_kwargs):
-        reported_error[0] = 5
-        return SimpleNamespace(IsUserAnAdmin=lambda: False)
+    with pytest.raises(RuntimeError, match="Windows token elevation query failed"):
+        windows_credential_integrity._is_windows_process_elevated(
+            kernel32=FailingKernel32(),
+            advapi32=object(),
+        )
 
-    monkeypatch.setattr(
-        windows_credential_integrity.ctypes, "WinDLL", failed_probe_library
-    )
-    monkeypatch.setattr(
-        windows_credential_integrity.ctypes,
-        "windll",
-        SimpleNamespace(shell32=SimpleNamespace(IsUserAnAdmin=lambda: False)),
-    )
-    monkeypatch.setattr(
-        windows_credential_integrity.ctypes, "get_last_error", lambda: reported_error[0]
-    )
 
-    with pytest.raises(RuntimeError) as raised:
-        require_standard_user_process()
+def test_native_token_query_configures_pointer_sized_win32_signatures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Function:
+        def __init__(self, callback):
+            self.callback = callback
+            self.argtypes = None
+            self.restype = None
 
-    assert str(raised.value) == "unable to verify Windows process integrity"
+        def __call__(self, *args):
+            return self.callback(*args)
+
+    kernel32 = SimpleNamespace()
+    kernel32.GetCurrentProcess = Function(lambda: -1)
+
+    def open_process_token(_process, _access, handle):
+        handle._obj.value = 1
+        return True
+
+    kernel32.OpenProcessToken = Function(open_process_token)
+    kernel32.CloseHandle = Function(lambda _handle: True)
+    advapi32 = SimpleNamespace()
+
+    def get_token_information(_token, _kind, elevation, size, returned):
+        elevation._obj.TokenIsElevated = 0
+        returned._obj.value = size
+        return True
+
+    advapi32.GetTokenInformation = Function(get_token_information)
+
+    def load_library(name: str, *, use_last_error: bool):
+        assert use_last_error is True
+        return {"kernel32": kernel32, "advapi32": advapi32}[name]
+
+    monkeypatch.setattr(windows_credential_integrity.os, "name", "nt")
+    monkeypatch.setattr(windows_credential_integrity.ctypes, "WinDLL", load_library)
+
+    assert windows_credential_integrity._is_windows_process_elevated() is False
+    assert kernel32.GetCurrentProcess.restype is wintypes.HANDLE
+    assert kernel32.OpenProcessToken.restype is wintypes.BOOL
+    assert advapi32.GetTokenInformation.restype is wintypes.BOOL
+    assert kernel32.CloseHandle.restype is wintypes.BOOL
 
 
 def test_credential_manager_read_failure_has_no_backend_or_secret_detail() -> None:
