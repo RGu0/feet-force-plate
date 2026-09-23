@@ -70,6 +70,30 @@ class FormalUploadEnvelope(ContractModel):
         )
 
 
+class SubjectRecoveryAuthorization(ContractModel):
+    """Separate operator authorization; the original upload envelope stays immutable."""
+
+    schema_version: Literal["subject-recovery/1"] = "subject-recovery/1"
+    session_id: UUID
+    original_envelope_sha256: Sha256Hex
+    original_subject_uuid: UUID
+    cloud_subject_uuid: UUID
+    replacement_consent: ConsentCreateRequest
+    operator_account_id: UUID
+    confirmed_at: datetime
+    cloud_external_id_masked: str | None = None
+
+    @model_validator(mode="after")
+    def validate_bindings(self) -> SubjectRecoveryAuthorization:
+        if self.original_subject_uuid == self.cloud_subject_uuid:
+            raise ValueError("recovery requires distinct subject identities")
+        if self.replacement_consent.subject_uuid != self.cloud_subject_uuid:
+            raise ValueError("replacement consent must target the cloud subject")
+        if self.replacement_consent.granted_at < self.confirmed_at:
+            raise ValueError("replacement consent predates operator confirmation")
+        return self
+
+
 class LocalSegmentState(StrEnum):
     WRITING = "WRITING"
     SEALED = "SEALED"

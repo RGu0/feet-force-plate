@@ -109,6 +109,7 @@ class ApplicationController:
         device_support: _DeviceSupportPort | None = None,
         engineering_maintenance: EngineeringMaintenanceService | None = None,
         session_deletion: CompletedSessionDeletionService | None = None,
+        subject_recovery=None,
         physical_grid: PhysicalGridOverlay | None = None,
     ) -> None:
         self._coordinator = coordinator
@@ -122,6 +123,7 @@ class ApplicationController:
         self._device_support = device_support
         self._engineering_maintenance = engineering_maintenance
         self._session_deletion = session_deletion
+        self._subject_recovery = subject_recovery
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -137,6 +139,7 @@ class ApplicationController:
             engineering_maintenance is not None
         )
         self.window.set_session_deletion_available(session_deletion is not None)
+        self.window.set_subject_recovery_available(subject_recovery is not None)
         self._live_display_timer = QTimer(self.window)
         refresh_interval_ms = (
             16
@@ -146,6 +149,10 @@ class ApplicationController:
         self._live_display_timer.setInterval(refresh_interval_ms)
         self._live_display_timer.timeout.connect(self._on_live_display_timer)
         self.refresh()
+
+    def attach_subject_recovery(self, service) -> None:
+        self._subject_recovery = service
+        self.window.set_subject_recovery_available(True)
 
     def dispatch(self, action: str) -> None:
         if self._participant is not None and action in {
@@ -193,6 +200,12 @@ class ApplicationController:
                 self.window.show_form_error("本地会话清理功能尚未接入当前运行环境")
             else:
                 self.window.show_session_deletion(self._session_deletion)
+            return
+        if action == "OPEN_SUBJECT_RECOVERY":
+            if self._subject_recovery is None:
+                self.window.show_form_error("待传档案核对尚未接入当前运行环境")
+            else:
+                self.window.show_subject_recovery(self._subject_recovery)
             return
         if action == "CONFIRM_CONSENT":
             self._coordinator.confirm_consent()

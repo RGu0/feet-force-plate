@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from pydantic import ValidationError
@@ -297,6 +297,7 @@ class PersistentUploadQueue:
     ) -> UploadCycleOutcome:
         try:
             envelope = self._store.sync_handoff_envelope(handoff.session_id)
+            recovery = self._store.subject_recovery_authorization(handoff.session_id)
         except KeyProviderUnavailable as exc:
             raise UploadRetryable(
                 "local upload key is temporarily unavailable",
@@ -313,24 +314,53 @@ class PersistentUploadQueue:
                 return self._confirm(handoff)
             self._require_continuable(status)
 
+        subject_lookup_key = (
+            subject_key(envelope) if recovery is None else
+            f"subject-recovery:{canonical_sha256(envelope.subject)}:{uuid4().hex}"
+        )
         subject = self._client.create_subject(
             access_token,
             envelope.subject,
-            subject_key(envelope),
+            subject_lookup_key,
         )
-        if subject.subject_uuid != envelope.subject.subject_uuid:
-            raise UploadConflict(
-                "cloud subject differs from the immutable local consent subject"
-            )
-        self._client.create_consent(
+        if recovery is None:
+            if subject.subject_uuid != envelope.subject.subject_uuid:
+                raise UploadConflict(
+                    "cloud subject differs from the immutable local consent subject",
+                    error_code="E-SUB-409",
+                )
+            consent = envelope.consent
+            session_request = envelope.session_request()
+        else:
+            if (
+                recovery.session_id != envelope.session_id
+                or recovery.original_envelope_sha256 != canonical_sha256(envelope)
+                or recovery.original_subject_uuid != envelope.subject.subject_uuid
+                or recovery.cloud_subject_uuid != subject.subject_uuid
+                or not subject.conflict
+            ):
+                raise UploadConflict("cloud subject no longer matches recovery authorization")
+            consent = recovery.replacement_consent
+            session_request = envelope.session_request().model_copy(update={
+                "subject_uuid": recovery.cloud_subject_uuid,
+                "consent_record_id": consent.consent_record_id,
+            })
+        consent_response = self._client.create_consent(
             access_token,
-            envelope.consent,
-            consent_key(envelope),
+            consent,
+            f"consent:{canonical_sha256(consent)}",
         )
+        if (
+            consent_response.consent_record_id != consent.consent_record_id
+            or consent_response.subject_uuid != consent.subject_uuid
+            or consent_response.policy_version != consent.policy_version
+            or consent_response.revoked_at is not None
+        ):
+            raise UploadConflict("cloud consent does not match upload authorization")
         self._client.create_session(
             access_token,
-            envelope.session_request(),
-            session_key(envelope),
+            session_request,
+            f"session:{canonical_sha256(session_request)}",
         )
         try:
             local = self._local_segments(handoff, envelope)
@@ -496,7 +526,9 @@ class PersistentUploadQueue:
         if isinstance(exc, UploadRetryable):
             return self._defer(handoff, exc)
         if isinstance(exc, UploadConflict):
-            self._store.mark_sync_handoff_conflict(handoff.session_id)
+            self._store.mark_sync_handoff_conflict(
+                handoff.session_id, error_code=exc.error_code
+            )
             return UploadCycleOutcome.CONFLICT
         if isinstance(exc, UploadBlocked):
             self._store.mark_sync_handoff_blocked(

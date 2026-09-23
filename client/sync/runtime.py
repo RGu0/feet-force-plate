@@ -165,6 +165,10 @@ class PackagedUploadRuntime:
         self._started = False
         self._closed = False
 
+    @property
+    def recovery_client(self) -> HttpIngestionClient:
+        return self._http_client
+
     def start(self) -> None:
         with self._lock:
             if self._closed:

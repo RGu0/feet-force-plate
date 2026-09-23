@@ -25,7 +25,11 @@ from client.sync.persistent_upload import (
     UploadCycleOutcome,
     UploadRetryable,
 )
-from shared.contracts.client_sync import FormalUploadEnvelope, canonical_sha256
+from shared.contracts.client_sync import (
+    FormalUploadEnvelope,
+    SubjectRecoveryAuthorization,
+    canonical_sha256,
+)
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
@@ -461,6 +465,78 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(remote.calls, ["status:first-access-token", "subject"])
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
         self.assertTrue(sealed.path.exists())
+
+    def test_operator_authorized_recovery_uploads_original_raw_session_after_restart(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        cloud_subject = uuid4()
+        new_consent = uuid4()
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        original_envelope = self.store.sync_handoff_envelope(str(self.session_id))
+        authorization = SubjectRecoveryAuthorization(
+            session_id=self.session_id,
+            original_envelope_sha256=canonical_sha256(original_envelope),
+            original_subject_uuid=self.subject_id,
+            cloud_subject_uuid=cloud_subject,
+            replacement_consent=ConsentCreateRequest(
+                consent_record_id=new_consent,
+                subject_uuid=cloud_subject,
+                policy_version=self.envelope.consent.policy_version,
+                purpose_codes=self.envelope.consent.purpose_codes,
+                data_categories=self.envelope.consent.data_categories,
+                granted_at=datetime.fromtimestamp(2, UTC),
+                evidence_type="OPERATOR_CONFIRMED",
+                terminal_signature="new-signed-evidence",
+            ),
+            operator_account_id=uuid4(),
+            confirmed_at=datetime.fromtimestamp(1, UTC),
+            cloud_external_id_masked="***2781",
+        )
+        self.store.authorize_subject_recovery(authorization)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+
+        self.assertEqual(
+            self.store.subject_recovery_authorization(str(self.session_id)),
+            authorization,
+        )
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED")
+        self.assertEqual(remote.session_requests[0].subject_uuid, cloud_subject)
+        self.assertEqual(remote.session_requests[0].consent_record_id, new_consent)
+        self.assertEqual(remote.session_requests[0].session_id, self.session_id)
+        self.assertEqual(remote.put_calls, [0])
+        self.assertTrue(sealed.path.exists())
+        self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), original_envelope)
+
+    def test_subject_recovery_rejects_wrong_original_digest_without_releasing_handoff(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        cloud_subject = uuid4()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        authorization = SubjectRecoveryAuthorization(
+            session_id=self.session_id,
+            original_envelope_sha256="0" * 64,
+            original_subject_uuid=self.subject_id,
+            cloud_subject_uuid=cloud_subject,
+            replacement_consent=ConsentCreateRequest(
+                consent_record_id=uuid4(), subject_uuid=cloud_subject,
+                policy_version=self.envelope.consent.policy_version,
+                purpose_codes=self.envelope.consent.purpose_codes,
+                data_categories=self.envelope.consent.data_categories,
+                granted_at=datetime.fromtimestamp(2, UTC),
+                evidence_type="OPERATOR_CONFIRMED",
+                terminal_signature="new-signed-evidence",
+            ),
+            operator_account_id=uuid4(), confirmed_at=datetime.fromtimestamp(1, UTC),
+        )
+        with self.assertRaises(ValueError):
+            self.store.authorize_subject_recovery(authorization)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
 
     def test_wrong_segment_list_session_identity_never_progresses_handoff(self) -> None:
         sealed = self._seal(0)
