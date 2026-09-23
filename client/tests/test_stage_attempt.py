@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
 import sqlite3
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -20,6 +21,7 @@ from client.hardware_standardization.models import (
 from client.spool.derived_artifact import read_derived_observation
 from client.spool.segments import read_segment
 from client.spool import session_commit
+from client.spool import stage_attempt
 from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import SealedStageAttempt, StageAttemptSpool
 from client.spool.state_store import SensitiveBlobCodec, StateStore
@@ -144,12 +146,12 @@ def test_stage_attempt_seals_verified_encrypted_frames_in_a_unique_directory(tmp
     sealed = first.seal()
 
     assert first.staging_directory != second.staging_directory
-    assert first.staging_directory.parent.name.startswith("stage-")
+    assert first.staging_directory.parent.name == ".sa"
     assert [frame.source_index for frame in sealed.frames] == [0]
     assert len(tuple(first.staging_directory.rglob("*.ffps"))) == 1
 
 
-def test_stage_attempt_does_not_repeat_session_id_below_longest_stage_directory(
+def test_stage_attempt_uses_a_compact_attempt_directory_on_windows(
     tmp_path,
 ):
     session_id = "0" * 32
@@ -166,7 +168,8 @@ def test_stage_attempt_does_not_repeat_session_id_below_longest_stage_directory(
     assert sealed.segment_ids
     segments = tuple(attempt.staging_directory.glob("segment-*.ffps"))
     assert segments
-    assert not (attempt.staging_directory / session_id).exists()
+    assert attempt.staging_directory.parent.name == ".sa"
+    assert attempt.staging_directory.name != session_id
     relative_segment = segments[0].relative_to(tmp_path)
     representative_root = PureWindowsPath(
         "C:/Users/"
@@ -175,6 +178,45 @@ def test_stage_attempt_does_not_repeat_session_id_below_longest_stage_directory(
     )
     representative_path = representative_root.joinpath(*relative_segment.parts)
     assert len(str(representative_path)) <= 240
+
+
+def test_stage_attempt_retries_a_compact_directory_collision_without_data_loss(
+    tmp_path, monkeypatch
+):
+    attempt_ids = iter(
+        (
+            "a" * 16 + "1" * 16,
+            "a" * 16 + "2" * 16,
+            "b" * 16 + "3" * 16,
+        )
+    )
+    monkeypatch.setattr(
+        stage_attempt.uuid,
+        "uuid4",
+        lambda: SimpleNamespace(hex=next(attempt_ids)),
+    )
+
+    first = _attempt(tmp_path, "stage-1")
+    second = _attempt(tmp_path, "stage-2")
+
+    assert first.staging_directory != second.staging_directory
+    first.discard(reason="operator retry")
+
+    assert second.staging_directory.exists()
+
+
+def test_invalid_stage_attempt_configuration_does_not_reserve_a_directory(tmp_path):
+    with pytest.raises(ValueError, match="segment duration"):
+        StageAttemptSpool(
+            tmp_path,
+            session_id="session-1",
+            stage_id="stage-1",
+            key_provider=_KeyProvider(),
+            versions={"protocol": "test/1"},
+            segment_duration_seconds=4.0,
+        )
+
+    assert not (tmp_path / ".sa").exists()
 
 
 def test_final_stager_merges_four_sealed_attempts_in_stage_order(tmp_path):
