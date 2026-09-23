@@ -17,8 +17,8 @@
 - [ ] `FeetForcePlate.exe` 的 Authenticode 状态为 `Valid`，证书主体、有效期与时间戳符合机构要求。
 - [ ] ZIP 摘要已由独立人员复核；交付渠道使用受控下载或受控介质。
 - [ ] ZIP 中包含 DO-P4864 设备规格、应用资源和支持诊断公钥（若本次交付启用诊断导出）。
-- [ ] 构建机器上 `pwsh -File dev.ps1 setup` 已成功校验 `foundation-artifact.lock.json` 锁定的 `techflex-cloud-foundation` 版本与 SHA-256；本次构建未使用未校验的 wheel 或绕过 `./dev` / `dev.ps1` 的环境。
-- [ ] 打包产物内的 foundation 版本与 `foundation-artifact.lock.json` 一致，并记入 `release-manifest.json`。
+- [ ] 构建机器上 `pwsh -File dev.ps1 setup` 已从公开 GitHub Release 安装 `techflex-cloud-foundation`，并按 `uv.lock` 校验锁定版本与 SHA-256；本次构建未使用未校验的 wheel 或绕过 `./dev` / `dev.ps1` 的环境。
+- [ ] 打包产物内的 foundation 版本与 `pyproject.toml`、`uv.lock` 一致，并记入 `release-manifest.json`。
 
 ## 受控配置与安全
 

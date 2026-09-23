@@ -24,8 +24,7 @@ export PYTHONPATH="$project_root${PYTHONPATH:+:$PYTHONPATH}"
 cd "$project_root"
 
 sync() {
-    python3 scripts/prepare_foundation_artifact.py
-    "$uv_bin" sync --locked --extra dev --find-links .foundation-artifacts "$@"
+    "$uv_bin" sync --locked --extra dev "$@"
 }
 
 action="${1:-}"
@@ -33,7 +32,6 @@ shift || true
 case "$action" in
     setup)
         [ "$#" -eq 0 ] || { echo "setup accepts no arguments" >&2; exit 2; }
-        python3 scripts/prepare_foundation_artifact.py --download
         sync
         ;;
     test)
