@@ -39,6 +39,14 @@ class RecoveryPreview:
     research_available: bool
 
 
+class RecoveryLookupError(ValueError):
+    """Safe reason for a failed operator-side cloud identity lookup."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("cloud subject is not recoverable")
+        self.error_code = reason
+
+
 def _mask_identifier(value: str) -> str:
     return "***" + value[-4:] if value else "***"
 
@@ -89,8 +97,10 @@ class SubjectRecoveryService:
         if external is None:
             raise ValueError("session has no institution identifier for verification")
         summary = self._resolve_subject(envelope)
-        if summary is None or summary.subject_uuid == envelope.subject.subject_uuid:
-            raise ValueError("cloud does not report a recoverable subject collision")
+        if summary is None:
+            raise RecoveryLookupError("cloud-not-found")
+        if summary.subject_uuid == envelope.subject.subject_uuid:
+            raise RecoveryLookupError("cloud-already-matches-local")
         return RecoveryPreview(
             session_id=session_id,
             local_subject_uuid=envelope.subject.subject_uuid,

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from client.sync.subject_recovery import SubjectRecoveryService
+from client.sync.subject_recovery import RecoveryLookupError, SubjectRecoveryService
 from shared.contracts.client_sync import FormalUploadEnvelope
 from shared.contracts.cloud import (
     ConsentCreateRequest, ExternalIdentifierInput, SessionVersions,
@@ -36,6 +36,8 @@ class _Client:
     def resolve_subject(self, token, request):
         assert token == "access"
         assert request.external_id == "2024-0731"
+        if self.cloud_uuid is None:
+            return None
         return SubjectSummary(
             subject_uuid=self.cloud_uuid, external_id_masked="***0731", conflict=True
         )
@@ -138,3 +140,16 @@ def test_remote_subject_change_requires_new_preview():
         )
     assert store.authorization is None
     assert signer.requests == []
+
+
+def test_lookup_distinguishes_missing_cloud_subject_from_existing_local_mapping():
+    service, store, client, _ = _service()
+    client.cloud_uuid = None
+    with pytest.raises(RecoveryLookupError) as missing:
+        service.prepare(store.envelope.session_id)
+    assert missing.value.error_code == "cloud-not-found"
+
+    client.cloud_uuid = store.envelope.subject.subject_uuid
+    with pytest.raises(RecoveryLookupError) as matching:
+        service.prepare(store.envelope.session_id)
+    assert matching.value.error_code == "cloud-already-matches-local"
