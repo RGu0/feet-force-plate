@@ -308,7 +308,12 @@ def test_find_valid_requires_immutable_consent_evidence(tmp_path) -> None:
 
 
 def test_institution_report_round_trip_is_encrypted(tmp_path) -> None:
-    store = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    store = InstitutionLocalStore.open(
+        tmp_path,
+        key_provider=_Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_Signer("synthetic"),
+    )
     report = BasicReportDocument(
         report_id="report-1", version=1, status=ReportStatus.BASIC_READY, kind="BASIC",
         session_id="session-1", analysis_result_id="analysis-1", subject_display_id="匿名",
