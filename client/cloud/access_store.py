@@ -25,6 +25,10 @@ class CredentialStore(Protocol):
     def delete_refresh_token(self, account_id: UUID) -> None: ...
 
 
+class CredentialStoreUnavailable(RuntimeError):
+    """The platform credential vault cannot safely serve this request."""
+
+
 class KeyringCredentialStore:
     def __init__(
         self,
@@ -35,6 +39,7 @@ class KeyringCredentialStore:
         if backend is None:
             import keyring
 
+            _require_windows_credential_manager(keyring)
             backend = keyring
         self._service_name = service_name
         self._backend = backend
@@ -44,17 +49,27 @@ class KeyringCredentialStore:
         return f"refresh:{account_id}"
 
     def set_refresh_token(self, account_id: UUID, refresh_token: str) -> None:
-        self._backend.set_password(
-            self._service_name,
-            self._username(account_id),
-            refresh_token,
-        )
+        try:
+            self._backend.set_password(
+                self._service_name,
+                self._username(account_id),
+                refresh_token,
+            )
+        except Exception:
+            raise CredentialStoreUnavailable(
+                "system credential storage is unavailable"
+            ) from None
 
     def get_refresh_token(self, account_id: UUID) -> str | None:
-        return self._backend.get_password(
-            self._service_name,
-            self._username(account_id),
-        )
+        try:
+            return self._backend.get_password(
+                self._service_name,
+                self._username(account_id),
+            )
+        except Exception:
+            raise CredentialStoreUnavailable(
+                "system credential storage is unavailable"
+            ) from None
 
     def delete_refresh_token(self, account_id: UUID) -> None:
         try:
@@ -65,7 +80,28 @@ class KeyringCredentialStore:
         except Exception as exc:
             # keyring backends use backend-specific "not found" exceptions.
             if "not found" not in str(exc).lower():
-                raise
+                raise CredentialStoreUnavailable(
+                    "system credential storage is unavailable"
+                ) from None
+
+
+def _require_windows_credential_manager(backend) -> None:
+    if os.name != "nt":
+        return
+    try:
+        native_backend = backend.get_keyring()
+    except Exception:
+        raise CredentialStoreUnavailable(
+            "Windows Credential Manager backend is required"
+        ) from None
+    backend_type = type(native_backend)
+    if (
+        backend_type.__module__ != "keyring.backends.Windows"
+        or backend_type.__name__ != "WinVaultKeyring"
+    ):
+        raise CredentialStoreUnavailable(
+            "Windows Credential Manager backend is required"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +314,7 @@ def _decode_datetime(value: str | None) -> datetime | None:
 __all__ = [
     "ClientAccessStore",
     "CredentialStore",
+    "CredentialStoreUnavailable",
     "KeyringCredentialStore",
     "LOCK_TIMEOUT_OPTIONS",
     "StoredAccessState",
