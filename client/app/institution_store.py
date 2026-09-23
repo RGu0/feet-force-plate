@@ -21,7 +21,11 @@ from collections.abc import Callable
 from platformdirs import user_data_path
 from techflex_cloud_foundation import CredentialVault
 
-from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
+from client.security.credential_vault import (
+    SystemCredentialVault,
+    _credential_initialization_lock,
+    get_or_create_credential,
+)
 from client.reporting.models import BasicReportDocument
 from client.app.ui_models import ScreeningRecordRow
 from client.spool.state_store import (
@@ -66,21 +70,91 @@ class KeyringAesKeyProvider:
 
     _SERVICE = "FeetForcePlate.institution-storage"
     _ACCOUNT = "aes256-v1"
+    _ACTIVE_ACCOUNT = "aes256-active-version"
 
     def __init__(self, vault: CredentialVault | None = None) -> None:
         self._vault = vault or SystemCredentialVault()
 
     def get_key(self) -> bytes:
+        return self.get_current_key()[1]
+
+    def get_current_key(self) -> tuple[int, bytes]:
         try:
-            encoded = get_or_create_credential(
-                self._vault,
-                self._vault_key(),
-                lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
-            )
+            version = self._active_version()
+            if version == 1:
+                encoded = get_or_create_credential(
+                    self._vault,
+                    self._vault_key(1),
+                    lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
+                )
+            else:
+                encoded = self._vault.get(self._vault_key(version))
+                if encoded is None:
+                    raise KeyProviderUnavailable("active institution data key is missing")
+        except Exception as exc:
+            if isinstance(exc, KeyProviderUnavailable):
+                raise
+            raise KeyProviderUnavailable(
+                "system credential storage is temporarily unavailable"
+            ) from exc
+        return version, self._decode_key(encoded)
+
+    def get_key_for_version(self, version: int) -> bytes:
+        if version < 1:
+            raise ValueError("institution data key version is invalid")
+        try:
+            encoded = self._vault.get(self._vault_key(version))
         except Exception as exc:
             raise KeyProviderUnavailable(
                 "system credential storage is temporarily unavailable"
             ) from exc
+        if encoded is None:
+            raise KeyProviderUnavailable("institution data key version is missing")
+        return self._decode_key(encoded)
+
+    def rotate_key(self) -> int:
+        """Activate a retained next key; never overwrite an old version."""
+
+        self.get_key()  # Establish the legacy first-use key before taking the lock.
+        with _credential_initialization_lock():
+            try:
+                old_marker = self._vault.get(self._active_key())
+                old_version = self._parse_version(old_marker)
+                self.get_key_for_version(old_version)
+                if old_version == 2**32 - 1:
+                    raise KeyProviderUnavailable("institution data key version limit reached")
+                next_version = old_version + 1
+                next_key_name = self._vault_key(next_version)
+                encoded = self._vault.get(next_key_name)
+                if encoded is None:
+                    encoded = base64.b64encode(os.urandom(32)).decode("ascii")
+                    self._vault.set(next_key_name, encoded)
+                    if self._vault.get(next_key_name) != encoded:
+                        raise KeyProviderUnavailable("new institution data key was not retained")
+                self._decode_key(encoded)
+                try:
+                    self._vault.set(self._active_key(), str(next_version))
+                    if self._vault.get(self._active_key()) != str(next_version):
+                        raise KeyProviderUnavailable("institution key rotation was not retained")
+                except Exception as exc:
+                    try:
+                        if old_marker is None:
+                            self._vault.delete(self._active_key())
+                        else:
+                            self._vault.set(self._active_key(), old_marker)
+                        if self._vault.get(self._active_key()) != old_marker:
+                            raise KeyProviderUnavailable("institution key rollback was not retained")
+                    except Exception as rollback_exc:
+                        raise KeyProviderUnavailable("institution key rotation state is uncertain") from rollback_exc
+                    raise KeyProviderUnavailable("institution key rotation failed") from exc
+            except KeyProviderUnavailable:
+                raise
+            except Exception as exc:
+                raise KeyProviderUnavailable("system credential storage is temporarily unavailable") from exc
+        return next_version
+
+    @staticmethod
+    def _decode_key(encoded: str) -> bytes:
         try:
             key = base64.b64decode(encoded.encode("ascii"), validate=True)
         except (UnicodeEncodeError, ValueError) as exc:
@@ -89,8 +163,25 @@ class KeyringAesKeyProvider:
             raise ValueError("stored institution data key is not AES-256")
         return key
 
-    def _vault_key(self) -> str:
-        return f"{self._SERVICE}/{self._ACCOUNT}"
+    def _active_version(self) -> int:
+        return self._parse_version(self._vault.get(self._active_key()))
+
+    @staticmethod
+    def _parse_version(marker: str | None) -> int:
+        if marker is None:
+            return 1
+        if not marker.isascii() or not marker.isdecimal() or str(int(marker)) != marker:
+            raise ValueError("institution data key version marker is invalid")
+        version = int(marker)
+        if version < 1 or version > 2**32 - 1:
+            raise ValueError("institution data key version marker is invalid")
+        return version
+
+    def _active_key(self) -> str:
+        return f"{self._SERVICE}/{self._ACTIVE_ACCOUNT}"
+
+    def _vault_key(self, version: int) -> str:
+        return f"{self._SERVICE}/aes256-v{version}"
 
 
 class KeyringConsentEvidenceSigner:

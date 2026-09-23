@@ -15,7 +15,7 @@ from client.app.institution_store import (
     InstitutionLocalStore,
     KeyringAesKeyProvider,
 )
-from client.spool.state_store import KeyProviderUnavailable
+from client.spool.state_store import KeyProviderUnavailable, SensitiveBlobCodec
 from client.reporting.models import BasicReportDocument, ReportStatus
 from client.workflow.consent import ConsentPolicy, ConsentRequest, ConsentWorkflow
 from client.workflow.participant import (
@@ -85,6 +85,66 @@ def test_institution_aes_key_uses_the_foundation_credential_vault() -> None:
     assert set(vault.values) == {
         "FeetForcePlate.institution-storage/aes256-v1"
     }
+
+
+def test_institution_aes_rotation_reads_legacy_and_new_ciphertext() -> None:
+    vault = _MemoryVault()
+    provider = KeyringAesKeyProvider(vault)
+    old_key = provider.get_key()
+    legacy = SensitiveBlobCodec(_FixedKey(old_key)).encrypt(b"sealed before rotation", context="subject:1")
+
+    assert provider.rotate_key() == 2
+
+    codec = SensitiveBlobCodec(provider)
+    current = codec.encrypt(b"sealed after rotation", context="subject:2")
+    assert codec.decrypt(legacy, context="subject:1") == b"sealed before rotation"
+    assert codec.decrypt(current, context="subject:2") == b"sealed after rotation"
+    assert current != legacy
+    assert KeyringAesKeyProvider(vault).get_key() != old_key
+
+
+def test_institution_aes_rotation_failure_keeps_old_key_and_data() -> None:
+    class RejectActivationVault(_MemoryVault):
+        def set(self, key: str, value: str) -> None:
+            if key.endswith("/aes256-active-version"):
+                raise OSError("credential service denied activation")
+            super().set(key, value)
+
+    vault = RejectActivationVault()
+    provider = KeyringAesKeyProvider(vault)
+    before = provider.get_key()
+    legacy = SensitiveBlobCodec(_FixedKey(before)).encrypt(b"sealed", context="subject:1")
+
+    with pytest.raises(KeyProviderUnavailable):
+        provider.rotate_key()
+
+    reopened = KeyringAesKeyProvider(vault)
+    assert reopened.get_key() == before
+    assert SensitiveBlobCodec(reopened).decrypt(legacy, context="subject:1") == b"sealed"
+
+
+def test_institution_aes_rotation_refuses_version_overflow() -> None:
+    vault = _MemoryVault()
+    vault.set("FeetForcePlate.institution-storage/aes256-active-version", str(2**32 - 1))
+    vault.set(
+        f"FeetForcePlate.institution-storage/aes256-v{2**32 - 1}",
+        base64.b64encode(b"k" * 32).decode("ascii"),
+    )
+    provider = KeyringAesKeyProvider(vault)
+
+    with pytest.raises(KeyProviderUnavailable):
+        provider.rotate_key()
+
+    assert provider.get_key() == b"k" * 32
+    assert "FeetForcePlate.institution-storage/aes256-v4294967296" not in vault.values
+
+
+class _FixedKey:
+    def __init__(self, key: bytes) -> None:
+        self.key = key
+
+    def get_key(self) -> bytes:
+        return self.key
 
 
 def test_concurrent_first_use_returns_the_one_persisted_aes_key() -> None:
