@@ -20,7 +20,8 @@ git -C "$repo_root" diff --quiet
 git -C "$repo_root" diff --cached --quiet
 foundation_artifact="$(python3 "$repo_root/scripts/prepare_foundation_artifact.py")"
 git -C "$repo_root" archive --format=tar "$release_sha" | tar -x -C "$release_root"
-install -D -m 0644 "$foundation_artifact" \
+mkdir -p "$release_root/.foundation-artifacts"
+install -m 0644 "$foundation_artifact" \
     "$release_root/.foundation-artifacts/$(basename "$foundation_artifact")"
 tar -C "$release_root" -czf "$archive" .
 archive_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"

@@ -242,7 +242,9 @@ def test_remote_release_deploy_bundles_the_verified_foundation_artifact() -> Non
     text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
     assert 'scripts/prepare_foundation_artifact.py' in text
     assert 'git -C "$repo_root" archive --format=tar "$release_sha" | tar -x -C "$release_root"' in text
-    assert 'install -D -m 0644 "$foundation_artifact"' in text
+    assert 'mkdir -p "$release_root/.foundation-artifacts"' in text
+    assert 'install -m 0644 "$foundation_artifact"' in text
+    assert 'install -D -m 0644 "$foundation_artifact"' not in text
     assert 'tar -C "$release_root" -czf "$archive" .' in text
 
 
