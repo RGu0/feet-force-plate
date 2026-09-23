@@ -238,6 +238,14 @@ def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
     assert "/bin/bash -s" not in text
 
 
+def test_remote_release_deploy_bundles_the_verified_foundation_artifact() -> None:
+    text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
+    assert 'scripts/prepare_foundation_artifact.py' in text
+    assert 'git -C "$repo_root" archive --format=tar "$release_sha" | tar -x -C "$release_root"' in text
+    assert 'install -D -m 0644 "$foundation_artifact"' in text
+    assert 'tar -C "$release_root" -czf "$archive" .' in text
+
+
 def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -> None:
     text = _read_repository_text(ROOT / "feetforceplate-seed-release-server.sh")
     assert '[[ "${EUID}" -ne 0 ]]' in text
