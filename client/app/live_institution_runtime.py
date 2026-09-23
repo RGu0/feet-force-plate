@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from client.app.heatmap import PhysicalGridOverlay
+from client.app.institution_read_models import InstitutionUiReadModels
+from client.app.report_index_recovery import recover_missing_screening_records
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
@@ -176,6 +178,11 @@ def build_live_institution_runtime(
         spool_root=data_root / "spool",
         reports=institution,
     )
+    recover_missing_screening_records(
+        institution=institution,
+        physical_store=physical_store,
+        tenant_id=session.tenant_id,
+    )
     participant = ParticipantWorkflow(
         tenant_id=session.tenant_id,
         issuer="institution-ui",
@@ -211,6 +218,12 @@ def build_live_institution_runtime(
         controller_options={
             "participant": participant,
             "consent": consent,
+            "read_models": InstitutionUiReadModels(
+                institution=institution,
+                tenant_id=session.tenant_id,
+                physical_store=physical_store,
+                app_version=app_version,
+            ),
             "consent_policy": ConsentPolicy("institution-screening/1", ("SCREENING",), ("SCREENING",)),
             "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
                 hardware.display_geometry, specification_id=hardware.specification_id
