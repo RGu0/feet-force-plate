@@ -37,7 +37,12 @@ class KeyringCredentialStore:
         backend=None,
     ) -> None:
         if backend is None:
-            import keyring
+            try:
+                import keyring
+            except Exception:
+                raise CredentialStoreUnavailable(
+                    "system credential storage is unavailable"
+                ) from None
 
             _require_windows_credential_manager(keyring)
             backend = keyring
@@ -78,11 +83,19 @@ class KeyringCredentialStore:
                 self._username(account_id),
             )
         except Exception as exc:
-            # keyring backends use backend-specific "not found" exceptions.
-            if "not found" not in str(exc).lower():
-                raise CredentialStoreUnavailable(
-                    "system credential storage is unavailable"
-                ) from None
+            if _is_missing_keyring_credential(exc):
+                return
+            raise CredentialStoreUnavailable(
+                "system credential storage is unavailable"
+            ) from None
+
+
+def _is_missing_keyring_credential(error: Exception) -> bool:
+    try:
+        from keyring.errors import PasswordDeleteError
+    except Exception:
+        return False
+    return isinstance(error, PasswordDeleteError)
 
 
 def _require_windows_credential_manager(backend) -> None:

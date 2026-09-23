@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from keyring.errors import PasswordDeleteError
 
 import client.cloud.access_store as access_store
 from client.cloud.access_store import KeyringCredentialStore
@@ -24,6 +25,16 @@ class _WriteUnavailableCredentialBackend:
 class _DeleteUnavailableCredentialBackend:
     def delete_password(self, service_name: str, username: str) -> None:
         raise OSError("refresh-token-must-never-reach-the-operator")
+
+
+class _MissingCredentialBackend:
+    def delete_password(self, service_name: str, username: str) -> None:
+        raise PasswordDeleteError("credential not found")
+
+
+class _MisleadingDeleteFailureBackend:
+    def delete_password(self, service_name: str, username: str) -> None:
+        raise OSError("backend unavailable; target not found")
 
 
 class _NotWindowsCredentialManager:
@@ -46,6 +57,16 @@ def test_elevated_process_is_rejected_before_it_can_create_user_vault_data() -> 
 
 def test_standard_user_process_is_allowed() -> None:
     require_standard_user_process(is_elevated=lambda: False)
+
+
+def test_indeterminate_elevation_probe_is_rejected_without_native_detail() -> None:
+    def failed_probe() -> bool:
+        raise OSError("native-token-query-failed")
+
+    with pytest.raises(RuntimeError) as raised:
+        require_standard_user_process(is_elevated=failed_probe)
+
+    assert str(raised.value) == "unable to verify Windows process integrity"
 
 
 def test_credential_manager_read_failure_has_no_backend_or_secret_detail() -> None:
@@ -71,6 +92,32 @@ def test_credential_manager_delete_failure_has_no_backend_or_secret_detail() -> 
 
     with pytest.raises(RuntimeError) as raised:
         store.delete_refresh_token(uuid4())
+
+    assert str(raised.value) == "system credential storage is unavailable"
+
+
+def test_missing_credential_delete_is_idempotent() -> None:
+    store = KeyringCredentialStore(backend=_MissingCredentialBackend())
+
+    store.delete_refresh_token(uuid4())
+
+
+def test_credential_manager_delete_failure_with_misleading_not_found_text_is_rejected() -> None:
+    store = KeyringCredentialStore(backend=_MisleadingDeleteFailureBackend())
+
+    with pytest.raises(RuntimeError) as raised:
+        store.delete_refresh_token(uuid4())
+
+    assert str(raised.value) == "system credential storage is unavailable"
+
+
+def test_missing_keyring_module_is_reported_without_import_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "keyring", None)
+
+    with pytest.raises(RuntimeError) as raised:
+        KeyringCredentialStore()
 
     assert str(raised.value) == "system credential storage is unavailable"
 

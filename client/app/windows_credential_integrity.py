@@ -12,7 +12,10 @@ def require_standard_user_process(
 ) -> None:
     """Fail closed before Credential Manager access uses another integrity context."""
 
-    elevated = (is_elevated or _is_windows_process_elevated)()
+    try:
+        elevated = (is_elevated or _is_windows_process_elevated)()
+    except Exception:
+        raise RuntimeError("unable to verify Windows process integrity") from None
     if elevated:
         raise RuntimeError(
             "FeetForcePlate must not run as administrator because local encrypted "
@@ -23,4 +26,10 @@ def require_standard_user_process(
 def _is_windows_process_elevated() -> bool:
     if os.name != "nt":
         return False
-    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    ctypes.set_last_error(0)
+    elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    if elevated:
+        return True
+    if ctypes.get_last_error() != 0:
+        raise RuntimeError("Windows elevation probe failed")
+    return False
