@@ -334,9 +334,11 @@ class PersistentUploadQueueTests(unittest.TestCase):
         assert sealed is not None
         return sealed
 
-    def _commit(self, *sealed: SealedSegment) -> None:
+    def _commit(
+        self, *sealed: SealedSegment, stored_session_id: str | None = None
+    ) -> None:
         self.store.commit_valid_session(
-            str(self.session_id),
+            stored_session_id or str(self.session_id),
             subject_uuid=str(self.subject_id),
             consent_id=str(self.consent_id),
             versions_json=b"{}",
@@ -484,7 +486,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
             ),
         })
         sealed = self._seal(0)
-        self._commit(sealed)
+        self._commit(sealed, stored_session_id=self.session_id.hex)
         cloud_subject = uuid4()
         new_consent = uuid4()
         remote = _IngestionService()

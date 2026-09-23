@@ -609,7 +609,11 @@ class PersistentUploadQueue:
                 restored = read_segment(path, self._keys)
             except (OSError, SegmentIntegrityError) as exc:
                 raise UploadConflict("sealed segment integrity verification failed") from exc
-            if restored.session_id != handoff.session_id or restored.segment_index in local:
+            try:
+                same_session = UUID(restored.session_id) == UUID(handoff.session_id)
+            except ValueError:
+                same_session = False
+            if not same_session or restored.segment_index in local:
                 raise UploadConflict(
                     "sealed segments do not form one unambiguous session"
                 )

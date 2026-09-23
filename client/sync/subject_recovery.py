@@ -90,7 +90,10 @@ class SubjectRecoveryService:
         return tuple(result)
 
     def prepare(self, session_id: UUID) -> RecoveryPreview:
-        if str(session_id) not in self._store.subject_recovery_candidates():
+        if not any(
+            UUID(stored_id) == session_id
+            for stored_id in self._store.subject_recovery_candidates()
+        ):
             raise ValueError("session is not awaiting controlled recovery")
         envelope = self._store.sync_handoff_envelope(str(session_id))
         external = envelope.subject.external_identifier

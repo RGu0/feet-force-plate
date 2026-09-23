@@ -768,40 +768,63 @@ class StateStore:
             )
 
     def sync_handoff_state(self, session_id: str) -> str:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
-                "SELECT state FROM sync_handoffs WHERE session_id=?", (session_id,)
+                "SELECT state FROM sync_handoffs WHERE session_id=?",
+                (stored_session_id,),
             ).fetchone()
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
 
     def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
                 "SELECT upload_envelope FROM sync_handoffs WHERE session_id=?",
-                (session_id,),
+                (stored_session_id,),
             ).fetchone()
         if row is None or row[0] is None:
             raise KeyError(session_id)
         plaintext = self._codec.decrypt(
             bytes(row[0]),
-            context=f"formal_upload_envelope:{session_id}",
+            context=f"formal_upload_envelope:{stored_session_id}",
         )
         return FormalUploadEnvelope.model_validate_json(plaintext)
+
+    def _stored_sync_handoff_id(self, session_id: str) -> str:
+        """Resolve legacy hex and canonical UUID spellings without rewriting evidence."""
+
+        aliases = {session_id}
+        try:
+            parsed = UUID(session_id)
+        except ValueError:
+            pass
+        else:
+            aliases.update((str(parsed), parsed.hex))
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT session_id FROM sync_handoffs WHERE session_id IN ({','.join('?' for _ in aliases)})",
+                tuple(aliases),
+            ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("multiple handoffs use the same session UUID")
+        return str(rows[0][0]) if rows else session_id
 
     def subject_recovery_authorization(
         self, session_id: str
     ) -> SubjectRecoveryAuthorization | None:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
                 "SELECT encrypted_payload FROM subject_recovery_authorizations WHERE session_id=?",
-                (session_id,),
+                (stored_session_id,),
             ).fetchone()
         if row is None:
             return None
         plaintext = self._codec.decrypt(
-            bytes(row[0]), context=f"subject_recovery:{session_id}"
+            bytes(row[0]), context=f"subject_recovery:{stored_session_id}"
         )
         return SubjectRecoveryAuthorization.model_validate_json(plaintext)
 
@@ -823,7 +846,7 @@ class StateStore:
     ) -> None:
         """Atomically record fresh consent and release an identity-blocked handoff."""
 
-        session_id = str(authorization.session_id)
+        session_id = self._stored_sync_handoff_id(str(authorization.session_id))
         envelope = self.sync_handoff_envelope(session_id)
         if (
             authorization.original_envelope_sha256 != canonical_sha256(envelope)

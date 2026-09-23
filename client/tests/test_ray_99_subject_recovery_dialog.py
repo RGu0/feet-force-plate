@@ -68,5 +68,6 @@ def test_integration_lookup_failure_shows_only_safe_diagnostic(qtbot, monkeypatc
 
     text = " ".join(label.text() for label in dialog.findChildren(QLabel))
     assert "UploadBlocked / E-AUT-403" in text
+    assert "test_ray_99_subject_recovery_dialog.py:" in text
     assert "private server detail" not in text
     assert all(not box.isEnabled() for box in dialog.findChildren(QCheckBox))

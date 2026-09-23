@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox,
@@ -84,7 +85,16 @@ class SubjectRecoveryDialog(QDialog):
             detail = ""
             if os.environ.get("FEETFORCEPLATE_INTEGRATION_MODE") == "1":
                 code = getattr(exc, "error_code", None)
-                detail = f"（{type(exc).__name__}{f' / {code}' if code else ''}）"
+                frame = exc.__traceback__
+                while frame is not None and frame.tb_next is not None:
+                    frame = frame.tb_next
+                location = (
+                    f" @ {Path(frame.tb_frame.f_code.co_filename).name}:{frame.tb_lineno}"
+                    if frame is not None else ""
+                )
+                detail = (
+                    f"（{type(exc).__name__}{f' / {code}' if code else ''}{location}）"
+                )
             self._comparison.setText(
                 f"云端核对未完成{detail}；待传数据仍保留在本机。"
             )
