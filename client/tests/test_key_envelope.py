@@ -95,6 +95,35 @@ def test_keyring_terminal_handle_persists_only_the_terminal_private_key() -> Non
     assert set(vault.values) == {"FeetForcePlate.test/terminal-42"}
 
 
+def test_terminal_handle_refuses_decryption_after_vault_access_is_denied() -> None:
+    class RevocableVault(_MemoryVault):
+        denied = False
+
+        def get(self, key: str) -> str | None:
+            if self.denied:
+                raise OSError("Keychain access denied")
+            return super().get(key)
+
+    vault = RevocableVault()
+    handle = KeyringTerminalKeyHandle(
+        service_name="FeetForcePlate.test",
+        account_name="terminal-locked",
+        credential_vault=vault,
+    )
+    server = generate_test_keypair()
+    artifact = encrypt_for_dual_recovery(
+        b"locked local record",
+        context="record:locked",
+        server_keyset=ServerKeyset("server-v1", server.public_key_pem),
+        terminal_key_id=handle.key_id,
+        terminal_public_key_pem=handle.public_key_pem,
+    )
+
+    vault.denied = True
+    with pytest.raises(OSError, match="Keychain access denied"):
+        decrypt_for_terminal_handle(artifact, handle)
+
+
 def test_dual_envelope_blob_codec_keeps_plaintext_out_of_sqlite_value() -> None:
     vault = _MemoryVault()
     terminal = KeyringTerminalKeyHandle(

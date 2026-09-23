@@ -39,31 +39,35 @@ def _credential_initialization_lock():
     except OSError as exc:
         raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
     try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            raise CredentialVaultUnavailable("credential initialization lock is invalid")
-        if os.name != "nt":
-            if info.st_uid != os.getuid():
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
                 raise CredentialVaultUnavailable("credential initialization lock is invalid")
-            os.fchmod(descriptor, 0o600)
-            import fcntl
+            if os.name != "nt":
+                if info.st_uid != os.getuid():
+                    raise CredentialVaultUnavailable("credential initialization lock is invalid")
+                os.fchmod(descriptor, 0o600)
+                import fcntl
 
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            unlock = lambda: fcntl.flock(descriptor, fcntl.LOCK_UN)
-        else:
-            import msvcrt
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                unlock = lambda: fcntl.flock(descriptor, fcntl.LOCK_UN)
+            else:
+                import msvcrt
 
-            if info.st_size == 0:
-                os.write(descriptor, b"\0")
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
-            unlock = lambda: msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                if info.st_size == 0:
+                    os.write(descriptor, b"\0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                unlock = lambda: msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        except OSError as exc:
+            raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
         try:
             yield
         finally:
-            unlock()
-    except OSError as exc:
-        raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
+            try:
+                unlock()
+            except OSError as exc:
+                raise CredentialVaultUnavailable("credential initialization lock is unavailable") from exc
     finally:
         os.close(descriptor)
 

@@ -158,7 +158,6 @@ class KeyringTerminalKeyHandle:
         self._service_name = service_name
         self._account_name = account_name
         self._vault = credential_vault or SystemCredentialVault()
-        self._private_key_pem: bytes | None = None
 
     @property
     def public_key_pem(self) -> bytes:
@@ -183,19 +182,18 @@ class KeyringTerminalKeyHandle:
         )
 
     def _private_key(self) -> ec.EllipticCurvePrivateKey:
-        if self._private_key_pem is None:
-            def generate() -> str:
-                generated = ec.generate_private_key(ec.SECP256R1())
-                pem = generated.private_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PrivateFormat.PKCS8,
-                    serialization.NoEncryption(),
-                )
-                return base64.b64encode(pem).decode("ascii")
+        def generate() -> str:
+            generated = ec.generate_private_key(ec.SECP256R1())
+            pem = generated.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            return base64.b64encode(pem).decode("ascii")
 
-            saved = get_or_create_credential(self._vault, self._vault_key(), generate)
-            self._private_key_pem = base64.b64decode(saved.encode("ascii"), validate=True)
-        loaded = serialization.load_pem_private_key(self._private_key_pem, password=None)
+        saved = get_or_create_credential(self._vault, self._vault_key(), generate)
+        pem = base64.b64decode(saved.encode("ascii"), validate=True)
+        loaded = serialization.load_pem_private_key(pem, password=None)
         if not isinstance(loaded, ec.EllipticCurvePrivateKey) or not isinstance(
             loaded.curve, ec.SECP256R1
         ):
