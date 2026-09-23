@@ -487,7 +487,7 @@ class ApplicationController:
     def _profile_from_form(self) -> AnalysisProfile:
         form = self.window.profile_form_values()
         return AnalysisProfile(
-            age_band=self._optional_text(*form["ageBand"], label="年龄段"),
+            age_band=self._optional_age(*form["ageBand"]),
             sex=self._optional_text(*form["sex"], label="性别"),
             height_cm=self._optional_number(*form["height"], label="身高"),
             weight_kg=self._optional_number(*form["weight"], label="体重"),
@@ -509,6 +509,22 @@ class ApplicationController:
         if not normalized:
             raise ValueError(f"{label}标记为已填写时必须选择或输入内容")
         return OptionalField(state, normalized)
+
+    @staticmethod
+    def _optional_age(
+        state_value: str,
+        value: str,
+    ) -> OptionalField[str]:
+        state = FieldState(state_value)
+        if state is not FieldState.PROVIDED:
+            return OptionalField(state)
+        normalized = value.strip()
+        if not normalized.isdecimal():
+            raise ValueError("年龄需填写 1–120 范围内的整数")
+        age = int(normalized)
+        if not 1 <= age <= 120:
+            raise ValueError("年龄需填写 1–120 范围内的整数")
+        return OptionalField(state, str(age))
 
     @staticmethod
     def _optional_number(

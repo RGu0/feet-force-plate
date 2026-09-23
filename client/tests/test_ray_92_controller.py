@@ -175,6 +175,7 @@ def test_found_subject_profile_and_consent_are_bound_before_preflight(qtbot) -> 
 
     assert controller.window.current_page_id == PageId.CONSENT
     assert subjects.updated[0].height_cm.value == 168.5
+    assert subjects.updated[0].age_band.value == "60"
     consent_page = controller.window.page_widget(PageId.CONSENT)
     consent_page.findChild(QCheckBox, "requiredConsent").setChecked(True)
     consent_page.findChild(QCheckBox, "researchConsent").setChecked(False)
@@ -188,6 +189,24 @@ def test_found_subject_profile_and_consent_are_bound_before_preflight(qtbot) -> 
     assert controller.window.current_page_id == PageId.PREFLIGHT
     controller.dispatch("ENTER_POSITION")
     assert controller.window.current_page_id == PageId.POSITION_GUIDANCE
+
+
+def test_profile_rejects_age_outside_supported_range(qtbot) -> None:
+    controller, coordinator, subjects, _ = _controller(
+        SubjectResolution(SubjectResolutionStatus.NOT_FOUND)
+    )
+    qtbot.addWidget(controller.window)
+    controller.dispatch("START_NEW_SCREENING")
+    controller.dispatch("CREATE_ANONYMOUS_SUBJECT")
+    profile_page = controller.window.page_widget(PageId.PROFILE)
+    profile_page.findChild(QLineEdit, "ageBandInput").setText("121")
+
+    controller.dispatch("SAVE_PROFILE")
+
+    assert controller.window.current_page_id == PageId.PROFILE
+    assert "1–120" in controller.window.error_text
+    assert subjects.updated == []
+    assert coordinator.state.step == ScreeningStep.PROFILE_DETAILS
 
 
 def test_required_consent_decline_stays_on_consent_with_plain_error(qtbot) -> None:
