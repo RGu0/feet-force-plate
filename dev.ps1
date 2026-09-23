@@ -68,6 +68,16 @@ try {
             if ($Command.Count -gt 0) { throw "build accepts no arguments" }
             & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud shared
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($env:FEETFORCEPLATE_PORTABLE_OUTPUT_ROOT) {
+                if ($env:FEETFORCEPLATE_PORTABLE_UNSIGNED_DEVELOPMENT -ne "1") {
+                    throw "governed portable build requires explicit unsigned development mode"
+                }
+                & (Join-Path $projectRoot "scripts\build-portable-release.ps1") `
+                    -OutputRoot $env:FEETFORCEPLATE_PORTABLE_OUTPUT_ROOT `
+                    -UnsignedDevelopment `
+                    -GitCommit ((& git rev-parse --verify HEAD).Trim())
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
         }
         "run" {
             if ($Command.Count -eq 0) { throw "run requires a command" }
