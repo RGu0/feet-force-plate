@@ -79,24 +79,23 @@ class KeyringAesKeyProvider:
         return self.get_current_key()[1]
 
     def get_current_key(self) -> tuple[int, bytes]:
-        try:
-            version = self._active_version()
-            if version == 1:
-                encoded = get_or_create_credential(
-                    self._vault,
-                    self._vault_key(1),
-                    lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
-                )
-            else:
+        with _credential_initialization_lock():
+            try:
+                version = self._active_version()
                 encoded = self._vault.get(self._vault_key(version))
                 if encoded is None:
-                    raise KeyProviderUnavailable("active institution data key is missing")
-        except Exception as exc:
-            if isinstance(exc, KeyProviderUnavailable):
-                raise
-            raise KeyProviderUnavailable(
-                "system credential storage is temporarily unavailable"
-            ) from exc
+                    if version != 1:
+                        raise KeyProviderUnavailable("active institution data key is missing")
+                    encoded = base64.b64encode(os.urandom(32)).decode("ascii")
+                    self._vault.set(self._vault_key(1), encoded)
+                    if self._vault.get(self._vault_key(1)) != encoded:
+                        raise KeyProviderUnavailable("institution data key was not retained")
+            except Exception as exc:
+                if isinstance(exc, KeyProviderUnavailable):
+                    raise
+                raise KeyProviderUnavailable(
+                    "system credential storage is temporarily unavailable"
+                ) from exc
         return version, self._decode_key(encoded)
 
     def get_key_for_version(self, version: int) -> bytes:

@@ -139,6 +139,49 @@ def test_institution_aes_rotation_refuses_version_overflow() -> None:
     assert "FeetForcePlate.institution-storage/aes256-v4294967296" not in vault.values
 
 
+def test_institution_aes_reader_waits_for_rotation_marker_update() -> None:
+    class PausedMarkerVault(_MemoryVault):
+        def __init__(self) -> None:
+            super().__init__()
+            self.updating = threading.Event()
+            self.release = threading.Event()
+            self.read_during_update = threading.Event()
+            self.guard = threading.Lock()
+
+        def get(self, key: str) -> str | None:
+            with self.guard:
+                value = self.values.get(key)
+            if key.endswith("/aes256-active-version") and self.updating.is_set():
+                self.read_during_update.set()
+            return value
+
+        def set(self, key: str, value: str) -> None:
+            if key.endswith("/aes256-active-version"):
+                with self.guard:
+                    self.values.pop(key, None)
+                self.updating.set()
+                assert self.release.wait(timeout=5)
+            with self.guard:
+                self.values[key] = value
+
+    vault = PausedMarkerVault()
+    provider = KeyringAesKeyProvider(vault)
+    old_key = provider.get_key()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        rotation = executor.submit(provider.rotate_key)
+        assert vault.updating.wait(timeout=5)
+        reader = executor.submit(KeyringAesKeyProvider(vault).get_current_key)
+        try:
+            assert not vault.read_during_update.wait(timeout=0.2)
+        finally:
+            vault.release.set()
+        assert rotation.result(timeout=5) == 2
+        version, key = reader.result(timeout=5)
+
+    assert version == 2
+    assert key != old_key
+
+
 class _FixedKey:
     def __init__(self, key: bytes) -> None:
         self.key = key
