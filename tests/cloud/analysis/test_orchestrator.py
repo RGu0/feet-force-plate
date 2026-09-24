@@ -18,6 +18,15 @@ from cloud.analysis.orchestrator import (
     InMemoryEventPublisher,
     RegisteredMetric,
 )
+from cloud.session_hold.service import SessionHeld
+
+
+class MutableHolds:
+    def __init__(self) -> None:
+        self.held: set[tuple[str, str]] = set()
+
+    def is_held(self, tenant_id: str, session_id: str) -> bool:
+        return (tenant_id, session_id) in self.held
 
 
 def frame() -> tuple[int, ...]:
@@ -112,6 +121,7 @@ def orchestrator(
     loader: Loader | None = None,
     algorithm_set_version: str = "algorithms/1",
     descriptor: AlgorithmDescriptor | None = None,
+    holds: MutableHolds | None = None,
 ) -> AnalysisOrchestrator:
     registered = RegisteredMetric(
         descriptor=descriptor or metric(),
@@ -129,10 +139,31 @@ def orchestrator(
         model_set_version="models/none",
         report_schema_version="report-document/1",
         parameters={"contact_threshold": 0},
+        holds=holds if holds is not None else MutableHolds(),
     )
 
 
 class AnalysisOrchestratorTests(unittest.TestCase):
+    def test_queued_event_is_blocked_after_hold_before_loader_or_reservation(self) -> None:
+        queued = event(event_id="queued-before-hold")
+        holds = MutableHolds()
+        repository = InMemoryAnalysisRepository()
+        publisher = InMemoryEventPublisher()
+        loader = Loader()
+        service = orchestrator(repository=repository, publisher=publisher, loader=loader, holds=holds)
+        holds.held.add((queued.tenant_id, queued.session_id))
+
+        with self.assertRaises(SessionHeld):
+            service.handle(queued)
+        self.assertEqual(loader.calls, 0)
+        self.assertEqual(repository.count(), 0)
+        self.assertEqual(publisher.events, [])
+
+        unheld = event(session_id="another-session", event_id="unheld-event")
+        # A different session on the same tenant still reaches the ordinary path.
+        service.handle(unheld)
+        self.assertEqual(loader.calls, 1)
+
     def test_only_accepts_the_approved_complete_session_event(self) -> None:
         repository = InMemoryAnalysisRepository()
         service = orchestrator(repository=repository)

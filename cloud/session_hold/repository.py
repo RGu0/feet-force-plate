@@ -17,6 +17,12 @@ class SessionHoldRepository(Protocol):
     async def status(self, tenant_id: UUID, session_id: UUID) -> SessionHoldStatus: ...
 
 
+class SessionHoldReader(Protocol):
+    """Synchronous, tenant-scoped decision passed to one domain processing step."""
+
+    def is_held(self, tenant_id: UUID | str, session_id: UUID | str) -> bool: ...
+
+
 class InMemorySessionHoldRepository:
     """Reference adapter; identity and raw session state are deliberately separate."""
 
