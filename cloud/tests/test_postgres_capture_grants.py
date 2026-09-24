@@ -51,7 +51,10 @@ def _role_dsns() -> tuple[str, str, str] | None:
     return values if all(values) else None
 
 
-@pytest.mark.skipif(_role_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
+@pytest.mark.skipif(
+    _role_dsns() is None or not os.environ.get("FEETFORCEPLATE_TEST_ADMIN_DSN"),
+    reason="three PostgreSQL application role DSNs and an admin inspection DSN are required",
+)
 def test_live_concurrent_51st_grant_locks_installation_and_stores_only_hashes():
     async def exercise():
         import asyncpg
@@ -88,7 +91,20 @@ def test_live_concurrent_51st_grant_locks_installation_and_stores_only_hashes():
                 assert await connection.fetchval("SELECT count(*) FROM screening.capture_grants WHERE installation_id=$1 AND state='ISSUED'", installation_id) == 50
                 digest = await connection.fetchval("SELECT token_sha256 FROM screening.capture_grants WHERE session_id=$1", initial.grants[0].session_id)
                 assert digest == hashlib.sha256(initial.grants[0].token.get_secret_value().encode()).digest()
-                assert await connection.fetchval("SELECT count(*) FROM ops.capture_authorization_audit WHERE tenant_id=$1 AND event_kind='ISSUED'", tenant.tenant_id) == 50
+            # Both application roles have INSERT-only audit access. Inspection
+            # uses an explicitly configured administrative test connection.
+            audit_connection = await asyncpg.connect(os.environ["FEETFORCEPLATE_TEST_ADMIN_DSN"])
+            try:
+                async with audit_connection.transaction():
+                    await audit_connection.execute(
+                        "SELECT set_config('app.tenant_id', $1, true)", str(tenant.tenant_id)
+                    )
+                    assert await audit_connection.fetchval(
+                        "SELECT count(*) FROM ops.capture_authorization_audit WHERE tenant_id=$1 AND event_kind='ISSUED'",
+                        tenant.tenant_id,
+                    ) == 50
+            finally:
+                await audit_connection.close()
             await service.retire(context, initial.grants[0].session_id, "CANCELED")
             with pytest.raises(TenantAccessDenied):
                 await service.retire(context, initial.grants[0].session_id, "CANCELED")
