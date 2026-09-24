@@ -52,6 +52,7 @@ from shared.contracts.cloud import (
     TestProtocol as CloudTestProtocol,
     ValidityStatus,
 )
+from shared.contracts.identity_recovery import RecoveryRegistrationResult
 
 
 class _Key:
@@ -97,6 +98,28 @@ class _IngestionService:
         ) = None
         self.completion_status: SessionStatusResponse | None = None
         self.subject_response: SubjectSummary | None = None
+        self.recovery_keys: list[str] = []
+        self.lose_recovery_response_once = False
+
+    def register_recovery(self, access_token, case_id, request, idempotency_key):
+        self.calls.append("recovery-register")
+        self.recovery_keys.append(idempotency_key)
+        self._fail_if_requested("recovery-register")
+        self.session_requests.append(request.session)
+        self.status = SessionStatusResponse(
+            session_id=request.session.session_id,
+            validity_status=ValidityStatus.UNKNOWN,
+            ingest_status=IngestStatus.RECEIVING,
+        )
+        if self.lose_recovery_response_once:
+            self.lose_recovery_response_once = False
+            raise UploadRetryable("recovery registration response lost")
+        return RecoveryRegistrationResult(
+            case_id=case_id, receipt_id=request.receipt_id,
+            consent_record_id=request.consent.consent_record_id,
+            session_id=request.session.session_id,
+            registered_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
 
     def _fail_if_requested(self, operation: str) -> None:
         failures = self.failures.get(operation, [])
@@ -475,7 +498,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
         self.assertTrue(sealed.path.exists())
 
-    def test_operator_authorized_recovery_uploads_original_raw_session_after_restart(self) -> None:
+    def test_server_matched_recovery_uploads_original_raw_session_after_restart(self) -> None:
         self.envelope = self.envelope.model_copy(update={
             "subject": SubjectCreateRequest(
                 subject_uuid=self.subject_id,
@@ -494,6 +517,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
         original_envelope = self.store.sync_handoff_envelope(str(self.session_id))
         authorization = SubjectRecoveryAuthorization(
+            schema_version="subject-recovery/2",
             session_id=self.session_id,
             original_envelope_sha256=canonical_sha256(original_envelope),
             original_subject_uuid=self.subject_id,
@@ -505,12 +529,15 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 purpose_codes=self.envelope.consent.purpose_codes,
                 data_categories=self.envelope.consent.data_categories,
                 granted_at=datetime.fromtimestamp(2, UTC),
-                evidence_type="OPERATOR_CONFIRMED",
+                evidence_type="SUBJECT_CONFIRMED",
                 terminal_signature="new-signed-evidence",
             ),
             operator_account_id=uuid4(),
             confirmed_at=datetime.fromtimestamp(1, UTC),
             cloud_external_id_masked="***2781",
+            case_id=uuid4(), receipt_id=uuid4(),
+            receipt_expires_at=datetime.fromtimestamp(30, UTC),
+            platform_ticket_sha256="a" * 64,
         )
         self.store.authorize_subject_recovery(authorization)
         self.store.close()
@@ -520,14 +547,86 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.store.subject_recovery_authorization(str(self.session_id)),
             authorization,
         )
-        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        remote.lose_recovery_response_once = True
+        clock = _Clock()
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        _, retry_at_ns, _ = self.store.sync_handoff_retry_state(self.session_id.hex)
+        assert retry_at_ns is not None
+        clock.value = retry_at_ns
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED")
         self.assertEqual(remote.session_requests[0].subject_uuid, cloud_subject)
         self.assertEqual(remote.session_requests[0].consent_record_id, new_consent)
         self.assertEqual(remote.session_requests[0].session_id, self.session_id)
+        self.assertEqual(len(remote.recovery_keys), 2)
+        self.assertEqual(remote.recovery_keys[0], remote.recovery_keys[1])
+        self.assertEqual(remote.consent_keys, [])
+        self.assertEqual(remote.session_keys, [])
         self.assertEqual(remote.put_calls, [0])
         self.assertTrue(sealed.path.exists())
         self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), original_envelope)
+
+    def test_rejected_receipt_blocks_and_preserves_old_authorization_for_renewal(self) -> None:
+        self.envelope = self.envelope.model_copy(update={
+            "subject": SubjectCreateRequest(
+                subject_uuid=self.subject_id,
+                external_identifier=ExternalIdentifierInput(
+                    issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER",
+                    external_id="test-2781",
+                ),
+            ),
+        })
+        sealed = self._seal(0)
+        self._commit(sealed)
+        cloud_subject = uuid4()
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        envelope = self.store.sync_handoff_envelope(str(self.session_id))
+        consent = self.envelope.consent.model_copy(update={
+            "consent_record_id": uuid4(), "subject_uuid": cloud_subject,
+            "granted_at": datetime.fromtimestamp(2, UTC),
+            "evidence_type": "SUBJECT_CONFIRMED",
+        })
+        authorization = SubjectRecoveryAuthorization(
+            schema_version="subject-recovery/2", session_id=self.session_id,
+            original_envelope_sha256=canonical_sha256(envelope),
+            original_subject_uuid=self.subject_id, cloud_subject_uuid=cloud_subject,
+            replacement_consent=consent, operator_account_id=uuid4(),
+            confirmed_at=datetime.fromtimestamp(1, UTC),
+            case_id=uuid4(), receipt_id=uuid4(),
+            receipt_expires_at=datetime.fromtimestamp(30, UTC),
+            platform_ticket_sha256="a" * 64,
+        )
+        self.store.authorize_subject_recovery(authorization)
+        remote.failures["recovery-register"] = [UploadConflict("expired receipt")]
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.BLOCKED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "BLOCKED")
+        self.assertEqual(self.store.subject_recovery_candidates(), (str(self.session_id),))
+        renewed = authorization.model_copy(update={
+            "receipt_id": uuid4(), "receipt_expires_at": datetime.fromtimestamp(60, UTC),
+            "confirmed_at": datetime.fromtimestamp(3, UTC),
+            "replacement_consent": consent.model_copy(update={
+                "consent_record_id": uuid4(), "granted_at": datetime.fromtimestamp(4, UTC),
+            }),
+        })
+        self.store.authorize_subject_recovery(renewed)
+        self.assertEqual(self.store.subject_recovery_authorization(str(self.session_id)), renewed)
+        history = self.store._connection.execute(
+            "SELECT encrypted_payload FROM subject_recovery_authorization_history WHERE session_id=?",
+            (str(self.session_id),),
+        ).fetchone()
+        assert history is not None
+        assert str(authorization.receipt_id).encode() not in history[0]
+        self.assertEqual(
+            SubjectRecoveryAuthorization.model_validate_json(self.store._codec.decrypt(
+                history[0], context=f"subject_recovery:{self.session_id}",
+            )), authorization,
+        )
+        self.assertTrue(sealed.path.exists())
 
     def test_subject_recovery_rejects_wrong_original_digest_without_releasing_handoff(self) -> None:
         sealed = self._seal(0)

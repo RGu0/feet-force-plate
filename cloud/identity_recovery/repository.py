@@ -110,6 +110,7 @@ class InMemoryRecoveryCaseRepository:
                 case, attempts=case.attempts + 1,
                 status="MATCHED" if matched else ("DENIED" if case.attempts >= 2 else "PENDING"),
                 receipt_id=receipt_id, receipt_expires_at=expires_at,
+                ticket_sha256=ticket_sha256 if matched else None,
             )
             self._by_id[(tenant_id, case_id)] = updated
             self._cases[(tenant_id, case.request.session_id)] = updated

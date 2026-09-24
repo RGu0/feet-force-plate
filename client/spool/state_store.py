@@ -20,7 +20,7 @@ from shared.contracts.client_sync import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -423,6 +423,17 @@ class StateStore:
                     )"""
                 )
                 self._connection.execute("PRAGMA user_version=10")
+            if version < 11:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorization_history (
+                        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL,
+                        replaced_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute("PRAGMA user_version=11")
 
     def record_validation_audit(
         self,
@@ -844,7 +855,17 @@ class StateStore:
     def authorize_subject_recovery(
         self, authorization: SubjectRecoveryAuthorization
     ) -> None:
-        """Atomically record fresh consent and release an identity-blocked handoff."""
+        """Atomically record server-bound consent and release a blocked handoff."""
+
+        if (
+            authorization.schema_version != "subject-recovery/2"
+            or authorization.case_id is None
+            or authorization.receipt_id is None
+            or authorization.receipt_expires_at is None
+            or authorization.platform_ticket_sha256 is None
+            or authorization.receipt_expires_at <= authorization.confirmed_at
+        ):
+            raise ValueError("current server match receipt is required")
 
         session_id = self._stored_sync_handoff_id(str(authorization.session_id))
         envelope = self.sync_handoff_envelope(session_id)
@@ -874,16 +895,32 @@ class StateStore:
                 raise ValueError("conflict has another cause")
             if row[0] == "BLOCKED" and row[1] != "E-AUT-403":
                 raise ValueError("blocked handoff has another cause")
-            if self._connection.execute(
-                "SELECT 1 FROM subject_recovery_authorizations WHERE session_id=?",
+            previous = self._connection.execute(
+                """SELECT encrypted_payload, recorded_at_ns
+                FROM subject_recovery_authorizations WHERE session_id=?""",
                 (session_id,),
-            ).fetchone() is not None:
-                raise ValueError("recovery authorization is already recorded")
-            self._connection.execute(
-                """INSERT INTO subject_recovery_authorizations
-                (session_id, encrypted_payload, recorded_at_ns) VALUES (?,?,?)""",
-                (session_id, encrypted, int(authorization.confirmed_at.timestamp() * 1e9)),
-            )
+            ).fetchone()
+            recorded_at_ns = int(authorization.confirmed_at.timestamp() * 1e9)
+            if previous is not None:
+                if row[0] != "BLOCKED" or row[1] != "E-AUT-403":
+                    raise ValueError("recovery authorization is already recorded")
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorization_history
+                    (session_id, encrypted_payload, recorded_at_ns, replaced_at_ns)
+                    VALUES (?,?,?,?)""",
+                    (session_id, previous[0], previous[1], recorded_at_ns),
+                )
+                self._connection.execute(
+                    """UPDATE subject_recovery_authorizations
+                    SET encrypted_payload=?, recorded_at_ns=? WHERE session_id=?""",
+                    (encrypted, recorded_at_ns, session_id),
+                )
+            else:
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorizations
+                    (session_id, encrypted_payload, recorded_at_ns) VALUES (?,?,?)""",
+                    (session_id, encrypted, recorded_at_ns),
+                )
             self._connection.execute(
                 """UPDATE sync_handoffs SET state='READY_FOR_NETWORK',
                 next_attempt_at_ns=NULL, last_error_code=NULL WHERE session_id=?""",

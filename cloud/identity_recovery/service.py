@@ -38,6 +38,7 @@ class IdentityRecoveryService:
             masked_clue=record.masked_clue, created_at=record.created_at,
             receipt_id=None if expired or record.status != "MATCHED" or record.receipt_consumed_at else record.receipt_id,
             receipt_expires_at=None if expired or record.status != "MATCHED" or record.receipt_consumed_at else record.receipt_expires_at,
+            platform_ticket_sha256=None if expired or record.status != "MATCHED" or record.receipt_consumed_at else record.ticket_sha256,
         )
 
     async def create_case(

@@ -53,6 +53,10 @@ from shared.contracts.cloud import (
     TestProtocol,
     ValidityStatus,
 )
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryCaseSummary,
+    RecoveryRegistrationRequest, RecoveryRegistrationResult,
+)
 
 
 _SAFE_ERROR_CODE = re.compile(r"^E-[A-Z]{3}-[0-9]{3}$")
@@ -122,6 +126,17 @@ class UploadTokenProvider(Protocol):
 
 
 class IngestionClient(Protocol):
+    def create_recovery_case(
+        self, access_token: str, request: RecoveryCaseCreateRequest, idempotency_key: str,
+    ) -> RecoveryCaseSummary: ...
+
+    def get_recovery_case(self, access_token: str, case_id: UUID) -> RecoveryCaseSummary: ...
+
+    def register_recovery(
+        self, access_token: str, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+    ) -> RecoveryRegistrationResult: ...
+
     def get_status(
         self, access_token: str, session_id: UUID
     ) -> SessionStatusResponse | None: ...
@@ -311,6 +326,47 @@ class PersistentUploadQueue:
         except Exception as exc:
             raise UploadConflict("formal upload envelope is unavailable") from exc
 
+        if recovery is not None:
+            if (
+                recovery.schema_version != "subject-recovery/2"
+                or recovery.case_id is None or recovery.receipt_id is None
+                or recovery.original_envelope_sha256 != canonical_sha256(envelope)
+                or recovery.session_id != envelope.session_id
+                or recovery.original_subject_uuid != envelope.subject.subject_uuid
+            ):
+                raise UploadBlocked("recovery lacks a server-issued match receipt")
+            consent = recovery.replacement_consent
+            session_request = envelope.session_request().model_copy(update={
+                "subject_uuid": recovery.cloud_subject_uuid,
+                "consent_record_id": consent.consent_record_id,
+            })
+            try:
+                registration = self._client.register_recovery(
+                    access_token, recovery.case_id,
+                    RecoveryRegistrationRequest(
+                        receipt_id=recovery.receipt_id,
+                        original_subject_uuid=recovery.original_subject_uuid,
+                        original_envelope_sha256=recovery.original_envelope_sha256,
+                        consent=consent, session=session_request,
+                    ),
+                    f"recovery:{recovery.case_id}:{recovery.original_envelope_sha256}",
+                )
+            except UploadConflict as exc:
+                # The server first checks idempotent replay. A 409 here means
+                # there is no committed registration to resume. Keep raw data
+                # blocked and require a new platform comparison/receipt.
+                raise UploadBlocked(
+                    "recovery receipt was rejected; new verification is required",
+                    error_code="E-AUT-403",
+                ) from exc
+            if (
+                registration.case_id != recovery.case_id
+                or registration.receipt_id != recovery.receipt_id
+                or registration.session_id != envelope.session_id
+                or registration.consent_record_id != consent.consent_record_id
+            ):
+                raise UploadConflict("cloud recovery registration does not match local authorization")
+
         status = self._client.get_status(access_token, envelope.session_id)
         if status is not None:
             self._require_status_session(status, envelope.session_id)
@@ -330,44 +386,19 @@ class PersistentUploadQueue:
                 )
             consent = envelope.consent
             session_request = envelope.session_request()
-        else:
-            external = envelope.subject.external_identifier
-            if external is None:
-                raise UploadConflict("recovered subject has no institution identifier")
-            subject = self._client.resolve_subject(
-                access_token, SubjectResolveRequest.model_validate(external.model_dump()),
+            consent_response = self._client.create_consent(
+                access_token, consent, f"consent:{canonical_sha256(consent)}",
             )
             if (
-                subject is None
-                or subject.subject_uuid == envelope.subject.subject_uuid
-                or recovery.session_id != envelope.session_id
-                or recovery.original_envelope_sha256 != canonical_sha256(envelope)
-                or recovery.original_subject_uuid != envelope.subject.subject_uuid
-                or recovery.cloud_subject_uuid != subject.subject_uuid
+                consent_response.consent_record_id != consent.consent_record_id
+                or consent_response.subject_uuid != consent.subject_uuid
+                or consent_response.policy_version != consent.policy_version
+                or consent_response.revoked_at is not None
             ):
-                raise UploadConflict("cloud subject no longer matches recovery authorization")
-            consent = recovery.replacement_consent
-            session_request = envelope.session_request().model_copy(update={
-                "subject_uuid": recovery.cloud_subject_uuid,
-                "consent_record_id": consent.consent_record_id,
-            })
-        consent_response = self._client.create_consent(
-            access_token,
-            consent,
-            f"consent:{canonical_sha256(consent)}",
-        )
-        if (
-            consent_response.consent_record_id != consent.consent_record_id
-            or consent_response.subject_uuid != consent.subject_uuid
-            or consent_response.policy_version != consent.policy_version
-            or consent_response.revoked_at is not None
-        ):
-            raise UploadConflict("cloud consent does not match upload authorization")
-        self._client.create_session(
-            access_token,
-            session_request,
-            f"session:{canonical_sha256(session_request)}",
-        )
+                raise UploadConflict("cloud consent does not match upload authorization")
+            self._client.create_session(
+                access_token, session_request, f"session:{canonical_sha256(session_request)}",
+            )
         try:
             local = self._local_segments(handoff, envelope)
         except KeyProviderUnavailable as exc:
@@ -678,6 +709,31 @@ class HttpIngestionClient:
             SessionStatusResponse,
             access_token,
             not_found_none=True,
+        )
+
+    def create_recovery_case(
+        self, access_token: str, request: RecoveryCaseCreateRequest, idempotency_key: str,
+    ) -> RecoveryCaseSummary:
+        return self._model_request(
+            "POST", "/v1/identity-recovery/cases", RecoveryCaseSummary, access_token,
+            headers={"Idempotency-Key": idempotency_key}, json=request.model_dump(mode="json"),
+        )
+
+    def get_recovery_case(self, access_token: str, case_id: UUID) -> RecoveryCaseSummary:
+        return self._model_request(
+            "GET", f"/v1/identity-recovery/cases/{case_id}",
+            RecoveryCaseSummary, access_token,
+        )
+
+    def register_recovery(
+        self, access_token: str, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+    ) -> RecoveryRegistrationResult:
+        return self._model_request(
+            "POST", f"/v1/identity-recovery/cases/{case_id}/register",
+            RecoveryRegistrationResult, access_token,
+            headers={"Idempotency-Key": idempotency_key},
+            json=request.model_dump(mode="json"),
         )
 
     def create_subject(

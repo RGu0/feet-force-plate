@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from client.spool.state_store import (
+    SCHEMA_VERSION,
     GateReason,
     SensitiveBlobCodec,
     StateStore,
@@ -85,7 +86,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 10)
+        self.assertEqual(self.store.schema_version, SCHEMA_VERSION)
         expected = {
             "subject_refs",
             "consent_records",
@@ -301,7 +302,7 @@ class StateStoreTests(unittest.TestCase):
 
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
-        self.assertEqual(self.store.schema_version, 10)
+        self.assertEqual(self.store.schema_version, SCHEMA_VERSION)
         with closing(sqlite3.connect(self.db_path)) as verification:
             columns = {
                 row[1]

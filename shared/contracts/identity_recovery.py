@@ -35,6 +35,7 @@ class RecoveryCaseSummary(ContractModel):
     created_at: datetime
     receipt_id: UUID | None = None
     receipt_expires_at: datetime | None = None
+    platform_ticket_sha256: Sha256Hex | None = None
 
 
 class RecoveryCaseCreateResponse(ContractModel):

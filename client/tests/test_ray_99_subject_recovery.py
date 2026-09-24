@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,6 +11,7 @@ from shared.contracts.cloud import (
     ConsentCreateRequest, ExternalIdentifierInput, SessionVersions,
     SubjectCreateRequest, SubjectSummary, TestProtocol,
 )
+from shared.contracts.identity_recovery import RecoveryCaseSummary
 
 
 class _Store:
@@ -32,6 +33,10 @@ class _Store:
 class _Client:
     def __init__(self, cloud_uuid):
         self.cloud_uuid = cloud_uuid
+        self.status = "PENDING"
+        self.case_id = uuid4()
+        self.receipt_id = uuid4()
+        self.session_id = None
 
     def resolve_subject(self, token, request):
         assert token == "access"
@@ -40,6 +45,18 @@ class _Client:
             return None
         return SubjectSummary(
             subject_uuid=self.cloud_uuid, external_id_masked="***0731", conflict=True
+        )
+
+    def create_recovery_case(self, token, request, key):
+        self.session_id = request.session_id
+        return RecoveryCaseSummary(
+            case_id=self.case_id, session_id=request.session_id,
+            status=self.status, masked_clue="***0731",
+            created_at=datetime(2026, 9, 23, 12, tzinfo=UTC),
+            receipt_id=self.receipt_id if self.status == "MATCHED" else None,
+            receipt_expires_at=(datetime(2026, 9, 23, 12, tzinfo=UTC) + timedelta(minutes=15))
+            if self.status == "MATCHED" else None,
+            platform_ticket_sha256="a" * 64 if self.status == "MATCHED" else None,
         )
 
 
@@ -90,15 +107,12 @@ def _service(*, verified_identity=True):
     )
     store = _Store(envelope)
     client = _Client(cloud)
+    client.status = "MATCHED" if verified_identity else "PENDING"
     signer = _Signer()
     service = SubjectRecoveryService(
         store=store, client=client, tokens=_Tokens(), signer=signer,
         tenant_id=str(uuid4()), terminal_id=str(envelope.client_installation_id),
         operator_account_id=str(uuid4()),
-        identity_evidence_verifier=(
-            (lambda envelope, summary: "controlled-test-evidence")
-            if verified_identity else None
-        ),
         now=lambda: datetime(2026, 9, 23, 12, tzinfo=UTC),
     )
     return service, store, client, signer
@@ -106,9 +120,13 @@ def _service(*, verified_identity=True):
 
 def test_masked_identifier_without_independent_identity_evidence_fails_closed():
     service, store, _, signer = _service(verified_identity=False)
-    with pytest.raises(RecoveryLookupError) as blocked:
-        service.prepare(store.envelope.session_id)
-    assert blocked.value.error_code == "independent-identity-evidence-unavailable"
+    preview = service.prepare(store.envelope.session_id)
+    assert preview.status == "PENDING"
+    with pytest.raises(ValueError):
+        service.authorize(
+            preview, evidence_type="SUBJECT_CONFIRMED",
+            necessary_processing_accepted=True, research_accepted=False,
+        )
     assert store.authorization is None
     assert signer.requests == []
 
@@ -116,10 +134,10 @@ def test_masked_identifier_without_independent_identity_evidence_fails_closed():
 def test_operator_must_reconfirm_identity_and_necessary_processing():
     service, store, _, signer = _service()
     preview = service.prepare(store.envelope.session_id)
-    for same_person, necessary in ((False, True), (True, False)):
+    for evidence_type, necessary in (("OPERATOR_CONFIRMED", True), ("SUBJECT_CONFIRMED", False)):
         with pytest.raises(ValueError):
             service.authorize(
-                preview, same_person_confirmed=same_person,
+                preview, evidence_type=evidence_type,
                 necessary_processing_accepted=necessary, research_accepted=False,
             )
     assert store.authorization is None
@@ -132,12 +150,13 @@ def test_new_signed_consent_targets_cloud_subject_and_keeps_original():
     preview = service.prepare(original.session_id)
     assert preview.local_identifier_masked == "***0731"
     authorization = service.authorize(
-        preview, same_person_confirmed=True,
+        preview, evidence_type="SUBJECT_CONFIRMED",
         necessary_processing_accepted=True, research_accepted=False,
     )
     assert authorization.cloud_subject_uuid == preview.cloud_subject_uuid
     assert authorization.replacement_consent.subject_uuid == preview.cloud_subject_uuid
     assert authorization.replacement_consent.purpose_codes == ("SCREENING",)
+    assert authorization.receipt_id == preview.receipt_id
     assert signer.requests[0].subject_uuid == str(preview.cloud_subject_uuid)
     assert store.envelope == original
 
@@ -148,7 +167,7 @@ def test_remote_subject_change_requires_new_preview():
     client.cloud_uuid = uuid4()
     with pytest.raises(ValueError, match="changed"):
         service.authorize(
-            preview, same_person_confirmed=True,
+            preview, evidence_type="SUBJECT_CONFIRMED",
             necessary_processing_accepted=True, research_accepted=False,
         )
     assert store.authorization is None

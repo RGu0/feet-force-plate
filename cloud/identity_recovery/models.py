@@ -22,3 +22,4 @@ class RecoveryCaseRecord:
     receipt_id: UUID | None = None
     receipt_expires_at: datetime | None = None
     receipt_consumed_at: datetime | None = None
+    ticket_sha256: str | None = None

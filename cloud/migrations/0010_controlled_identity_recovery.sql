@@ -46,6 +46,7 @@ CREATE TABLE ops.identity_recovery_receipts (
     cloud_subject_uuid uuid NOT NULL,
     envelope_sha256 text NOT NULL CHECK (envelope_sha256 ~ '^[0-9a-f]{64}$'),
     expires_at timestamptz NOT NULL,
+    ticket_sha256 text NOT NULL CHECK (ticket_sha256 ~ '^[0-9a-f]{64}$'),
     consumed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, receipt_id),

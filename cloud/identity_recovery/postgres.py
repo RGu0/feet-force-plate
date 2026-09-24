@@ -41,11 +41,12 @@ def _record(row) -> RecoveryCaseRecord:
         attempts=row["attempts"], receipt_id=row["receipt_id"],
         receipt_expires_at=row["receipt_expires_at"],
         receipt_consumed_at=row["receipt_consumed_at"],
+        ticket_sha256=row["ticket_sha256"],
     )
 
 
 _CASE_SELECT = """SELECT c.*, r.receipt_id, r.expires_at AS receipt_expires_at,
-                         r.consumed_at AS receipt_consumed_at
+                         r.consumed_at AS receipt_consumed_at, r.ticket_sha256
                   FROM ops.identity_recovery_cases c
                   LEFT JOIN ops.identity_recovery_receipts r
                     ON r.tenant_id=c.tenant_id AND r.case_id=c.case_id"""
@@ -243,18 +244,19 @@ class PostgresRecoveryCaseRepository:
                     await connection.execute(
                         """INSERT INTO ops.identity_recovery_receipts
                            (receipt_id, tenant_id, case_id, terminal_id, session_id,
-                            original_subject_uuid, cloud_subject_uuid, envelope_sha256, expires_at)
-                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+                            original_subject_uuid, cloud_subject_uuid, envelope_sha256,
+                            expires_at, ticket_sha256)
+                           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
                         receipt_id, tenant_id, case_id, case["terminal_id"], case["session_id"],
                         case["original_subject_uuid"], case["cloud_subject_uuid"],
-                        case["envelope_sha256"], expires_at,
+                        case["envelope_sha256"], expires_at, ticket_sha256,
                     )
                 else:
                     await connection.execute(
                         """UPDATE ops.identity_recovery_receipts
-                           SET receipt_id=$3, expires_at=$4, consumed_at=NULL
+                           SET receipt_id=$3, expires_at=$4, ticket_sha256=$5, consumed_at=NULL
                            WHERE tenant_id=$1 AND case_id=$2 AND consumed_at IS NULL""",
-                        tenant_id, case_id, receipt_id, expires_at,
+                        tenant_id, case_id, receipt_id, expires_at, ticket_sha256,
                     )
             await connection.execute(
                 """INSERT INTO ops.identity_recovery_comparisons
