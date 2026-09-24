@@ -1,10 +1,10 @@
 # RAY-513 暂停 License 后有效会话补传设计
 
-**状态：** 待用户审阅书面规格
+**状态：** 书面规格已获用户确认；R5 审批理由修订已确认
 
 **日期：** 2026-09-23
 
-**Linear：** RAY-513 revision R4
+**Linear：** RAY-513 revision R5（继承 R4，仅收窄迁移审批理由）
 
 **交付 scope：** `suspended-valid-session-resume`
 
@@ -18,7 +18,7 @@ License 暂停须阻止新的无凭据云端 session 登记，同时不能使此
 
 ## 2. 现状与被否决的路径
 
-`PersistentUploadQueue` 每次尝试都先调用 `POST /v1/sessions`，然后查询缺段、上传、提交清单。PR #56 在 `IngestionService.create_session()` 入口无条件调用 `ensure_can_start_new()`；它使暂停后的裸请求得到 403，却也挡住未在云端登记的有效旧会话，以及队列的已登记会话重试。PR #56 已合并但尚未部署到 Aliyun seed，不能单独作为 R4 验收。
+`PersistentUploadQueue` 每次尝试都先调用 `POST /v1/sessions`，然后查询缺段、上传、提交清单。PR #56 在 `IngestionService.create_session()` 入口无条件调用 `ensure_can_start_new()`；它使暂停后的裸请求得到 403，却也挡住未在云端登记的有效旧会话，以及队列的已登记会话重试。PR #56 已合并但尚未部署到 Aliyun seed，不能单独作为 R5 验收。
 
 曾考虑的两种较简单方案均不满足目标：仅信任客户端签名 License 和自报 `started_at`，可被篡改客户端伪造；强制每次测试开始时联网登记，破坏 RAY-99 的 24 小时离线采集和长期断网后补传。采用服务端预发额度，并对无额度的历史数据设置人工审计例外。
 
@@ -46,7 +46,7 @@ License 暂停须阻止新的无凭据云端 session 登记，同时不能使此
 
 旧版 `VALID` 会话如已在云端登记，按上节已有 session 规则重试，不需要补发额度。未登记且无额度的旧会话在 License 暂停后**不自动放行**；队列保留数据和明确的“需迁移核准”状态。若 RAY-99 的受试者 UUID / 同意冲突尚未解决，必须先由操作员完成受控身份核对、新同意及持久映射，由该持久映射形成最终 cloud `SessionCreateRequest`，然后计算 canonical digest；原始上传封套与原同意审计保持不可变。RAY-513 不自行实现或绕过 RAY-99 的身份恢复流程，相关组合验收依赖该流程完成。
 
-平台 `PLATFORM_OWNER` 使用独立的 `POST /v1/platform/upload-migration-permits`，提交 tenant、account、License、采集时安装/硬件、最终 session UUID、最终请求 SHA-256、最终清单 SHA-256、证据引用和非空审批理由。审批材料须包括本地 `VALID`/不可变分段与原同意，并核对可取得的采集时授权证据（例如保留的签名 License 版本或服务端历史发行审计）；证据不足时不能自动核准。服务器只记录引用与摘要，不复制原始数据或敏感凭据进审计。仅负责人可签发，签发本身及拒绝留审计。许可是高熵、一次性、仅供该 session 与两个摘要使用的不透明令牌；消费与云端新建 session 在同一事务。负责人核准代表明确的风险承担，不应在产品或证据中描述成自动验证了真实采集时刻。
+平台 `PLATFORM_OWNER` 使用独立的 `POST /v1/platform/upload-migration-permits`，提交 tenant、account、License、采集时安装/硬件、最终 session UUID、最终请求 SHA-256、最终清单 SHA-256、证据引用，以及固定的非敏感审批理由代码 `LEGACY_VALID_SESSION_REVIEWED`；接口拒绝自由文本理由。详细审批说明只保存在受限证据中，`evidence_reference` 仅是没有敏感内容的引用。审批材料须包括本地 `VALID`/不可变分段与原同意，并核对可取得的采集时授权证据（例如保留的签名 License 版本或服务端历史发行审计）；证据不足时不能自动核准。服务器在许可记录和审计中保存审批者、固定理由代码、证据引用与摘要，不复制详细说明、原始数据或敏感凭据。仅负责人可签发，签发本身及拒绝留审计。许可是高熵、一次性、仅供该 session 与两个摘要使用的不透明令牌；消费与云端新建 session 在同一事务。负责人核准代表明确的风险承担，不应在产品或证据中描述成自动验证了真实采集时刻。
 
 旧客户端不带 grant 时，在 License 仍有效下可以按现行权限上传；若其未登记会话遇到暂停，则走上述人工路径。不能以全租户开关、无期限通用豁免或手工直接写数据库绕过。许可证恢复为 active 后，普通上传可重试，历史原始数据始终保留。
 
@@ -61,12 +61,12 @@ License 暂停须阻止新的无凭据云端 session 登记，同时不能使此
 1. 合同/数据库/服务测试：活跃发行及上限、暂停不能发行、裸请求 403 且无副作用、跨租户/安装/硬件/会话/摘要拒绝、注销后拒绝、并发消费唯一、丢响应后同会话幂等、已有会话无新 grant 重试、`allow_upload=false` 硬拒绝、最终清单摘要匹配。
 2. 客户端组合测试：正式 workflow 从预发 UUID 创建本地会话；有效会话晋升与授权交接原子；取消/无效/崩溃烧掉额度；24 小时、50 次、2 GiB 本地门槛；进程重启/网络恢复/长期延迟上传；额度耗尽只挡新测；权限错误保留原始数据。覆盖真实 `PersistentUploadQueue`，不以直接 `put_segment`/`complete_session` 单测替代。
 3. 人工迁移测试：无额度旧会话自动拒绝；审批需负责人身份、理由和证据引用；受试者/同意冲突在核准前解决；许可只匹配最终请求与清单摘要；重复或换会话使用失败；拒批与失联不删除原始数据。测试使用脱敏 fixture，不把本机测试说成 Windows 真机验收。
-4. 受管测试、lint/build、跨平台 CI、PR head 自审与证据齐全后合并本 scope。Aliyun 先发布包含 R4 修正的**精确提交**，再与 RAY-120 D10 候选明确集成；不得只部署 PR #56 或直接把当前 `master` 当成 D10 候选。受控 seed 验证暂停后裸请求 403、持合法额度的有效会话首次登记/补传、同会话重试及人工许可拒绝/通过路径，然后重跑 RAY-120 live acceptance。部署、审计与证据不得打印密钥或令牌。
+4. 受管测试、lint/build、跨平台 CI、PR head 自审与证据齐全后合并本 scope。Aliyun 先发布包含 R5 修正的**精确提交**，再与 RAY-120 D10 候选明确集成；不得只部署 PR #56 或直接把当前 `master` 当成 D10 候选。受控 seed 验证暂停后裸请求 403、持合法额度的有效会话首次登记/补传、同会话重试及人工许可拒绝/通过路径，然后重跑 RAY-120 live acceptance。部署、审计与证据不得打印密钥或令牌。
 
-此设计 scope 的 PR 不能仅因 CI 通过就标记 RAY-513 Done；须按 R4 证据与合并状态重验旧 `license-new-session-gate` 和新 scope，再核对 RAY-120 的父级验收门槛。
+此设计 scope 的 PR 不能仅因 CI 通过就标记 RAY-513 Done；须按 R5 证据与合并状态重验旧 `license-new-session-gate` 和新 scope，再核对 RAY-120 的父级验收门槛。
 
 ## 6. 文档同步与非目标
 
-实现 scope 中同步仓库 `docs/产品需求文档_PRD.md`、`docs/modules/05-sync-upload.md`、`docs/modules/08-subject-consent.md`、本仓库旧 RAY-99 上传设计及共享上下文对应副本；逐项检查通信接口、架构文档并记录改动或不变理由。该设计文档本身是 R4 的新权威方案，不改写 PR #56 或 RAY-99 历史证据。
+实现 scope 中同步仓库 `docs/产品需求文档_PRD.md`、`docs/modules/05-sync-upload.md`、`docs/modules/08-subject-consent.md`、本仓库旧 RAY-99 上传设计及共享上下文对应副本；逐项检查通信接口、架构文档并记录改动或不变理由。该设计文档承载 R5 当前方案，不改写 PR #56 或 RAY-99 历史证据。
 
 非目标：改动 RAY-120 D10 identity loader、重做 credential vault、把客户端时间戳升级为可信时间证明、静默合并受试者/同意、绕过真实 Windows 打包客户端或阿里云验收。新的授权凭据只使用现有敏感数据加密及受限日志边界，不引入另一套通用凭据平台。
