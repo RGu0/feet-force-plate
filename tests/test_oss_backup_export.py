@@ -58,8 +58,8 @@ def test_export_fetches_referenced_keys_and_records_digests(tmp_path: Path) -> N
         stored = (tmp_path / "objects" / key).read_bytes()
         assert stored == objects[key]
         assert digest == hashlib.sha256(objects[key]).hexdigest()
-    deepest = tmp_path / "objects" / "tenants" / "t1" / "sessions" / "s1" / "segments"
     if os.name != "nt":
+        deepest = tmp_path / "objects" / "tenants" / "t1" / "sessions" / "s1" / "segments"
         assert deepest.stat().st_mode & 0o777 == 0o700
         file_mode = (deepest / "0-abc.ffps").stat().st_mode & 0o777
         assert file_mode == 0o600
