@@ -482,11 +482,26 @@ def create_app(container: ServiceContainer) -> FastAPI:
             tenant_id: UUID,
             context: PlatformAccessDependency,
         ):
+            if container.session_holds is None:
+                raise RepositoryUnavailable("report hold check unavailable")
+            binding = getattr(container.platform_reports, "session_for_report", None)
+            if binding is None:
+                raise RepositoryUnavailable("report session binding unavailable")
             result = await container.platform_reports.list_masked_reports(
                 context,
                 tenant_id,
             )
-            return _data_response(request, result)
+            visible = []
+            for row in result:
+                if getattr(row, "tenant_id", None) != tenant_id:
+                    raise RepositoryUnavailable("report tenant binding unavailable")
+                session_id = await binding(context, tenant_id, row.report_id)
+                if not isinstance(session_id, UUID):
+                    raise RepositoryUnavailable("report session binding unavailable")
+                hold = await container.session_holds.status(context, tenant_id, session_id)
+                if not hold.held:
+                    visible.append(row)
+            return _data_response(request, visible)
 
     if container.session_holds is not None and container.platform_tokens is not None:
 
