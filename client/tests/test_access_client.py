@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import unittest
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -190,6 +191,24 @@ class CloudAccessClientTests(unittest.TestCase):
                 self.assertNotIn(secret, str(caught.exception))
                 self.assertNotIn("Authorization", str(caught.exception))
                 client.close()
+
+
+def test_access_client_does_not_log_or_raise_response_grant_token(caplog) -> None:
+    secret = "capture-grant-secret-opaque-value"
+    caplog.set_level(logging.DEBUG)
+    client = CloudAccessClient(
+        "https://cloud.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(403, text=f"grant={secret}")
+        ),
+    )
+    try:
+        with unittest.TestCase().assertRaises(AccessDenied) as caught:
+            client.fetch_license("access-token-value-at-least-20-chars")
+        assert secret not in str(caught.exception)
+        assert secret not in caplog.text
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
