@@ -31,6 +31,7 @@ from cloud.ingestion.principal import (
     legacy_terminal_principal,
     tenant_ingestion_principal,
 )
+from cloud.session_hold.models import HoldApplyBody, HoldApplyRequest
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -90,6 +91,7 @@ class ServiceContainer:
     platform_reports: object | None = None
     platform_subjects: object | None = None
     validation_telemetry: object | None = None
+    session_holds: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -484,6 +486,39 @@ def create_app(container: ServiceContainer) -> FastAPI:
                 context,
                 tenant_id,
             )
+            return _data_response(request, result)
+
+    if container.session_holds is not None and container.platform_tokens is not None:
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_apply_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldApplyBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.apply(
+                context,
+                HoldApplyRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    ticket_reference=body.ticket_reference,
+                    reason_code=body.reason_code,
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.get("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_session_hold_status(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            context: PlatformAccessDependency,
+        ):
+            result = await container.session_holds.status(context, tenant_id, session_id)
             return _data_response(request, result)
 
     if (

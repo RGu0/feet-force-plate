@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.sql"
+HOLD_MIGRATION = Path(__file__).parents[1] / "migrations" / "0009_unverified_session_holds.sql"
 
 
 class MigrationContractTests(unittest.TestCase):
@@ -73,6 +74,16 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("CREATE TABLE screening.session_segments", self.sql)
         self.assertIn("CREATE TABLE ops.audit_logs", self.sql)
         self.assertNotIn("external_id_plaintext", self.sql)
+
+    def test_hold_tables_are_tenant_scoped_and_append_only(self) -> None:
+        sql = HOLD_MIGRATION.read_text(encoding="utf-8")
+        for table in ("ops.session_holds", "ops.session_hold_events", "ops.session_hold_idempotency"):
+            self.assertIn(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;", sql)
+            self.assertIn(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;", sql)
+        self.assertIn("UNIQUE (tenant_id, session_id)", sql)
+        self.assertIn("tenant_id = ops.current_tenant_id()", sql)
+        self.assertIn("request_sha256", sql)
+        self.assertIn("FOREIGN KEY (tenant_id, session_id) REFERENCES screening.sessions", sql)
 
 
 if __name__ == "__main__":
