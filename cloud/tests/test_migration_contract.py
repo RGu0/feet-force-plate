@@ -77,3 +77,23 @@ class MigrationContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentityRecoveryMigrationContractTests(unittest.TestCase):
+    def test_case_table_is_tenant_isolated_and_has_no_plaintext_identity(self) -> None:
+        sql = (MIGRATION.parent / "0010_controlled_identity_recovery.sql").read_text(encoding="utf-8")
+        self.assertIn("UNIQUE (tenant_id, session_id)", sql)
+        self.assertIn("UNIQUE (tenant_id, key_sha256)", sql)
+        self.assertIn("FORCE ROW LEVEL SECURITY", sql)
+        self.assertIn("ops.current_tenant_id()", sql)
+        self.assertIn("GRANT SELECT (tenant_id, subject_uuid, status)", sql)
+        self.assertIn(
+            "GRANT SELECT (tenant_id, subject_uuid, external_identifier_id, "
+            "issuer, id_type, normalized_hmac, status)", sql,
+        )
+        self.assertIn("identifier_hmac bytea NOT NULL", sql)
+        self.assertIn("CREATE TABLE ops.identity_recovery_receipts", sql)
+        self.assertIn("CREATE TABLE ops.identity_recovery_registrations", sql)
+        self.assertIn("ALTER TABLE ops.identity_recovery_registrations FORCE ROW LEVEL SECURITY", sql)
+        self.assertNotIn("display_name text", sql)
+        self.assertNotIn("contact text", sql)

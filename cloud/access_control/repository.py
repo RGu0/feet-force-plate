@@ -1263,6 +1263,7 @@ class InMemoryAccessRepository:
                 or grant.platform_identity_id != platform_identity_id
                 or grant.revoked_at is not None
                 or grant.expires_at <= used_at
+                or grant.last_used_at is not None
             ):
                 raise AccessRepositoryConflict("sensitive grant is invalid")
             used = replace(grant, last_used_at=used_at)

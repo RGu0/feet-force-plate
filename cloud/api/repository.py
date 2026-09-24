@@ -96,6 +96,7 @@ class ExternalIdentifierRecord:
     encryption_nonce: bytes
     masked_value: str
     key_version: str
+    external_identifier_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +198,7 @@ class InMemoryPlatformRepository:
         self._idempotency: dict[tuple[UUID, str, str], IdempotencyRecord] = {}
         self._events: list[EventEnvelope] = []
         self._problems: list[tuple[UUID, UUID, str]] = []
+        self.recovery_case_guard = None
 
     def add_terminal(self, tenant_id: UUID, site_id: UUID, terminal_id: UUID) -> None:
         self._terminals[(tenant_id, terminal_id)] = TerminalRecord(tenant_id, site_id, terminal_id)
@@ -553,6 +555,7 @@ class InMemoryPlatformRepository:
             return None
         return SubjectSummary(
             subject_uuid=record.subject_uuid,
+            external_identifier_id=record.external_identifier_id,
             external_id_masked=record.masked_value,
             analysis_profile=self._subject_profiles[(context.tenant_id, record.subject_uuid)],
         )
@@ -587,6 +590,7 @@ class InMemoryPlatformRepository:
             if existing is not None:
                 response = SubjectSummary(
                     subject_uuid=existing.subject_uuid,
+                    external_identifier_id=existing.external_identifier_id,
                     external_id_masked=existing.masked_value,
                     conflict=True,
                     analysis_profile=self._subject_profiles[
@@ -641,6 +645,11 @@ class InMemoryPlatformRepository:
             )
         response = SubjectSummary(
             subject_uuid=request.subject_uuid,
+            external_identifier_id=(
+                self._external_identifiers[
+                    (context.tenant_id, external.issuer, external.id_type, normalized_hmac)
+                ].external_identifier_id if external is not None else None
+            ),
             external_id_masked=masked_value,
             analysis_profile=request.analysis_profile,
         )
@@ -803,8 +812,15 @@ class InMemoryPlatformRepository:
         context: TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        *, recovery_case_id: UUID | None = None,
     ) -> SessionCreateResponse:
         self._terminal(context)
+        if self.recovery_case_guard is not None:
+            protected_case = self.recovery_case_guard.open_case_id(
+                context.tenant_id, request.session_id
+            )
+            if protected_case is not None and protected_case != recovery_case_id:
+                raise TenantAccessDenied("session requires controlled identity recovery")
         digest = canonical_sha256(request)
         replay = self._idempotent_result(context.tenant_id, "session.create", idempotency_key, digest)
         if replay is not None:

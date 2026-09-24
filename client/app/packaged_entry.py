@@ -19,8 +19,11 @@ from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
 
 from client.spool.state_store import SensitiveBlobCodec, StateStore
-from client.app.institution_store import InstitutionLocalStore, KeyringAesKeyProvider
+from client.app.institution_store import (
+    InstitutionLocalStore, KeyringAesKeyProvider, KeyringConsentEvidenceSigner,
+)
 from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
+from client.sync.subject_recovery import SubjectRecoveryService
 from shared.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
 from client.support import (
     PlatformFamily,
@@ -940,6 +943,18 @@ def compose_authenticated_session(
                 payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
                 event_recorder=composition.recorder,
             )
+            if isinstance(upload_runtime, PackagedUploadRuntime):
+                live_runtime.controller.attach_subject_recovery(
+                    SubjectRecoveryService(
+                        store=physical_store,
+                        client=upload_runtime.recovery_client,
+                        tokens=runtime,
+                        signer=KeyringConsentEvidenceSigner(),
+                        tenant_id=session.tenant_id,
+                        terminal_id=session.client_installation_id,
+                        operator_account_id=session.account_id,
+                    )
+                )
             references["live_runtime"] = live_runtime
             return live_runtime.controller.window
 

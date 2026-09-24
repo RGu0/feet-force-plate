@@ -13,10 +13,14 @@ from typing import Protocol
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.client_sync import (
+    FormalUploadEnvelope,
+    SubjectRecoveryAuthorization,
+    canonical_sha256,
+)
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -434,6 +438,26 @@ class StateStore:
                         "ALTER TABLE sync_handoffs ADD COLUMN last_error_code TEXT"
                     )
                 self._connection.execute("PRAGMA user_version=9")
+            if version < 10:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorizations (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute("PRAGMA user_version=10")
+            if version < 11:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorization_history (
+                        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL,
+                        replaced_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute("PRAGMA user_version=11")
 
     def record_validation_audit(
         self,
@@ -779,27 +803,153 @@ class StateStore:
             )
 
     def sync_handoff_state(self, session_id: str) -> str:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
-                "SELECT state FROM sync_handoffs WHERE session_id=?", (session_id,)
+                "SELECT state FROM sync_handoffs WHERE session_id=?",
+                (stored_session_id,),
             ).fetchone()
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
 
     def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
                 "SELECT upload_envelope FROM sync_handoffs WHERE session_id=?",
-                (session_id,),
+                (stored_session_id,),
             ).fetchone()
         if row is None or row[0] is None:
             raise KeyError(session_id)
         plaintext = self._codec.decrypt(
             bytes(row[0]),
-            context=f"formal_upload_envelope:{session_id}",
+            context=f"formal_upload_envelope:{stored_session_id}",
         )
         return FormalUploadEnvelope.model_validate_json(plaintext)
+
+    def _stored_sync_handoff_id(self, session_id: str) -> str:
+        """Resolve legacy hex and canonical UUID spellings without rewriting evidence."""
+
+        aliases = {session_id}
+        try:
+            parsed = UUID(session_id)
+        except ValueError:
+            pass
+        else:
+            aliases.update((str(parsed), parsed.hex))
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT session_id FROM sync_handoffs WHERE session_id IN ({','.join('?' for _ in aliases)})",
+                tuple(aliases),
+            ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("multiple handoffs use the same session UUID")
+        return str(rows[0][0]) if rows else session_id
+
+    def subject_recovery_authorization(
+        self, session_id: str
+    ) -> SubjectRecoveryAuthorization | None:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM subject_recovery_authorizations WHERE session_id=?",
+                (stored_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        plaintext = self._codec.decrypt(
+            bytes(row[0]), context=f"subject_recovery:{stored_session_id}"
+        )
+        return SubjectRecoveryAuthorization.model_validate_json(plaintext)
+
+    def subject_recovery_candidates(self) -> tuple[str, ...]:
+        """Identity-blocked sessions that an operator may inspect for recovery."""
+
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT session_id FROM sync_handoffs
+                WHERE upload_envelope IS NOT NULL
+                  AND (state='CONFLICT' AND last_error_code='E-SUB-409'
+                    OR (state='BLOCKED' AND last_error_code='E-AUT-403'))
+                ORDER BY created_at_ns, session_id"""
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def authorize_subject_recovery(
+        self, authorization: SubjectRecoveryAuthorization
+    ) -> None:
+        """Atomically record server-bound consent and release a blocked handoff."""
+
+        if (
+            authorization.schema_version != "subject-recovery/2"
+            or authorization.case_id is None
+            or authorization.receipt_id is None
+            or authorization.receipt_expires_at is None
+            or authorization.platform_ticket_sha256 is None
+            or authorization.receipt_expires_at <= authorization.confirmed_at
+        ):
+            raise ValueError("current server match receipt is required")
+
+        session_id = self._stored_sync_handoff_id(str(authorization.session_id))
+        envelope = self.sync_handoff_envelope(session_id)
+        if (
+            authorization.original_envelope_sha256 != canonical_sha256(envelope)
+            or authorization.original_subject_uuid != envelope.subject.subject_uuid
+            or authorization.replacement_consent.consent_record_id
+            == envelope.consent.consent_record_id
+            or authorization.replacement_consent.policy_version
+            != envelope.consent.policy_version
+            or authorization.replacement_consent.data_categories
+            != envelope.consent.data_categories
+        ):
+            raise ValueError("recovery authorization does not match immutable handoff")
+        encrypted = self._codec.encrypt(
+            authorization.model_dump_json().encode("utf-8"),
+            context=f"subject_recovery:{session_id}",
+        )
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT state, last_error_code FROM sync_handoffs WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is None or row[0] not in {"CONFLICT", "BLOCKED"}:
+                raise ValueError("recovery requires a blocked handoff")
+            if row[0] == "CONFLICT" and row[1] != "E-SUB-409":
+                raise ValueError("conflict has another cause")
+            if row[0] == "BLOCKED" and row[1] != "E-AUT-403":
+                raise ValueError("blocked handoff has another cause")
+            previous = self._connection.execute(
+                """SELECT encrypted_payload, recorded_at_ns
+                FROM subject_recovery_authorizations WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+            recorded_at_ns = int(authorization.confirmed_at.timestamp() * 1e9)
+            if previous is not None:
+                if row[0] != "BLOCKED" or row[1] != "E-AUT-403":
+                    raise ValueError("recovery authorization is already recorded")
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorization_history
+                    (session_id, encrypted_payload, recorded_at_ns, replaced_at_ns)
+                    VALUES (?,?,?,?)""",
+                    (session_id, previous[0], previous[1], recorded_at_ns),
+                )
+                self._connection.execute(
+                    """UPDATE subject_recovery_authorizations
+                    SET encrypted_payload=?, recorded_at_ns=? WHERE session_id=?""",
+                    (encrypted, recorded_at_ns, session_id),
+                )
+            else:
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorizations
+                    (session_id, encrypted_payload, recorded_at_ns) VALUES (?,?,?)""",
+                    (session_id, encrypted, recorded_at_ns),
+                )
+            self._connection.execute(
+                """UPDATE sync_handoffs SET state='READY_FOR_NETWORK',
+                next_attempt_at_ns=NULL, last_error_code=NULL WHERE session_id=?""",
+                (session_id,),
+            )
 
     def attach_supporting_local_analysis(
         self,
@@ -962,15 +1112,19 @@ class StateStore:
             str(row[2]) if row[2] is not None else None,
         )
 
-    def mark_sync_handoff_conflict(self, session_id: str) -> None:
+    def mark_sync_handoff_conflict(
+        self, session_id: str, *, error_code: str = "E-SYN-409"
+    ) -> None:
         """Stop automatic retries when a remote immutable digest conflicts."""
 
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs SET state='CONFLICT',
-                    next_attempt_at_ns=NULL, last_error_code='E-SYN-409'
+                    next_attempt_at_ns=NULL, last_error_code=?
                 WHERE session_id=? AND state='UPLOADING'""",
-                (session_id,),
+                (error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)

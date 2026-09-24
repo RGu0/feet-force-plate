@@ -22,6 +22,12 @@ by the cloud security group or host firewall. The migration role applies
 `postgresql-role-grants.sql` using `psql` variables supplied outside shell
 history. No application role is an owner, superuser, or `BYPASSRLS` role.
 
+For the RAY-99 upgrade, deploy the unverified-session-hold release and verify
+migration 0009 before deploying controlled identity recovery. The release
+installer refuses migration 0010 when the hold table is absent. A successful
+installer run does not itself establish the real incident hold or prove a
+backup restore; record those as separate acceptance evidence.
+
 On a new Alibaba Cloud Linux host, run the reviewed prerequisite script once as
 root. It is idempotent and deliberately does not stop or reconfigure the
 existing 7443 process, so the later cutover remains reversible:

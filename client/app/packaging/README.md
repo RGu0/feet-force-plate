@@ -4,6 +4,13 @@ This directory defines the repeatable packaging inputs for the institution clien
 
 ## Build inputs
 
+For a governed internal Windows package, set `FEETFORCEPLATE_PORTABLE_OUTPUT_ROOT`
+to a new empty local directory and `FEETFORCEPLATE_PORTABLE_UNSIGNED_DEVELOPMENT=1`,
+then run the project's governed `build` action. The normal build still checks
+source compilation; this opt-in also runs `build-portable-release.ps1` with the
+current commit and verifies the unsigned development archive. Do not use an
+unsigned development archive for customer delivery.
+
 - `FeetForcePlate.spec` describes the PyInstaller application bundle.
 - `build-config.json` records target-platform, signing, driver-readiness, persistent-data, and controlled-upgrade requirements.
 - Repository `main.py` is the frozen application entry point; it routes the
