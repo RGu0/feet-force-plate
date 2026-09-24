@@ -175,6 +175,9 @@ role_wrapper="$install_root/roles.sql"
 chown postgres:postgres "$role_wrapper"
 chmod 0600 "$role_wrapper"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -f "$role_wrapper"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0008_activation_projection_grants.sql"
+apply_migration ops.session_holds "$release_source/cloud/migrations/0009_unverified_session_holds.sql"
 
 cp -a /var/lib/pgsql/data/pg_hba.conf "/var/lib/pgsql/data/pg_hba.conf.pre-seed.$(date -u +%Y%m%dT%H%M%SZ)"
 install -o postgres -g postgres -m 0600 \
