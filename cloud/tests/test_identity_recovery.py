@@ -39,12 +39,15 @@ class RecoveryCaseTests(unittest.IsolatedAsyncioTestCase):
             allow_new_test=False, allow_upload=True,
         )
         self.repository = InMemoryRecoveryCaseRepository()
-        self.repository.add_subject(self.tenant, self.cloud_subject, masked_clue="***0731")
+        self.identifier_id = self.repository.add_subject(
+            self.tenant, self.cloud_subject, masked_clue="***0731"
+        )
         self.service = IdentityRecoveryService(self.repository)
         self.request = RecoveryCaseCreateRequest(
             session_id=uuid4(), original_subject_uuid=uuid4(),
             cloud_subject_uuid=self.cloud_subject, envelope_sha256="a" * 64,
             identifier_issuer="institution", identifier_type="record-number",
+            external_identifier_id=self.identifier_id,
             terminal_id=self.terminal,
         )
 
@@ -72,6 +75,11 @@ class RecoveryCaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ResourceNotFound):
             await self.service.create_case(
                 self.principal, self.request.model_copy(update={"cloud_subject_uuid": uuid4()}), "missing-subject"
+            )
+        with self.assertRaises(ResourceNotFound):
+            await self.service.create_case(
+                self.principal, self.request.model_copy(update={"external_identifier_id": uuid4()}),
+                "different-identifier",
             )
         other = self.principal.__class__(
             tenant_id=uuid4(), terminal_id=self.terminal, expires_at=self.principal.expires_at,
@@ -161,11 +169,15 @@ class RecoveryComparisonTests(unittest.IsolatedAsyncioTestCase):
         terminal = await self.service.get_case(self.principal, self.case.case_id)
         self.assertEqual(terminal.receipt_id, result.receipt_id)
         self.assertNotIn("Ada", terminal.model_dump_json())
-        again = await self.service.compare(
-            self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
-            tenant_id=self.tenant, ticket_reference="SUP-100",
+        with self.assertRaises(IdempotencyConflict):
+            await self.service.compare(
+                self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+                tenant_id=self.tenant, ticket_reference="SUP-100",
+            )
+        self.assertEqual(
+            (await self.service.get_case(self.principal, self.case.case_id)).receipt_id,
+            result.receipt_id,
         )
-        self.assertEqual(again.receipt_id, result.receipt_id)
 
     async def test_one_field_or_ambiguous_contact_never_issues_receipt(self) -> None:
         for name, contact in (
@@ -249,6 +261,15 @@ class RecoveryComparisonTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_deactivated_cloud_subject_cannot_issue_receipt(self) -> None:
         self.repository.deactivate_subject(self.tenant, self.cloud_subject)
+        with self.assertRaises(ResourceNotFound):
+            await self.service.compare(
+                self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+                tenant_id=self.tenant, ticket_reference="SUP-100",
+            )
+        self.assertIsNone((await self.service.get_case(self.principal, self.case.case_id)).receipt_id)
+
+    async def test_replaced_identifier_cannot_issue_receipt(self) -> None:
+        self.repository.replace_identifier(self.tenant, self.cloud_subject)
         with self.assertRaises(ResourceNotFound):
             await self.service.compare(
                 self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
@@ -378,6 +399,15 @@ class RecoveryRegistrationTests(unittest.IsolatedAsyncioTestCase):
             await self.service.register(
                 self.principal, self.case.case_id, self.registration, "expired-receipt",
             )
+        self.assertEqual(len(self.data._sessions), 0)
+
+    async def test_identifier_replacement_after_match_blocks_registration(self) -> None:
+        self.repository.replace_identifier(self.tenant, self.cloud_subject)
+        with self.assertRaises(ResourceNotFound):
+            await self.service.register(
+                self.principal, self.case.case_id, self.registration, "stale-identifier",
+            )
+        self.assertEqual(len(self.data._consents), 0)
         self.assertEqual(len(self.data._sessions), 0)
 
     async def test_failure_after_consent_insert_rolls_back_all_local_state(self) -> None:

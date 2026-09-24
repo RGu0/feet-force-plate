@@ -30,6 +30,7 @@ def _record(row) -> RecoveryCaseRecord:
         envelope_sha256=row["envelope_sha256"],
         identifier_issuer=row["identifier_issuer"],
         identifier_type=row["identifier_type"],
+        external_identifier_id=row["external_identifier_id"],
         terminal_id=row["terminal_id"],
     )
     return RecoveryCaseRecord(
@@ -90,15 +91,16 @@ class PostgresRecoveryCaseRepository:
         key_sha256: str, request_sha256: str,
     ) -> RecoveryCaseRecord:
         async with tenant_transaction(self._tenant_pool, tenant_id) as connection:
-            # Stable order closes both a reused-key race across sessions and a
-            # distinct-key race on one session without a uniqueness exception.
-            await connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-key:' || $1::uuid::text || ':' || $2::text, 0))",
-                tenant_id, key_sha256,
-            )
+            # Session lock is shared with generic session creation. Acquire it
+            # before the key lock so a racing generic create cannot pass its
+            # case check while this case is being inserted.
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
                 tenant_id, request.session_id,
+            )
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-key:' || $1::uuid::text || ':' || $2::text, 0))",
+                tenant_id, key_sha256,
             )
             terminal_active = await connection.fetchval(
                 """SELECT EXISTS(
@@ -119,15 +121,17 @@ class PostgresRecoveryCaseRepository:
                     raise IdempotencyConflict("recovery case idempotency key conflict")
                 return _record(keyed)
             subject = await connection.fetchrow(
-                """SELECT s.subject_uuid,
-                          (SELECT e.masked_value FROM subject.external_identifiers e
-                           WHERE e.tenant_id=s.tenant_id AND e.subject_uuid=s.subject_uuid
-                             AND e.issuer=$3 AND e.id_type=$4 AND e.status='ACTIVE'
-                           ORDER BY e.created_at DESC LIMIT 1) AS masked_clue
+                """SELECT s.subject_uuid, e.masked_value AS masked_clue,
+                          e.normalized_hmac AS identifier_hmac
                    FROM subject.subjects s
-                   WHERE s.tenant_id=$1 AND s.subject_uuid=$2 AND s.status='ACTIVE'""",
+                   JOIN subject.external_identifiers e
+                     ON e.tenant_id=s.tenant_id AND e.subject_uuid=s.subject_uuid
+                   WHERE s.tenant_id=$1 AND s.subject_uuid=$2 AND s.status='ACTIVE'
+                     AND e.issuer=$3 AND e.id_type=$4 AND e.status='ACTIVE'
+                     AND e.external_identifier_id=$5""",
                 tenant_id, request.cloud_subject_uuid,
                 request.identifier_issuer, request.identifier_type,
+                request.external_identifier_id,
             )
             if subject is None:
                 raise ResourceNotFound("cloud subject not found")
@@ -150,12 +154,14 @@ class PostgresRecoveryCaseRepository:
                 """INSERT INTO ops.identity_recovery_cases
                    (case_id, tenant_id, terminal_id, session_id, original_subject_uuid,
                     cloud_subject_uuid, envelope_sha256, identifier_issuer, identifier_type,
+                    external_identifier_id, identifier_hmac,
                     key_sha256, request_sha256, masked_clue, status)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'PENDING')
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'PENDING')
                    RETURNING case_id""",
                 case_id, tenant_id, terminal_id, request.session_id,
                 request.original_subject_uuid, request.cloud_subject_uuid,
                 request.envelope_sha256, request.identifier_issuer, request.identifier_type,
+                request.external_identifier_id, subject["identifier_hmac"],
                 key_sha256, request_sha256, subject["masked_clue"],
             )
             await connection.execute(
@@ -213,10 +219,7 @@ class PostgresRecoveryCaseRepository:
             if prior is not None and prior["consumed_at"] is not None:
                 raise IdempotencyConflict("recovery receipt already consumed")
             if prior is not None and prior["expires_at"] > datetime.now(UTC):
-                return RecoveryComparisonResult(
-                    case_id=case_id, decision="MATCHED", receipt_id=prior["receipt_id"],
-                    receipt_expires_at=prior["expires_at"],
-                )
+                raise IdempotencyConflict("comparison already completed")
             if case["attempts"] >= 3 or case["status"] in {"DENIED", "EXPIRED"}:
                 return RecoveryComparisonResult(case_id=case_id, decision="NOT_VERIFIED")
             active_subject = await connection.fetchval(
@@ -224,9 +227,13 @@ class PostgresRecoveryCaseRepository:
                    JOIN subject.external_identifiers e
                      ON e.tenant_id=s.tenant_id AND e.subject_uuid=s.subject_uuid
                    WHERE s.tenant_id=$1 AND s.subject_uuid=$2 AND s.status='ACTIVE'
-                     AND e.issuer=$3 AND e.id_type=$4 AND e.status='ACTIVE')""",
+                     AND e.issuer=$3 AND e.id_type=$4 AND e.status='ACTIVE'
+                     AND e.external_identifier_id=$5
+                     AND e.normalized_hmac=$6)""",
                 tenant_id, case["cloud_subject_uuid"],
                 case["identifier_issuer"], case["identifier_type"],
+                case["external_identifier_id"],
+                case["identifier_hmac"],
             )
             if not active_subject:
                 raise ResourceNotFound("cloud subject is no longer active")
@@ -355,10 +362,14 @@ class PostgresRecoveryCaseRepository:
                     EXISTS(SELECT 1 FROM subject.external_identifiers e
                            WHERE e.tenant_id=$1 AND e.subject_uuid=$5
                              AND e.issuer=$6 AND e.id_type=$7
-                             AND e.status='ACTIVE') AS identifier_ok""",
+                             AND e.status='ACTIVE'
+                             AND e.external_identifier_id=$8
+                             AND e.normalized_hmac=$9) AS identifier_ok""",
                 tenant_id, context.terminal_id, request.session.site_id,
                 request.session.device_id, case["cloud_subject_uuid"],
                 case["identifier_issuer"], case["identifier_type"],
+                case["external_identifier_id"],
+                case["identifier_hmac"],
             )
             if not all(validation.values()):
                 raise TenantAccessDenied("recovery session references are invalid")

@@ -21,7 +21,7 @@ from shared.contracts.identity_recovery import (
 
 class InMemoryRecoveryCaseRepository:
     def __init__(self, data_repository=None) -> None:
-        self._subjects: dict[tuple[UUID, UUID], str | None] = {}
+        self._subjects: dict[tuple[UUID, UUID], tuple[UUID, str | None]] = {}
         self._cases: dict[tuple[UUID, UUID], RecoveryCaseRecord] = {}
         self._by_id: dict[tuple[UUID, UUID], RecoveryCaseRecord] = {}
         self._keys: dict[tuple[UUID, str], RecoveryCaseRecord] = {}
@@ -37,8 +37,16 @@ class InMemoryRecoveryCaseRepository:
         case = self._cases.get((tenant_id, session_id))
         return case.case_id if case is not None else None
 
-    def add_subject(self, tenant_id: UUID, subject_id: UUID, *, masked_clue: str | None = None) -> None:
-        self._subjects[(tenant_id, subject_id)] = masked_clue
+    def add_subject(self, tenant_id: UUID, subject_id: UUID, *, masked_clue: str | None = None) -> UUID:
+        identifier_id = uuid4()
+        self._subjects[(tenant_id, subject_id)] = (identifier_id, masked_clue)
+        return identifier_id
+
+    def replace_identifier(self, tenant_id: UUID, subject_id: UUID) -> UUID:
+        identifier_id = uuid4()
+        _prior_id, clue = self._subjects[(tenant_id, subject_id)]
+        self._subjects[(tenant_id, subject_id)] = (identifier_id, clue)
+        return identifier_id
 
     def deactivate_subject(self, tenant_id: UUID, subject_id: UUID) -> None:
         self._subjects.pop((tenant_id, subject_id), None)
@@ -53,7 +61,11 @@ class InMemoryRecoveryCaseRepository:
                 if keyed.request_sha256 != request_sha256:
                     raise IdempotencyConflict("recovery case idempotency key conflict")
                 return keyed
-            if (tenant_id, request.cloud_subject_uuid) not in self._subjects:
+            if (
+                (tenant_id, request.cloud_subject_uuid) not in self._subjects
+                or self._subjects[(tenant_id, request.cloud_subject_uuid)][0]
+                != request.external_identifier_id
+            ):
                 raise ResourceNotFound("cloud subject not found")
             if (
                 self._data_repository is not None
@@ -69,7 +81,7 @@ class InMemoryRecoveryCaseRepository:
             record = RecoveryCaseRecord(
                 case_id=uuid4(), tenant_id=tenant_id, terminal_id=terminal_id,
                 request=request, request_sha256=request_sha256, key_sha256=key_sha256,
-                masked_clue=self._subjects[(tenant_id, request.cloud_subject_uuid)],
+                masked_clue=self._subjects[(tenant_id, request.cloud_subject_uuid)][1],
                 status="PENDING", created_at=datetime.now(UTC),
             )
             self._cases[(tenant_id, request.session_id)] = record
@@ -96,13 +108,14 @@ class InMemoryRecoveryCaseRepository:
         async with self._lock:
             case = await self.get_platform_case(tenant_id, case_id)
             if case.status == "MATCHED" and case.receipt_expires_at is not None and case.receipt_expires_at > datetime.now(UTC):
-                return RecoveryComparisonResult(
-                    case_id=case_id, decision="MATCHED", receipt_id=case.receipt_id,
-                    receipt_expires_at=case.receipt_expires_at,
-                )
+                raise IdempotencyConflict("comparison already completed")
             if case.attempts >= 3:
                 return RecoveryComparisonResult(case_id=case_id, decision="NOT_VERIFIED")
-            if (tenant_id, case.request.cloud_subject_uuid) not in self._subjects:
+            if (
+                (tenant_id, case.request.cloud_subject_uuid) not in self._subjects
+                or self._subjects[(tenant_id, case.request.cloud_subject_uuid)][0]
+                != case.request.external_identifier_id
+            ):
                 raise ResourceNotFound("cloud subject is no longer active")
             receipt_id = uuid4() if matched else None
             expires_at = datetime.now(UTC) + timedelta(minutes=15) if matched else None
@@ -151,7 +164,11 @@ class InMemoryRecoveryCaseRepository:
                 raise IdempotencyConflict("recovery registration binding conflict")
             if self._data_repository is None:
                 raise TenantAccessDenied("recovery data repository unavailable")
-            if (context.tenant_id, case.request.cloud_subject_uuid) not in self._subjects:
+            if (
+                (context.tenant_id, case.request.cloud_subject_uuid) not in self._subjects
+                or self._subjects[(context.tenant_id, case.request.cloud_subject_uuid)][0]
+                != case.request.external_identifier_id
+            ):
                 raise ResourceNotFound("cloud subject is no longer active")
             data = self._data_repository
             snapshot = {

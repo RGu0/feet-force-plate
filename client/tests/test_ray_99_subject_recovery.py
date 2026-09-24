@@ -35,6 +35,7 @@ class _Client:
         self.cloud_uuid = cloud_uuid
         self.status = "PENDING"
         self.case_id = uuid4()
+        self.identifier_id = uuid4()
         self.receipt_id = uuid4()
         self.session_id = None
 
@@ -44,7 +45,8 @@ class _Client:
         if self.cloud_uuid is None:
             return None
         return SubjectSummary(
-            subject_uuid=self.cloud_uuid, external_id_masked="***0731", conflict=True
+            subject_uuid=self.cloud_uuid, external_id_masked="***0731", conflict=True,
+            external_identifier_id=self.identifier_id,
         )
 
     def create_recovery_case(self, token, request, key):

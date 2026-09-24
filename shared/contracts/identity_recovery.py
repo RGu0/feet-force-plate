@@ -18,6 +18,7 @@ class RecoveryCaseCreateRequest(ContractModel):
     envelope_sha256: Sha256Hex
     identifier_issuer: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     identifier_type: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    external_identifier_id: UUID
     terminal_id: UUID
 
     @model_validator(mode="after")

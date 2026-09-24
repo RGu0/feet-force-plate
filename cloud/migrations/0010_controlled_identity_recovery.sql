@@ -12,6 +12,8 @@ CREATE TABLE ops.identity_recovery_cases (
     envelope_sha256 text NOT NULL CHECK (envelope_sha256 ~ '^[0-9a-f]{64}$'),
     identifier_issuer text NOT NULL,
     identifier_type text NOT NULL,
+    external_identifier_id uuid NOT NULL,
+    identifier_hmac bytea NOT NULL CHECK (octet_length(identifier_hmac) = 32),
     key_sha256 text NOT NULL CHECK (key_sha256 ~ '^[0-9a-f]{64}$'),
     request_sha256 text NOT NULL CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
     masked_clue text,
@@ -23,6 +25,8 @@ CREATE TABLE ops.identity_recovery_cases (
     UNIQUE (tenant_id, key_sha256),
     FOREIGN KEY (tenant_id, cloud_subject_uuid)
         REFERENCES subject.subjects(tenant_id, subject_uuid),
+    FOREIGN KEY (tenant_id, external_identifier_id)
+        REFERENCES subject.external_identifiers(tenant_id, external_identifier_id),
     CHECK (original_subject_uuid <> cloud_subject_uuid)
 );
 
@@ -90,7 +94,7 @@ GRANT SELECT, INSERT ON ops.identity_recovery_comparisons TO ffp_platform_app;
 -- grants avoid exposing encrypted identifiers or identity-profile payloads.
 GRANT SELECT (tenant_id, subject_uuid, status)
     ON subject.subjects TO ffp_platform_app;
-GRANT SELECT (tenant_id, subject_uuid, issuer, id_type, status)
+GRANT SELECT (tenant_id, subject_uuid, external_identifier_id, issuer, id_type, normalized_hmac, status)
     ON subject.external_identifiers TO ffp_platform_app;
 
 CREATE TABLE ops.identity_recovery_registrations (

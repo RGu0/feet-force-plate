@@ -34,12 +34,14 @@ class Client:
         self.cloud_subject = cloud_subject
         self.now = now
         self.case_id = uuid4()
+        self.identifier_id = uuid4()
         self.receipt_id = uuid4()
         self.status = "PENDING"
 
     def resolve_subject(self, token, request):
         return SubjectSummary(
             subject_uuid=self.cloud_subject, external_id_masked="***0731", conflict=True,
+            external_identifier_id=self.identifier_id,
         )
 
     def create_recovery_case(self, token, request, key):

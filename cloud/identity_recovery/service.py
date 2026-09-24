@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from cloud.api.access_auth import PlatformAccessContext
-from cloud.api.errors import RequestContractError, RepositoryUnavailable, TenantAccessDenied
+from cloud.api.errors import IdempotencyConflict, RequestContractError, RepositoryUnavailable, TenantAccessDenied
 from cloud.ingestion.principal import IngestionPrincipal
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.access_control import PlatformRole
@@ -96,10 +96,7 @@ class IdentityRecoveryService:
             case.status == "MATCHED" and case.receipt_consumed_at is None
             and case.receipt_expires_at and case.receipt_expires_at > datetime.now(UTC)
         ):
-            return RecoveryComparisonResult(
-                case_id=case_id, decision="MATCHED", receipt_id=case.receipt_id,
-                receipt_expires_at=case.receipt_expires_at,
-            )
+            raise IdempotencyConflict("comparison already completed; read case status")
         if case.attempts >= 3 or case.status == "DENIED":
             return RecoveryComparisonResult(case_id=case_id, decision="NOT_VERIFIED")
         # Only the platform boundary reads plaintext. It is never passed to

@@ -96,6 +96,7 @@ class ExternalIdentifierRecord:
     encryption_nonce: bytes
     masked_value: str
     key_version: str
+    external_identifier_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +555,7 @@ class InMemoryPlatformRepository:
             return None
         return SubjectSummary(
             subject_uuid=record.subject_uuid,
+            external_identifier_id=record.external_identifier_id,
             external_id_masked=record.masked_value,
             analysis_profile=self._subject_profiles[(context.tenant_id, record.subject_uuid)],
         )
@@ -588,6 +590,7 @@ class InMemoryPlatformRepository:
             if existing is not None:
                 response = SubjectSummary(
                     subject_uuid=existing.subject_uuid,
+                    external_identifier_id=existing.external_identifier_id,
                     external_id_masked=existing.masked_value,
                     conflict=True,
                     analysis_profile=self._subject_profiles[
@@ -642,6 +645,11 @@ class InMemoryPlatformRepository:
             )
         response = SubjectSummary(
             subject_uuid=request.subject_uuid,
+            external_identifier_id=(
+                self._external_identifiers[
+                    (context.tenant_id, external.issuer, external.id_type, normalized_hmac)
+                ].external_identifier_id if external is not None else None
+            ),
             external_id_masked=masked_value,
             analysis_profile=request.analysis_profile,
         )

@@ -87,7 +87,11 @@ class IdentityRecoveryMigrationContractTests(unittest.TestCase):
         self.assertIn("FORCE ROW LEVEL SECURITY", sql)
         self.assertIn("ops.current_tenant_id()", sql)
         self.assertIn("GRANT SELECT (tenant_id, subject_uuid, status)", sql)
-        self.assertIn("GRANT SELECT (tenant_id, subject_uuid, issuer, id_type, status)", sql)
+        self.assertIn(
+            "GRANT SELECT (tenant_id, subject_uuid, external_identifier_id, "
+            "issuer, id_type, normalized_hmac, status)", sql,
+        )
+        self.assertIn("identifier_hmac bytea NOT NULL", sql)
         self.assertIn("CREATE TABLE ops.identity_recovery_receipts", sql)
         self.assertIn("CREATE TABLE ops.identity_recovery_registrations", sql)
         self.assertIn("ALTER TABLE ops.identity_recovery_registrations FORCE ROW LEVEL SECURITY", sql)

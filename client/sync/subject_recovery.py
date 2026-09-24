@@ -116,6 +116,8 @@ class SubjectRecoveryService:
             raise RecoveryLookupError("cloud-not-found")
         if summary.subject_uuid == envelope.subject.subject_uuid:
             raise RecoveryLookupError("cloud-already-matches-local")
+        if summary.external_identifier_id is None:
+            raise RecoveryLookupError("cloud-identifier-binding-unavailable")
         request = RecoveryCaseCreateRequest(
             session_id=session_id,
             original_subject_uuid=envelope.subject.subject_uuid,
@@ -123,6 +125,7 @@ class SubjectRecoveryService:
             envelope_sha256=canonical_sha256(envelope),
             identifier_issuer=external.issuer,
             identifier_type=external.id_type,
+            external_identifier_id=summary.external_identifier_id,
             terminal_id=UUID(self._terminal_id),
         )
         case = self._case(request)
