@@ -1,4 +1,4 @@
-# RAY-99 R7: controlled identity recovery and unverified-session hold
+# RAY-99 R8: controlled identity recovery and unverified-session hold
 
 ## Purpose and current state
 
@@ -41,6 +41,6 @@ Until the hold operation is deployed and executed, the incident remains open; cl
 
 ## Delivery and verification
 
-Keep RAY-99 R7 as the authoritative requirement. Separate the platform comparison/receipt and administrative hold work into registered delivery scopes if reviewable PR size requires it; each scope gets its own branch, worktree, PR and evidence directory. The current `windows-packaged-acceptance` PR remains Draft and fail-closed until integration and incident handling are verified. Its existing merge conflict must be resolved through the governed branch workflow, with no automatic rebase, reset or merge.
+Keep RAY-99 R8 as the authoritative requirement. Separate the platform comparison/receipt and administrative hold work into registered delivery scopes if reviewable PR size requires it; each scope gets its own branch, worktree, PR and evidence directory. The current `windows-packaged-acceptance` PR remains Draft and fail-closed until integration and incident handling are verified. Its existing merge conflict must be resolved through the governed branch workflow, with no automatic rebase, reset or merge.
 
 Automated tests cover missing/one-field identity, two-field match, mismatch, repeated guesses, wrong tenant/subject/session/envelope/terminal, expired or replayed grant/receipt, lost response and restart recovery. Contract tests prove the server rejects generic endpoint bypasses and keeps original records unchanged. Hold tests cover an ingestion event already queued or processed, report reads, analysis scheduling, idempotent hold/release and consent revocation without raw deletion. Windows packaged acceptance uses synthetic identities and a controlled platform account; evidence records only hashes, counts, statuses and redacted audit references. The existing incident needs an authorized operator's separate disposition record before RAY-99 can be accepted.
