@@ -66,7 +66,7 @@ else
     tar -C "$FEETFORCEPLATE_OBJECT_ROOT" --exclude='./.staging' -cf "$stage/objects.tar" .
 fi
 
-schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license,0005_sales_inventory_activation,0006_inventory_activation_pairing"
+schema_versions="0001_p3_cloud_platform,0002_p5_device_operations,0003_seed_mvp_access_control,0004_allow_unsigned_revoked_license,0005_sales_inventory_activation,0006_inventory_activation_pairing,0007_completion_receipt_fields,0008_activation_projection_grants,0009_unverified_session_holds"
 printf '{"backup_id":"%s","implementation_sha":"%s","schema_versions":"%s","created_at":"%s"}\n' \
     "$backup_id" "$implementation_sha" "$schema_versions" "$(date -u +%FT%TZ)" \
     >"$stage/metadata.json"
