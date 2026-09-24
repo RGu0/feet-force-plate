@@ -182,6 +182,11 @@ install -o postgres -g postgres -m 0600 \
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -Atqc "ALTER SYSTEM SET password_encryption = 'scram-sha-256'"
 systemctl restart postgresql
 pg_isready -h 127.0.0.1 -p 5432 >/dev/null
+if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT to_regclass('ops.session_holds') IS NOT NULL")" != "t" ]]; then
+    echo "RAY-99 session-hold migration 0009 must precede identity recovery 0010" >&2
+    exit 1
+fi
+apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0010_controlled_identity_recovery.sql"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then
