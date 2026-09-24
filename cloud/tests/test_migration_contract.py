@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.sql"
+CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
 
 
 class MigrationContractTests(unittest.TestCase):
@@ -73,6 +74,20 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("CREATE TABLE screening.session_segments", self.sql)
         self.assertIn("CREATE TABLE ops.audit_logs", self.sql)
         self.assertNotIn("external_id_plaintext", self.sql)
+
+    def test_capture_grants_do_not_store_reusable_credential_or_raw_data(self) -> None:
+        sql = CAPTURE_GRANTS.read_text(encoding="utf-8")
+        self.assertIn("token_sha256 bytea", sql)
+        for forbidden in ("token_plaintext", "license_document_json", "raw_segment", "consent_details"):
+            self.assertNotIn(forbidden, sql)
+        for required in (
+            "account_id uuid NOT NULL", "license_id uuid NOT NULL",
+            "hardware_id uuid NOT NULL", "installation_id uuid NOT NULL",
+            "consumed_request_sha256 text", "expected_manifest_sha256 text",
+            "approver_id uuid NOT NULL", "approval_reason text NOT NULL",
+            "evidence_reference text NOT NULL",
+        ):
+            self.assertIn(required, sql)
 
 
 if __name__ == "__main__":

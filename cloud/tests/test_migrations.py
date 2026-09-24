@@ -7,6 +7,42 @@ MIGRATION = Path(__file__).parents[1] / "migrations" / "0003_seed_mvp_access_con
 ACTIVATION_PROJECTION_GRANTS = (
     Path(__file__).parents[1] / "migrations" / "0008_activation_projection_grants.sql"
 )
+CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
+SEED_INSTALLER = Path(__file__).parents[2] / "deploy" / "aliyun" / "seed" / "install-seed-release.sh"
+
+
+def test_capture_authorization_migration_contract() -> None:
+    sql = CAPTURE_GRANTS.read_text(encoding="utf-8")
+    assert sql.startswith("BEGIN;")
+    assert sql.rstrip().endswith("COMMIT;")
+    for table in (
+        "screening.capture_grants",
+        "screening.upload_migration_permits",
+        "ops.capture_authorization_audit",
+    ):
+        assert f"CREATE TABLE {table}" in sql
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;" in sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;" in sql
+        assert f"REVOKE ALL ON {table} FROM PUBLIC;" in sql
+    assert "ops.current_tenant_id()" in sql
+    assert "PRIMARY KEY (tenant_id, session_id)" in sql
+    assert "UNIQUE (token_sha256)" in sql
+    assert "octet_length(token_sha256) = 32" in sql
+    assert "state IN ('ISSUED', 'CONSUMED', 'RETIRED')" in sql
+    assert "GRANT SELECT, INSERT ON screening.capture_grants TO ffp_tenant_app;" in sql
+    assert "GRANT UPDATE (state, consumed_request_sha256, expected_manifest_sha256) ON screening.capture_grants TO ffp_tenant_app;" in sql
+    assert "GRANT SELECT, INSERT ON screening.upload_migration_permits TO ffp_platform_app;" in sql
+    assert "GRANT UPDATE (state) ON screening.upload_migration_permits TO ffp_tenant_app;" in sql
+    assert "TO ffp_activation_app" not in sql
+    # Task 3 must lock the installation before counting this indexed set.
+    assert "ON screening.capture_grants (tenant_id, installation_id)" in sql
+    assert "WHERE state = 'ISSUED'" in sql
+    assert "OLD.state <> 'ISSUED' AND NEW IS DISTINCT FROM OLD" in sql
+
+
+def test_seed_installer_applies_capture_authorization_migration() -> None:
+    installer = SEED_INSTALLER.read_text(encoding="utf-8")
+    assert 'apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"' in installer
 
 
 def test_activation_role_can_write_its_data_plane_projection() -> None:
