@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from cloud.api.errors import ResourceNotFound
+from cloud.api.errors import IdempotencyConflict, ResourceNotFound
 from cloud.identity_recovery.postgres import PostgresRecoveryCaseRepository
 from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.ingestion.principal import IngestionPrincipal
@@ -97,6 +97,19 @@ def test_recovery_case_and_comparison_obey_live_roles_and_tenant_rls() -> None:
                 "SELECT count(*) FROM ops.identity_recovery_comparisons WHERE tenant_id=$1 AND case_id=$2",
                 tenant_id, created.case_id,
             ) == 1
+            concurrent = await asyncio.gather(
+                service.create_case(
+                    principal, request.model_copy(update={"session_id": uuid4()}),
+                    "shared-concurrent-key",
+                ),
+                service.create_case(
+                    principal, request.model_copy(update={"session_id": uuid4()}),
+                    "shared-concurrent-key",
+                ),
+                return_exceptions=True,
+            )
+            assert sum(isinstance(result, IdempotencyConflict) for result in concurrent) == 1
+            assert sum(not isinstance(result, Exception) for result in concurrent) == 1
             second_request = request.model_copy(update={"session_id": uuid4()})
             second = await service.create_case(principal, second_request, "replaced-identifier-case")
             await admin.execute(
