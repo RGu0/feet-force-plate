@@ -40,3 +40,18 @@ class RecoveryCaseSummary(ContractModel):
 class RecoveryCaseCreateResponse(ContractModel):
     case: RecoveryCaseSummary
     idempotent_replay: bool = Field(default=False)
+
+
+class RecoveryComparisonRequest(ContractModel):
+    tenant_id: UUID
+    grant_id: UUID
+    original_name: Annotated[str, StringConstraints(max_length=256)]
+    original_contact: Annotated[str, StringConstraints(max_length=512)]
+    ticket_reference: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+
+
+class RecoveryComparisonResult(ContractModel):
+    case_id: UUID
+    decision: Literal["MATCHED", "NOT_VERIFIED"]
+    receipt_id: UUID | None = None
+    receipt_expires_at: datetime | None = None

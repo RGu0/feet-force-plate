@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import inspect
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
@@ -375,6 +376,7 @@ class SensitiveAccessService:
         tenant_id: UUID,
         subject_id: UUID,
         identity_loader: Callable[[], tuple[str | None, str | None]],
+        grant_observer: Callable[[SensitiveAccessGrantRecord], None] | None = None,
     ) -> SensitiveIdentityResponse:
         if context.expires_at <= self._now() or not context.roles:
             await self._append_denial(
@@ -411,7 +413,12 @@ class SensitiveAccessService:
                 details=(("grant_id", str(grant_id)),),
             )
             raise PlatformPermissionDenied("sensitive access grant is invalid") from exc
-        display_name, contact = identity_loader()
+        if grant_observer is not None:
+            grant_observer(grant)
+        loaded = identity_loader()
+        if inspect.isawaitable(loaded):
+            loaded = await loaded
+        display_name, contact = loaded
         response = SensitiveIdentityResponse(
             grant_id=grant.grant_id,
             tenant_id=tenant_id,

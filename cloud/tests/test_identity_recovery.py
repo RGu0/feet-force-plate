@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -10,6 +11,10 @@ from httpx import ASGITransport, AsyncClient
 from cloud.api.errors import IdempotencyConflict, ResourceNotFound, TenantAccessDenied
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.auth import TerminalTokenIssuer
+from cloud.api.access_auth import PlatformAccessContext
+from cloud.api.subject_service import IdentityProtector
+from shared.contracts.cloud import IdentityProfileInput
+from shared.contracts.access_control import PlatformRole
 from cloud.ingestion.principal import IngestionPrincipal
 from cloud.identity_recovery.repository import InMemoryRecoveryCaseRepository
 from cloud.identity_recovery.service import IdentityRecoveryService
@@ -103,3 +108,166 @@ class RecoveryCaseTests(unittest.IsolatedAsyncioTestCase):
                 headers={**headers, "Authorization": f"Bearer {issuer.issue(uuid4(), self.terminal)}"},
             )
             self.assertEqual(wrong.status_code, 404)
+
+
+class RecoveryComparisonTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        await RecoveryCaseTests.asyncSetUp(self)
+        self.case = await self.service.create_case(self.principal, self.request, "compare-case")
+        self.platform = PlatformAccessContext(
+            platform_identity_id=uuid4(), roles=frozenset({PlatformRole.SUPPORT}),
+            token_version=1, expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+
+        class Sensitive:
+            calls = 0
+
+            async def read_identity(self, context, *, grant_id, tenant_id, subject_id, identity_loader, grant_observer):
+                self.calls += 1
+                grant_observer(type("Grant", (), {"ticket_reference": "SUP-100"})())
+                name, contact = await identity_loader()
+                return type("Identity", (), {
+                    "display_name": name, "contact": contact,
+                })()
+
+        class IdentityReader:
+            async def read_identity(self, tenant_id, subject_id):
+                return "Ada Wu", "+86 13900001111"
+
+        self.sensitive = Sensitive()
+        self.service = IdentityRecoveryService(
+            self.repository, sensitive=self.sensitive, identity_reader=IdentityReader(),
+        )
+
+    async def test_two_exact_fields_issue_one_short_receipt(self) -> None:
+        result = await self.service.compare(
+            self.platform, self.case.case_id, uuid4(), "Ａｄａ Wu ", "+86 13900001111",
+            tenant_id=self.tenant, ticket_reference="SUP-100",
+        )
+        self.assertEqual(result.decision, "MATCHED")
+        self.assertIsNotNone(result.receipt_id)
+        self.assertLessEqual(
+            result.receipt_expires_at - datetime.now(UTC), timedelta(minutes=15)
+        )
+        terminal = await self.service.get_case(self.principal, self.case.case_id)
+        self.assertEqual(terminal.receipt_id, result.receipt_id)
+        self.assertNotIn("Ada", terminal.model_dump_json())
+        again = await self.service.compare(
+            self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+            tenant_id=self.tenant, ticket_reference="SUP-100",
+        )
+        self.assertEqual(again.receipt_id, result.receipt_id)
+
+    async def test_one_field_or_ambiguous_contact_never_issues_receipt(self) -> None:
+        for name, contact in (
+            ("Ada Wu", "wrong"), ("wrong", "+86 13900001111"),
+            ("", "+86 13900001111"), ("Ada Wu", "+86 13900001111, +86 13900002222"),
+        ):
+            result = await self.service.compare(
+                self.platform, self.case.case_id, uuid4(), name, contact,
+                tenant_id=self.tenant, ticket_reference="SUP-100",
+            )
+            self.assertEqual(result.decision, "NOT_VERIFIED")
+            self.assertIsNone(result.receipt_id)
+            self.assertNotIn("contact", result.model_dump_json())
+        self.assertEqual((await self.service.get_case(self.principal, self.case.case_id)).status, "DENIED")
+        self.assertEqual(self.sensitive.calls, 3)
+
+    async def test_ticket_must_match_consumed_grant(self) -> None:
+        with self.assertRaises(TenantAccessDenied):
+            await self.service.compare(
+                self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+                tenant_id=self.tenant, ticket_reference="DIFFERENT-TICKET",
+            )
+        self.assertIsNone((await self.service.get_case(self.principal, self.case.case_id)).receipt_id)
+
+    async def test_platform_route_returns_only_decision_and_opaque_receipt(self) -> None:
+        class Identities:
+            async def verify_access_token(_self, token):
+                return self.platform
+
+        app = create_app(ServiceContainer(
+            identity_recovery=self.service, platform_identities=Identities(),
+            platform_tokens=object(),
+        ))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://cloud.test") as client:
+            response = await client.post(
+                f"/v1/platform/identity-recovery/cases/{self.case.case_id}/compare",
+                headers={"Authorization": "Bearer test-platform-token"},
+                json={
+                    "tenant_id": str(self.tenant), "grant_id": str(uuid4()),
+                    "original_name": "Ada Wu", "original_contact": "+86 13900001111",
+                    "ticket_reference": "SUP-100",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["data"]["decision"], "MATCHED")
+        self.assertNotIn("Ada Wu", str(body))
+        self.assertNotIn("13900001111", str(body))
+        self.assertNotIn("SUP-100", str(body))
+
+    async def test_wrong_role_and_subject_binding_fail_closed(self) -> None:
+        engineer = PlatformAccessContext(
+            platform_identity_id=uuid4(), roles=frozenset({PlatformRole.ENGINEER}),
+            token_version=1, expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+        with self.assertRaises(TenantAccessDenied):
+            await self.service.compare(
+                engineer, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+                tenant_id=self.tenant, ticket_reference="SUP-100",
+            )
+        self.assertEqual(self.sensitive.calls, 0)
+
+    async def test_expired_receipt_requires_fresh_comparison(self) -> None:
+        first = await self.service.compare(
+            self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+            tenant_id=self.tenant, ticket_reference="SUP-100",
+        )
+        stored = self.repository._by_id[(self.tenant, self.case.case_id)]
+        expired = replace(stored, receipt_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        self.repository._by_id[(self.tenant, self.case.case_id)] = expired
+        self.repository._cases[(self.tenant, self.request.session_id)] = expired
+        self.repository._keys[(self.tenant, stored.key_sha256)] = expired
+        self.assertEqual((await self.service.get_case(self.principal, self.case.case_id)).status, "EXPIRED")
+        self.assertIsNone((await self.service.get_case(self.principal, self.case.case_id)).receipt_id)
+        second = await self.service.compare(
+            self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+            tenant_id=self.tenant, ticket_reference="SUP-100",
+        )
+        self.assertNotEqual(first.receipt_id, second.receipt_id)
+        self.assertEqual(self.sensitive.calls, 2)
+
+    async def test_deactivated_cloud_subject_cannot_issue_receipt(self) -> None:
+        self.repository.deactivate_subject(self.tenant, self.cloud_subject)
+        with self.assertRaises(ResourceNotFound):
+            await self.service.compare(
+                self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+                tenant_id=self.tenant, ticket_reference="SUP-100",
+            )
+        self.assertIsNone((await self.service.get_case(self.principal, self.case.case_id)).receipt_id)
+
+
+class RecoveryIdentityProtectionTests(unittest.TestCase):
+    def test_identity_decrypt_is_bound_to_subject_and_tenant(self) -> None:
+        tenant, subject = uuid4(), uuid4()
+        protector = IdentityProtector(
+            encryption_key=b"e" * 32, lookup_hmac_key=b"h" * 32,
+            key_version="identity/1",
+        )
+        profile = IdentityProfileInput(display_name="Ada Wu", contact="+86 13900001111")
+        protected = protector.protect_identity_profile(
+            profile, tenant_id=str(tenant), subject_uuid=str(subject),
+        )
+        self.assertEqual(
+            protector.unprotect_identity_profile(
+                protected.ciphertext, protected.nonce, protected.key_version,
+                tenant_id=str(tenant), subject_uuid=str(subject),
+            ),
+            profile,
+        )
+        with self.assertRaises(Exception):
+            protector.unprotect_identity_profile(
+                protected.ciphertext, protected.nonce, protected.key_version,
+                tenant_id=str(tenant), subject_uuid=str(uuid4()),
+            )

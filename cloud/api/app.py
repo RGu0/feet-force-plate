@@ -69,7 +69,9 @@ from shared.contracts.operations import (
 from shared.contracts.validation_telemetry import (
     DeviceValidationTelemetryBatchRequest,
 )
-from shared.contracts.identity_recovery import RecoveryCaseCreateRequest
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryComparisonRequest,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,6 +709,19 @@ def create_app(container: ServiceContainer) -> FastAPI:
         if container.identity_recovery is None:
             raise RepositoryUnavailable("identity recovery is unavailable")
         result = await container.identity_recovery.get_case(context, case_id)
+        return _data_response(request, result)
+
+    @app.post("/v1/platform/identity-recovery/cases/{case_id}/compare")
+    async def compare_recovery_case(
+        request: Request, case_id: UUID, body: RecoveryComparisonRequest,
+        context: PlatformAccessDependency,
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.compare(
+            context, case_id, body.grant_id, body.original_name, body.original_contact,
+            tenant_id=body.tenant_id, ticket_reference=body.ticket_reference,
+        )
         return _data_response(request, result)
 
     @app.post("/v1/subjects/resolve")

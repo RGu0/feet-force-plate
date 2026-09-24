@@ -18,3 +18,7 @@ class RecoveryCaseRecord:
     masked_clue: str | None
     status: str
     created_at: datetime
+    attempts: int = 0
+    receipt_id: UUID | None = None
+    receipt_expires_at: datetime | None = None
+    receipt_consumed_at: datetime | None = None

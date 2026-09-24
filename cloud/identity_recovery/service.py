@@ -3,25 +3,40 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
+from datetime import UTC, datetime
 from uuid import UUID
 
-from cloud.api.errors import RequestContractError, TenantAccessDenied
+from cloud.api.access_auth import PlatformAccessContext
+from cloud.api.errors import RequestContractError, RepositoryUnavailable, TenantAccessDenied
 from cloud.ingestion.principal import IngestionPrincipal
 from shared.contracts.client_sync import canonical_sha256
-from shared.contracts.identity_recovery import RecoveryCaseCreateRequest, RecoveryCaseSummary
+from shared.contracts.access_control import PlatformRole
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryCaseSummary, RecoveryComparisonResult,
+)
 
 from .models import RecoveryCaseRecord
 
 
 class IdentityRecoveryService:
-    def __init__(self, repository) -> None:
+    def __init__(self, repository, *, sensitive=None, identity_reader=None) -> None:
         self._repository = repository
+        self._sensitive = sensitive
+        self._identity_reader = identity_reader
 
     @staticmethod
     def _summary(record: RecoveryCaseRecord) -> RecoveryCaseSummary:
+        expired = (
+            record.status == "MATCHED" and record.receipt_expires_at is not None
+            and record.receipt_expires_at <= datetime.now(UTC)
+        )
         return RecoveryCaseSummary(
             case_id=record.case_id, session_id=record.request.session_id,
-            status=record.status, masked_clue=record.masked_clue, created_at=record.created_at,
+            status="EXPIRED" if expired else record.status,
+            masked_clue=record.masked_clue, created_at=record.created_at,
+            receipt_id=None if expired or record.status != "MATCHED" or record.receipt_consumed_at else record.receipt_id,
+            receipt_expires_at=None if expired or record.status != "MATCHED" or record.receipt_consumed_at else record.receipt_expires_at,
         )
 
     async def create_case(
@@ -43,4 +58,69 @@ class IdentityRecoveryService:
         context.ensure_can_upload()
         return self._summary(
             await self._repository.get_case(context.tenant_id, context.terminal_id, case_id)
+        )
+
+    @staticmethod
+    def _name(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFKC", value).strip()
+        if not normalized or any(ord(character) < 32 for character in normalized):
+            return None
+        return normalized
+
+    @staticmethod
+    def _contact(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFKC", value).strip()
+        if not normalized or any(character in normalized for character in ",;\n\r/|"):
+            return None
+        return normalized
+
+    async def compare(
+        self, context: PlatformAccessContext, case_id: UUID, grant_id: UUID,
+        original_name: str, original_contact: str, *, tenant_id: UUID,
+        ticket_reference: str,
+    ) -> RecoveryComparisonResult:
+        if context.expires_at <= datetime.now(UTC) or not context.roles.intersection(
+            {PlatformRole.OWNER, PlatformRole.SUPPORT}
+        ):
+            raise TenantAccessDenied("platform identity comparison is not authorized")
+        if self._sensitive is None or self._identity_reader is None:
+            raise RepositoryUnavailable("identity comparison is unavailable")
+        case = await self._repository.get_platform_case(tenant_id, case_id)
+        if (
+            case.status == "MATCHED" and case.receipt_consumed_at is None
+            and case.receipt_expires_at and case.receipt_expires_at > datetime.now(UTC)
+        ):
+            return RecoveryComparisonResult(
+                case_id=case_id, decision="MATCHED", receipt_id=case.receipt_id,
+                receipt_expires_at=case.receipt_expires_at,
+            )
+        if case.attempts >= 3 or case.status == "DENIED":
+            return RecoveryComparisonResult(case_id=case_id, decision="NOT_VERIFIED")
+        # Only the platform boundary reads plaintext. It is never passed to
+        # repository methods, response models, or terminal-safe summaries.
+        grant_records = []
+        disclosed = await self._sensitive.read_identity(
+            context, grant_id=grant_id, tenant_id=tenant_id,
+            subject_id=case.request.cloud_subject_uuid,
+            identity_loader=lambda: self._identity_reader.read_identity(
+                tenant_id, case.request.cloud_subject_uuid,
+            ),
+            grant_observer=grant_records.append,
+        )
+        if len(grant_records) != 1 or grant_records[0].ticket_reference != ticket_reference:
+            raise TenantAccessDenied("comparison ticket does not match grant")
+        name = self._name(original_name)
+        contact = self._contact(original_contact)
+        matched = bool(
+            name and contact and name == self._name(disclosed.display_name)
+            and contact == self._contact(disclosed.contact)
+        )
+        return await self._repository.record_comparison(
+            tenant_id, case_id, matched=matched,
+            actor_id=context.platform_identity_id, grant_id=grant_id,
+            ticket_sha256=hashlib.sha256(grant_records[0].ticket_reference.encode("utf-8")).hexdigest(),
         )
