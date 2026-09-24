@@ -28,7 +28,7 @@ from shared.contracts.access_control import (
 )
 
 from .access_client import AccessAuthenticationFailed, CloudAccessClient
-from .access_store import ClientAccessStore, KeyringCredentialStore
+from .access_store import ClientAccessStore, CredentialVaultStore
 from .hardware_identity import (
     ActivationHardwareIdentityProvider,
     ActivationHardwareStatus,
@@ -512,7 +512,7 @@ def build_client_access_runtime(
     )
     store = ClientAccessStore(
         root / "database" / "access.sqlite3",
-        KeyringCredentialStore(),
+        CredentialVaultStore(),
     )
     client = CloudAccessClient(settings.base_url, verify=settings.verify)
     raw_public_key = settings.license_public_key_file.read_bytes().strip()
