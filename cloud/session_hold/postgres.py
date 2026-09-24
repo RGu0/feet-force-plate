@@ -31,9 +31,19 @@ class PostgresSessionHoldRepository:
         return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
 
     @staticmethod
+    async def _lock_key(connection, tenant_id: UUID, key_sha256: str) -> None:
+        # Key lock always precedes the session lock. This serializes reuse of
+        # one tenant-wide idempotency key across distinct sessions.
+        await connection.execute(
+            """SELECT pg_advisory_xact_lock(hashtextextended(
+                   'hold-key:' || $1::uuid::text || ':' || $2::text, 0))""",
+            tenant_id, key_sha256,
+        )
+
+    @staticmethod
     async def _lock_hold(connection, tenant_id: UUID, session_id: UUID):
         await connection.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))",
+            "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':' || $2::uuid::text, 0))",
             tenant_id, session_id,
         )
         hold = await connection.fetchrow(
@@ -71,10 +81,11 @@ class PostgresSessionHoldRepository:
         key_sha256 = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
         ticket_sha256 = hashlib.sha256(request.ticket_reference.strip().encode("utf-8")).hexdigest()
         async with tenant_transaction(self._pool, tenant_id) as connection:
+            await self._lock_key(connection, tenant_id, key_sha256)
             # Session-scoped advisory lock serializes distinct-key requests without
             # granting the platform role UPDATE on screening.sessions.
             await connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))",
+                "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':' || $2::uuid::text, 0))",
                 tenant_id, session_id,
             )
             exists = await connection.fetchval(
@@ -126,7 +137,7 @@ class PostgresSessionHoldRepository:
                    (audit_log_id, tenant_id, actor_type, actor_id, action, resource_type,
                     resource_id, outcome, safe_context)
                    VALUES ($1,$2,'PLATFORM_IDENTITY',$3,'session-hold.apply','SESSION',$4,
-                           'ALLOWED',jsonb_build_object('reason_code',$5,'hold_id',$6::text))""",
+                           'ALLOWED',jsonb_build_object('reason_code',$5::text,'hold_id',$6::uuid::text))""",
                 uuid4(), tenant_id, actor_id, session_id, request.reason_code, hold_id,
             )
             return _record(row)
@@ -136,6 +147,7 @@ class PostgresSessionHoldRepository:
         tenant_id, session_id = request.tenant_id, request.session_id
         key_sha256 = self._sha(idempotency_key)
         async with tenant_transaction(self._pool, tenant_id) as connection:
+            await self._lock_key(connection, tenant_id, key_sha256)
             hold = await self._lock_hold(connection, tenant_id, session_id)
             prior = await connection.fetchrow(
                 "SELECT request_sha256 FROM ops.session_hold_idempotency WHERE tenant_id=$1 AND key_sha256=$2",
@@ -183,7 +195,7 @@ class PostgresSessionHoldRepository:
                         subject_uuid, action, status, evidence_json)
                        VALUES ($1,$2,$3,$4,'RESTRICT','PLANNED',
                                jsonb_build_object('scope','SESSION_ONLY',
-                                                  'session_id',$5::text,'hold_id',$6::text))""",
+                                                  'session_id',$5::uuid::text,'hold_id',$6::uuid::text))""",
                     planned_job_id, tenant_id, policy_id, subject_id,
                     session_id, hold["hold_id"],
                 )
@@ -210,7 +222,7 @@ class PostgresSessionHoldRepository:
                    (event_id, tenant_id, hold_id, session_id, action, actor_id,
                     ticket_sha256, safe_context)
                    VALUES ($1,$2,$3,$4,'DISPOSITION',$5,$6,
-                           jsonb_build_object('decision_code',$7))""",
+                           jsonb_build_object('decision_code',$7::text))""",
                 uuid4(), tenant_id, hold["hold_id"], session_id, actor_id,
                 self._sha(request.ticket_reference), request.decision_code,
             )
@@ -219,7 +231,7 @@ class PostgresSessionHoldRepository:
                    (audit_log_id, tenant_id, actor_type, actor_id, action, resource_type,
                     resource_id, outcome, safe_context)
                    VALUES ($1,$2,'PLATFORM_IDENTITY',$3,'session-hold.disposition',
-                           'SESSION',$4,'ALLOWED',jsonb_build_object('decision_code',$5))""",
+                           'SESSION',$4,'ALLOWED',jsonb_build_object('decision_code',$5::text))""",
                 uuid4(), tenant_id, actor_id, session_id, request.decision_code,
             )
             return self._disposition_result(row)
@@ -239,6 +251,7 @@ class PostgresSessionHoldRepository:
         tenant_id, session_id = request.tenant_id, request.session_id
         key_sha256 = self._sha(idempotency_key)
         async with tenant_transaction(self._pool, tenant_id) as connection:
+            await self._lock_key(connection, tenant_id, key_sha256)
             hold = await self._lock_hold(connection, tenant_id, session_id)
             prior = await connection.fetchrow(
                 "SELECT request_sha256, action, result_state FROM ops.session_hold_idempotency WHERE tenant_id=$1 AND key_sha256=$2",
@@ -284,7 +297,7 @@ class PostgresSessionHoldRepository:
                    (audit_log_id, tenant_id, actor_type, actor_id, action, resource_type,
                     resource_id, outcome, safe_context)
                    VALUES ($1,$2,'PLATFORM_IDENTITY',$3,'session-hold.release',
-                           'SESSION',$4,'ALLOWED',jsonb_build_object('hold_id',$5::text))""",
+                           'SESSION',$4,'ALLOWED',jsonb_build_object('hold_id',$5::uuid::text))""",
                 uuid4(), tenant_id, actor_id, session_id, hold["hold_id"],
             )
             return _record(row)

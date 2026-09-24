@@ -67,6 +67,12 @@ class HoldServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.apply(
                 self.owner, self.request.model_copy(update={"ticket_reference": "INC-100"}), "apply-1"
             )
+        second_session = uuid4()
+        self.repository.add_session(self.tenant, second_session, status="INGESTED", raw_object_count=1)
+        with self.assertRaises(IdempotencyConflict):
+            await self.service.apply(
+                self.owner, self.request.model_copy(update={"session_id": second_session}), "apply-1"
+            )
 
     async def test_platform_route_rejects_terminal_token_and_returns_safe_status(self) -> None:
         class IdentityVerifier:

@@ -19,6 +19,7 @@ from cloud.analysis.orchestrator import (
     RegisteredMetric,
 )
 from cloud.session_hold.service import SessionHeld
+from cloud.session_hold.adapter import run_with_current_hold
 
 
 class MutableHolds:
@@ -164,6 +165,7 @@ class AnalysisOrchestratorTests(unittest.TestCase):
         service.handle(unheld)
         self.assertEqual(loader.calls, 1)
 
+
     def test_only_accepts_the_approved_complete_session_event(self) -> None:
         repository = InMemoryAnalysisRepository()
         service = orchestrator(repository=repository)
@@ -287,6 +289,36 @@ class AnalysisOrchestratorTests(unittest.TestCase):
             ("relative_total_load", ("CLOUD_QUALITY_FAILED",)),
             run.capability_reasons,
         )
+
+
+class AuthoritativeAnalysisAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prequeued_event_is_blocked_by_current_repository_hold(self) -> None:
+        from uuid import uuid4
+
+        tenant, session = uuid4(), uuid4()
+        queued = event(tenant_id=str(tenant), session_id=str(session))
+        repository = InMemoryAnalysisRepository()
+        publisher = InMemoryEventPublisher()
+        loader = Loader()
+
+        class DurableHolds:
+            async def is_held(self, tenant_id, session_id):
+                self.asserted = (tenant_id, session_id)
+                return True
+
+        holds = DurableHolds()
+        with self.assertRaises(SessionHeld):
+            await run_with_current_hold(
+                holds, queued.tenant_id, queued.session_id,
+                lambda reader: orchestrator(
+                    repository=repository, publisher=publisher, loader=loader,
+                    holds=reader,
+                ).handle(queued),
+            )
+        self.assertEqual(holds.asserted, (tenant, session))
+        self.assertEqual(loader.calls, 0)
+        self.assertEqual(repository.count(), 0)
+        self.assertEqual(publisher.events, [])
 
 
 if __name__ == "__main__":
