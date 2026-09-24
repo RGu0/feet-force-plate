@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import Field, StringConstraints, model_validator
 
-from .cloud import ContractModel, Sha256Hex
+from .cloud import ContractModel, Sha256Hex, ConsentCreateRequest, SessionCreateRequest
 
 
 class RecoveryCaseCreateRequest(ContractModel):
@@ -55,3 +55,28 @@ class RecoveryComparisonResult(ContractModel):
     decision: Literal["MATCHED", "NOT_VERIFIED"]
     receipt_id: UUID | None = None
     receipt_expires_at: datetime | None = None
+
+
+class RecoveryRegistrationRequest(ContractModel):
+    receipt_id: UUID
+    original_subject_uuid: UUID
+    original_envelope_sha256: Sha256Hex
+    consent: ConsentCreateRequest
+    session: SessionCreateRequest
+
+    @model_validator(mode="after")
+    def consent_matches_session(self):
+        if (
+            self.consent.subject_uuid != self.session.subject_uuid
+            or self.consent.consent_record_id != self.session.consent_record_id
+        ):
+            raise ValueError("consent and session do not share subject and consent identity")
+        return self
+
+
+class RecoveryRegistrationResult(ContractModel):
+    case_id: UUID
+    receipt_id: UUID
+    consent_record_id: UUID
+    session_id: UUID
+    registered_at: datetime

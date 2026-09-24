@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -8,17 +9,25 @@ from uuid import uuid4
 from pydantic import ValidationError
 from httpx import ASGITransport, AsyncClient
 
-from cloud.api.errors import IdempotencyConflict, ResourceNotFound, TenantAccessDenied
+from cloud.api.errors import (
+    IdempotencyConflict, RequestContractError, ResourceNotFound, TenantAccessDenied,
+)
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.auth import TerminalTokenIssuer
 from cloud.api.access_auth import PlatformAccessContext
 from cloud.api.subject_service import IdentityProtector
+from cloud.api.repository import InMemoryPlatformRepository
 from shared.contracts.cloud import IdentityProfileInput
+from shared.contracts.cloud import (
+    ConsentCreateRequest, SessionCreateRequest, SessionVersions, TestProtocol,
+)
+from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.access_control import PlatformRole
 from cloud.ingestion.principal import IngestionPrincipal
 from cloud.identity_recovery.repository import InMemoryRecoveryCaseRepository
 from cloud.identity_recovery.service import IdentityRecoveryService
 from shared.contracts.identity_recovery import RecoveryCaseCreateRequest
+from shared.contracts.identity_recovery import RecoveryRegistrationRequest
 
 
 class RecoveryCaseTests(unittest.IsolatedAsyncioTestCase):
@@ -271,3 +280,154 @@ class RecoveryIdentityProtectionTests(unittest.TestCase):
                 protected.ciphertext, protected.nonce, protected.key_version,
                 tenant_id=str(tenant), subject_uuid=str(uuid4()),
             )
+
+
+class RecoveryRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        await RecoveryComparisonTests.asyncSetUp(self)
+        self.data = InMemoryPlatformRepository()
+        self.site, self.device = uuid4(), uuid4()
+        self.data.add_terminal(self.tenant, self.site, self.terminal)
+        self.data.add_device(self.tenant, self.device, "DO-P4864")
+        self.data.add_subject(self.tenant, self.cloud_subject)
+        self.repository.attach_data_repository(self.data)
+        self.data.recovery_case_guard = self.repository
+        compared = await self.service.compare(
+            self.platform, self.case.case_id, uuid4(), "Ada Wu", "+86 13900001111",
+            tenant_id=self.tenant, ticket_reference="SUP-100",
+        )
+        self.receipt_id = compared.receipt_id
+        self.consent = ConsentCreateRequest(
+            consent_record_id=uuid4(), subject_uuid=self.cloud_subject,
+            policy_version="consent/1", purpose_codes=("SCREENING_SERVICE",),
+            data_categories=("PRESSURE_RAW",), granted_at=datetime.now(UTC),
+            evidence_type="SUBJECT_CONFIRMED", terminal_signature="test-signature-123456",
+        )
+        self.session = SessionCreateRequest(
+            session_id=self.request.session_id, subject_uuid=self.cloud_subject,
+            consent_record_id=self.consent.consent_record_id, site_id=self.site,
+            terminal_id=self.terminal, client_installation_id=self.terminal,
+            device_id=self.device,
+            test_protocol=TestProtocol(id="standard-screening", version="1"),
+            versions=SessionVersions(
+                app="0.1", protocol_profile="do-p4864/1",
+                payload_schema="raw-segment/1", calibration="calibration/1",
+            ),
+            started_at=datetime.now(UTC),
+        )
+        self.registration = RecoveryRegistrationRequest(
+            receipt_id=self.receipt_id,
+            original_subject_uuid=self.request.original_subject_uuid,
+            original_envelope_sha256=self.request.envelope_sha256,
+            consent=self.consent, session=self.session,
+        )
+
+    async def test_atomic_registration_and_lost_response_retry(self) -> None:
+        first = await self.service.register(
+            self.principal, self.case.case_id, self.registration, "register-1"
+        )
+        self.assertEqual(first.session_id, self.request.session_id)
+        self.assertEqual(first.consent_record_id, self.consent.consent_record_id)
+        self.assertEqual(
+            await self.service.register(self.principal, self.case.case_id, self.registration, "register-1"),
+            first,
+        )
+        self.assertEqual(len(self.data._consents), 1)
+        self.assertEqual(len(self.data._sessions), 1)
+        with self.assertRaises(IdempotencyConflict):
+            await self.service.register(
+                self.principal, self.case.case_id,
+                self.registration.model_copy(update={"consent": self.consent.model_copy(update={"consent_record_id": uuid4()})}),
+                "register-1",
+            )
+
+    async def test_old_operator_attestation_and_wrong_binding_fail_closed(self) -> None:
+        old = self.consent.model_copy(update={"evidence_type": "OPERATOR_CONFIRMED"})
+        for changed in (
+            self.registration.model_copy(update={"consent": old}),
+            self.registration.model_copy(update={"original_envelope_sha256": "b" * 64}),
+            self.registration.model_copy(update={"original_subject_uuid": uuid4()}),
+            self.registration.model_copy(update={"receipt_id": uuid4()}),
+        ):
+            with self.assertRaises((RequestContractError, IdempotencyConflict)):
+                await self.service.register(self.principal, self.case.case_id, changed, "bad-binding")
+        self.assertEqual(len(self.data._consents), 0)
+        self.assertEqual(len(self.data._sessions), 0)
+
+    async def test_generic_session_creation_cannot_bypass_open_case(self) -> None:
+        await self.data.create_consent(
+            self.principal, self.consent, canonical_sha256(self.consent), "generic-consent"
+        )
+        with self.assertRaises(TenantAccessDenied):
+            await self.data.create_session(self.principal, self.session, "generic-session")
+        self.assertEqual(len(self.data._sessions), 0)
+
+    async def test_expired_receipt_and_old_consent_do_not_register(self) -> None:
+        stale_consent = self.consent.model_copy(update={
+            "granted_at": datetime.now(UTC) - timedelta(days=1),
+        })
+        with self.assertRaises(RequestContractError):
+            await self.service.register(
+                self.principal, self.case.case_id,
+                self.registration.model_copy(update={"consent": stale_consent}), "old-consent",
+            )
+        stored = self.repository._by_id[(self.tenant, self.case.case_id)]
+        expired = replace(stored, receipt_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        self.repository._by_id[(self.tenant, self.case.case_id)] = expired
+        with self.assertRaises(IdempotencyConflict):
+            await self.service.register(
+                self.principal, self.case.case_id, self.registration, "expired-receipt",
+            )
+        self.assertEqual(len(self.data._sessions), 0)
+
+    async def test_failure_after_consent_insert_rolls_back_all_local_state(self) -> None:
+        async def fail_session(*args, **kwargs):
+            raise RuntimeError("injected session insert failure")
+
+        self.data.create_session = fail_session
+        with self.assertRaisesRegex(RuntimeError, "injected"):
+            await self.service.register(
+                self.principal, self.case.case_id, self.registration, "register-fail",
+            )
+        self.assertEqual(len(self.data._consents), 0)
+        self.assertEqual(len(self.data._sessions), 0)
+        self.assertIsNone(
+            self.repository._by_id[(self.tenant, self.case.case_id)].receipt_consumed_at
+        )
+
+    async def test_concurrent_double_spend_has_one_winner(self) -> None:
+        outcomes = await asyncio.gather(
+            self.service.register(self.principal, self.case.case_id, self.registration, "register-a"),
+            self.service.register(self.principal, self.case.case_id, self.registration, "register-b"),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(item, Exception) for item in outcomes), 1)
+        self.assertEqual(len(self.data._consents), 1)
+        self.assertEqual(len(self.data._sessions), 1)
+
+    async def test_registration_route_is_terminal_authenticated(self) -> None:
+        issuer = TerminalTokenIssuer(
+            secret=b"test-only-recovery-token-secret-32-bytes", key_id="test-key",
+            token_ttl=timedelta(minutes=10),
+        )
+        app = create_app(ServiceContainer(token_issuer=issuer, identity_recovery=self.service))
+        headers = {
+            "Authorization": f"Bearer {issuer.issue(self.tenant, self.terminal)}",
+            "X-Terminal-ID": str(self.terminal), "Idempotency-Key": "route-register",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://cloud.test") as client:
+            url = f"/v1/identity-recovery/cases/{self.case.case_id}/register"
+            response = await client.post(
+                url, json=self.registration.model_dump(mode="json"), headers=headers,
+            )
+            self.assertEqual(response.status_code, 201)
+            replay = await client.post(
+                url, json=self.registration.model_dump(mode="json"), headers=headers,
+            )
+            self.assertEqual(replay.status_code, 201)
+            self.assertEqual(response.json()["data"], replay.json()["data"])
+            foreign = await client.post(
+                url, json=self.registration.model_dump(mode="json"),
+                headers={**headers, "Authorization": f"Bearer {issuer.issue(uuid4(), self.terminal)}"},
+            )
+            self.assertEqual(foreign.status_code, 404)

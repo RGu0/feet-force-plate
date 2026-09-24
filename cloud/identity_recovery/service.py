@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from cloud.api.access_auth import PlatformAccessContext
@@ -14,6 +14,7 @@ from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.access_control import PlatformRole
 from shared.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryCaseSummary, RecoveryComparisonResult,
+    RecoveryRegistrationRequest, RecoveryRegistrationResult,
 )
 
 from .models import RecoveryCaseRecord
@@ -123,4 +124,46 @@ class IdentityRecoveryService:
             tenant_id, case_id, matched=matched,
             actor_id=context.platform_identity_id, grant_id=grant_id,
             ticket_sha256=hashlib.sha256(grant_records[0].ticket_reference.encode("utf-8")).hexdigest(),
+        )
+
+    async def register(
+        self, context: IngestionPrincipal, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+    ) -> RecoveryRegistrationResult:
+        context.ensure_can_upload()
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise RequestContractError("invalid recovery idempotency key")
+        case = await self._repository.get_case(context.tenant_id, context.terminal_id, case_id)
+        if (
+            case.status != "MATCHED" or case.receipt_id != request.receipt_id
+            or case.receipt_expires_at is None or case.receipt_expires_at <= datetime.now(UTC)
+            or case.receipt_consumed_at is not None
+            or case.request.original_subject_uuid != request.original_subject_uuid
+            or case.request.envelope_sha256 != request.original_envelope_sha256
+            or case.request.session_id != request.session.session_id
+            or case.request.cloud_subject_uuid != request.session.subject_uuid
+            or request.session.terminal_id != context.terminal_id
+            or request.session.client_installation_id != context.terminal_id
+            or request.consent.subject_uuid != case.request.cloud_subject_uuid
+            or request.consent.consent_record_id != request.session.consent_record_id
+        ):
+            # A successful retry is resolved by the repository's idempotency
+            # record before this current-state check in its own transaction.
+            return await self._repository.register(
+                context, case_id, request, idempotency_key,
+                canonical_sha256(request), replay_only=True,
+            )
+        if request.consent.evidence_type not in {"SUBJECT_CONFIRMED", "REPRESENTATIVE_CONFIRMED"}:
+            raise RequestContractError("fresh subject or representative consent is required")
+        if not any(purpose != "ALGORITHM_RESEARCH" for purpose in request.consent.purpose_codes):
+            raise RequestContractError("necessary screening consent is required")
+        if (
+            request.consent.granted_at.tzinfo is None
+            or request.consent.granted_at < case.receipt_expires_at - timedelta(minutes=15)
+            or request.consent.granted_at > datetime.now(UTC) + timedelta(minutes=2)
+        ):
+            raise RequestContractError("fresh consent time is invalid")
+        return await self._repository.register(
+            context, case_id, request, idempotency_key, canonical_sha256(request),
+            replay_only=False,
         )

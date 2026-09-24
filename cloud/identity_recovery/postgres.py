@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -9,8 +11,13 @@ from cloud.api.errors import (
     IdempotencyConflict, RepositoryUnavailable, ResourceNotFound, TenantAccessDenied,
 )
 from cloud.api.postgres import tenant_transaction
+from cloud.ingestion.principal import IngestionPrincipal
 from cloud.api.subject_service import IdentityProtector
-from shared.contracts.identity_recovery import RecoveryCaseCreateRequest, RecoveryComparisonResult
+from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryComparisonResult,
+    RecoveryRegistrationRequest, RecoveryRegistrationResult,
+)
 
 from .models import RecoveryCaseRecord
 
@@ -123,6 +130,12 @@ class PostgresRecoveryCaseRepository:
             )
             if subject is None:
                 raise ResourceNotFound("cloud subject not found")
+            session_exists = await connection.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2)",
+                tenant_id, request.session_id,
+            )
+            if session_exists:
+                raise IdempotencyConflict("session already registered before recovery case")
             existing = await connection.fetchrow(
                 _CASE_SELECT + " WHERE c.tenant_id=$1 AND c.session_id=$2",
                 tenant_id, request.session_id,
@@ -254,4 +267,170 @@ class PostgresRecoveryCaseRepository:
             return RecoveryComparisonResult(
                 case_id=case_id, decision="MATCHED" if matched else "NOT_VERIFIED",
                 receipt_id=receipt_id, receipt_expires_at=expires_at,
+            )
+
+    async def register(
+        self, context: IngestionPrincipal, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+        request_sha256: str, *, replay_only: bool,
+    ) -> RecoveryRegistrationResult:
+        tenant_id = context.tenant_id
+        key_sha256 = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        async with tenant_transaction(self._tenant_pool, tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-register:' || $1::uuid::text || ':' || $2::text, 0))",
+                tenant_id, key_sha256,
+            )
+            prior = await connection.fetchrow(
+                """SELECT * FROM ops.identity_recovery_registrations
+                   WHERE tenant_id=$1 AND key_sha256=$2""",
+                tenant_id, key_sha256,
+            )
+            if prior is not None:
+                if prior["request_sha256"] != request_sha256 or prior["case_id"] != case_id:
+                    raise IdempotencyConflict("recovery registration key conflict")
+                return RecoveryRegistrationResult(
+                    case_id=case_id, receipt_id=prior["receipt_id"],
+                    consent_record_id=prior["consent_record_id"],
+                    session_id=prior["session_id"], registered_at=prior["registered_at"],
+                )
+            if replay_only:
+                raise IdempotencyConflict("recovery registration binding conflict")
+            case = await connection.fetchrow(
+                """SELECT * FROM ops.identity_recovery_cases
+                   WHERE tenant_id=$1 AND case_id=$2 FOR UPDATE""",
+                tenant_id, case_id,
+            )
+            if case is None or case["terminal_id"] != context.terminal_id:
+                raise ResourceNotFound("recovery case not found")
+            receipt = await connection.fetchrow(
+                """SELECT * FROM ops.identity_recovery_receipts
+                   WHERE tenant_id=$1 AND case_id=$2 FOR UPDATE""",
+                tenant_id, case_id,
+            )
+            if (
+                receipt is None or receipt["receipt_id"] != request.receipt_id
+                or receipt["expires_at"] <= datetime.now(UTC)
+                or receipt["consumed_at"] is not None or case["status"] != "MATCHED"
+                or receipt["terminal_id"] != context.terminal_id
+                or receipt["session_id"] != case["session_id"]
+                or receipt["original_subject_uuid"] != case["original_subject_uuid"]
+                or receipt["cloud_subject_uuid"] != case["cloud_subject_uuid"]
+                or receipt["envelope_sha256"] != case["envelope_sha256"]
+                or request.original_subject_uuid != case["original_subject_uuid"]
+                or request.original_envelope_sha256 != case["envelope_sha256"]
+                or request.session.session_id != case["session_id"]
+                or request.session.subject_uuid != case["cloud_subject_uuid"]
+                or request.session.terminal_id != context.terminal_id
+                or request.session.client_installation_id != context.terminal_id
+                or request.consent.subject_uuid != case["cloud_subject_uuid"]
+                or request.consent.consent_record_id != request.session.consent_record_id
+            ):
+                raise IdempotencyConflict("recovery receipt or binding invalid")
+            if (
+                request.consent.evidence_type not in {"SUBJECT_CONFIRMED", "REPRESENTATIVE_CONFIRMED"}
+                or not any(purpose != "ALGORITHM_RESEARCH" for purpose in request.consent.purpose_codes)
+                or request.consent.granted_at.tzinfo is None
+                or request.consent.granted_at < receipt["created_at"]
+                or request.consent.granted_at > datetime.now(UTC) + timedelta(minutes=2)
+            ):
+                raise IdempotencyConflict("fresh necessary consent required")
+            validation = await connection.fetchrow(
+                """SELECT
+                    EXISTS(SELECT 1 FROM device.client_installations i
+                           JOIN device.terminals t ON t.tenant_id=i.tenant_id
+                             AND t.terminal_id=i.client_installation_id
+                           WHERE i.tenant_id=$1 AND i.client_installation_id=$2
+                             AND i.status='ACTIVE' AND t.status='ACTIVE'
+                             AND t.site_id IS NOT DISTINCT FROM $3) AS installation_ok,
+                    EXISTS(SELECT 1 FROM device.hardware_assets h
+                           JOIN device.devices d ON d.tenant_id=h.tenant_id
+                             AND d.device_id=h.hardware_id
+                           WHERE h.tenant_id=$1 AND h.hardware_id=$4) AS hardware_ok,
+                    EXISTS(SELECT 1 FROM subject.subjects s
+                           WHERE s.tenant_id=$1 AND s.subject_uuid=$5
+                             AND s.status='ACTIVE') AS subject_ok,
+                    EXISTS(SELECT 1 FROM subject.external_identifiers e
+                           WHERE e.tenant_id=$1 AND e.subject_uuid=$5
+                             AND e.issuer=$6 AND e.id_type=$7
+                             AND e.status='ACTIVE') AS identifier_ok""",
+                tenant_id, context.terminal_id, request.session.site_id,
+                request.session.device_id, case["cloud_subject_uuid"],
+                case["identifier_issuer"], case["identifier_type"],
+            )
+            if not all(validation.values()):
+                raise TenantAccessDenied("recovery session references are invalid")
+            existing = await connection.fetchval(
+                """SELECT EXISTS(SELECT 1 FROM screening.sessions
+                   WHERE tenant_id=$1 AND session_id=$2)""",
+                tenant_id, case["session_id"],
+            )
+            if existing:
+                raise IdempotencyConflict("session is already registered")
+            consent_exists = await connection.fetchval(
+                """SELECT EXISTS(SELECT 1 FROM subject.consents
+                   WHERE tenant_id=$1 AND consent_record_id=$2)""",
+                tenant_id, request.consent.consent_record_id,
+            )
+            if consent_exists:
+                raise IdempotencyConflict("consent identifier already exists")
+            await connection.execute(
+                """INSERT INTO subject.consents
+                   (consent_record_id, tenant_id, subject_uuid, policy_version,
+                    purpose_codes, data_categories, evidence_type, terminal_id,
+                    evidence_hash, granted_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                request.consent.consent_record_id, tenant_id,
+                request.consent.subject_uuid, request.consent.policy_version,
+                list(request.consent.purpose_codes), list(request.consent.data_categories),
+                request.consent.evidence_type, context.terminal_id,
+                canonical_sha256(request.consent), request.consent.granted_at,
+            )
+            session = request.session
+            await connection.execute(
+                """INSERT INTO screening.sessions
+                   (session_id, tenant_id, site_id, terminal_id, device_id,
+                    subject_uuid, consent_record_id, test_protocol_id,
+                    test_protocol_version, validity_status, ingest_status,
+                    started_at, app_version, protocol_profile_version,
+                    payload_schema_version, calibration_version, config_snapshot)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'UNKNOWN','RECEIVING',
+                           $10,$11,$12,$13,$14,$15::jsonb)""",
+                session.session_id, tenant_id, session.site_id, context.terminal_id,
+                session.device_id, session.subject_uuid, session.consent_record_id,
+                session.test_protocol.id, session.test_protocol.version,
+                session.started_at, session.versions.app,
+                session.versions.protocol_profile, session.versions.payload_schema,
+                session.versions.calibration,
+                json.dumps(session.config_snapshot, separators=(",", ":")),
+            )
+            registered_at = datetime.now(UTC)
+            await connection.execute(
+                """UPDATE ops.identity_recovery_receipts SET consumed_at=$3
+                   WHERE tenant_id=$1 AND case_id=$2 AND consumed_at IS NULL""",
+                tenant_id, case_id, registered_at,
+            )
+            await connection.execute(
+                """INSERT INTO ops.identity_recovery_registrations
+                   (registration_id, tenant_id, case_id, receipt_id, key_sha256,
+                    request_sha256, consent_record_id, session_id, registered_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+                uuid4(), tenant_id, case_id, request.receipt_id, key_sha256,
+                request_sha256, request.consent.consent_record_id,
+                request.session.session_id, registered_at,
+            )
+            await connection.execute(
+                """INSERT INTO ops.audit_logs
+                   (audit_log_id, tenant_id, actor_type, actor_id, action,
+                    resource_type, resource_id, outcome, safe_context)
+                   VALUES ($1,$2,'TERMINAL',$3,'identity-recovery.register',
+                           'RECOVERY_CASE',$4,'ALLOWED',
+                           jsonb_build_object('session_id',$5::uuid::text))""",
+                uuid4(), tenant_id, context.terminal_id, case_id,
+                request.session.session_id,
+            )
+            return RecoveryRegistrationResult(
+                case_id=case_id, receipt_id=request.receipt_id,
+                consent_record_id=request.consent.consent_record_id,
+                session_id=request.session.session_id, registered_at=registered_at,
             )

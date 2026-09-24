@@ -71,6 +71,7 @@ from shared.contracts.validation_telemetry import (
 )
 from shared.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryComparisonRequest,
+    RecoveryRegistrationRequest,
 )
 
 
@@ -723,6 +724,19 @@ def create_app(container: ServiceContainer) -> FastAPI:
             tenant_id=body.tenant_id, ticket_reference=body.ticket_reference,
         )
         return _data_response(request, result)
+
+    @app.post("/v1/identity-recovery/cases/{case_id}/register")
+    async def register_recovery_case(
+        request: Request, case_id: UUID, body: RecoveryRegistrationRequest,
+        context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.register(
+            context, case_id, body, idempotency_key,
+        )
+        return _data_response(request, result, 201)
 
     @app.post("/v1/subjects/resolve")
     async def resolve_subject(

@@ -452,6 +452,13 @@ class PostgresPlatformRepository:
         context.ensure_active()
         digest = canonical_sha256(request)
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            protected = await connection.fetchval(
+                """SELECT EXISTS(SELECT 1 FROM ops.identity_recovery_cases
+                   WHERE tenant_id=$1 AND session_id=$2)""",
+                context.tenant_id, request.session_id,
+            )
+            if protected:
+                raise TenantAccessDenied("session requires controlled identity recovery")
             replay = await self._idempotency(
                 connection, context.tenant_id, "session.create", idempotency_key, digest
             )

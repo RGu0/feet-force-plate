@@ -92,4 +92,30 @@ GRANT SELECT (tenant_id, subject_uuid, status)
 GRANT SELECT (tenant_id, subject_uuid, issuer, id_type, status)
     ON subject.external_identifiers TO ffp_platform_app;
 
+CREATE TABLE ops.identity_recovery_registrations (
+    registration_id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES iam.tenants(tenant_id),
+    case_id uuid NOT NULL,
+    receipt_id uuid NOT NULL,
+    key_sha256 text NOT NULL CHECK (key_sha256 ~ '^[0-9a-f]{64}$'),
+    request_sha256 text NOT NULL CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
+    consent_record_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, registration_id),
+    UNIQUE (tenant_id, case_id),
+    UNIQUE (tenant_id, key_sha256),
+    FOREIGN KEY (tenant_id, case_id)
+        REFERENCES ops.identity_recovery_cases(tenant_id, case_id)
+);
+
+ALTER TABLE ops.identity_recovery_registrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ops.identity_recovery_registrations FORCE ROW LEVEL SECURITY;
+CREATE POLICY identity_recovery_registrations_tenant_isolation ON ops.identity_recovery_registrations
+USING (tenant_id = ops.current_tenant_id())
+WITH CHECK (tenant_id = ops.current_tenant_id());
+REVOKE ALL ON ops.identity_recovery_registrations FROM PUBLIC;
+GRANT SELECT, INSERT ON ops.identity_recovery_registrations TO ffp_tenant_app;
+GRANT UPDATE ON ops.identity_recovery_receipts TO ffp_tenant_app;
+
 COMMIT;

@@ -197,6 +197,7 @@ class InMemoryPlatformRepository:
         self._idempotency: dict[tuple[UUID, str, str], IdempotencyRecord] = {}
         self._events: list[EventEnvelope] = []
         self._problems: list[tuple[UUID, UUID, str]] = []
+        self.recovery_case_guard = None
 
     def add_terminal(self, tenant_id: UUID, site_id: UUID, terminal_id: UUID) -> None:
         self._terminals[(tenant_id, terminal_id)] = TerminalRecord(tenant_id, site_id, terminal_id)
@@ -803,8 +804,15 @@ class InMemoryPlatformRepository:
         context: TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        *, recovery_case_id: UUID | None = None,
     ) -> SessionCreateResponse:
         self._terminal(context)
+        if self.recovery_case_guard is not None:
+            protected_case = self.recovery_case_guard.open_case_id(
+                context.tenant_id, request.session_id
+            )
+            if protected_case is not None and protected_case != recovery_case_id:
+                raise TenantAccessDenied("session requires controlled identity recovery")
         digest = canonical_sha256(request)
         replay = self._idempotent_result(context.tenant_id, "session.create", idempotency_key, digest)
         if replay is not None:

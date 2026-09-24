@@ -3,24 +3,39 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from cloud.api.errors import IdempotencyConflict, ResourceNotFound
+from cloud.api.errors import IdempotencyConflict, ResourceNotFound, TenantAccessDenied
+from cloud.ingestion.principal import IngestionPrincipal
+from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.identity_recovery import RecoveryCaseCreateRequest
 
 from .models import RecoveryCaseRecord
-from shared.contracts.identity_recovery import RecoveryComparisonResult
+from shared.contracts.identity_recovery import (
+    RecoveryComparisonResult, RecoveryRegistrationRequest, RecoveryRegistrationResult,
+)
 
 
 class InMemoryRecoveryCaseRepository:
-    def __init__(self) -> None:
+    def __init__(self, data_repository=None) -> None:
         self._subjects: dict[tuple[UUID, UUID], str | None] = {}
         self._cases: dict[tuple[UUID, UUID], RecoveryCaseRecord] = {}
         self._by_id: dict[tuple[UUID, UUID], RecoveryCaseRecord] = {}
         self._keys: dict[tuple[UUID, str], RecoveryCaseRecord] = {}
         self._lock = asyncio.Lock()
+        self._data_repository = data_repository
+        self._registrations: dict[tuple[UUID, UUID], RecoveryRegistrationResult] = {}
+        self._registration_keys: dict[tuple[UUID, str], tuple[str, RecoveryRegistrationResult]] = {}
+
+    def attach_data_repository(self, data_repository) -> None:
+        self._data_repository = data_repository
+
+    def open_case_id(self, tenant_id: UUID, session_id: UUID) -> UUID | None:
+        case = self._cases.get((tenant_id, session_id))
+        return case.case_id if case is not None else None
 
     def add_subject(self, tenant_id: UUID, subject_id: UUID, *, masked_clue: str | None = None) -> None:
         self._subjects[(tenant_id, subject_id)] = masked_clue
@@ -40,6 +55,11 @@ class InMemoryRecoveryCaseRepository:
                 return keyed
             if (tenant_id, request.cloud_subject_uuid) not in self._subjects:
                 raise ResourceNotFound("cloud subject not found")
+            if (
+                self._data_repository is not None
+                and (tenant_id, request.session_id) in self._data_repository._sessions
+            ):
+                raise IdempotencyConflict("session already registered before recovery case")
             existing = self._cases.get((tenant_id, request.session_id))
             if existing is not None:
                 if existing.request_sha256 != request_sha256:
@@ -98,3 +118,67 @@ class InMemoryRecoveryCaseRepository:
                 case_id=case_id, decision="MATCHED" if matched else "NOT_VERIFIED",
                 receipt_id=receipt_id, receipt_expires_at=expires_at,
             )
+
+    async def register(
+        self, context: IngestionPrincipal, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+        request_sha256: str, *, replay_only: bool,
+    ) -> RecoveryRegistrationResult:
+        async with self._lock:
+            key = (context.tenant_id, idempotency_key)
+            prior = self._registration_keys.get(key)
+            if prior is not None:
+                if prior[0] != request_sha256 or prior[1].case_id != case_id:
+                    raise IdempotencyConflict("recovery registration key conflict")
+                return prior[1]
+            if replay_only:
+                raise IdempotencyConflict("recovery registration binding conflict")
+            case = await self.get_case(context.tenant_id, context.terminal_id, case_id)
+            if (
+                case.status != "MATCHED" or case.receipt_id != request.receipt_id
+                or case.receipt_expires_at is None or case.receipt_expires_at <= datetime.now(UTC)
+                or case.receipt_consumed_at is not None
+                or case.request.original_subject_uuid != request.original_subject_uuid
+                or case.request.envelope_sha256 != request.original_envelope_sha256
+                or case.request.session_id != request.session.session_id
+                or case.request.cloud_subject_uuid != request.session.subject_uuid
+                or request.consent.subject_uuid != case.request.cloud_subject_uuid
+                or request.consent.consent_record_id != request.session.consent_record_id
+                or request.session.terminal_id != context.terminal_id
+                or request.session.client_installation_id != context.terminal_id
+            ):
+                raise IdempotencyConflict("recovery registration binding conflict")
+            if self._data_repository is None:
+                raise TenantAccessDenied("recovery data repository unavailable")
+            if (context.tenant_id, case.request.cloud_subject_uuid) not in self._subjects:
+                raise ResourceNotFound("cloud subject is no longer active")
+            data = self._data_repository
+            snapshot = {
+                name: copy.deepcopy(getattr(data, name))
+                for name in ("_consents", "_sessions", "_session_tenants", "_idempotency")
+            }
+            try:
+                await data.create_consent(
+                    context, request.consent, canonical_sha256(request.consent),
+                    f"recovery-consent:{case_id}",
+                )
+                await data.create_session(
+                    context, request.session, f"recovery-session:{case_id}",
+                    recovery_case_id=case_id,
+                )
+            except Exception:
+                for name, state in snapshot.items():
+                    setattr(data, name, state)
+                raise
+            result = RecoveryRegistrationResult(
+                case_id=case_id, receipt_id=request.receipt_id,
+                consent_record_id=request.consent.consent_record_id,
+                session_id=request.session.session_id, registered_at=datetime.now(UTC),
+            )
+            updated = replace(case, receipt_consumed_at=result.registered_at)
+            self._by_id[(context.tenant_id, case_id)] = updated
+            self._cases[(context.tenant_id, case.request.session_id)] = updated
+            self._keys[(context.tenant_id, case.key_sha256)] = updated
+            self._registrations[(context.tenant_id, case_id)] = result
+            self._registration_keys[key] = (request_sha256, result)
+            return result
