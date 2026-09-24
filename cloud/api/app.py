@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization
+from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization, UploadMigrationPermitRequest
 
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
@@ -304,6 +304,16 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return await container.platform_identities.verify_access_token(token)
 
     PlatformAccessDependency = Annotated[PlatformAccessContext, Depends(platform_context)]
+
+    async def migration_platform_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ) -> PlatformAccessContext:
+        try:
+            return await platform_context(authorization)
+        except AuthenticationError:
+            raise TenantAccessDenied("platform owner approval required") from None
+
+    MigrationPlatformDependency = Annotated[PlatformAccessContext, Depends(migration_platform_context)]
 
     def source_fingerprint(request: Request) -> bytes:
         host = request.client.host if request.client is not None else "unknown"
@@ -680,6 +690,21 @@ def create_app(container: ServiceContainer) -> FastAPI:
             idempotency_key,
         )
         return _data_response(request, result)
+
+    @app.post("/v1/platform/upload-migration-permits")
+    async def approve_upload_migration_permit(
+        request: Request, body: UploadMigrationPermitRequest, context: MigrationPlatformDependency,
+    ):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("迁移核准服务暂不可用")
+        result = await container.capture_grants.approve_migration(context, body)
+        # Only this issuance response reveals the secret, once. Neither the
+        # ordinary model serializer nor persistent records expose it.
+        response = _data_response(request, {
+            "session_id": str(result.session_id), "token": result.token.get_secret_value(),
+        }, 201)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.post("/v1/access/capture-grants")
     async def issue_capture_grants(request: Request, body: CaptureGrantBatchRequest, context: DataDependency):

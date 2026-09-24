@@ -238,7 +238,7 @@ async def build_seed_app(
     access_repository = PostgresAccessRepository(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
-    data_repository = PostgresPlatformRepository(tenant_pool)
+    data_repository = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
     if object_store_factory is not None:
         objects = object_store_factory(settings)
     elif settings.object_backend == "aliyun-oss":

@@ -184,6 +184,9 @@ class CaptureGrantRecord:
     state: str = "ISSUED"
     consumed_request_sha256: str | None = None
     expected_manifest_sha256: str | None = None
+    approver_id: UUID | None = None
+    approval_reason: str | None = None
+    evidence_reference: str | None = None
 
 
 class InMemoryPlatformRepository:
@@ -193,6 +196,7 @@ class InMemoryPlatformRepository:
         self._capture_access = access_repository
         self._capture_grants: dict[tuple[UUID, UUID], CaptureGrantRecord] = {}
         self._migration_permits: dict[tuple[UUID, UUID], CaptureGrantRecord] = {}
+        self._migration_audits: list[dict[str, Any]] = []
         self._registration_lock = asyncio.Lock()
         self._capture_audits: list[tuple[UUID, UUID, UUID, str, str]] = []
         self._terminals: dict[tuple[UUID, UUID], TerminalRecord] = {}
@@ -223,6 +227,54 @@ class InMemoryPlatformRepository:
         self._idempotency: dict[tuple[UUID, str, str], IdempotencyRecord] = {}
         self._events: list[EventEnvelope] = []
         self._problems: list[tuple[UUID, UUID, str]] = []
+
+    async def audit_migration_denial(self, context, request, decision):
+        self._migration_audits.append(self._migration_audit(context, request, "REJECTED", decision))
+
+    @staticmethod
+    def _migration_audit(context, request, event, decision):
+        return dict(tenant_id=request.tenant_id, session_id=request.session_id,
+                    actor_id=context.platform_identity_id, event_kind=event,
+                    decision_code=decision, reason=request.reason,
+                    evidence_reference=request.evidence_reference)
+
+    async def insert_migration_permit(self, context, request, token_sha256):
+        from shared.contracts.access_control import PlatformRole
+
+        access = self._capture_access
+        if access is None:
+            raise TenantAccessDenied("migration approval unavailable")
+        async with access._lock, self._registration_lock:
+            now = datetime.now(UTC)
+            owner = access._platform_identities.get(context.platform_identity_id)
+            owner_role = any(binding.platform_identity_id == context.platform_identity_id
+                             and binding.role == PlatformRole.OWNER and binding.valid_from <= now
+                             and (binding.valid_to is None or now < binding.valid_to)
+                             for binding in access._platform_role_bindings)
+            installation = access._installations.get(request.installation_id)
+            hardware_id = access._hardware_by_identity.get(request.hardware_id)
+            historical_records = (access._accounts.get(request.account_id),
+                                  access._licenses.get(request.license_id), access._hardware.get(hardware_id))
+            history = any(row.tenant_id == request.tenant_id and row.account_id == request.account_id
+                          and row.license_id == request.license_id and row.hardware_id == hardware_id
+                          and (row.closed_at is None or (installation is not None and installation.first_seen_at < row.closed_at))
+                          for row in access._group_history)
+            key = (request.tenant_id, request.session_id)
+            if (owner is None or owner.status != "ACTIVE" or owner.token_version != context.token_version
+                or context.expires_at <= now or PlatformRole.OWNER not in context.roles or not owner_role
+                or installation is None or installation.tenant_id != request.tenant_id
+                or installation.account_id != request.account_id or not history
+                or any(row is None or row.tenant_id != request.tenant_id for row in historical_records)
+                or key in self._migration_permits):
+                raise TenantAccessDenied("migration approval binding rejected")
+            self._migration_permits[key] = CaptureGrantRecord(
+                request.tenant_id, request.session_id, request.installation_id, request.account_id,
+                request.license_id, hardware_id, token_sha256, now,
+                consumed_request_sha256=request.request_sha256, expected_manifest_sha256=request.manifest_sha256,
+                approver_id=context.platform_identity_id, approval_reason=request.reason,
+                evidence_reference=request.evidence_reference,
+            )
+            self._migration_audits.append(self._migration_audit(context, request, "APPROVED", request.reason))
 
     def _capture_entitlement(self, context):
         """Called under the reference access adapter's shared mutation lock."""

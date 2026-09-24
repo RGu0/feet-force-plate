@@ -6,6 +6,7 @@ These values carry credentials; validation here does not prove authorization.
 from __future__ import annotations
 
 from typing import Annotated, Literal
+import re
 from uuid import UUID
 
 from pydantic import Field, SecretStr, StringConstraints, field_validator
@@ -70,13 +71,22 @@ class UploadMigrationPermitRequest(ContractModel):
     request_sha256: Sha256Hex
     manifest_sha256: Sha256Hex
     evidence_reference: NonemptyText
-    reason: NonemptyText
+    reason: Literal["LEGACY_VALID_SESSION_REVIEWED"]
     identity_conflict: bool
     reconciliation_reference: NonemptyText | None
     local_valid_reviewed: bool
     immutable_manifest_reviewed: bool
     original_consent_reviewed: bool
     historical_authorization_reviewed: bool
+
+    @field_validator("evidence_reference")
+    @classmethod
+    def require_safe_evidence_reference(cls, value: str) -> str:
+        # Opaque relative references only: no credentials, URI parameters,
+        # traversal, free-text rationale, or evidence payloads in the audit.
+        if len(value) > 240 or re.fullmatch(r"evidence/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", value) is None:
+            raise ValueError("an opaque evidence/ reference is required")
+        return value
 
 
 class MigrationPermitResponse(_TokenContract):

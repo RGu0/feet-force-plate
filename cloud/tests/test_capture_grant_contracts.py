@@ -79,7 +79,7 @@ def test_retirement_and_migration_request_preserve_review_fields() -> None:
         tenant_id=uuid4(), account_id=uuid4(), license_id=uuid4(),
         installation_id=uuid4(), hardware_id="usb-serial-0123456789abcdef0123",
         session_id=session_id, request_sha256="a" * 64, manifest_sha256="b" * 64,
-        evidence_reference="audit/513", reason="reviewed historical capture",
+        evidence_reference="evidence/ray-513/review-1", reason="LEGACY_VALID_SESSION_REVIEWED",
         identity_conflict=False, reconciliation_reference=None,
         local_valid_reviewed=True, immutable_manifest_reviewed=True,
         original_consent_reviewed=True, historical_authorization_reviewed=True,

@@ -337,7 +337,7 @@ def test_live_capture_authorization_operations_are_tenant_scoped_and_one_way() -
                 first_group.account_id, first_group.license_id,
                 first_group.hardware_id, os.urandom(32), request_digest,
                 manifest_digest, approver.platform_identity_id,
-                "Reviewed legacy valid capture", "evidence/ray-513/test",
+                "LEGACY_VALID_SESSION_REVIEWED", "evidence/ray-513/test",
             )
             permit_sql = """INSERT INTO screening.upload_migration_permits
                 (tenant_id,session_id,installation_id,account_id,license_id,
@@ -348,12 +348,53 @@ def test_live_capture_authorization_operations_are_tenant_scoped_and_one_way() -
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     async with connection.transaction():
                         await connection.execute(permit_sql, *permit_args)
+            from cloud.api.access_auth import PlatformAccessContext
+            from cloud.api.postgres import PostgresPlatformRepository
+            from cloud.api.errors import TenantAccessDenied
+            from cloud.access_control.capture_grants import CaptureGrantService
+            from shared.contracts.capture_grants import UploadMigrationPermitRequest
+            from dataclasses import replace
+
+            context = PlatformAccessContext(approver.platform_identity_id, frozenset({PlatformRole.OWNER}),
+                                            1, datetime.now(UTC) + timedelta(minutes=10))
+            service = CaptureGrantService(PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool))
+            request = UploadMigrationPermitRequest(
+                tenant_id=first.tenant_id, session_id=permit_session_id, installation_id=first_installation_id,
+                account_id=first_group.account_id, license_id=first_group.license_id,
+                hardware_id=first_group.hardware_identity, request_sha256=request_digest,
+                manifest_sha256=manifest_digest, evidence_reference="evidence/ray-513/test",
+                reason="LEGACY_VALID_SESSION_REVIEWED", identity_conflict=False, reconciliation_reference=None,
+                local_valid_reviewed=True, immutable_manifest_reviewed=True,
+                original_consent_reviewed=True, historical_authorization_reviewed=True,
+            )
+            for denied_context, denied_request in (
+                (replace(context, roles=frozenset({PlatformRole.SUPPORT})), request),
+                (context, request.model_copy(update={"account_id": second_group.account_id})),
+                (context, request.model_copy(update={"tenant_id": uuid4()})),
+                (context, request.model_copy(update={"identity_conflict": True, "reconciliation_reference": "evidence/claimed"})),
+            ):
+                with pytest.raises(TenantAccessDenied):
+                    await service.approve_migration(denied_context, denied_request)
+            async with platform_pool.acquire() as connection:
+                assert await connection.fetchval(
+                    "SELECT count(*) FROM ops.access_audit_events WHERE actor_id=$1 AND action='UPLOAD_MIGRATION_PERMIT_REJECTED'",
+                    approver.platform_identity_id,
+                ) == 4
+            results = await asyncio.gather(service.approve_migration(context, request),
+                                           service.approve_migration(context, request), return_exceptions=True)
+            assert sum(isinstance(result, TenantAccessDenied) for result in results) == 1
+            permit = next(result for result in results if not isinstance(result, BaseException))
             async with tenant_transaction(platform_pool, first.tenant_id) as connection:
-                await connection.execute(permit_sql, *permit_args)
                 assert await connection.fetchval(
                     "SELECT state FROM screening.upload_migration_permits WHERE session_id=$1",
                     permit_session_id,
                 ) == "ISSUED"
+                row = await connection.fetchrow(
+                    "SELECT * FROM screening.upload_migration_permits WHERE session_id=$1", permit_session_id)
+                assert row["token_sha256"] == hashlib.sha256(permit.token.get_secret_value().encode()).digest()
+                assert row["approval_reason"] == request.reason
+                assert row["approver_id"] == context.platform_identity_id
+                assert permit.token.get_secret_value() not in repr(dict(row))
             async with tenant_transaction(platform_pool, second.tenant_id) as connection:
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     async with connection.transaction():

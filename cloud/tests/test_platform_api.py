@@ -19,10 +19,13 @@ from cloud.api.access_auth import (
     TenantAccessTokenIssuer,
 )
 from cloud.api.app import ServiceContainer, create_app
+from cloud.api.repository import InMemoryPlatformRepository
+from cloud.access_control.capture_grants import CaptureGrantService
 from shared.contracts.access_control import (
     AccessCapabilities,
     ActivateAccountRequest,
     PlatformRole,
+    ProvisionTenantRequest,
 )
 
 
@@ -77,11 +80,13 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
             license_signer=signer,
             now=lambda: self.now,
         )
+        self.data_repository = InMemoryPlatformRepository(access_repository=self.repository)
         app = create_app(
             ServiceContainer(
                 platform_identities=self.identities,
                 platform_access=self.platform_access,
                 platform_tokens=self.platform_tokens,
+                capture_grants=CaptureGrantService(self.data_repository),
                 platform_sensitive=SensitiveAccessService(
                     self.repository,
                     now=lambda: self.now,
@@ -106,6 +111,63 @@ class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
             "hardware_id": "usb-serial-0123456789abcdef0123",
             "license_period_months": 12,
         }
+
+    async def migration_body(self):
+        owner = await self.identities.verify_access_token(self.owner_login.access_token)
+        provisioned = await self.platform_access.provision_tenant(owner, ProvisionTenantRequest(**self.tenant_body()))
+        installation = uuid4()
+        activated = await self.tenant_access.activate(ActivateAccountRequest(
+            account_name=provisioned.account_name, activation_code=provisioned.activation_code,
+            password="correct-horse-battery-staple", password_confirmation="correct-horse-battery-staple",
+            hardware_id=provisioned.hardware_id, client_installation_id=installation,
+        ), source_fingerprint=b"test-source")
+        return dict(tenant_id=str(provisioned.tenant_id), account_id=str(activated.account_id),
+                    license_id=str(activated.license_id), installation_id=str(installation),
+                    hardware_id=provisioned.hardware_id, session_id=str(uuid4()),
+                    request_sha256="a" * 64, manifest_sha256="b" * 64,
+                    evidence_reference="evidence/ray-513/review-1", reason="LEGACY_VALID_SESSION_REVIEWED",
+                    identity_conflict=False, reconciliation_reference=None,
+                    local_valid_reviewed=True, immutable_manifest_reviewed=True,
+                    original_consent_reviewed=True, historical_authorization_reviewed=True), activated.access_token
+
+    async def test_migration_route_owner_only_and_returns_secret_once(self):
+        body, tenant_token = await self.migration_body()
+        path = "/v1/platform/upload-migration-permits"
+        denied = await self.client.post(path, headers={"Authorization": f"Bearer {tenant_token}"}, json=body)
+        self.assertEqual(denied.status_code, 403, denied.text)
+        owner = await self.identities.verify_access_token(self.owner_login.access_token)
+        for role in (PlatformRole.OPERATIONS, PlatformRole.SUPPORT):
+            login = await self.identities.create_identity(owner, login_name=role.value,
+                display_name=role.value, password="correct-horse-battery-staple", roles=(role,))
+            denied = await self.client.post(path, headers={"Authorization": f"Bearer {login.access_token}"}, json=body)
+            self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(len(self.data_repository._migration_audits), 2)
+        self.assertFalse(self.data_repository._migration_permits)
+        approved = await self.client.post(path, headers=self.owner_headers, json=body)
+        self.assertEqual(approved.status_code, 201, approved.text)
+        self.assertEqual(approved.headers["Cache-Control"], "no-store")
+        secret = approved.json()["data"]["token"]
+        self.assertGreaterEqual(len(secret), 32)
+        self.assertNotIn(secret, repr(self.data_repository._migration_permits))
+        self.assertNotIn(secret, repr(self.data_repository._migration_audits))
+        replay = await self.client.post(path, headers=self.owner_headers, json=body)
+        self.assertEqual(replay.status_code, 403, replay.text)
+        self.assertNotIn(secret, replay.text)
+
+    async def test_migration_route_rejects_free_text_and_unsafe_evidence(self):
+        body, _ = await self.migration_body()
+        for changes in ({"reason": ""}, {"reason": "private reviewer explanation"},
+                        {"evidence_reference": ""}, {"evidence_reference": "evidence/../private"},
+                        {"evidence_reference": "https://user:secret@example.test/review"},
+                        {"evidence_reference": "evidence/review?token=secret"}):
+            denied = await self.client.post("/v1/platform/upload-migration-permits", headers=self.owner_headers,
+                                            json={**body, **changes})
+            self.assertEqual(denied.status_code, 422, denied.text)
+            self.assertNotIn("private reviewer explanation", denied.text)
+        missing = dict(body)
+        missing.pop("reason")
+        self.assertEqual((await self.client.post("/v1/platform/upload-migration-permits", headers=self.owner_headers, json=missing)).status_code, 422)
+        self.assertFalse(self.data_repository._migration_permits)
 
     async def test_owner_provisions_lists_and_controls_tenant_license(self) -> None:
         created = await self.client.post(

@@ -119,11 +119,84 @@ class PostgresPlatformRepository:
         pool,
         *,
         enrollment_pool=None,
+        platform_pool=None,
         idempotency_ttl: timedelta = timedelta(days=7),
     ) -> None:
         self._pool = pool
         self._enrollment_pool = enrollment_pool
+        self._platform_pool = platform_pool
         self._idempotency_ttl = idempotency_ttl
+
+    async def audit_migration_denial(self, context, request, decision):
+        if self._platform_pool is None:
+            raise RepositoryUnavailable("migration approval unavailable")
+        # The requested tenant may not exist. The global platform audit allows
+        # a null tenant while retaining the attempted IDs as non-sensitive UUIDs.
+        async with pool_transaction(self._platform_pool) as connection:
+            await connection.execute(
+                """INSERT INTO ops.access_audit_events
+                   (access_audit_event_id, actor_id, action, resource_id, occurred_at, details)
+                   VALUES ($1,$2,'UPLOAD_MIGRATION_PERMIT_REJECTED',$3,clock_timestamp(),$4::jsonb)""",
+                uuid4(), context.platform_identity_id, request.session_id,
+                json.dumps(dict(tenant_id=str(request.tenant_id), decision_code=decision,
+                                reason=request.reason, evidence_reference=request.evidence_reference)),
+            )
+
+    async def insert_migration_permit(self, context, request, token_sha256):
+        from shared.contracts.access_control import PlatformRole
+
+        if self._platform_pool is None:
+            raise RepositoryUnavailable("migration approval unavailable")
+        if PlatformRole.OWNER not in context.roles or context.expires_at <= datetime.now(UTC):
+            raise TenantAccessDenied("migration owner required")
+        async with tenant_transaction(self._platform_pool, request.tenant_id) as connection:
+            owner = await connection.fetchval(
+                """SELECT i.platform_identity_id FROM iam.platform_identities i
+                   JOIN iam.platform_identity_role_bindings b USING (platform_identity_id)
+                   JOIN iam.platform_roles r USING (platform_role_id)
+                   WHERE i.platform_identity_id=$1 AND i.status='ACTIVE' AND i.token_version=$2
+                     AND $3::timestamptz > clock_timestamp()
+                     AND r.role_name='PLATFORM_OWNER' AND b.valid_from <= clock_timestamp()
+                     AND (b.valid_to IS NULL OR clock_timestamp() < b.valid_to)
+                   FOR SHARE OF i,b,r""", context.platform_identity_id, context.token_version, context.expires_at,
+            )
+            if owner is None:
+                raise TenantAccessDenied("migration owner required")
+            hardware_id = await connection.fetchval(
+                """SELECT h.hardware_id FROM device.client_installations i
+                   JOIN device.license_assignments la ON la.tenant_id=i.tenant_id AND la.account_id=i.account_id
+                   JOIN device.hardware_bindings hb ON hb.tenant_id=la.tenant_id AND hb.license_id=la.license_id
+                   JOIN device.hardware_assets h ON h.tenant_id=hb.tenant_id AND h.hardware_id=hb.hardware_id
+                   WHERE i.tenant_id=$1 AND i.client_installation_id=$2 AND i.account_id=$3
+                     AND la.license_id=$4 AND h.stable_identity=$5
+                     AND greatest(la.assigned_at,hb.bound_at,i.first_seen_at) <
+                         least(coalesce(la.unassigned_at,'infinity'::timestamptz),
+                               coalesce(hb.unbound_at,'infinity'::timestamptz))
+                   FOR SHARE OF i,la,hb,h""",
+                request.tenant_id, request.installation_id, request.account_id,
+                request.license_id, request.hardware_id,
+            )
+            if hardware_id is None:
+                raise TenantAccessDenied("migration historical binding rejected")
+            inserted = await connection.fetchval(
+                """INSERT INTO screening.upload_migration_permits
+                   (tenant_id,session_id,installation_id,account_id,license_id,hardware_id,token_sha256,
+                    consumed_request_sha256,expected_manifest_sha256,approver_id,approval_reason,evidence_reference)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                   ON CONFLICT (tenant_id,session_id) DO NOTHING RETURNING session_id""",
+                request.tenant_id, request.session_id, request.installation_id, request.account_id,
+                request.license_id, hardware_id, token_sha256, request.request_sha256, request.manifest_sha256,
+                context.platform_identity_id, request.reason, request.evidence_reference,
+            )
+            if inserted is None:
+                raise TenantAccessDenied("migration permit already issued")
+            await connection.execute(
+                """INSERT INTO ops.capture_authorization_audit
+                   (event_id,tenant_id,session_id,authorization_kind,event_kind,actor_id,evidence_reference,decision_code)
+                   VALUES ($1,$2,$3,'PERMIT','APPROVED',$4,$5,$6)""",
+                uuid4(), request.tenant_id, request.session_id, context.platform_identity_id,
+                request.evidence_reference, request.reason,
+            )
 
     async def _capture_entitlement(self, connection, context):
         context.ensure_can_start_new()
