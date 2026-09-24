@@ -19,14 +19,66 @@ from cloud.api.access_auth import (
     TenantAccessTokenIssuer,
 )
 from cloud.api.app import ServiceContainer, create_app
+from cloud.session_hold.models import HoldApplyRequest
+from cloud.session_hold.repository import InMemorySessionHoldRepository
+from cloud.session_hold.service import SessionHoldService
 from shared.contracts.access_control import (
     AccessCapabilities,
     ActivateAccountRequest,
     PlatformRole,
+    MaskedReportSummary,
 )
 
 
 class PlatformApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_report_listing_omits_held_session_and_requires_binding(self) -> None:
+        tenant_id, held_session, clear_session = uuid4(), uuid4(), uuid4()
+        held_report, clear_report = uuid4(), uuid4()
+        rows = [
+            MaskedReportSummary(tenant_id=tenant_id, report_id=report_id,
+                                subject_reference_masked="**2781", created_at=self.now,
+                                status="PUBLISHED")
+            for report_id in (held_report, clear_report)
+        ]
+
+        class Reports:
+            async def list_masked_reports(self, context, tenant):
+                return rows
+
+            async def session_for_report(self, context, tenant, report):
+                return {held_report: held_session, clear_report: clear_session}[report]
+
+        holds_repo = InMemorySessionHoldRepository()
+        for session_id in (held_session, clear_session):
+            holds_repo.add_session(tenant_id, session_id, status="INGESTED", raw_object_count=16)
+        holds = SessionHoldService(holds_repo)
+        owner = await self.identities.verify_access_token(self.owner_login.access_token)
+        await holds.apply(owner, HoldApplyRequest(
+            tenant_id=tenant_id, session_id=held_session,
+            ticket_reference="INC-99", reason_code="IDENTITY_UNVERIFIED",
+        ), "hold-1")
+        app = create_app(ServiceContainer(
+            platform_identities=self.identities, platform_tokens=self.platform_tokens,
+            platform_reports=Reports(), session_holds=holds,
+        ))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="https://cloud.test") as client:
+            response = await client.get(f"/v1/platform/tenants/{tenant_id}/reports", headers=self.owner_headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual([r["report_id"] for r in response.json()["data"]], [str(clear_report)])
+
+            class UnboundReports:
+                async def list_masked_reports(self, context, tenant):
+                    return rows
+
+            unbound_app = create_app(ServiceContainer(
+                platform_identities=self.identities, platform_tokens=self.platform_tokens,
+                platform_reports=UnboundReports(), session_holds=holds,
+            ))
+            async with AsyncClient(transport=ASGITransport(app=unbound_app), base_url="https://cloud.test") as unbound:
+                blocked = await unbound.get(f"/v1/platform/tenants/{tenant_id}/reports", headers=self.owner_headers)
+            self.assertEqual(blocked.status_code, 503)
+            self.assertNotIn(str(held_report), blocked.text)
+
     async def asyncSetUp(self) -> None:
         self.now = datetime.now(UTC).replace(microsecond=0)
         self.repository = InMemoryAccessRepository()

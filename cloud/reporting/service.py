@@ -17,6 +17,8 @@ from cloud.reporting.models import (
     ReportVersion,
 )
 from cloud.reporting.pdf import MinimalPdfRenderer
+from cloud.session_hold.repository import SessionHoldReader
+from cloud.session_hold.service import SessionHeld
 
 
 class InMemoryArtifactStore:
@@ -145,18 +147,22 @@ class CloudReportService:
         builder: CloudReportBuilder,
         renderer: MinimalPdfRenderer,
         publisher: InMemoryReportEventPublisher,
+        holds: SessionHoldReader,
     ) -> None:
         self.repository = repository
         self.artifact_store = artifact_store
         self.builder = builder
         self.renderer = renderer
         self.publisher = publisher
+        self.holds = holds
 
     def publish(
         self,
         run: AnalysisRun,
         context: ReportContext,
     ) -> ReportVersion | None:
+        if self.holds.is_held(run.key.tenant_id, run.key.session_id):
+            raise SessionHeld("session is under administrative hold")
         if run.status is not AnalysisRunStatus.SUCCEEDED:
             return None
 

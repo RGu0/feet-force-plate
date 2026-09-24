@@ -23,6 +23,8 @@ from cloud.reporting.service import (
     InMemoryReportEventPublisher,
     InMemoryReportRepository,
 )
+from cloud.session_hold.repository import SessionHoldReader
+from cloud.session_hold.service import SessionHeld
 
 
 _RISK_LABELS = {
@@ -201,12 +203,14 @@ class StaticBalanceCloudReportService:
         builder: StaticBalanceReportBuilder,
         renderer: MinimalPdfRenderer,
         publisher: InMemoryReportEventPublisher,
+        holds: SessionHoldReader,
     ) -> None:
         self.repository = repository
         self.artifact_store = artifact_store
         self.builder = builder
         self.renderer = renderer
         self.publisher = publisher
+        self.holds = holds
 
     def publish(
         self,
@@ -221,6 +225,8 @@ class StaticBalanceCloudReportService:
         features: SessionFeatureSet,
         context: ReportContext,
     ) -> ReportVersion:
+        if self.holds.is_held(tenant_id, session_id):
+            raise SessionHeld("session is under administrative hold")
         if features.session_id != session_id:
             raise ValueError("feature session identity does not match report session")
 

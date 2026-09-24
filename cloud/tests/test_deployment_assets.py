@@ -186,8 +186,12 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "0005_sales_inventory_activation.sql" in text
     assert "0006_inventory_activation_pairing.sql" in text
     assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
+    assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
+    assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
     assert "install_tls_file" in text
     assert "readlink -f" in text
+    assert text.index("foundation-artifact.lock.json") < text.index("apply_migration iam.tenants")
+    assert "release archive is missing the locked foundation wheel" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
 
