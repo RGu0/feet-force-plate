@@ -31,7 +31,10 @@ from cloud.ingestion.principal import (
     legacy_terminal_principal,
     tenant_ingestion_principal,
 )
-from cloud.session_hold.models import HoldApplyBody, HoldApplyRequest
+from cloud.session_hold.models import (
+    HoldApplyBody, HoldApplyRequest, HoldDispositionBody,
+    HoldDispositionRequest, HoldReleaseBody, HoldReleaseRequest,
+)
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -534,6 +537,46 @@ def create_app(container: ServiceContainer) -> FastAPI:
             context: PlatformAccessDependency,
         ):
             result = await container.session_holds.status(context, tenant_id, session_id)
+            return _data_response(request, result)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/disposition")
+        async def platform_dispose_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldDispositionBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.dispose(
+                context,
+                HoldDispositionRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/release")
+        async def platform_release_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldReleaseBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.release(
+                context,
+                HoldReleaseRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
+            )
             return _data_response(request, result)
 
     if (

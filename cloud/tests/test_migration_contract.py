@@ -84,6 +84,9 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("tenant_id = ops.current_tenant_id()", sql)
         self.assertIn("request_sha256", sql)
         self.assertIn("FOREIGN KEY (tenant_id, session_id) REFERENCES screening.sessions", sql)
+        self.assertIn("CREATE TABLE ops.session_hold_dispositions", sql)
+        self.assertIn("GRANT SELECT, INSERT ON ops.session_hold_dispositions TO ffp_platform_app", sql)
+
 
 
 if __name__ == "__main__":
