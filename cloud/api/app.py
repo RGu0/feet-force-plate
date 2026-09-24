@@ -69,6 +69,7 @@ from shared.contracts.operations import (
 from shared.contracts.validation_telemetry import (
     DeviceValidationTelemetryBatchRequest,
 )
+from shared.contracts.identity_recovery import RecoveryCaseCreateRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +91,7 @@ class ServiceContainer:
     platform_reports: object | None = None
     platform_subjects: object | None = None
     validation_telemetry: object | None = None
+    identity_recovery: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -687,6 +689,25 @@ def create_app(container: ServiceContainer) -> FastAPI:
     ):
         result = await container.ingestion.create_session(context, body, idempotency_key)
         return _data_response(request, result, 200 if result.idempotent_replay else 201)
+
+    @app.post("/v1/identity-recovery/cases")
+    async def create_recovery_case(
+        request: Request,
+        body: RecoveryCaseCreateRequest,
+        context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.create_case(context, body, idempotency_key)
+        return _data_response(request, result, 201)
+
+    @app.get("/v1/identity-recovery/cases/{case_id}")
+    async def get_recovery_case(request: Request, case_id: UUID, context: DataDependency):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.get_case(context, case_id)
+        return _data_response(request, result)
 
     @app.post("/v1/subjects/resolve")
     async def resolve_subject(

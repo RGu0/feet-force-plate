@@ -33,6 +33,8 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.identity_recovery.postgres import PostgresRecoveryCaseRepository
+from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
@@ -312,6 +314,7 @@ async def build_seed_app(
                     Path(settings.validation_telemetry_root)
                 )
             ),
+            identity_recovery=IdentityRecoveryService(PostgresRecoveryCaseRepository(tenant_pool)),
         )
     )
     app.state.seed_settings = settings
