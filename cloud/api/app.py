@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest
+from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization
 
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
@@ -705,8 +705,23 @@ def create_app(container: ServiceContainer) -> FastAPI:
         body: SessionCreateRequest,
         context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
+        capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
+        expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
     ):
-        result = await container.ingestion.create_session(context, body, idempotency_key)
+        authorization = None
+        if capture_authorization is not None or expected_manifest is not None:
+            try:
+                kind, token = (capture_authorization or "").split(" ", 1)
+                if any(character.isspace() for character in token):
+                    raise ValueError("invalid opaque token")
+                authorization = SessionAuthorization(
+                    session_id=body.session_id, kind=kind, token=token,
+                    manifest_sha256=expected_manifest,
+                )
+            except ValueError:
+                # Never include credential values or Pydantic input in errors.
+                raise RequestValidationError([{"loc": ("header", "X-Capture-Authorization"), "type": "value_error", "msg": "invalid authorization headers"}]) from None
+        result = await container.ingestion.create_session(context, body, idempotency_key, authorization)
         return _data_response(request, result, 200 if result.idempotent_replay else 201)
 
     @app.post("/v1/subjects/resolve")

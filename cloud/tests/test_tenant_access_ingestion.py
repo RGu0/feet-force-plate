@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from cloud.access_control.lease_service import HardwareLeaseService
 from cloud.access_control.capture_grants import CaptureGrantService
@@ -37,6 +40,7 @@ from shared.contracts.access_control import (
     RefreshRequest,
 )
 from shared.contracts.client_sync import canonical_sha256, encode_segment_metadata
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ExternalIdentifierInput,
@@ -57,6 +61,154 @@ from shared.contracts.cloud import (
 
 
 class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
+    def altered_token(self, **changes):
+        fields = dict(tenant_id=self.provisioned.tenant_id, account_id=self.session.account_id,
+                      license_id=self.session.license_id, hardware_id=self.session.hardware_id,
+                      client_installation_id=self.installation_id, token_version=1,
+                      capabilities=self.session.capabilities.model_copy(update={"allow_new_test": False}), now=self.now)
+        fields.update(changes)
+        return self.tenant_tokens.issue(**fields)
+
+    async def test_authorization_rejects_wrong_identity_token_and_bound_request(self):
+        refreshed, authorization = await self.suspended_grant()
+        original = self.session_request(authorization.session_id)
+        for token, request, auth in (
+            (self.altered_token(tenant_id=uuid4()), original, authorization),
+            (self.altered_token(account_id=uuid4()), original, authorization),
+            (self.altered_token(client_installation_id=uuid4()), original, authorization),
+            (refreshed.access_token, original.model_copy(update={"device_id": uuid4()}), authorization),
+            (refreshed.access_token, original.model_copy(update={"session_id": uuid4()}), authorization),
+            (refreshed.access_token, original, authorization.model_copy(update={"token": SecretStr("wrong-token-value-at-least-20")})),
+        ):
+            response = await self.client.post("/v1/sessions", headers={**self.headers(token), "Idempotency-Key": str(uuid4()), **auth.headers()}, json=request.model_dump(mode="json"))
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual(len(self.data_repository._sessions), 0)
+        key = (self.provisioned.tenant_id, authorization.session_id)
+        self.assertEqual(self.data_repository._capture_grants[key].state, "ISSUED")
+        self.data_repository._capture_grants[key] = replace(self.data_repository._capture_grants[key], state="RETIRED")
+        response = await self.client.post("/v1/sessions", headers={**self.headers(refreshed.access_token), "Idempotency-Key": "retired", **authorization.headers()}, json=original.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertFalse(self.data_repository._sessions)
+
+    async def test_historical_grant_survives_delay_and_replacement_entitlement(self):
+        _, authorization = await self.suspended_grant()
+        key = (self.provisioned.tenant_id, authorization.session_id)
+        historical = replace(self.data_repository._capture_grants[key], issued_at=self.now - timedelta(days=60))
+        self.data_repository._capture_grants[key] = historical
+        token = self.altered_token(license_id=uuid4(), hardware_id="usb-serial-replacement-0123456789")
+        headers = {**self.headers(token), "Idempotency-Key": "historical", **authorization.headers()}
+        request = self.session_request(authorization.session_id)
+        response = await self.client.post("/v1/sessions", headers=headers, json=request.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 201, response.text)
+        consumed = self.data_repository._capture_grants[key]
+        self.assertEqual((consumed.hardware_id, consumed.license_id), (historical.hardware_id, historical.license_id))
+        changed = request.model_copy(update={"config_snapshot": {"changed": True}})
+        response = await self.client.post("/v1/sessions", headers=headers, json=changed.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 409, response.text)
+
+    async def test_allow_upload_false_denies_every_resume_endpoint(self):
+        refreshed, authorization = await self.suspended_grant()
+        request = self.session_request(authorization.session_id)
+        response = await self.client.post("/v1/sessions", headers={**self.headers(refreshed.access_token), "Idempotency-Key": "first", **authorization.headers()}, json=request.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 201, response.text)
+        token = self.altered_token(capabilities=self.session.capabilities.model_copy(update={"allow_upload": False, "allow_new_test": True}))
+        headers = {**self.headers(token), "Idempotency-Key": "denied", **authorization.headers()}
+        base = f"/v1/sessions/{request.session_id}"
+        manifest = SessionManifest(segment_count=1, total_frames=1, total_bytes=1, segments=(ManifestSegment(index=0, sha256="b" * 64, size_bytes=1, frame_count=1),), ended_at=self.now, local_quality_outcome="VALID")
+        metadata = SegmentMetadata(segment_index=0, start_frame_index=0, frame_count=1, start_monotonic_ns=0, end_monotonic_ns=1, compression="zstd", cipher="aes-256-gcm", size_bytes=1, sha256=hashlib.sha256(b"x").hexdigest(), payload_schema_version="raw-segment/1")
+        responses = [
+            await self.client.post("/v1/sessions", headers=headers, json=request.model_dump(mode="json")),
+            await self.client.get(base + "/status", headers=headers),
+            await self.client.get(base + "/segments", headers=headers),
+            await self.client.put(base + "/segments/0", headers={**headers, "X-Content-SHA256": metadata.sha256, "X-Schema-Version": metadata.payload_schema_version, "X-Segment-Metadata": encode_segment_metadata(metadata), "Content-Type": "application/vnd.feetforceplate.segment.v1+octet-stream"}, content=b"x"),
+            await self.client.post(base + "/complete", headers={**headers, "X-Content-SHA256": canonical_sha256(manifest), "X-Schema-Version": manifest.schema_version}, json=manifest.model_dump(mode="json")),
+        ]
+        for response in responses:
+            self.assertEqual(response.status_code, 403, response.text)
+        self.assertFalse(self.data_repository._segments)
+        self.assertFalse(self.data_repository._manifests)
+
+    async def test_completion_rejects_manifest_different_from_registration(self):
+        refreshed, authorization = await self.suspended_grant()
+        metadata = SegmentMetadata(segment_index=0, start_frame_index=0, frame_count=1, start_monotonic_ns=0, end_monotonic_ns=1, compression="zstd", cipher="aes-256-gcm", size_bytes=1, sha256=hashlib.sha256(b"x").hexdigest(), payload_schema_version="raw-segment/1")
+        expected = SessionManifest(segment_count=1, total_frames=1, total_bytes=1, segments=(ManifestSegment(index=0, sha256=metadata.sha256, size_bytes=1, frame_count=1),), ended_at=self.now, local_quality_outcome="VALID")
+        authorization = authorization.model_copy(update={"manifest_sha256": canonical_sha256(expected)})
+        request = self.session_request(authorization.session_id)
+        response = await self.client.post("/v1/sessions", headers={**self.headers(refreshed.access_token), "Idempotency-Key": "first", **authorization.headers()}, json=request.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 201, response.text)
+        manifest = SessionManifest(segment_count=1, total_frames=1, total_bytes=1, segments=(ManifestSegment(index=0, sha256="b" * 64, size_bytes=1, frame_count=1),), ended_at=self.now, local_quality_outcome="VALID")
+        response = await self.client.post(f"/v1/sessions/{request.session_id}/complete", headers={**self.headers(refreshed.access_token), "Idempotency-Key": "complete", "X-Content-SHA256": canonical_sha256(manifest), "X-Schema-Version": manifest.schema_version}, json=manifest.model_dump(mode="json"))
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertFalse(self.data_repository._manifests)
+        uploaded = await self.client.put(f"/v1/sessions/{request.session_id}/segments/0", headers={**self.headers(refreshed.access_token), "X-Content-SHA256": metadata.sha256, "X-Schema-Version": metadata.payload_schema_version, "X-Segment-Metadata": encode_segment_metadata(metadata), "Content-Type": "application/vnd.feetforceplate.segment.v1+octet-stream"}, content=b"x")
+        self.assertEqual(uploaded.status_code, 201, uploaded.text)
+        completed = await self.client.post(f"/v1/sessions/{request.session_id}/complete", headers={**self.headers(refreshed.access_token), "Idempotency-Key": "complete", "X-Content-SHA256": canonical_sha256(expected), "X-Schema-Version": expected.schema_version}, json=expected.model_dump(mode="json"))
+        self.assertEqual(completed.status_code, 200, completed.text)
+
+    async def test_migration_permit_consumer_requires_both_prebound_digests(self):
+        refreshed, authorization = await self.suspended_grant()
+        key = (self.provisioned.tenant_id, authorization.session_id)
+        request = self.session_request(authorization.session_id)
+        # Issuance/owner review belongs to Task 5; this fixture exercises only
+        # the repository's already-approved, immutable permit consumer.
+        self.data_repository._migration_permits[key] = replace(
+            self.data_repository._capture_grants.pop(key),
+            consumed_request_sha256=canonical_sha256(request), expected_manifest_sha256="a" * 64,
+        )
+        authorization = authorization.model_copy(update={"kind": "migration_permit"})
+        for body, auth in (
+            (request.model_copy(update={"config_snapshot": {"changed": True}}), authorization),
+            (request, authorization.model_copy(update={"manifest_sha256": "b" * 64})),
+        ):
+            result = await self.client.post("/v1/sessions", headers={**self.headers(refreshed.access_token), "Idempotency-Key": str(uuid4()), **auth.headers()}, json=body.model_dump(mode="json"))
+            self.assertEqual(result.status_code, 403, result.text)
+            self.assertFalse(self.data_repository._sessions)
+        headers = {**self.headers(refreshed.access_token), "Idempotency-Key": "permit", **authorization.headers()}
+        for status in (201, 200):
+            result = await self.client.post("/v1/sessions", headers=headers, json=request.model_dump(mode="json"))
+            self.assertEqual(result.status_code, status, result.text)
+        self.assertEqual(self.data_repository._migration_permits[key].state, "CONSUMED")
+
+    async def suspended_grant(self):
+        await self.create_subject_and_consent(self.session.access_token)
+        issued = await self.client.post("/v1/access/capture-grants", headers=self.headers(self.session.access_token), json={"count": 1})
+        self.assertEqual(issued.status_code, 201, issued.text)
+        grant = issued.json()["data"]["grants"][0]
+        authorization = SessionAuthorization(session_id=grant["session_id"], kind="grant", token=grant["token"], manifest_sha256="a" * 64)
+        await self.platform.control_license(self.operator, self.provisioned.license_id, LicenseControlRequest(action=LicenseControlAction.SUSPEND, reason_code="CUSTOMER_REQUEST"))
+        refreshed = await self.tenant_access.refresh(RefreshRequest(refresh_token=self.session.refresh_token, client_installation_id=self.installation_id))
+        return refreshed, authorization
+
+    async def test_authorized_suspended_registration_and_lost_response_replay(self):
+        refreshed, authorization = await self.suspended_grant()
+        request = self.session_request(authorization.session_id)
+        async def register(key, auth=authorization):
+            return await self.client.post("/v1/sessions", headers={**self.headers(refreshed.access_token), "Idempotency-Key": key, **auth.headers()}, json=request.model_dump(mode="json"))
+        first, replay = await asyncio.gather(register("first"), register("lost-response"))
+        self.assertEqual(sorted([first.status_code, replay.status_code]), [200, 201])
+        self.assertEqual(len(self.data_repository._sessions), 1)
+        row = self.data_repository._capture_grants[(self.provisioned.tenant_id, request.session_id)]
+        self.assertEqual(row.state, "CONSUMED")
+        self.assertEqual(row.consumed_request_sha256, canonical_sha256(request))
+        self.assertEqual(sum(event[3] == "CONSUMED" for event in self.data_repository._capture_audits), 1)
+        changed = await register("different-manifest", authorization.model_copy(update={"manifest_sha256": "b" * 64}))
+        self.assertEqual(changed.status_code, 409, changed.text)
+
+    async def test_suspended_existing_bare_session_replays(self):
+        await self.create_subject_and_consent(self.session.access_token)
+        self.assertEqual((await self.create_session(self.session.access_token, self.session_id)).status_code, 201)
+        await self.platform.control_license(self.operator, self.provisioned.license_id, LicenseControlRequest(action=LicenseControlAction.SUSPEND, reason_code="CUSTOMER_REQUEST"))
+        refreshed = await self.tenant_access.refresh(RefreshRequest(refresh_token=self.session.refresh_token, client_installation_id=self.installation_id))
+        replay = await self.create_session(refreshed.access_token, self.session_id)
+        self.assertEqual(replay.status_code, 200, replay.text)
+
+    async def test_authorization_headers_are_not_ignored(self):
+        await self.create_subject_and_consent(self.session.access_token)
+        for headers in ({"X-Capture-Authorization": "grant " + "x" * 32}, {"X-Expected-Manifest-SHA256": "a" * 64}, {"X-Capture-Authorization": "unknown " + "x" * 32, "X-Expected-Manifest-SHA256": "a" * 64}):
+            response = await self.client.post("/v1/sessions", headers={**self.headers(self.session.access_token), "Idempotency-Key": str(uuid4()), **headers}, json=self.session_request(uuid4()).model_dump(mode="json"))
+            self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(len(self.data_repository._sessions), 0)
+
     async def asyncSetUp(self) -> None:
         self.now = datetime.now(UTC)
         self.access_repository = InMemoryAccessRepository()

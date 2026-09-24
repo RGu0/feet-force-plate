@@ -45,6 +45,15 @@ def test_seed_installer_applies_capture_authorization_migration() -> None:
     assert 'apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"' in installer
 
 
+def test_session_expected_manifest_migration_preserves_legacy_rows():
+    sql = (MIGRATION.parent / "0010_session_expected_manifest.sql").read_text()
+    assert "ALTER TABLE screening.sessions" in sql
+    assert "ADD COLUMN expected_manifest_sha256 text" in sql
+    assert "expected_manifest_sha256 IS NULL OR expected_manifest_sha256 ~ '^[0-9a-f]{64}$'" in sql
+    assert "NOT NULL" not in sql and "DEFAULT" not in sql
+    assert 'apply_migration_if_column_missing screening sessions expected_manifest_sha256 "$release_source/cloud/migrations/0010_session_expected_manifest.sql"' in SEED_INSTALLER.read_text()
+
+
 def test_activation_role_can_write_its_data_plane_projection() -> None:
     sql = ACTIVATION_PROJECTION_GRANTS.read_text()
 

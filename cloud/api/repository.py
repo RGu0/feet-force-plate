@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter
+import asyncio
 import hashlib
+import hmac
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
-from shared.contracts.capture_grants import CaptureGrantBatchResponse
+from shared.contracts.capture_grants import CaptureGrantBatchResponse, SessionAuthorization
+from cloud.ingestion.principal import coerce_ingestion_principal
 from cloud.api.errors import (
     ActivationCodeInvalid,
     IdempotencyConflict,
@@ -110,6 +113,7 @@ class SessionRecord:
     manifest_sha256: str | None = None
     manifest_object_key: str | None = None
     aggregate_version: int = 1
+    expected_manifest_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +182,8 @@ class CaptureGrantRecord:
     token_sha256: bytes
     issued_at: datetime
     state: str = "ISSUED"
+    consumed_request_sha256: str | None = None
+    expected_manifest_sha256: str | None = None
 
 
 class InMemoryPlatformRepository:
@@ -186,6 +192,8 @@ class InMemoryPlatformRepository:
     def __init__(self, *, access_repository=None) -> None:
         self._capture_access = access_repository
         self._capture_grants: dict[tuple[UUID, UUID], CaptureGrantRecord] = {}
+        self._migration_permits: dict[tuple[UUID, UUID], CaptureGrantRecord] = {}
+        self._registration_lock = asyncio.Lock()
         self._capture_audits: list[tuple[UUID, UUID, UUID, str, str]] = []
         self._terminals: dict[tuple[UUID, UUID], TerminalRecord] = {}
         self._tenants: dict[UUID, tuple[str, str]] = {}
@@ -873,12 +881,52 @@ class InMemoryPlatformRepository:
         context: TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
+        # Shared with issuance/retirement when access control is configured.
+        lock = self._capture_access._lock if self._capture_access is not None else self._registration_lock
+        async with lock:
+            return self._create_session_locked(context, request, idempotency_key, authorization)
+
+    def _create_session_locked(self, context, request, idempotency_key, authorization):
         self._terminal(context)
         digest = canonical_sha256(request)
-        replay = self._idempotent_result(context.tenant_id, "session.create", idempotency_key, digest)
-        if replay is not None:
-            return replay.model_copy(update={"idempotent_replay": True})
+        self._idempotent_result(context.tenant_id, "session.create", idempotency_key, digest)
+        key = (context.tenant_id, request.session_id)
+        existing = self._sessions.get(key)
+        if existing is not None:
+            if existing.request_sha256 != digest:
+                raise IdempotencyConflict("同一会话 ID 对应不同请求")
+            if existing.expected_manifest_sha256 is not None and (
+                authorization is None or authorization.manifest_sha256 != existing.expected_manifest_sha256
+            ):
+                raise IdempotencyConflict("同一会话对应不同最终清单")
+        elif authorization is None:
+            context.ensure_can_start_new()
+        authorization_row = None
+        if authorization is not None:
+            rows = self._capture_grants if authorization.kind == "grant" else self._migration_permits
+            authorization_row = rows.get(key)
+            row = authorization_row
+            if (
+                row is None or row.tenant_id != context.tenant_id
+                or row.session_id != request.session_id or authorization.session_id != request.session_id
+                or row.installation_id != context.terminal_id or row.installation_id != request.client_installation_id
+                or row.account_id != context.account_id or row.hardware_id != request.device_id
+                or not hmac.compare_digest(row.token_sha256, hashlib.sha256(authorization.token.get_secret_value().encode()).digest())
+                or row.state != ("CONSUMED" if existing is not None else "ISSUED")
+                or (row.consumed_request_sha256 is not None and row.consumed_request_sha256 != digest)
+                or (row.expected_manifest_sha256 is not None and row.expected_manifest_sha256 != authorization.manifest_sha256)
+            ):
+                raise TenantAccessDenied("采集授权不匹配")
+            # The grant/permit records the historical License and hardware UUID.
+            # Current entitlement may legitimately use another License/hardware.
+        if existing is not None:
+            response = SessionCreateResponse(session_id=request.session_id, ingest_status=existing.ingest_status, idempotent_replay=True)
+            self._idempotency[(context.tenant_id, "session.create", idempotency_key)] = IdempotencyRecord(digest, response)
+            return response
         captured_installation = self._terminals.get(
             (context.tenant_id, request.client_installation_id)
         )
@@ -905,26 +953,20 @@ class InMemoryPlatformRepository:
         existing_tenant = self._session_tenants.get(request.session_id)
         if existing_tenant is not None and existing_tenant != context.tenant_id:
             raise TenantAccessDenied("会话 ID 已属于其他租户")
-        existing = self._sessions.get((context.tenant_id, request.session_id))
-        if existing is not None:
-            if existing.request_sha256 != digest:
-                raise IdempotencyConflict("同一会话 ID 对应不同请求")
-            response = SessionCreateResponse(
-                session_id=request.session_id,
-                ingest_status=existing.ingest_status,
-                idempotent_replay=True,
-            )
-        else:
-            self._sessions[(context.tenant_id, request.session_id)] = SessionRecord(
-                tenant_id=context.tenant_id,
-                request=request,
-                request_sha256=digest,
-            )
-            self._session_tenants[request.session_id] = context.tenant_id
-            response = SessionCreateResponse(
-                session_id=request.session_id,
-                ingest_status=IngestStatus.RECEIVING,
-            )
+        self._sessions[key] = SessionRecord(
+            tenant_id=context.tenant_id,
+            request=request,
+            request_sha256=digest,
+            expected_manifest_sha256=authorization.manifest_sha256 if authorization else None,
+        )
+        self._session_tenants[request.session_id] = context.tenant_id
+        response = SessionCreateResponse(
+            session_id=request.session_id,
+            ingest_status=IngestStatus.RECEIVING,
+        )
+        if authorization_row is not None:
+            rows[key] = replace(authorization_row, state="CONSUMED", consumed_request_sha256=digest, expected_manifest_sha256=authorization.manifest_sha256)
+            self._capture_audits.append((context.tenant_id, request.session_id, context.account_id, "CONSUMED", "AUTHORIZED_REGISTRATION"))
         self._idempotency[(context.tenant_id, "session.create", idempotency_key)] = IdempotencyRecord(
             digest, response.model_copy(update={"idempotent_replay": False})
         )
@@ -1016,6 +1058,8 @@ class InMemoryPlatformRepository:
         completed_at: datetime,
     ) -> ManifestCompletionResponse:
         session = self._session(context, session_id)
+        if session.expected_manifest_sha256 is not None and canonical_sha256(manifest) != session.expected_manifest_sha256:
+            raise ManifestConflict("最终清单与登记授权不一致", session_id=str(session_id))
         replay = self._idempotent_result(
             context.tenant_id, "session.complete", idempotency_key, manifest_sha256
         )

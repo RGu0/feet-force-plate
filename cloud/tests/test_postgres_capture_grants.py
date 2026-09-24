@@ -109,6 +109,54 @@ def test_live_concurrent_51st_grant_locks_installation_and_stores_only_hashes():
             with pytest.raises(TenantAccessDenied):
                 await service.retire(context, initial.grants[0].session_id, "CANCELED")
             assert len((await service.issue(context, 50)).grants) == 1
+
+            # Two independent connections race to register the same prebound
+            # session with different idempotency keys (lost-response retry).
+            from shared.contracts.capture_grants import SessionAuthorization
+            from shared.contracts.cloud import SessionCreateRequest, SessionVersions, TestProtocol
+            from shared.contracts.client_sync import canonical_sha256
+            subject_id, consent_id = uuid4(), uuid4()
+            async with tenant_transaction(tenant_pool, tenant.tenant_id) as connection:
+                await connection.execute(
+                    "INSERT INTO subject.subjects (subject_uuid,tenant_id,status) VALUES ($1,$2,'ACTIVE')",
+                    subject_id, tenant.tenant_id,
+                )
+                await connection.execute(
+                    """INSERT INTO subject.consents
+                       (consent_record_id,tenant_id,subject_uuid,policy_version,purpose_codes,
+                        data_categories,evidence_type,evidence_hash,granted_at)
+                       VALUES ($1,$2,$3,'test/1',ARRAY['SCREENING_SERVICE'],ARRAY['PRESSURE_RAW'],
+                               'OPERATOR_CONFIRMED',$4,$5)""",
+                    consent_id, tenant.tenant_id, subject_id, "a" * 64, now,
+                )
+            grant = initial.grants[1]
+            request = SessionCreateRequest(
+                session_id=grant.session_id, subject_uuid=subject_id, consent_record_id=consent_id,
+                site_id=None, terminal_id=installation_id, client_installation_id=installation_id,
+                device_id=group.hardware_id, test_protocol=TestProtocol(id="test", version="1"),
+                versions=SessionVersions(app="1", protocol_profile="test/1", payload_schema="raw-segment/1", calibration="test/1"),
+                started_at=now,
+            )
+            authorization = SessionAuthorization(session_id=grant.session_id, kind="grant", token=grant.token, manifest_sha256="b" * 64)
+            suspended = replace(context, allow_new_test=False)
+            ingestion_repository = PostgresPlatformRepository(tenant_pool)
+            results = await asyncio.gather(
+                ingestion_repository.create_session(suspended, request, "first-register", authorization),
+                ingestion_repository.create_session(suspended, request, "lost-response", authorization),
+            )
+            assert sorted(result.idempotent_replay for result in results) == [False, True]
+            assert (await ingestion_repository.create_session(suspended, request, "first-register", authorization)).idempotent_replay
+            async with tenant_transaction(tenant_pool, tenant.tenant_id) as connection:
+                assert await connection.fetchval("SELECT count(*) FROM screening.sessions WHERE session_id=$1", grant.session_id) == 1
+                row = await connection.fetchrow("SELECT state,consumed_request_sha256,expected_manifest_sha256 FROM screening.capture_grants WHERE session_id=$1", grant.session_id)
+                assert tuple(row.values()) == ("CONSUMED", canonical_sha256(request), authorization.manifest_sha256)
+            audit_connection = await asyncpg.connect(os.environ["FEETFORCEPLATE_TEST_ADMIN_DSN"])
+            try:
+                async with audit_connection.transaction():
+                    await audit_connection.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant.tenant_id))
+                    assert await audit_connection.fetchval("SELECT count(*) FROM ops.capture_authorization_audit WHERE tenant_id=$1 AND session_id=$2 AND event_kind='CONSUMED'", tenant.tenant_id, grant.session_id) == 1
+            finally:
+                await audit_connection.close()
         finally:
             await tenant_pool.close()
             await activation_pool.close()
