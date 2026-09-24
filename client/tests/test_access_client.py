@@ -101,6 +101,27 @@ class CloudAccessClientTests(unittest.TestCase):
             transport=httpx.MockTransport(handler),
         )
 
+    def test_capture_grant_issue_and_retire_contract(self) -> None:
+        import json
+        session_id = uuid4()
+        token = "capture-secret-at-least-20-characters"
+        def handler(request):
+            self.requests.append(request)
+            if request.url.path.endswith("/retire"):
+                return self.response_data({"session_id": str(session_id), "state": "RETIRED"})
+            return self.response_data({"grants": [{"session_id": str(session_id), "token": token}]}, 201)
+        with self.client(handler) as client:
+            batch = client.issue_capture_grants("access-token", 7)
+            assert batch.grants[0].session_id == session_id
+            assert batch.grants[0].token.get_secret_value() == token
+            assert token not in repr(batch)
+            client.retire_capture_grant("access-token", session_id, "INCOMPLETE")
+        assert self.requests[0].url.path == "/v1/access/capture-grants"
+        assert json.loads(self.requests[0].content) == {"count": 7}
+        assert self.requests[1].url.path == "/v1/access/capture-grants/retire"
+        assert json.loads(self.requests[1].content) == {"session_id": str(session_id), "reason": "INCOMPLETE"}
+        assert all(request.headers["Authorization"] == "Bearer access-token" for request in self.requests)
+
     def test_exact_access_and_lease_calls(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)

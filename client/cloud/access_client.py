@@ -11,6 +11,9 @@ from pydantic import BaseModel, ValidationError
 from techflex_cloud_foundation import SecureTransport
 
 from client.cloud.foundation_compat import foundation_verify
+from shared.contracts.capture_grants import (
+    CaptureGrantBatchRequest, CaptureGrantBatchResponse, RetireCaptureGrantRequest,
+)
 
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -141,6 +144,20 @@ class CloudAccessClient:
             "/v1/access/license",
             SignedLicenseV2,
             access_token=access_token,
+        )
+
+    def issue_capture_grants(self, access_token: str, count: int) -> CaptureGrantBatchResponse:
+        request = CaptureGrantBatchRequest(count=count)
+        return self._model_request(
+            "POST", "/v1/access/capture-grants", CaptureGrantBatchResponse,
+            access_token=access_token, json=request.model_dump(mode="json"),
+        )
+
+    def retire_capture_grant(self, access_token: str, session_id: UUID, reason: str) -> None:
+        request = RetireCaptureGrantRequest(session_id=session_id, reason=reason)
+        self._request(
+            "POST", "/v1/access/capture-grants/retire", access_token=access_token,
+            json=request.model_dump(mode="json"),
         )
 
     def acquire_hardware_lease(

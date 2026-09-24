@@ -44,6 +44,7 @@ from client.workflow.participant import (
 from client.workflow.protocol import ProtocolSnapshot
 from client.workflow.models import ScreeningParticipantContext
 from shared.contracts.client_sync import canonical_json_bytes
+from shared.contracts.capture_grants import CaptureCredential, CaptureGrant
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ExternalIdentifierInput,
@@ -138,6 +139,10 @@ class KeyringConsentEvidenceSigner:
         return key
 
 
+class CaptureGrantExhausted(RuntimeError):
+    """Only starting a new formal test requires replenishing capture grants."""
+
+
 class InstitutionLocalStore:
     """Tenant-scoped local state encrypted with a Keychain-backed AES key."""
 
@@ -215,6 +220,15 @@ class InstitutionLocalStore:
                 session_id TEXT PRIMARY KEY,
                 subject_uuid TEXT NOT NULL REFERENCES institution_subjects(subject_uuid),
                 lifecycle_status TEXT NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS institution_capture_grants (
+                session_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                installation_id TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('AVAILABLE','ASSIGNED','BURNED','RETIRED')),
+                issued_at TEXT NOT NULL,
+                token_lookup BLOB NOT NULL UNIQUE,
                 payload BLOB NOT NULL
             );
             CREATE TABLE IF NOT EXISTS institution_stage_completions (
@@ -457,20 +471,115 @@ class InstitutionLocalStore:
             terminal_signature=terminal_signature,
         )
 
+    def add_capture_grants(
+        self, tenant_id: str, installation_id: str, grants: tuple[CaptureGrant, ...]
+    ) -> None:
+        if not tenant_id or not installation_id:
+            raise ValueError("capture grant binding is required")
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            available = self.available_capture_grants(tenant_id, installation_id)
+            if available + len(grants) > 50:
+                raise ValueError("capture grant pool exceeds 50 slots")
+            for grant in grants:
+                session_id = str(grant.session_id)
+                token_lookup = self._lookup("capture-grant", grant.token.get_secret_value())
+                if self.db.execute(
+                    "SELECT 1 FROM institution_capture_grants WHERE session_id=? OR token_lookup=? UNION ALL "
+                    "SELECT 1 FROM institution_sessions WHERE session_id IN (?,?)",
+                    (session_id, token_lookup, session_id, grant.session_id.hex),
+                ).fetchone():
+                    raise ValueError("duplicate or mismatched capture grant")
+                payload = self.codec.encrypt(
+                    grant.token.get_secret_value().encode(),
+                    context=f"capture-grant:{tenant_id}:{installation_id}:{session_id}",
+                )
+                self.db.execute(
+                    "INSERT INTO institution_capture_grants VALUES (?,?,?,'AVAILABLE',?,?,?)",
+                    (session_id, tenant_id, installation_id, self._now().isoformat(), token_lookup, payload),
+                )
+
+    def available_capture_grants(self, tenant_id: str, installation_id: str) -> int:
+        return self.db.execute(
+            "SELECT COUNT(*) FROM institution_capture_grants "
+            "WHERE tenant_id=? AND installation_id=? AND state='AVAILABLE'",
+            (tenant_id, installation_id),
+        ).fetchone()[0]
+
+    def capture_grant_state(self, session_id: str) -> str:
+        row = self.db.execute(
+            "SELECT state FROM institution_capture_grants WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError("session has no capture grant")
+        return row[0]
+
+    def capture_credential(self, session_id: str) -> CaptureCredential:
+        row = self.db.execute(
+            "SELECT tenant_id, installation_id, payload FROM institution_capture_grants "
+            "WHERE session_id=? AND state IN ('ASSIGNED','BURNED')",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError("session has no assigned capture grant")
+        token = self.codec.decrypt(row[2], context=f"capture-grant:{row[0]}:{row[1]}:{session_id}")
+        return CaptureCredential(session_id=uuid.UUID(session_id), kind="grant", token=token.decode())
+
+    def mark_capture_grant_retired(self, session_id: str) -> None:
+        """Call only after successful server retirement; never recycle the UUID."""
+        with self.db:
+            cursor = self.db.execute(
+                "UPDATE institution_capture_grants SET state='RETIRED' "
+                "WHERE session_id=? AND state IN ('AVAILABLE','BURNED')", (session_id,)
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("capture grant is not eligible for retirement")
+
     def create_session(
+        self, context: ScreeningParticipantContext, protocol: ProtocolSnapshot,
+        tenant_id: str, installation_id: str,
+    ) -> str:
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            subject = self.db.execute(
+                "SELECT tenant_id FROM institution_subjects WHERE subject_uuid=?",
+                (context.subject_uuid,),
+            ).fetchone()
+            if subject is None or subject[0] != tenant_id:
+                raise ValueError("participant does not match capture grant tenant")
+            row = self.db.execute(
+                "SELECT session_id FROM institution_capture_grants "
+                "WHERE tenant_id=? AND installation_id=? AND state='AVAILABLE' "
+                "ORDER BY issued_at,session_id LIMIT 1", (tenant_id, installation_id),
+            ).fetchone()
+            if row is None:
+                raise CaptureGrantExhausted("新检测需要可用采集额度，请联网补领；历史数据与补传不受影响")
+            session_id = row[0]
+            self.db.execute(
+                "UPDATE institution_capture_grants SET state='ASSIGNED' WHERE session_id=?",
+                (session_id,),
+            )
+            self._insert_session(session_id, context, protocol)
+        return session_id
+
+    def create_engineering_session(
         self, context: ScreeningParticipantContext, protocol: ProtocolSnapshot
     ) -> str:
+        """Nonformal engineering capture only; formal runtime never calls this."""
         session_id = uuid.uuid4().hex
+        with self.db:
+            self._insert_session(session_id, context, protocol)
+        return session_id
+
+    def _insert_session(self, session_id, context, protocol) -> None:
         payload = self.codec.encrypt(
             _json({"consent_record_id": context.consent_record_id, "protocol": asdict(protocol)}),
             context=f"session:{session_id}",
         )
-        with self.db:
-            self.db.execute(
-                "INSERT INTO institution_sessions VALUES (?,?,?,?)",
-                (session_id, context.subject_uuid, "ACQUIRING", payload),
-            )
-        return session_id
+        self.db.execute(
+            "INSERT INTO institution_sessions VALUES (?,?,?,?)",
+            (session_id, context.subject_uuid, "ACQUIRING", payload),
+        )
 
     def mark_incomplete(self, session_id: str) -> None:
         self._set_session_status(session_id, "INCOMPLETE")
@@ -498,6 +607,11 @@ class InstitutionLocalStore:
             cursor = self.db.execute(
                 "UPDATE institution_sessions SET lifecycle_status=? WHERE session_id=?", (status, session_id)
             )
+            if status in ("INCOMPLETE", "INVALID"):
+                self.db.execute(
+                    "UPDATE institution_capture_grants SET state='BURNED' "
+                    "WHERE session_id=? AND state='ASSIGNED'", (session_id,),
+                )
         if cursor.rowcount != 1:
             raise KeyError(f"unknown institution session {session_id}")
 

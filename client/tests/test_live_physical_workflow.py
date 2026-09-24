@@ -11,6 +11,7 @@ from client.hardware_standardization.models import BaselineReference
 from client.hardware_integration import live_physical_workflow
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
+    EngineeringLiveSessions,
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
@@ -22,6 +23,7 @@ from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
+from shared.contracts.capture_grants import CaptureGrant
 
 
 class _Key:
@@ -60,13 +62,19 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             )
         )
         protocol = default_standard_protocol().snapshot()
-        sessions = InstitutionLiveSessions(institution)
+        grant = CaptureGrant(session_id=uuid4(), token="formal-live-grant-token-1234567890")
+        institution.add_capture_grants("tenant-1", str(installation_id), (grant,))
+        sessions = InstitutionLiveSessions(
+            institution, tenant_id="tenant-1", installation_id=str(installation_id)
+        )
         session_id = sessions.create_session(
             ScreeningParticipantContext(
                 subject.subject_uuid, consent.consent_record_id
             ),
             protocol,
         )
+        assert UUID(session_id) == grant.session_id
+        assert sessions.capture_credential(session_id).token == grant.token
         metadata = sessions.metadata(session_id)
         capture = LivePhysicalCapture(
             hardware=SimpleNamespace(capture_profile_version="do-p4864/1"),
@@ -158,7 +166,7 @@ def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator
             data_categories=("SCREENING",), evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = EngineeringLiveSessions(institution)
     session_id = sessions.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
@@ -194,7 +202,7 @@ def test_live_physical_processor_requires_captured_windows_with_attestations(tmp
             data_categories=("SCREENING",), evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = EngineeringLiveSessions(institution)
     session_id = sessions.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
@@ -242,7 +250,7 @@ def test_live_physical_processor_returns_retry_for_degraded_local_quality(
             evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = EngineeringLiveSessions(institution)
     session_id = sessions.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),

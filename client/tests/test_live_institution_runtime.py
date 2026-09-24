@@ -341,7 +341,11 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         ),
         raising=False,
     )
-    monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", lambda _store: object())
+    session_bindings = {}
+    def make_sessions(_store, **kwargs):
+        session_bindings.update(kwargs)
+        return object()
+    monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", make_sessions)
     monkeypatch.setattr(live_runtime, "LiveBaselinePreflight", make_baseline)
     monkeypatch.setattr(live_runtime, "HardwareLeasePreflight", lambda _lease: object())
     monkeypatch.setattr(live_runtime, "build_production_preflight", lambda **_kwargs: object())
@@ -393,6 +397,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         app_version="9.8.7-authoritative",
         payload_schema="raw-segment/7",
     )
+    assert session_bindings["tenant_id"] == "tenant-1"
+    assert session_bindings["installation_id"] == "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
+    assert callable(session_bindings["replenish"])
 
     assert (
         acquisition is not None

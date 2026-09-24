@@ -114,7 +114,7 @@ def test_retained_local_analysis_rebuilds_missing_record_once(tmp_path: Path) ->
             evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    session_id = institution.create_session(
+    session_id = institution.create_engineering_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
     )

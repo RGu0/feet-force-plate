@@ -276,6 +276,8 @@ class ScreeningCoordinator:
                     self._protocol.snapshot(),
                 )
             except Exception as exc:
+                from client.app.institution_store import CaptureGrantExhausted
+
                 technical_detail = f"{type(exc).__name__}: {exc}"
                 self._telemetry.record_error(
                     code="E-DAT-001",
@@ -284,7 +286,11 @@ class ScreeningCoordinator:
                 )
                 self._error = ClientError(
                     code="E-DAT-001",
-                    operator_message="暂时无法保存检测数据，请重新检查后再试",
+                    operator_message=(
+                        "采集额度已用尽，请联网补领；历史查看和待传数据补传不受影响"
+                        if isinstance(exc, CaptureGrantExhausted)
+                        else "暂时无法保存检测数据，请重新检查后再试"
+                    ),
                     action=ClientAction.RECHECK,
                 )
                 return False
