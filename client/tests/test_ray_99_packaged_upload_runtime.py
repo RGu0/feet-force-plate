@@ -210,3 +210,128 @@ def test_factory_closes_http_if_queue_construction_fails(
         )
 
     assert order == ["http.open", "http.close"]
+
+
+def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
+    monkeypatch: pytest.MonkeyPatch, qtbot,
+) -> None:
+    """Exercise both packaged roots with real encrypted stores and the real queue."""
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from client.app import live_institution_runtime
+    from client.app.institution_store import InstitutionLocalStore
+    from client.tests.test_p3_persistent_upload import (
+        PersistentUploadQueueTests, _IngestionService, _Tokens,
+    )
+    from client.tests.test_ray_101_ui_integration import _report
+    from client.workflow.models import PreflightCheck, PreflightSummary, ScreeningParticipantContext
+    from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
+    from client.workflow.protocol import default_standard_protocol
+
+    # Reuse the immutable encrypted segment/envelope fixture; keep its actual
+    # StateStore, and put its spool where the packaged factory expects it.
+    pending = PersistentUploadQueueTests()
+    pending.setUp()
+    data_root = pending.root
+    pending.root = data_root / "spool"
+    pending.root.mkdir()
+    segment = pending._seal(0)
+    pending._commit(segment)
+    institution = InstitutionLocalStore.open(
+        data_root / "institution", key_provider=pending.keys, query_index_key=b"q" * 32,
+    )
+    upload = None
+    try:
+        tenant_id = str(uuid4())
+        subject = institution.create(CreateSubjectRequest(
+            tenant_id=tenant_id, analysis_profile=AnalysisProfile.unknown(),
+        ))
+        context = ScreeningParticipantContext(subject.subject_uuid, str(uuid4()))
+        # A retained pre-protocol report exists before this launch. It must not
+        # acquire a new grant or lose its original UUID to remain readable.
+        historic_id = institution.create_engineering_session(
+            context, default_standard_protocol().snapshot(),
+        )
+        institution.finalize(historic_id)
+        report = replace(_report(), session_id=historic_id)
+        institution.save_report(report)
+        session = SimpleNamespace(
+            tenant_id=tenant_id,
+            client_installation_id=str(pending.envelope.client_installation_id),
+            hardware_asset_id=str(pending.envelope.hardware_asset_id),
+        )
+        access = _Tokens()
+        replenishments = []
+        # Model an unavailable issuance service, without modifying the empty
+        # real pool. Upload authorization remains available independently.
+        access.replenish_capture_grants = lambda store, active: replenishments.append((store, active))
+        access.hardware_lease_lifecycle = lambda _session: object()
+        starts = []
+
+        class AcquisitionProbe:
+            def __init__(self, capture, *, prepare_session):
+                self.capture = capture
+                self.prepare_session = prepare_session
+
+            def set_callbacks(self, **_callbacks):
+                pass
+
+            def start(self, session_id):
+                starts.append(session_id)
+
+        # Only physical device preflight/acquisition are substituted. Formal
+        # session creation, composition, coordinator, UI and persistence are real.
+        monkeypatch.setattr(live_institution_runtime, "QtLiveHardwareAcquisition", AcquisitionProbe)
+        monkeypatch.setattr(live_institution_runtime, "build_production_preflight", lambda **_kwargs: SimpleNamespace(
+            run_preflight=lambda: PreflightSummary((PreflightCheck("device", True),)),
+        ))
+        runtime = live_institution_runtime.build_live_institution_runtime(
+            session=session, access_runtime=access, key_provider=pending.keys,
+            institution=institution, physical_store=pending.store,
+            startup_run=object(), data_root=data_root,
+            export_destination=lambda: None, app_version="test/1", payload_schema="raw-segment/1",
+        )
+        qtbot.addWidget(runtime.controller.window)
+        coordinator = runtime.coordinator
+        coordinator.bind_participant(subject_uuid=context.subject_uuid, consent_record_id=context.consent_record_id)
+        coordinator.start_new_screening()
+        coordinator.confirm_subject()
+        coordinator.complete_profile()
+        coordinator.confirm_consent()
+        assert coordinator.run_preflight()
+        assert coordinator.enter_position_guidance()
+        for now in (0.0, 3.0):
+            coordinator.observe_position(now_seconds=now, contact_ready=True, in_valid_area=True)
+        assert institution.available_capture_grants(tenant_id, session.client_installation_id) == 0
+        assert not coordinator.start_acquisition()
+        assert starts == []
+        assert coordinator.state.session_id is None
+        assert "采集额度已用尽" in coordinator.state.error.operator_message
+        assert institution.db.execute("SELECT session_id FROM institution_sessions").fetchall() == [(historic_id,)]
+        assert replenishments == [(institution, session)]
+
+        # Replace only the remote HTTP boundary. The packaged factory creates
+        # its actual PersistentUploadQueue and background scheduler.
+        remote = _IngestionService()
+        remote.close = lambda: None
+        monkeypatch.setattr(upload_runtime_module, "HttpIngestionClient", lambda *_args, **_kwargs: remote)
+        upload = build_packaged_upload_runtime(
+            data_root, SimpleNamespace(base_url="https://upload.invalid", verify=True),
+            session, access, pending.keys, institution, pending.store,
+        )
+        assert pending.store.sync_handoff_state(str(pending.session_id)) == "READY_FOR_NETWORK"
+        upload.start()
+        qtbot.waitUntil(lambda: pending.store.sync_handoff_state(str(pending.session_id)) == "CLOUD_CONFIRMED", timeout=5000)
+        assert remote.put_calls == [0]
+        assert len(remote.manifests) == 1
+        assert segment.path.exists()
+        assert runtime.reports.report_document(report.report_id, report.version).session_id == historic_id
+        assert institution.available_capture_grants(tenant_id, session.client_installation_id) == 0
+        assert institution.db.execute("SELECT session_id FROM institution_sessions").fetchall() == [(historic_id,)]
+        assert starts == []
+    finally:
+        if upload is not None:
+            upload.close()
+        institution.close()
+        pending.tearDown()
