@@ -220,6 +220,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
     from uuid import uuid4
 
     from client.app import live_institution_runtime
+    from shared.contracts.capture_grants import CaptureCredential
     from client.app.institution_store import InstitutionLocalStore
     from client.tests.test_p3_persistent_upload import (
         PersistentUploadQueueTests, _IngestionService, _Tokens,
@@ -237,7 +238,8 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
     pending.root = data_root / "spool"
     pending.root.mkdir()
     segment = pending._seal(0)
-    pending._commit(segment)
+    credential = CaptureCredential(session_id=pending.session_id, kind="grant", token="packaged-grant-secret-123456")
+    pending._commit(segment, credential=credential)
     institution = InstitutionLocalStore.open(
         data_root / "institution", key_provider=pending.keys, query_index_key=b"q" * 32,
     )
@@ -325,6 +327,8 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
         qtbot.waitUntil(lambda: pending.store.sync_handoff_state(str(pending.session_id)) == "CLOUD_CONFIRMED", timeout=5000)
         assert remote.put_calls == [0]
         assert len(remote.manifests) == 1
+        assert remote.authorizations[0].token == credential.token
+        assert remote.authorizations[0].session_id == credential.session_id
         assert segment.path.exists()
         assert runtime.reports.report_document(report.report_id, report.version).session_id == historic_id
         assert institution.available_capture_grants(tenant_id, session.client_installation_id) == 0

@@ -14,7 +14,7 @@ import httpx
 import numpy as np
 
 from client.device.protocol import RawFrame
-from client.spool.segments import ImmutableSegmentWriter, SealedSegment
+from client.spool.segments import ImmutableSegmentWriter, SealedSegment, write_session_manifest
 from client.spool.state_store import SensitiveBlobCodec, StateStore, ValidSegmentRecord
 from client.sync.persistent_upload import (
     HttpIngestionClient,
@@ -26,6 +26,7 @@ from client.sync.persistent_upload import (
     UploadRetryable,
 )
 from shared.contracts.client_sync import FormalUploadEnvelope, canonical_sha256
+from shared.contracts.capture_grants import CaptureCredential, SessionAuthorization
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
@@ -78,11 +79,13 @@ class _IngestionService:
         self.subject_keys: list[str] = []
         self.consent_keys: list[str] = []
         self.session_keys: list[str] = []
+        self.authorizations: list[SessionAuthorization | None] = []
         self.session_requests: list[SessionCreateRequest] = []
         self.put_calls: list[int] = []
         self.complete_keys: list[str] = []
         self.failures: dict[str, list[Exception]] = {}
         self.lose_complete_response_once = False
+        self.lose_session_response_once = False
         self.list_response: SegmentListResponse | None = None
         self.acknowledgement: SegmentAcknowledgement | None = None
         self.completion_response: ManifestCompletionResponse | None = None
@@ -138,7 +141,9 @@ class _IngestionService:
         _access_token: str,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
+        self.authorizations.append(authorization)
         self.calls.append("session")
         self.session_keys.append(idempotency_key)
         self.session_requests.append(request)
@@ -148,6 +153,9 @@ class _IngestionService:
             validity_status=ValidityStatus.UNKNOWN,
             ingest_status=IngestStatus.RECEIVING,
         )
+        if self.lose_session_response_once:
+            self.lose_session_response_once = False
+            raise UploadRetryable("registration response lost")
         return SessionCreateResponse(
             session_id=request.session_id,
             ingest_status=IngestStatus.RECEIVING,
@@ -322,7 +330,12 @@ class PersistentUploadQueueTests(unittest.TestCase):
         assert sealed is not None
         return sealed
 
-    def _commit(self, *sealed: SealedSegment) -> None:
+    def _commit(self, *sealed: SealedSegment, credential=None) -> None:
+        manifest = write_session_manifest(
+            self.root / "sessions", session_id=str(self.session_id),
+            segment_paths=[item.path for item in sealed], key_provider=self.keys,
+            local_quality_outcome="VALID",
+        )
         self.store.commit_valid_session(
             str(self.session_id),
             subject_uuid=str(self.subject_id),
@@ -330,8 +343,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             versions_json=b"{}",
             started_at_ns=0,
             ended_at_ns=20_000_000_000,
-            manifest_sha256="b" * 64,
+            manifest_sha256=manifest["manifest_sha256"],
             upload_envelope=self.envelope,
+            upload_credential=credential,
             segments=tuple(
                 ValidSegmentRecord(
                     segment_id=item.segment_id,
@@ -356,6 +370,140 @@ class PersistentUploadQueueTests(unittest.TestCase):
             remote,
             now_ns=clock or _Clock(),
         )
+
+    def test_capture_authorization_survives_reopen_and_registration_response_loss(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=self.session_id, kind="grant", token="secret-capture-grant-token")
+        self._commit(sealed, credential=credential)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.assertEqual(self.store.sync_handoff_credential(str(self.session_id)), credential)
+        remote = _IngestionService()
+        remote.lose_session_response_once = True
+        clock = _Clock()
+        self.assertEqual(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        clock.value += 1_000_000_000_000
+        self.assertEqual(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(remote.authorizations[0], remote.authorizations[1])
+        self.assertEqual(remote.session_keys[0], remote.session_keys[1])
+        self.assertEqual(remote.authorizations[0].manifest_sha256, canonical_sha256(remote.manifests[0]))
+        promoted = json.loads((sealed.path.parent / "manifest.json").read_bytes())
+        self.assertNotEqual(remote.authorizations[0].manifest_sha256, promoted["manifest_sha256"])
+        self.assertNotIn(b"secret-capture-grant-token", (self.root / "state.sqlite3").read_bytes())
+        for path in self.root.glob("state.sqlite3*"):
+            self.assertNotIn(b"secret-capture-grant-token", path.read_bytes())
+
+    def test_capture_authorization_rejects_other_uuid_atomically(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=uuid4(), kind="grant", token="secret-capture-grant-token")
+        with self.assertRaisesRegex(ValueError, "session mismatch"):
+            self._commit(sealed, credential=credential)
+        with self.assertRaises(KeyError):
+            self.store.sync_handoff_state(str(self.session_id))
+
+    def test_capture_authorization_corrupt_segment_prevents_registration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        payload = sealed.path.read_bytes()
+        sealed.path.write_bytes(payload[:-1] + bytes([payload[-1] ^ 1]))
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_expected_digest_is_immutable(self):
+        self._commit(self._seal(0))
+        self.store.record_expected_cloud_manifest_sha256(str(self.session_id), "a" * 64)
+        self.store.record_expected_cloud_manifest_sha256(str(self.session_id), "a" * 64)
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_modified_promoted_manifest_blocks_registration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        path = sealed.path.parent / "manifest.json"
+        manifest = json.loads(path.read_bytes())
+        manifest["segments"][0]["ciphertext_sha256"] = "a" * 64
+        path.write_text(json.dumps(manifest))
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_rollback_does_not_expose_secret_or_partial_rows(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=self.session_id, kind="grant", token="rollback-secret-token-123456")
+        self.store._connection.execute("CREATE TRIGGER reject_handoff BEFORE INSERT ON sync_handoffs BEGIN SELECT RAISE(ABORT, 'injected handoff failure'); END")
+        with self.assertRaises(Exception) as caught:
+            self._commit(sealed, credential=credential)
+        self.assertNotIn(credential.token.get_secret_value(), str(caught.exception))
+        with self.assertRaises(KeyError):
+            self.store.session_status(str(self.session_id))
+        self.assertEqual(self.store._connection.execute("SELECT COUNT(*) FROM segments").fetchone()[0], 0)
+        self.assertEqual(self.store._connection.execute("SELECT COUNT(*) FROM sync_handoffs").fetchone()[0], 0)
+
+    def test_capture_authorization_invalid_encrypted_value_has_safe_error(self):
+        import traceback
+        self._commit(self._seal(0))
+        secret = "private-value-that-must-not-appear"
+        malformed = json.dumps({"session_id": "bad-uuid", "kind": "invalid", "token": secret}).encode()
+        encrypted = SensitiveBlobCodec(self.keys).encrypt(malformed, context=f"capture_authorization:{self.session_id}")
+        with self.store._connection:
+            self.store._connection.execute("UPDATE sync_handoffs SET upload_credential=?", (encrypted,))
+        with self.assertRaises(ValueError) as caught:
+            self.store.sync_handoff_credential(str(self.session_id))
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
+
+    def test_schema_nine_handoff_upgrade_preserves_legacy_nullable_authorization(self):
+        import sqlite3
+        self._commit(self._seal(0))
+        self.store.close()
+        with sqlite3.connect(self.root / "state.sqlite3") as connection:
+            connection.execute("ALTER TABLE sync_handoffs DROP COLUMN upload_credential")
+            connection.execute("ALTER TABLE sync_handoffs DROP COLUMN expected_cloud_manifest_sha256")
+            connection.execute("PRAGMA user_version=9")
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.assertEqual(self.store.schema_version, 10)
+        self.assertIsNone(self.store.sync_handoff_credential(str(self.session_id)))
+        self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), self.envelope)
+        self.assertEqual(self._queue(_IngestionService()).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+
+    def test_legacy_suspended_first_registration_needs_manual_migration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        original = sealed.path.read_bytes()
+        remote = _IngestionService()
+        remote.failures["session"] = [UploadBlocked("suspended", error_code="E-AUT-403")]
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.BLOCKED)
+        self.assertEqual(sealed.path.read_bytes(), original)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "BLOCKED")
+        self.assertEqual(self.store.sync_handoff_retry_state(str(self.session_id))[2], "E-SYN-428")
+
+    def test_capture_authorization_http_422_never_changes_body_or_headers(self):
+        seen = []
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(422, json={"error": {"code": "E-API-422", "message": "contract mismatch", "retryable": False, "action": "FIX_REQUEST", "details": {}}})
+        client = HttpIngestionClient("https://cloud.test", terminal_id=self.envelope.client_installation_id,
+                                     transport=httpx.MockTransport(handler))
+        authorization = SessionAuthorization(session_id=self.session_id, kind="grant", token="http-grant-secret-123456789", manifest_sha256="a" * 64)
+        request = self.envelope.session_request()
+        original_digest = canonical_sha256(request)
+        try:
+            for _ in range(2):
+                with self.assertRaises(UploadBlocked):
+                    client.create_session("access-token", request, "stable-key", authorization)
+        finally:
+            client.close()
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0].content, seen[1].content)
+        self.assertEqual(canonical_sha256(request), original_digest)
+        for item in seen:
+            self.assertEqual(item.headers["X-Capture-Authorization"], "grant http-grant-secret-123456789")
+            self.assertEqual(item.headers["X-Expected-Manifest-SHA256"], "a" * 64)
+            self.assertEqual(item.headers["Idempotency-Key"], "stable-key")
+            self.assertIn("client_installation_id", json.loads(item.content))
 
     def test_restart_resumes_only_missing_segments_and_retains_acknowledged_files(
         self,

@@ -48,6 +48,7 @@ from client.local_analysis.models import LocalQualityStatus
 from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
+from shared.contracts.capture_grants import CaptureCredential
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import ProtocolSnapshot
 from shared.contracts.client_sync import (
@@ -153,6 +154,7 @@ class _PreparedCaptureSession:
     started_at_ns: int
     protocol_profile: str
     upload_envelope: FormalUploadEnvelope | None
+    upload_credential: CaptureCredential | None
 
 
 class InstitutionLiveSessions:
@@ -297,6 +299,10 @@ class LivePhysicalCapture:
                 started_at_ns=started_at_ns,
                 protocol_profile=protocol_profile,
                 upload_envelope=upload_envelope,
+                upload_credential=(
+                    self._sessions.capture_credential(session_id)
+                    if self._formal_upload is not None else None
+                ),
             )
 
     def capture(
@@ -493,6 +499,9 @@ class LivePhysicalCapture:
                     versions=stager_versions,
                     started_at_ns=started_at_ns,
                     upload_envelope=upload_envelope,
+                    upload_credential=(
+                        prepared.upload_credential if prepared is not None else None
+                    ),
                     expected_stage_ids=gate.expected_stage_ids,
                 ),
             )
