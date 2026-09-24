@@ -52,6 +52,55 @@ def _role_dsns() -> tuple[str, str, str] | None:
 
 
 @pytest.mark.skipif(_role_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
+def test_live_concurrent_51st_grant_locks_installation_and_stores_only_hashes():
+    async def exercise():
+        import asyncpg
+        from cloud.access_control.capture_grants import CaptureGrantService
+        from cloud.api.postgres import PostgresPlatformRepository
+        from cloud.api.errors import TenantAccessDenied
+        from cloud.ingestion.principal import IngestionPrincipal
+
+        tenant_dsn, activation_dsn, platform_dsn = _role_dsns()
+        tenant_pool = await asyncpg.create_pool(tenant_dsn, min_size=2, max_size=3)
+        activation_pool = await asyncpg.create_pool(activation_dsn, min_size=1, max_size=1)
+        platform_pool = await asyncpg.create_pool(platform_dsn, min_size=1, max_size=1)
+        try:
+            repository = PostgresAccessRepository(tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool)
+            now = datetime.now(UTC)
+            from dataclasses import replace
+            group = replace(_group(), license_valid_from=now - timedelta(days=1), license_valid_until=now + timedelta(days=365), activation_expires_at=now + timedelta(days=7))
+            tenant = TenantSeed(uuid4(), "Grant concurrency fixture")
+            installation_id = uuid4()
+            await repository.provision_tenant(tenant, group, created_at=now)
+            await repository.activate_account_atomically(
+                login_name_hmac=group.login_name_hmac, activation_code_hash=group.activation_code_hash,
+                hardware_identity=group.hardware_identity, password_hash="$ffp-scrypt$capture-test",
+                installation_id=installation_id, activated_at=now,
+                license_key_id="license/2-test", license_document_json='{"schema_version":"license/2"}', license_signature="s" * 86,
+            )
+            context = IngestionPrincipal(tenant.tenant_id, installation_id, now + timedelta(minutes=10), True, True, group.account_id, group.license_id, group.hardware_identity)
+            service = CaptureGrantService(PostgresPlatformRepository(tenant_pool))
+            initial = await service.issue(context, 49)
+            results = await asyncio.gather(service.issue(context, 1), service.issue(context, 1), return_exceptions=True)
+            assert sum(isinstance(result, TenantAccessDenied) for result in results) == 1
+            assert sum(not isinstance(result, BaseException) for result in results) == 1
+            async with tenant_transaction(tenant_pool, tenant.tenant_id) as connection:
+                assert await connection.fetchval("SELECT count(*) FROM screening.capture_grants WHERE installation_id=$1 AND state='ISSUED'", installation_id) == 50
+                digest = await connection.fetchval("SELECT token_sha256 FROM screening.capture_grants WHERE session_id=$1", initial.grants[0].session_id)
+                assert digest == hashlib.sha256(initial.grants[0].token.get_secret_value().encode()).digest()
+                assert await connection.fetchval("SELECT count(*) FROM ops.capture_authorization_audit WHERE tenant_id=$1 AND event_kind='ISSUED'", tenant.tenant_id) == 50
+            await service.retire(context, initial.grants[0].session_id, "CANCELED")
+            with pytest.raises(TenantAccessDenied):
+                await service.retire(context, initial.grants[0].session_id, "CANCELED")
+            assert len((await service.issue(context, 50)).grants) == 1
+        finally:
+            await tenant_pool.close()
+            await activation_pool.close()
+            await platform_pool.close()
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(_role_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
 def test_live_capture_authorization_role_and_rls_contract() -> None:
     async def exercise() -> None:
         import asyncpg

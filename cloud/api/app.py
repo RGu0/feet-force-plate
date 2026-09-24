@@ -9,6 +9,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest
+
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
     PlatformAccessContext,
@@ -83,6 +85,7 @@ class ServiceContainer:
     tenant_access: object | None = None
     tenant_tokens: TenantAccessTokenIssuer | None = None
     hardware_leases: object | None = None
+    capture_grants: object | None = None
     platform_identities: object | None = None
     platform_access: object | None = None
     platform_tokens: PlatformAccessTokenIssuer | None = None
@@ -677,6 +680,24 @@ def create_app(container: ServiceContainer) -> FastAPI:
             idempotency_key,
         )
         return _data_response(request, result)
+
+    @app.post("/v1/access/capture-grants")
+    async def issue_capture_grants(request: Request, body: CaptureGrantBatchRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        result = await container.capture_grants.issue(context, body.count)
+        # This is the only transport boundary that reveals newly issued secrets.
+        return _data_response(request, {"grants": [
+            {"session_id": str(grant.session_id), "token": grant.token.get_secret_value()}
+            for grant in result.grants
+        ]}, 201)
+
+    @app.post("/v1/access/capture-grants/retire")
+    async def retire_capture_grant(request: Request, body: RetireCaptureGrantRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        await container.capture_grants.retire(context, body.session_id, body.reason)
+        return _data_response(request, {"session_id": str(body.session_id), "state": "RETIRED"})
 
     @app.post("/v1/sessions")
     async def create_session(

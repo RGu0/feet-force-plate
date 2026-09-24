@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
+from shared.contracts.capture_grants import CaptureGrantBatchResponse
 from cloud.api.errors import (
     ActivationCodeInvalid,
     IdempotencyConflict,
@@ -165,10 +167,26 @@ class EnrollmentIdempotencyRecord:
     binding: EnrollmentBinding
 
 
+@dataclass(frozen=True, slots=True)
+class CaptureGrantRecord:
+    tenant_id: UUID
+    session_id: UUID
+    installation_id: UUID
+    account_id: UUID
+    license_id: UUID
+    hardware_id: UUID
+    token_sha256: bytes
+    issued_at: datetime
+    state: str = "ISSUED"
+
+
 class InMemoryPlatformRepository:
     """Deterministic reference adapter for contract and fault tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, access_repository=None) -> None:
+        self._capture_access = access_repository
+        self._capture_grants: dict[tuple[UUID, UUID], CaptureGrantRecord] = {}
+        self._capture_audits: list[tuple[UUID, UUID, UUID, str, str]] = []
         self._terminals: dict[tuple[UUID, UUID], TerminalRecord] = {}
         self._tenants: dict[UUID, tuple[str, str]] = {}
         self._sites: dict[tuple[UUID, UUID], SiteSummary] = {}
@@ -197,6 +215,58 @@ class InMemoryPlatformRepository:
         self._idempotency: dict[tuple[UUID, str, str], IdempotencyRecord] = {}
         self._events: list[EventEnvelope] = []
         self._problems: list[tuple[UUID, UUID, str]] = []
+
+    def _capture_entitlement(self, context):
+        """Called under the reference access adapter's shared mutation lock."""
+        context.ensure_can_start_new()
+        access = self._capture_access
+        account = access._accounts.get(context.account_id)
+        license_record = access._licenses.get(context.license_id)
+        installation = access._installations.get(context.terminal_id)
+        hardware = access._hardware.get(access._hardware_by_identity.get(context.hardware_id))
+        now = datetime.now(UTC)
+        group = next((g for g in access._group_history if g.license_id == context.license_id and g.closed_at is None), None)
+        if (
+            account is None or license_record is None or installation is None or hardware is None or group is None
+            or any(row.tenant_id != context.tenant_id for row in (account, license_record, installation, hardware, group))
+            or account.status != "ACTIVE" or license_record.status != "ACTIVE"
+            or installation.status != "ACTIVE" or hardware.status != "ACTIVE"
+            or installation.account_id != context.account_id or group.account_id != context.account_id
+            or group.hardware_id != hardware.hardware_id
+            or not license_record.valid_from <= now < license_record.valid_until
+        ):
+            raise TenantAccessDenied("采集额度授权不匹配")
+        return hardware.hardware_id
+
+    async def issue_capture_grants(self, context, grants):
+        if self._capture_access is None:
+            raise TenantAccessDenied("采集额度授权不匹配")
+        async with self._capture_access._lock:
+            hardware_id = self._capture_entitlement(context)
+            outstanding = sum(row.tenant_id == context.tenant_id and row.installation_id == context.terminal_id and row.state == "ISSUED" for row in self._capture_grants.values())
+            if outstanding >= 50:
+                raise TenantAccessDenied("采集额度已用尽")
+            issued = grants[:50 - outstanding]
+            for grant in issued:
+                self._capture_grants[(context.tenant_id, grant.session_id)] = CaptureGrantRecord(
+                    context.tenant_id, grant.session_id, context.terminal_id, context.account_id,
+                    context.license_id, hardware_id, hashlib.sha256(grant.token.get_secret_value().encode()).digest(), datetime.now(UTC),
+                )
+                self._capture_audits.append((context.tenant_id, grant.session_id, context.account_id, "ISSUED", "ACTIVE_ENTITLEMENT"))
+            return CaptureGrantBatchResponse(grants=issued)
+
+    async def retire_capture_grant(self, context, session_id, reason):
+        if self._capture_access is None or not reason.strip():
+            raise TenantAccessDenied("采集额度授权不匹配")
+        async with self._capture_access._lock:
+            self._capture_entitlement(context)
+            key = (context.tenant_id, session_id)
+            row = self._capture_grants.get(key)
+            if row is None or row.installation_id != context.terminal_id or row.account_id != context.account_id or row.state != "ISSUED":
+                raise TenantAccessDenied("采集额度不可注销")
+            self._capture_grants[key] = replace(row, state="RETIRED")
+            # Do not persist arbitrary caller text which could contain credentials.
+            self._capture_audits.append((context.tenant_id, session_id, context.account_id, "RETIRED", "CLIENT_RETIRED"))
 
     def add_terminal(self, tenant_id: UUID, site_id: UUID, terminal_id: UUID) -> None:
         self._terminals[(tenant_id, terminal_id)] = TerminalRecord(tenant_id, site_id, terminal_id)

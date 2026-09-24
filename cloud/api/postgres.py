@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator
 from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
+from shared.contracts.capture_grants import CaptureGrantBatchResponse
 from cloud.api.errors import (
     ActivationCodeInvalid,
     IdempotencyConflict,
@@ -119,6 +121,85 @@ class PostgresPlatformRepository:
         self._pool = pool
         self._enrollment_pool = enrollment_pool
         self._idempotency_ttl = idempotency_ttl
+
+    async def _capture_entitlement(self, connection, context):
+        context.ensure_can_start_new()
+        # Serialize issuance against the actual installation, including an empty
+        # grant set. Locking existing grants cannot protect the first issuance.
+        installation = await connection.fetchval(
+            """SELECT client_installation_id FROM device.client_installations
+               WHERE tenant_id=$1 AND client_installation_id=$2
+                 AND account_id=$3 AND status='ACTIVE' FOR UPDATE""",
+            context.tenant_id, context.terminal_id, context.account_id,
+        )
+        if installation is None:
+            raise TenantAccessDenied("采集额度授权不匹配")
+        hardware_id = await connection.fetchval(
+            """SELECT h.hardware_id
+               FROM iam.tenant_accounts a
+               JOIN device.license_assignments la
+                 ON la.tenant_id=a.tenant_id AND la.account_id=a.account_id AND la.unassigned_at IS NULL
+               JOIN device.license_entitlements l
+                 ON l.tenant_id=la.tenant_id AND l.license_id=la.license_id
+               JOIN device.hardware_bindings hb
+                 ON hb.tenant_id=l.tenant_id AND hb.license_id=l.license_id AND hb.unbound_at IS NULL
+               JOIN device.hardware_assets h
+                 ON h.tenant_id=hb.tenant_id AND h.hardware_id=hb.hardware_id
+               WHERE a.tenant_id=$1 AND a.account_id=$2 AND l.license_id=$3
+                 AND h.stable_identity=$4 AND a.status='ACTIVE'
+                 AND l.status='ACTIVE' AND h.status='ACTIVE'
+                 AND l.valid_from <= clock_timestamp() AND clock_timestamp() < l.valid_until
+               FOR SHARE OF a, la, l, hb, h""",
+            context.tenant_id, context.account_id, context.license_id, context.hardware_id,
+        )
+        if hardware_id is None:
+            raise TenantAccessDenied("采集额度授权不匹配")
+        return hardware_id
+
+    async def _capture_audit(self, connection, context, session_id, event, decision):
+        await connection.execute(
+            """INSERT INTO ops.capture_authorization_audit
+               (event_id, tenant_id, session_id, authorization_kind, event_kind, actor_id, decision_code)
+               VALUES ($1,$2,$3,'GRANT',$4,$5,$6)""",
+            uuid4(), context.tenant_id, session_id, event, context.account_id, decision,
+        )
+
+    async def issue_capture_grants(self, context, grants):
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            hardware_id = await self._capture_entitlement(connection, context)
+            outstanding = await connection.fetchval(
+                """SELECT count(*) FROM screening.capture_grants
+                   WHERE tenant_id=$1 AND installation_id=$2 AND state='ISSUED'""",
+                context.tenant_id, context.terminal_id,
+            )
+            if outstanding >= 50:
+                raise TenantAccessDenied("采集额度已用尽")
+            issued = grants[:50 - outstanding]
+            for grant in issued:
+                await connection.execute(
+                    """INSERT INTO screening.capture_grants
+                       (tenant_id, session_id, installation_id, account_id, license_id, hardware_id, token_sha256)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                    context.tenant_id, grant.session_id, context.terminal_id, context.account_id,
+                    context.license_id, hardware_id, hashlib.sha256(grant.token.get_secret_value().encode()).digest(),
+                )
+                await self._capture_audit(connection, context, grant.session_id, "ISSUED", "ACTIVE_ENTITLEMENT")
+            return CaptureGrantBatchResponse(grants=issued)
+
+    async def retire_capture_grant(self, context, session_id, reason):
+        if not reason.strip():
+            raise TenantAccessDenied("采集额度不可注销")
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            await self._capture_entitlement(connection, context)
+            retired = await connection.fetchval(
+                """UPDATE screening.capture_grants SET state='RETIRED'
+                   WHERE tenant_id=$1 AND session_id=$2 AND installation_id=$3
+                     AND account_id=$4 AND state='ISSUED' RETURNING session_id""",
+                context.tenant_id, session_id, context.terminal_id, context.account_id,
+            )
+            if retired is None:
+                raise TenantAccessDenied("采集额度不可注销")
+            await self._capture_audit(connection, context, session_id, "RETIRED", "CLIENT_RETIRED")
 
     async def _require_active_terminal(
         self, connection, context: TerminalContext

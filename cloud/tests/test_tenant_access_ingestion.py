@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from httpx import ASGITransport, AsyncClient
 
 from cloud.access_control.lease_service import HardwareLeaseService
+from cloud.access_control.capture_grants import CaptureGrantService
 from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.repository import InMemoryAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
@@ -125,7 +126,7 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.subject_id = uuid4()
         self.consent_id = uuid4()
         self.session_id = uuid4()
-        self.data_repository = InMemoryPlatformRepository()
+        self.data_repository = InMemoryPlatformRepository(access_repository=self.access_repository)
         # Compatibility/audit records only. License authority remains in the access repository.
         self.data_repository.add_terminal(
             self.provisioned.tenant_id,
@@ -177,6 +178,7 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
                     now=lambda: self.now,
                 ),
                 tenant_access=self.tenant_access,
+                capture_grants=CaptureGrantService(self.data_repository),
                 tenant_tokens=self.tenant_tokens,
             )
         )
