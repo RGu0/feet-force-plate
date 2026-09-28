@@ -189,6 +189,9 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
     assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
     assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
+    assert text.index("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup") > text.index(
+        "0010_local_basic_report_copies.sql"
+    )
     assert "install_tls_file" in text
     assert "readlink -f" in text
     assert text.index("foundation-artifact.lock.json") < text.index("apply_migration iam.tenants")

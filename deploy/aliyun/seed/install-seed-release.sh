@@ -203,6 +203,9 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0008_activation_projection_grants.sql"
 apply_migration ops.session_holds "$release_source/cloud/migrations/0009_unverified_session_holds.sql"
 apply_migration reporting.local_basic_report_copies "$release_source/cloud/migrations/0010_local_basic_report_copies.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;
+     GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;"
 
 cp -a /var/lib/pgsql/data/pg_hba.conf "/var/lib/pgsql/data/pg_hba.conf.pre-seed.$(date -u +%Y%m%dT%H%M%SZ)"
 install -o postgres -g postgres -m 0600 \

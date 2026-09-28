@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +10,7 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "deploy" / "aliyun" / "seed"))
 
-from oss_backup_export import export_bucket_objects  # noqa: E402
+from oss_backup_export import export_bucket_objects, referenced_object_keys  # noqa: E402
 
 
 class _Stream:
@@ -39,6 +41,7 @@ def test_export_fetches_referenced_keys_and_records_digests(tmp_path: Path) -> N
     objects = {
         "tenants/t1/sessions/s1/segments/0-abc.ffps": b"segment-bytes",
         "tenants/t1/sessions/s1/manifests/def.json": b"manifest-bytes",
+        "tenants/t1/sessions/s1/basic-report-copies/copy.pdf": b"%PDF-1.4 report-bytes",
         "tenants/t2/sessions/s2/segments/0-ghi.ffps": b"more-bytes",
     }
     bucket = _Bucket(objects)
@@ -48,19 +51,20 @@ def test_export_fetches_referenced_keys_and_records_digests(tmp_path: Path) -> N
     count = export_bucket_objects(bucket, _Sdk, "the-bucket", sorted(objects),
                                   tmp_path / "objects", manifest)
 
-    assert count == 3
+    assert count == 4
     assert bucket.requested_keys == sorted(objects)
     lines = manifest.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 4
     for line in lines:
         digest, _, key = line.partition("  ")
         stored = (tmp_path / "objects" / key).read_bytes()
         assert stored == objects[key]
         assert digest == hashlib.sha256(objects[key]).hexdigest()
     deepest = tmp_path / "objects" / "tenants" / "t1" / "sessions" / "s1" / "segments"
-    assert deepest.stat().st_mode & 0o777 == 0o700
-    file_mode = (deepest / "0-abc.ffps").stat().st_mode & 0o777
-    assert file_mode == 0o600
+    if os.name != "nt":
+        assert deepest.stat().st_mode & 0o777 == 0o700
+        file_mode = (deepest / "0-abc.ffps").stat().st_mode & 0o777
+        assert file_mode == 0o600
 
 
 def test_export_skips_keys_that_live_only_in_the_legacy_local_tree(tmp_path: Path) -> None:
@@ -96,3 +100,43 @@ def test_export_rejects_keys_that_escape_the_staging_root(tmp_path: Path) -> Non
     with pytest.raises(RuntimeError):
         export_bucket_objects(bucket, _Sdk, "the-bucket",
                               ["../outside/evil.ffps"], tmp_path / "objects", manifest)
+
+
+def test_report_pdf_keys_are_included_and_marked_required(monkeypatch) -> None:
+    segment_key = "tenants/t1/sessions/s1/segments/0.ffps"
+    report_key = "tenants/t1/sessions/s1/basic-report-copies/copy.pdf"
+
+    class Connection:
+        async def fetch(self, query):
+            if "pdf_object_key" in query:
+                return [{"pdf_object_key": report_key}]
+            return [{"object_key": segment_key}]
+
+        async def close(self):
+            pass
+
+    async def connect(_dsn):
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(connect=connect))
+    keys, required = asyncio.run(referenced_object_keys("test-dsn"))
+    assert keys == [report_key, segment_key]
+    assert required == frozenset({report_key})
+
+
+def test_missing_referenced_report_pdf_fails_backup(tmp_path: Path) -> None:
+    import pytest
+
+    key = "tenants/t1/sessions/s1/basic-report-copies/copy.pdf"
+
+    class Missing:
+        def get_object(self, _request):
+            raise RuntimeError("Error Code: NoSuchKey")
+
+    manifest = tmp_path / "object-manifest.sha256"
+    manifest.write_text("", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="referenced report PDF"):
+        export_bucket_objects(
+            Missing(), _Sdk, "the-bucket", [key], tmp_path / "objects", manifest,
+            required_oss_keys=frozenset({key}),
+        )
