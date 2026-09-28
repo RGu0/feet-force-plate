@@ -545,6 +545,18 @@ class InstitutionLocalStore:
             raise KeyError(f"unknown report {report_id} v{version}")
         return self.codec.decrypt(row[0], context=f"report:{report_id}:{version}").decode("utf-8")
 
+    def load_basic_report_for_session(self, session_id: str) -> BasicReportDocument | None:
+        row = self.db.execute(
+            """SELECT report_id, version FROM institution_report_copy_handoffs
+               WHERE session_id=?""", (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        report_id = self.codec.decrypt(
+            row[0], context=f"report_copy_id:{session_id}",
+        ).decode("ascii")
+        return BasicReportDocument.from_json(self.load_report(report_id, int(row[1])))
+
     def record_subject_access(self, *, tenant_id: str, subject_uuid: str, purpose: str) -> None:
         self._record_audit(tenant_id, subject_uuid, "SUBJECT_ACCESS", {"purpose": purpose})
 

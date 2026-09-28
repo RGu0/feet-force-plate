@@ -878,6 +878,12 @@ class HttpIngestionClient:
             )
         except httpx.HTTPError as exc:
             raise UploadRetryable("report copy service is unavailable") from exc
+        if response.status_code == 423 and self._safe_error_code(response) == "E-RPT-423":
+            raise UploadRetryable(
+                "report copy is paused by a platform hold",
+                retry_after_seconds=300.0,
+                error_code="E-RPT-423",
+            )
         self._raise_for_response(response)
         try:
             receipt = response.json()["data"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QRect, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPageSize, QPdfWriter, QPen
 
 from client.app.heatmap_display import (
@@ -54,7 +54,19 @@ def build_stage_heatmap_image(
 
 class BasicReportPdfRenderer:
     def render(self, report: BasicReportDocument, destination: Path) -> None:
-        writer = QPdfWriter(str(destination))
+        self._render_to_writer(report, QPdfWriter(str(destination)))
+
+    def render_bytes(self, report: BasicReportDocument) -> bytes:
+        data = QByteArray()
+        buffer = QBuffer(data)
+        if not buffer.open(QIODevice.OpenModeFlag.ReadWrite):
+            raise RuntimeError("unable to initialize in-memory PDF buffer")
+        self._render_to_writer(report, QPdfWriter(buffer))
+        result = bytes(data)
+        buffer.close()
+        return result
+
+    def _render_to_writer(self, report: BasicReportDocument, writer: QPdfWriter) -> None:
         writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
         writer.setResolution(144)
         writer.setTitle(f"FeetForcePlate {report.report_id} v{report.version}")

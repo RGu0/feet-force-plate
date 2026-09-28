@@ -7,7 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-import tempfile
 import threading
 import time
 from typing import Protocol
@@ -33,7 +32,7 @@ class _CloudBinding(Protocol):
 
 
 class _ReportRenderer(Protocol):
-    def render(self, report: BasicReportDocument, destination: Path) -> None: ...
+    def render_bytes(self, report: BasicReportDocument) -> bytes: ...
 
 
 class ReportCopyUploader:
@@ -156,10 +155,7 @@ class ReportCopyUploader:
             if hashlib.sha256(pdf).hexdigest() != row["pdf_sha256"]:
                 raise UploadConflict("local report PDF digest changed")
             return pdf
-        with tempfile.TemporaryDirectory(prefix="feetforceplate-report-copy-") as directory:
-            destination = Path(directory) / "copy.pdf"
-            self._renderer.render(report, destination)
-            pdf = destination.read_bytes()
+        pdf = self._renderer.render_bytes(report)
         if not pdf.startswith(b"%PDF-") or b"%%EOF" not in pdf[-1024:] or len(pdf) > 8 * 1024 * 1024:
             raise UploadConflict("local report PDF is invalid")
         encrypted = self._codec.encrypt(pdf, context=f"report_copy_pdf:{session_id}")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 import hashlib
 import json
 import sqlite3
@@ -12,8 +11,11 @@ import httpx
 
 from client.app.institution_store import InstitutionLocalStore
 from client.reporting.models import BasicReportDocument, ReportStatus
+from client.hardware_integration.live_physical_workflow import LivePhysicalProcessor, ProcessingStatus
 from client.sync.report_copy import ReportCopyOutcome, ReportCopyUploader
 from client.sync.persistent_upload import HttpIngestionClient
+from client.sync.persistent_upload import UploadRetryable
+from client.reporting.pdf import BasicReportPdfRenderer
 from client.spool.state_store import StateStore
 
 
@@ -34,9 +36,9 @@ class _Renderer:
     def __init__(self) -> None:
         self.calls = 0
 
-    def render(self, _report, destination: Path) -> None:
+    def render_bytes(self, _report) -> bytes:
         self.calls += 1
-        destination.write_bytes(b"%PDF-1.4\nsynthetic\n%%EOF\n")
+        return b"%PDF-1.4\nsynthetic\n%%EOF\n"
 
 
 class _Cloud:
@@ -86,6 +88,19 @@ def test_report_save_atomically_queues_an_encrypted_copy(tmp_path) -> None:
         ).fetchone()
     assert row is not None and row[0] == "PENDING"
     assert report.report_id not in local.path.read_text(errors="ignore")
+
+
+def test_processing_retry_recovers_the_same_saved_report_after_restart(tmp_path) -> None:
+    local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    report = _report()
+    local.save_report(report)
+    processor = LivePhysicalProcessor(
+        sessions=object(), physical_store=object(), key_provider=_Key(),
+        spool_root=tmp_path, reports=local,
+    )
+    outcome = processor.process(report.session_id)
+    assert outcome.status is ProcessingStatus.BASIC_READY
+    assert outcome.report == report
 
 
 def test_copy_waits_for_cloud_ingested_then_survives_lost_response_and_restart(tmp_path) -> None:
@@ -183,3 +198,72 @@ def test_cloud_copy_uses_recovery_consent_only_after_raw_confirmation() -> None:
     assert store.report_copy_consent_id("session") == str(replacement)
     store.subject_recovery_authorization = lambda _session: None
     assert store.report_copy_consent_id("session") == str(original)
+
+
+def test_held_upload_is_retryable_after_platform_release(tmp_path) -> None:
+    local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    report = _report()
+    local.save_report(report)
+    physical = _Physical(str(uuid4()))
+
+    class HeldCloud(_Cloud):
+        held = True
+
+        def upload_basic_report_copy(self, token: str, **payload) -> dict:
+            if self.held:
+                raise UploadRetryable("session is held", error_code="E-RPT-423")
+            return super().upload_basic_report_copy(token, **payload)
+
+    cloud = HeldCloud()
+    renderer = _Renderer()
+    uploader = ReportCopyUploader(local.path, _Key(), physical, cloud, renderer, now_ns=lambda: 1)
+    assert uploader.run_once(_Tokens()) is ReportCopyOutcome.DEFERRED
+    uploader.close()
+    cloud.held = False
+    resumed = ReportCopyUploader(local.path, _Key(), physical, cloud, renderer, now_ns=lambda: 10**12)
+    assert resumed.run_once(_Tokens()) is ReportCopyOutcome.CONFIRMED
+    assert renderer.calls == 1
+    resumed.close()
+
+
+def test_real_pdf_renderer_uses_memory_without_plaintext_temp_file(qtbot, tmp_path) -> None:
+    _ = qtbot
+    local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    report = _report()
+    local.save_report(report)
+    uploader = ReportCopyUploader(
+        local.path, _Key(), _Physical(str(uuid4())), _Cloud(), BasicReportPdfRenderer(),
+    )
+    try:
+        assert uploader.run_once(_Tokens()) is ReportCopyOutcome.CONFIRMED
+        with sqlite3.connect(local.path) as database:
+            row = database.execute(
+                "SELECT pdf_payload FROM institution_report_copy_handoffs WHERE session_id=?",
+                (report.session_id,),
+            ).fetchone()
+        assert row[0] is not None and b"%PDF" not in row[0]
+    finally:
+        uploader.close()
+
+
+def test_http_held_response_is_retryable() -> None:
+    client = HttpIngestionClient(
+        "https://cloud.test", terminal_id=uuid4(),
+        transport=httpx.MockTransport(lambda _request: httpx.Response(
+            423, json={"error": {
+                "code": "E-RPT-423", "message": "session is held", "retryable": False,
+                "action": "RETRY_AFTER_HOLD_RELEASE",
+            }},
+        )),
+    )
+    try:
+        with __import__("pytest").raises(UploadRetryable) as error:
+            client.upload_basic_report_copy(
+                "token", session_id=uuid4(), report_id="basic-abc123", version=1,
+                source="LOCAL_BASIC_COPY", document_json="{}", pdf_bytes=b"%PDF-1.4\n%%EOF",
+                document_sha256="a" * 64, pdf_sha256="b" * 64,
+                consent_record_id=uuid4(), idempotency_key="key",
+            )
+        assert error.value.error_code == "E-RPT-423"
+    finally:
+        client.close()
