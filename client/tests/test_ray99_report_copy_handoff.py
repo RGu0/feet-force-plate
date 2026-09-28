@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -235,7 +236,8 @@ def test_real_pdf_renderer_uses_memory_without_plaintext_temp_file(qtbot, tmp_pa
         local.path, _Key(), _Physical(str(uuid4())), _Cloud(), BasicReportPdfRenderer(),
     )
     try:
-        assert uploader.run_once(_Tokens()) is ReportCopyOutcome.CONFIRMED
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(uploader.run_once, _Tokens()).result(timeout=10) is ReportCopyOutcome.CONFIRMED
         with sqlite3.connect(local.path) as database:
             row = database.execute(
                 "SELECT pdf_payload FROM institution_report_copy_handoffs WHERE session_id=?",
