@@ -147,3 +147,98 @@ def test_retained_local_analysis_rebuilds_missing_record_once(tmp_path: Path) ->
     document = institution.load_report(rows[0].report_id, rows[0].report_version or 0)
     assert '"analysis_result_id":"analysis-retained"' in document
     institution.close()
+
+
+def test_recovery_reindexes_existing_report_without_replacing_queued_copy(tmp_path: Path) -> None:
+    institution = InstitutionLocalStore.open(
+        tmp_path,
+        key_provider=_Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_Signer(),
+    )
+    subject = institution.create(
+        CreateSubjectRequest(tenant_id="tenant-1", analysis_profile=AnalysisProfile.unknown())
+    )
+    consent = institution.create_consent(
+        ConsentRequest(
+            tenant_id="tenant-1", terminal_id="terminal-1",
+            subject_uuid=subject.subject_uuid, policy_version="consent/1",
+            purpose_codes=("SCREENING",), data_categories=("SCREENING",),
+            evidence_type="OPERATOR_CONFIRMED",
+        )
+    )
+    session_id = institution.create_session(
+        ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+        default_standard_protocol().snapshot(),
+    )
+    institution.finalize(session_id)
+    physical = _PhysicalStore(
+        session_id=session_id, subject_uuid=subject.subject_uuid,
+        payload=_supporting_payload(session_id),
+    )
+    first = recover_missing_screening_records(
+        institution=institution, physical_store=physical, tenant_id="tenant-1",
+        now=lambda: datetime(2026, 9, 22, 9, 0, tzinfo=UTC),
+    )
+    assert first.recovered_count == 1
+    original = institution.load_basic_report_for_session(session_id)
+    assert original is not None
+    with institution.db:
+        institution.db.execute("DELETE FROM institution_screening_records")
+
+    second = recover_missing_screening_records(
+        institution=institution, physical_store=physical, tenant_id="tenant-1",
+        now=lambda: datetime(2026, 9, 23, 9, 0, tzinfo=UTC),
+    )
+    assert second == type(second)(candidate_count=1, recovered_count=1, unavailable_count=0)
+    assert institution.load_basic_report_for_session(session_id) == original
+    assert institution.recent_records(tenant_id="tenant-1")[0].report_id == original.report_id
+    assert institution.db.execute(
+        "SELECT COUNT(*) FROM institution_report_copy_handoffs WHERE session_id=?", (session_id,)
+    ).fetchone()[0] == 1
+    institution.close()
+
+
+def test_unreadable_historical_report_does_not_block_workbench_recovery(tmp_path: Path) -> None:
+    institution = InstitutionLocalStore.open(
+        tmp_path, key_provider=_Key(), query_index_key=b"q" * 32,
+        consent_signer=_Signer(),
+    )
+    subject = institution.create(
+        CreateSubjectRequest(tenant_id="tenant-1", analysis_profile=AnalysisProfile.unknown())
+    )
+    consent = institution.create_consent(
+        ConsentRequest(
+            tenant_id="tenant-1", terminal_id="terminal-1",
+            subject_uuid=subject.subject_uuid, policy_version="consent/1",
+            purpose_codes=("SCREENING",), data_categories=("SCREENING",),
+            evidence_type="OPERATOR_CONFIRMED",
+        )
+    )
+    session_id = institution.create_session(
+        ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+        default_standard_protocol().snapshot(),
+    )
+    institution.finalize(session_id)
+    physical = _PhysicalStore(
+        session_id=session_id, subject_uuid=subject.subject_uuid,
+        payload=_supporting_payload(session_id),
+    )
+    assert recover_missing_screening_records(
+        institution=institution, physical_store=physical, tenant_id="tenant-1",
+    ).recovered_count == 1
+    with institution.db:
+        for table in ("institution_reports", "institution_screening_records"):
+            payload = institution.db.execute(f"SELECT payload FROM {table}").fetchone()[0]
+            damaged = payload[:-1] + bytes([payload[-1] ^ 1])
+            institution.db.execute(f"UPDATE {table} SET payload=?", (damaged,))
+
+    result = recover_missing_screening_records(
+        institution=institution, physical_store=physical, tenant_id="tenant-1",
+    )
+    assert result == type(result)(candidate_count=1, recovered_count=0, unavailable_count=1)
+    assert institution.recent_records(tenant_id="tenant-1") == ()
+    assert institution.db.execute(
+        "SELECT COUNT(*) FROM institution_reports"
+    ).fetchone()[0] == 1
+    institution.close()

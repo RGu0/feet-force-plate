@@ -33,6 +33,10 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.identity_recovery.postgres import (
+    PostgresRecoveryCaseRepository, PostgresRecoveryIdentityReader,
+)
+from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
@@ -299,6 +303,7 @@ async def build_seed_app(
         lookup_hmac_key=_secret(settings.identity_lookup_hmac_key, "identity lookup key"),
         key_version=settings.identity_key_version,
     )
+    sensitive = SensitiveAccessService(access_repository)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -314,7 +319,7 @@ async def build_seed_app(
             platform_identities=platform_identities,
             platform_access=platform_access,
             platform_tokens=platform_tokens,
-            platform_sensitive=SensitiveAccessService(access_repository),
+            platform_sensitive=sensitive,
             session_holds=session_holds,
             report_copies=LocalBasicCopyService(
                 PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
@@ -324,6 +329,11 @@ async def build_seed_app(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)
                 )
+            ),
+            identity_recovery=IdentityRecoveryService(
+                PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
+                sensitive=sensitive,
+                identity_reader=PostgresRecoveryIdentityReader(tenant_pool, identity),
             ),
         )
     )

@@ -1321,6 +1321,7 @@ class PostgresAccessRepository:
                 row is None or row["tenant_id"] != tenant_id
                 or row["platform_identity_id"] != platform_identity_id
                 or row["revoked_at"] is not None or row["expires_at"] <= used_at
+                or row["last_used_at"] is not None
             ):
                 raise AccessRepositoryConflict("sensitive grant is invalid")
             row = await connection.fetchrow(

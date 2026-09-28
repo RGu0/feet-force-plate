@@ -452,6 +452,17 @@ class PostgresPlatformRepository:
         context.ensure_active()
         digest = canonical_sha256(request)
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                context.tenant_id, request.session_id,
+            )
+            protected = await connection.fetchval(
+                """SELECT EXISTS(SELECT 1 FROM ops.identity_recovery_cases
+                   WHERE tenant_id=$1 AND session_id=$2)""",
+                context.tenant_id, request.session_id,
+            )
+            if protected:
+                raise TenantAccessDenied("session requires controlled identity recovery")
             replay = await self._idempotency(
                 connection, context.tenant_id, "session.create", idempotency_key, digest
             )
@@ -567,7 +578,7 @@ class PostgresPlatformRepository:
             await self._require_active_terminal(connection, context)
             row = await connection.fetchrow(
                 """
-                SELECT e.subject_uuid, e.masked_value, p.profile_json
+                SELECT e.subject_uuid, e.external_identifier_id, e.masked_value, p.profile_json
                 FROM subject.external_identifiers e
                 JOIN subject.subjects s
                   ON s.tenant_id=e.tenant_id AND s.subject_uuid=e.subject_uuid
@@ -585,6 +596,7 @@ class PostgresPlatformRepository:
                 return None
             return SubjectSummary(
                 subject_uuid=row["subject_uuid"],
+                external_identifier_id=row["external_identifier_id"],
                 external_id_masked=row["masked_value"],
                 analysis_profile=_json_value(row["profile_json"]) if row["profile_json"] else {},
             )
@@ -618,7 +630,7 @@ class PostgresPlatformRepository:
             if external is not None:
                 existing = await connection.fetchrow(
                     """
-                    SELECT e.subject_uuid, e.masked_value, p.profile_json
+                    SELECT e.subject_uuid, e.external_identifier_id, e.masked_value, p.profile_json
                     FROM subject.external_identifiers e
                     LEFT JOIN subject.analysis_profiles p
                       ON p.tenant_id=e.tenant_id AND p.subject_uuid=e.subject_uuid
@@ -633,6 +645,7 @@ class PostgresPlatformRepository:
             if existing is not None:
                 response = SubjectSummary(
                     subject_uuid=existing["subject_uuid"],
+                    external_identifier_id=existing["external_identifier_id"],
                     external_id_masked=existing["masked_value"],
                     conflict=True,
                     analysis_profile=(
@@ -696,6 +709,7 @@ class PostgresPlatformRepository:
                         key_version,
                     ):
                         raise ValueError("protected external identifier fields are required")
+                    external_identifier_id = uuid4()
                     await connection.execute(
                         """
                         INSERT INTO subject.external_identifiers (
@@ -704,7 +718,7 @@ class PostgresPlatformRepository:
                             normalized_hmac, masked_value, key_version, status
                         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'ACTIVE')
                         """,
-                        uuid4(),
+                        external_identifier_id,
                         context.tenant_id,
                         request.subject_uuid,
                         external.issuer,
@@ -717,6 +731,9 @@ class PostgresPlatformRepository:
                     )
                 response = SubjectSummary(
                     subject_uuid=request.subject_uuid,
+                    external_identifier_id=(
+                        external_identifier_id if external is not None else None
+                    ),
                     external_id_masked=masked_value,
                     analysis_profile=request.analysis_profile,
                 )

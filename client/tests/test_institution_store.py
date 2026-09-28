@@ -307,7 +307,8 @@ def test_institution_store_keeps_subject_consent_session_and_report_out_of_repla
     store.finalize(session_id)
 
     assert store.schema_names() == {
-        "institution_consents", "institution_reports", "institution_screening_records", "institution_sessions",
+        "institution_consents", "institution_reports", "institution_report_copy_handoffs",
+        "institution_screening_records", "institution_sessions",
         "institution_stage_completions", "institution_subject_audit", "institution_subjects",
     }
     assert store.session_status(session_id) == "CLOSED"
