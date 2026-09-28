@@ -49,6 +49,13 @@ def recover_missing_screening_records(
     clock = now or (lambda: datetime.now(UTC))
     for candidate in candidates:
         try:
+            existing_report = institution.load_basic_report_for_session(candidate.session_id)
+            if existing_report is not None:
+                if existing_report.session_id != candidate.session_id:
+                    raise ValueError("retained report belongs to another session")
+                institution.save_report(existing_report)
+                recovered += 1
+                continue
             subject_uuid, started_at_ns = physical_store.completed_valid_session_identity(
                 candidate.session_id
             )
@@ -71,10 +78,10 @@ def recover_missing_screening_records(
                 ),
                 generated_at=clock(),
             )
+            institution.save_report(report)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             unavailable += 1
             continue
-        institution.save_report(report)
         recovered += 1
     return RecordRecoveryResult(len(candidates), recovered, unavailable)
 
