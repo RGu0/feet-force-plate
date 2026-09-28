@@ -48,6 +48,19 @@ def test_accepts_valid_local_basic_copy_contract() -> None:
     assert models.validate_local_basic_copy(request) is request
 
 
+def test_accepts_local_hex_spelling_of_the_same_session_uuid() -> None:
+    models = importlib.import_module("cloud.report_copy.models")
+    request = copy_request()
+    document = json.loads(request.document_json)
+    document["session_id"] = request.session_id.hex
+    payload = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    equivalent = replace(
+        request, document_json=payload,
+        document_sha256=hashlib.sha256(payload.encode()).hexdigest(),
+    )
+    assert models.validate_local_basic_copy(equivalent) is equivalent
+
+
 @pytest.mark.parametrize("report_id", ["../escape", "bad_name", "", "x" * 65, "含中文"])
 def test_rejects_unsafe_report_id(report_id: str) -> None:
     models = importlib.import_module("cloud.report_copy.models")

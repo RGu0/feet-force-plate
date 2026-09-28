@@ -99,7 +99,11 @@ def validate_local_basic_copy(request: LocalBasicCopyRequest) -> LocalBasicCopyR
         raise RequestContractError("report ID binding mismatch")
     if type(document["version"]) is not int or document["version"] != 1 or document["status"] != "BASIC_READY" or document["kind"] != "BASIC":
         raise RequestContractError("unsupported report status or kind")
-    if document["session_id"] != str(request.session_id):
+    try:
+        document_session_id = UUID(document["session_id"])
+    except ValueError as exc:
+        raise RequestContractError("invalid report session ID") from exc
+    if document_session_id != request.session_id:
         raise RequestContractError("report session binding mismatch")
     return request
 
