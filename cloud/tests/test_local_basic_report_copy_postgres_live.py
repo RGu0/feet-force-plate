@@ -46,6 +46,13 @@ def test_copy_is_tenant_bound_immutable_and_hidden_after_revocation(tmp_path) ->
             assert await admin.fetchval(
                 "SELECT to_regclass('reporting.local_basic_report_copies') IS NOT NULL"
             ), "apply the 0010 migration to the isolated database before this test"
+            assert await admin.fetchval(
+                "SELECT has_schema_privilege('ffp_seed_backup', 'reporting', 'USAGE')"
+            )
+            assert await admin.fetchval(
+                """SELECT has_table_privilege('ffp_seed_backup',
+                   'reporting.local_basic_report_copies', 'SELECT')"""
+            )
             for value in (tenant_id, other_tenant):
                 await admin.execute(
                     "INSERT INTO iam.tenants (tenant_id, name, status) VALUES ($1,'synthetic copy','ACTIVE')",

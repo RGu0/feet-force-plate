@@ -97,6 +97,10 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("ENABLE ROW LEVEL SECURITY", sql)
         self.assertIn("FORCE ROW LEVEL SECURITY", sql)
         self.assertIn("tenant_id = ops.current_tenant_id()", sql)
+        self.assertIn("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;", sql)
+        self.assertIn(
+            "GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;", sql,
+        )
         self.assertNotIn("ALTER TABLE screening.sessions", sql)
 
 

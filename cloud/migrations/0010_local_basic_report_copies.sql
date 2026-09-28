@@ -39,5 +39,7 @@ CREATE POLICY tenant_isolation ON reporting.local_basic_report_copies
 
 GRANT USAGE ON SCHEMA reporting TO ffp_tenant_app;
 GRANT SELECT, INSERT ON reporting.local_basic_report_copies TO ffp_tenant_app;
+GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;
+GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;
 
 COMMIT;
