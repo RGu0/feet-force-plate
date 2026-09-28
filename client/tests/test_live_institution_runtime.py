@@ -415,6 +415,15 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     read_models = connected_kwargs["controller_options"]["read_models"]
     assert read_models.tenant_id == "tenant-1"
     assert read_models.institution is institution
+    live_protocol = connected_kwargs["protocol"]
+    assert live_protocol.protocol_id == "standard-static-balance"
+    assert live_protocol.version == "static-balance/live-hardware-demo/1"
+    assert [stage.stage_id for stage in live_protocol.stages] == [
+        "BILATERAL_EYES_OPEN",
+        "BILATERAL_EYES_CLOSED",
+        "SEMI_TANDEM_LEFT_FORWARD",
+        "SEMI_TANDEM_RIGHT_FORWARD",
+    ]
     callbacks = acquisition.callbacks
     callbacks["on_progress"](7)
     result = SimpleNamespace(stage_windows=("window-1",))
