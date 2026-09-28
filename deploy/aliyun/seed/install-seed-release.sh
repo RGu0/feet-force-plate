@@ -68,7 +68,7 @@ foundation_info="$(python3 "$release_source/deploy/aliyun/seed/verify_foundation
     "$release_source/pyproject.toml" "$release_source/uv.lock")"
 read -r foundation_url foundation_sha256 <<<"$foundation_info"
 foundation_wheel="$install_root/foundation-release.whl"
-curl --fail --location --silent --show-error --retry 2 \
+curl --fail --location --silent --show-error --retry-all-errors --retry 5 --retry-delay 2 \
     --connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' \
     --output "$foundation_wheel" "$foundation_url"
 if [[ "$(sha256sum "$foundation_wheel" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
