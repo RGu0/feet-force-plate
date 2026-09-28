@@ -194,8 +194,10 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     )
     assert "install_tls_file" in text
     assert "readlink -f" in text
-    assert text.index("foundation-artifact.lock.json") < text.index("apply_migration iam.tenants")
-    assert "release archive is missing the locked foundation wheel" in text
+    assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
+    assert "verify_foundation_release_lock.py" in text
+    assert "curl --fail --location" in text
+    assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
 

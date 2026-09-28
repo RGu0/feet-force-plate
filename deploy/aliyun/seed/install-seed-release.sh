@@ -64,28 +64,15 @@ trap cleanup EXIT
 release_source="$install_root/release"
 install -d -o "$service_user" -g "$service_group" -m 0700 "$release_source"
 tar -xzf "$release_archive" -C "$release_source"
-foundation_lock="$release_source/foundation-artifact.lock.json"
-foundation_info="$(python3 - "$foundation_lock" <<'PY'
-import json
-import re
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    lock = json.load(source)
-wheel = lock.get("wheel", "")
-digest = lock.get("sha256", "")
-if not re.fullmatch(r"[A-Za-z0-9_.-]+\.whl", wheel):
-    raise SystemExit("locked foundation wheel name is invalid")
-if not re.fullmatch(r"[0-9a-f]{64}", digest):
-    raise SystemExit("locked foundation wheel digest is invalid")
-print(f"{wheel} {digest}")
-PY
-)"
-read -r foundation_wheel foundation_sha256 <<<"$foundation_info"
-foundation_artifact="$release_source/.foundation-artifacts/$foundation_wheel"
-if [[ ! -f "$foundation_artifact" || -L "$foundation_artifact" ]] \
-    || [[ "$(sha256sum "$foundation_artifact" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
-    echo "release archive is missing the locked foundation wheel or its checksum differs" >&2
+foundation_info="$(python3 "$release_source/deploy/aliyun/seed/verify_foundation_release_lock.py" \
+    "$release_source/pyproject.toml" "$release_source/uv.lock")"
+read -r foundation_url foundation_sha256 <<<"$foundation_info"
+foundation_wheel="$install_root/foundation-release.whl"
+curl --fail --location --silent --show-error --retry 2 \
+    --connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' \
+    --output "$foundation_wheel" "$foundation_url"
+if [[ "$(sha256sum "$foundation_wheel" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
+    echo "foundation release wheel digest mismatch" >&2
     exit 1
 fi
 chown -R "$service_user:$service_group" "$release_source"
