@@ -804,6 +804,19 @@ class StateStore:
         )
         return FormalUploadEnvelope.model_validate_json(plaintext)
 
+    def report_copy_consent_id(self, session_id: str) -> str | None:
+        """Return the cloud-bound consent only after a valid raw-session receipt."""
+
+        try:
+            if self.sync_handoff_state(session_id) != "CLOUD_CONFIRMED":
+                return None
+            recovery = self.subject_recovery_authorization(session_id)
+            if recovery is not None:
+                return str(recovery.replacement_consent.consent_record_id)
+            return str(self.sync_handoff_envelope(session_id).consent.consent_record_id)
+        except (KeyError, ValueError):
+            return None
+
     def _stored_sync_handoff_id(self, session_id: str) -> str:
         """Resolve legacy hex and canonical UUID spellings without rewriting evidence."""
 

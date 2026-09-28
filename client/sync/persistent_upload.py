@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import base64
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -851,6 +852,40 @@ class HttpIngestionClient:
             },
             json=manifest.model_dump(mode="json"),
         )
+
+    def upload_basic_report_copy(
+        self, access_token: str, *, session_id: UUID, report_id: str,
+        version: int, source: str, document_json: str, pdf_bytes: bytes,
+        document_sha256: str, pdf_sha256: str, consent_record_id: UUID,
+        idempotency_key: str,
+    ) -> dict:
+        body = {
+            "report_id": report_id, "version": version, "source": source,
+            "document_json": document_json,
+            "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "document_sha256": document_sha256, "pdf_sha256": pdf_sha256,
+            "consent_record_id": str(consent_record_id),
+        }
+        try:
+            response = self._client.request(
+                "POST", f"/v1/sessions/{session_id}/basic-report-copy",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Terminal-ID": str(self._terminal_id),
+                    "Idempotency-Key": idempotency_key,
+                },
+                json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise UploadRetryable("report copy service is unavailable") from exc
+        self._raise_for_response(response)
+        try:
+            receipt = response.json()["data"]
+            if not isinstance(receipt, dict):
+                raise TypeError("receipt")
+            return receipt
+        except (KeyError, TypeError, ValueError) as exc:
+            raise UploadRetryable("report copy service returned an invalid receipt") from exc
 
     def _model_request(
         self,

@@ -11,6 +11,7 @@ import base64
 from dataclasses import asdict
 from datetime import UTC, datetime
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -219,6 +220,20 @@ class InstitutionLocalStore:
             CREATE TABLE IF NOT EXISTS institution_reports (
                 report_lookup BLOB PRIMARY KEY,
                 payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS institution_report_copy_handoffs (
+                session_id TEXT PRIMARY KEY,
+                report_lookup BLOB NOT NULL UNIQUE REFERENCES institution_reports(report_lookup),
+                report_id BLOB NOT NULL,
+                version INTEGER NOT NULL,
+                document_sha256 TEXT NOT NULL,
+                pdf_payload BLOB,
+                pdf_sha256 TEXT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                state TEXT NOT NULL CHECK (state IN ('PENDING','UPLOADING','RETRY_WAIT','CONFIRMED','CONFLICT','BLOCKED')),
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at_ns INTEGER,
+                receipt_sha256 TEXT
             );
             CREATE TABLE IF NOT EXISTS institution_subject_audit (
                 event_id TEXT PRIMARY KEY,
@@ -487,14 +502,39 @@ class InstitutionLocalStore:
 
     def save_report(self, report: BasicReportDocument) -> None:
         context = f"report:{report.report_id}:{report.version}"
+        document = report.to_json().encode("utf-8")
+        lookup = self._lookup("report", report.report_id, str(report.version))
         with self.db:
-            self.db.execute(
-                "INSERT OR REPLACE INTO institution_reports VALUES (?,?)",
-                (
-                    self._lookup("report", report.report_id, str(report.version)),
-                    self.codec.encrypt(report.to_json().encode("utf-8"), context=context),
-                ),
-            )
+            prior = self.db.execute(
+                "SELECT payload FROM institution_reports WHERE report_lookup=?", (lookup,)
+            ).fetchone()
+            if prior is not None and self.codec.decrypt(prior[0], context=context) != document:
+                raise ValueError("stored report version is immutable")
+            if prior is None:
+                self.db.execute(
+                    "INSERT INTO institution_reports VALUES (?,?)",
+                    (lookup, self.codec.encrypt(document, context=context)),
+                )
+            if report.status.value == "BASIC_READY" and report.kind == "BASIC":
+                prior_handoff = self.db.execute(
+                    "SELECT report_lookup FROM institution_report_copy_handoffs WHERE session_id=?",
+                    (report.session_id,),
+                ).fetchone()
+                if prior_handoff is not None and prior_handoff[0] != lookup:
+                    raise ValueError("session already has a different report copy")
+                self.db.execute(
+                    """INSERT OR IGNORE INTO institution_report_copy_handoffs
+                       (session_id, report_lookup, report_id, version, document_sha256,
+                        idempotency_key, state) VALUES (?,?,?,?,?,?,'PENDING')""",
+                    (report.session_id, lookup,
+                     self.codec.encrypt(report.report_id.encode("ascii"),
+                                        context=f"report_copy_id:{report.session_id}"),
+                     report.version,
+                     hashlib.sha256(document).hexdigest(),
+                     "local-basic-copy:" + hashlib.sha256(
+                         (report.session_id + ":" + report.report_id).encode("utf-8")
+                     ).hexdigest()),
+                )
 
     def load_report(self, report_id: str, version: int) -> str:
         row = self.db.execute(

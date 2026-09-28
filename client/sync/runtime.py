@@ -11,8 +11,10 @@ from uuid import UUID
 
 from client.spool.session_commit import ValidSessionStager
 from client.spool.state_store import KeyProvider, StateStore
+from client.reporting.pdf import BasicReportPdfRenderer
 
 from .persistent_upload import HttpIngestionClient, PersistentUploadQueue
+from .report_copy import ReportCopyUploader
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,6 +87,20 @@ class _RecoverableUploadQueue:
         self._store.block_escaped_lease()
 
 
+class _CoordinatedUploadQueue:
+    def __init__(self, raw_queue, report_copies: ReportCopyUploader) -> None:
+        self._raw = raw_queue
+        self._copies = report_copies
+
+    def upload_next(self, access_runtime: _AccessTokenRuntime):
+        result = self._raw.upload_next(access_runtime)
+        self._copies.run_once(access_runtime)
+        return result
+
+    def recover_escaped_lease(self) -> None:
+        self._raw.recover_escaped_lease()
+
+
 class _UploadScheduler:
     """One daemon worker; durable queue due times choose when actual retries occur."""
 
@@ -155,12 +171,14 @@ class PackagedUploadRuntime:
         physical_store,
         upload_scheduler,
         http_client,
+        report_copy_uploader=None,
     ) -> None:
         self._spool_root = Path(spool_root)
         self._key_provider = key_provider
         self._physical_store = physical_store
         self._upload_scheduler = upload_scheduler
         self._http_client = http_client
+        self._report_copy_uploader = report_copy_uploader
         self._lock = threading.RLock()
         self._started = False
         self._closed = False
@@ -204,6 +222,8 @@ class PackagedUploadRuntime:
             close = getattr(self._http_client, "close", None)
             if close is not None:
                 close()
+            if self._report_copy_uploader is not None:
+                self._report_copy_uploader.close()
 
 
 def build_packaged_upload_runtime(
@@ -217,7 +237,6 @@ def build_packaged_upload_runtime(
 ) -> PackagedUploadRuntime:
     """Compose upload dependencies from the authenticated shared local resources."""
 
-    del institution_store
     http_client = HttpIngestionClient(
         settings.base_url,
         terminal_id=UUID(str(session.client_installation_id)),
@@ -225,6 +244,7 @@ def build_packaged_upload_runtime(
     )
     spool_root = data_root / "spool"
     tracking_store = _LeaseTrackingStore(physical_store)
+    report_copy_uploader = None
     try:
         queue = PersistentUploadQueue(
             tracking_store,
@@ -232,10 +252,17 @@ def build_packaged_upload_runtime(
             key_provider,
             http_client,
         )
-        scheduler = _UploadScheduler(
-            _RecoverableUploadQueue(queue, tracking_store), access_runtime
-        )
+        coordinated = _RecoverableUploadQueue(queue, tracking_store)
+        if getattr(institution_store, "path", None) is not None:
+            report_copy_uploader = ReportCopyUploader(
+                institution_store.path, key_provider, physical_store,
+                http_client, BasicReportPdfRenderer(),
+            )
+            coordinated = _CoordinatedUploadQueue(coordinated, report_copy_uploader)
+        scheduler = _UploadScheduler(coordinated, access_runtime)
     except Exception:
+        if report_copy_uploader is not None:
+            report_copy_uploader.close()
         http_client.close()
         raise
     return PackagedUploadRuntime(
@@ -244,6 +271,7 @@ def build_packaged_upload_runtime(
         physical_store=physical_store,
         upload_scheduler=scheduler,
         http_client=http_client,
+        report_copy_uploader=report_copy_uploader,
     )
 
 
