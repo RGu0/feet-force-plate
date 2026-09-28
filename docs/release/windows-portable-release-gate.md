@@ -66,7 +66,13 @@ PR #59 已合入 `master`（merge commit `2893e7629c53b984782ce50c617f19b3e55676
 
 用户授权的一次补测使用提交 `665c159939a0eda1edf720d87a435b471745c8a1` 的内部未签名 Windows ZIP（SHA-256 `d6156b3e9c8701966181de9bae575d38d01e6c10eef328f3f9ff34e9fbefd347`），另建合成机构编号，不复用上节身份冲突会话。受看护完成四段后，本地为 `CLOSED/VALID`、4 条阶段确认、16 个保留原始分段、可读取的基础报告；原始交接为 `CLOUD_CONFIRMED`，报告副本交接为 `CONFIRMED`。只读云端核对确认 `INGESTED/VALID`、16 段、恰好 1 份 `LOCAL_BASIC_COPY`，协议为 `standard-static-balance / static-balance/live-hardware-demo/1`，文档及 PDF 摘要与本地一致。机构授权的报告列表、直接读取和 PDF 导出均与本地副本吻合；客户端及联调服务分别重启后，报告仍可读，云端 16 段与单份副本保持不变。服务端运行提交 `933abcaa364cfed8fde50a578c9b55a885cb3ef7`，其 `cloud` 与 `deploy` Git 树和客户端提交相同。
 
-该补测仅证明正常上传和报告副本路径。受控断网、慢网、容量边界及后续代码提交的精确版本门槛仍须分别核对，不能据此将 #52 转 Ready 或宣称客户签名交付。可审计摘要在共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-28-r10-supplemental-field-report-copy-665c159.json`；上节失败记录保留原样。
+该补测仅证明正常上传和报告副本路径。受控断网、慢网、容量边界及后续代码提交的精确版本门槛仍须分别核对；截至 R10，不能据此将 #52 转 Ready 或宣称客户签名交付。可审计摘要在共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-28-r10-supplemental-field-report-copy-665c159.json`；上节失败记录保留原样。
+
+## RAY-99 R11 内部验收边界与 RAY-546 交接（2026-09-28）
+
+R11 将尚未取得 Windows 打包客户端操作员级证据的受控公网断网恢复、受控慢网下采集及本地报告性能、24 小时/50 个待传会话/2 GiB 门槛移交 [RAY-546](https://linear.app/ruiguo/issue/RAY-546/windows-打包客户端断网慢网与容量边界验收)。这些项目没有因拆分而被判通过；RAY-546 须使用合成数据和受控故障环境单独完成，旧 macOS 与源码测试仅供参考，不要求重做四段真机检测。RAY-99 的内部合并验收限定为已交付的正常真机四段、本地持久保存、受控身份恢复、云端基础报告副本、冻结及客户端/联调服务重启一致性。
+
+补测所用真机 ZIP 对应 `665c159939a0eda1edf720d87a435b471745c8a1`。随后 `7a5d2ffcdc52a0f329eea182f76025784e5471b2` 修正报告副本重试，统一采用 Foundation `RetryPolicy`，服务端 `Retry-After` 无条件优先；受管测试 `1322 passed, 31 skipped`、lint、六项 CI 与新内部未签名 ZIP 校验通过，新 ZIP SHA-256 为 `1ee78bbef634c27df3f007c770858697eb26a809d4f4c4da6b0b7d47e04d0e79`。该较新提交没有另做真机四段，不能把 `665c159` 的现场结果写成它的精确包现场验收。操作员在补测中主动选择了可选研究用途，该选择不作为本次内部验收的通过条件。客户签名交付仍按下方独立清单执行。
 
 ## 发布标识
 
