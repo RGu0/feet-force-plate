@@ -66,7 +66,7 @@ class PostgresLocalBasicCopyRepository:
                 )
                 session = await connection.fetchrow(
                     """SELECT session_id, tenant_id, terminal_id, subject_uuid,
-                              ingest_status, validity_status
+                              consent_record_id, ingest_status, validity_status
                        FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2""",
                     context.tenant_id, request.session_id,
                 )
@@ -74,6 +74,8 @@ class PostgresLocalBasicCopyRepository:
                     raise ResourceNotFound("session not found")
                 if session["terminal_id"] != context.terminal_id:
                     raise TenantAccessDenied("session terminal mismatch")
+                if session["consent_record_id"] != request.consent_record_id:
+                    raise TenantAccessDenied("session consent binding mismatch")
                 if session["ingest_status"] != "INGESTED" or session["validity_status"] != "VALID":
                     raise RequestContractError("session is not ingested and valid")
                 consent = await connection.fetchrow(

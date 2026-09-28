@@ -90,6 +90,7 @@ class MigrationContractTests(unittest.TestCase):
 
     def test_local_basic_copy_is_separate_and_rls_guarded(self) -> None:
         sql = COPY_MIGRATION.read_text(encoding="utf-8")
+        self.assertNotIn("TO ffp_platform_app", sql)
         self.assertIn("CREATE TABLE reporting.local_basic_report_copies", sql)
         self.assertIn("PRIMARY KEY (tenant_id, session_id)", sql)
         self.assertIn("UNIQUE (tenant_id, report_id, version)", sql)

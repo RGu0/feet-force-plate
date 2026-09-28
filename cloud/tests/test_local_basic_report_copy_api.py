@@ -88,16 +88,19 @@ def test_upload_list_read_and_export_then_hold_denies_direct_links() -> None:
             listed = await client.get("/v1/reports", headers=headers)
             assert listed.status_code == 200
             assert listed.headers["cache-control"] == "no-store"
+            assert listed.headers["x-content-type-options"] == "nosniff"
             assert listed.json()["data"][0]["source"] == "LOCAL_BASIC_COPY"
             direct = f"/v1/reports/{request.report_id}/versions/1"
             detail = await client.get(direct, headers=headers)
             assert detail.status_code == 200
             assert detail.headers["cache-control"] == "no-store"
+            assert detail.headers["x-content-type-options"] == "nosniff"
             pdf = await client.get(direct + "/pdf", headers=headers)
             assert pdf.status_code == 200
             assert pdf.content == request.pdf_bytes
             assert pdf.headers["content-type"] == "application/pdf"
             assert pdf.headers["cache-control"] == "no-store"
+            assert pdf.headers["x-content-type-options"] == "nosniff"
             holds.held = True
             assert (await client.get("/v1/reports", headers=headers)).json()["data"] == []
             assert (await client.get(direct, headers=headers)).status_code == 403
@@ -110,9 +113,11 @@ def test_upload_list_read_and_export_then_hold_denies_direct_links() -> None:
             )
             assert oversized.status_code == 400
             assert oversized.headers["cache-control"] == "no-store"
+            assert oversized.headers["x-content-type-options"] == "nosniff"
         unavailable = create_app(ServiceContainer(tenant_tokens=issuer))
         async with AsyncClient(transport=ASGITransport(app=unavailable), base_url="https://cloud.test") as client:
             absent = await client.get("/v1/reports", headers=headers)
             assert absent.status_code == 503
             assert absent.headers["cache-control"] == "no-store"
+            assert absent.headers["x-content-type-options"] == "nosniff"
     asyncio.run(exercise())

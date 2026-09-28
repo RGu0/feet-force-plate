@@ -37,8 +37,7 @@ ALTER TABLE reporting.local_basic_report_copies FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON reporting.local_basic_report_copies
     USING (tenant_id = ops.current_tenant_id()) WITH CHECK (tenant_id = ops.current_tenant_id());
 
-GRANT USAGE ON SCHEMA reporting TO ffp_tenant_app, ffp_platform_app;
+GRANT USAGE ON SCHEMA reporting TO ffp_tenant_app;
 GRANT SELECT, INSERT ON reporting.local_basic_report_copies TO ffp_tenant_app;
-GRANT SELECT ON reporting.local_basic_report_copies TO ffp_platform_app;
 
 COMMIT;

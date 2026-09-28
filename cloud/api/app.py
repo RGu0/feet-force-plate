@@ -152,6 +152,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         response.headers["X-Correlation-ID"] = str(request.state.correlation_id)
         if request.url.path.startswith("/v1/reports") or request.url.path.endswith("/basic-report-copy"):
             response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     @app.exception_handler(PlatformError)

@@ -33,6 +33,7 @@ class _Connection:
         self.held = False
         self.copy = None
         self.subject_id = uuid4()
+        self.session_consent_id = request.consent_record_id
 
     def transaction(self):
         return _Transaction()
@@ -51,6 +52,7 @@ class _Connection:
             return dict(
                 tenant_id=self.tenant_id, session_id=self.request.session_id,
                 terminal_id=self.terminal_id, subject_uuid=self.subject_id,
+                consent_record_id=self.session_consent_id,
                 ingest_status=self.ingest_status, validity_status=self.validity_status,
             ) if args[0] == self.tenant_id and args[1] == self.request.session_id else None
         if "FROM subject.consents" in sql:
@@ -117,7 +119,7 @@ def test_accepts_bound_copy_and_idempotent_retry() -> None:
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("failure", ["incomplete", "invalid", "revoked", "held", "terminal"])
+@pytest.mark.parametrize("failure", ["incomplete", "invalid", "revoked", "held", "terminal", "consent"])
 def test_rejects_unusable_or_unbound_session(failure: str) -> None:
     async def exercise():
         repo, principal, request, db, objects = _setup()
@@ -129,6 +131,8 @@ def test_rejects_unusable_or_unbound_session(failure: str) -> None:
             db.consent_active = False
         elif failure == "held":
             db.held = True
+        elif failure == "consent":
+            db.session_consent_id = uuid4()
         else:
             db.terminal_id = uuid4()
         with pytest.raises((RequestContractError, TenantAccessDenied)):
