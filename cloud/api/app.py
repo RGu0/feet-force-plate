@@ -899,9 +899,9 @@ def create_app(container: ServiceContainer) -> FastAPI:
     ):
         payload = bytearray()
         async for chunk in request.stream():
-            payload.extend(chunk)
-            if len(payload) > 12 * 1024 * 1024:
+            if len(payload) + len(chunk) > 12 * 1024 * 1024:
                 raise RequestContractError("report copy request exceeds size limit")
+            payload.extend(chunk)
         try:
             body = json.loads(payload)
             if not isinstance(body, dict):
