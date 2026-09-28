@@ -81,7 +81,7 @@ class PostgresLocalBasicCopyRepository:
                 consent = await connection.fetchrow(
                     """SELECT consent_record_id FROM subject.consents
                        WHERE tenant_id=$1 AND consent_record_id=$2 AND subject_uuid=$3
-                         AND revoked_at IS NULL AND purpose_codes @> ARRAY['SCREENING']::text[]""",
+                         AND revoked_at IS NULL AND purpose_codes @> ARRAY['SCREENING_SERVICE']::text[]""",
                     context.tenant_id, request.consent_record_id, session["subject_uuid"],
                 )
                 if consent is None:

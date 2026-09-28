@@ -69,7 +69,7 @@ def test_copy_is_tenant_bound_immutable_and_hidden_after_revocation(tmp_path) ->
                 """INSERT INTO subject.consents
                    (consent_record_id, tenant_id, subject_uuid, policy_version, purpose_codes,
                     data_categories, evidence_type, terminal_id, evidence_hash, granted_at)
-                   VALUES ($1,$2,$3,'synthetic',ARRAY['SCREENING'],ARRAY['RAW_DATA'],
+                   VALUES ($1,$2,$3,'synthetic',ARRAY['SCREENING_SERVICE'],ARRAY['RAW_DATA'],
                            'SUBJECT_CONFIRMED',$4,$5,$6)""",
                 request.consent_record_id, tenant_id, subject_id, terminal_id,
                 "a" * 64, datetime.now(UTC),
