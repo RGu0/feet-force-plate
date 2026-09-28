@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Callable
 
 from platformdirs import user_data_path
+from cryptography.exceptions import InvalidTag
 from techflex_cloud_foundation import CredentialVault
 
 from client.security.credential_vault import (
@@ -694,12 +695,18 @@ class InstitutionLocalStore:
             (tenant_id,),
         ).fetchall()
         for report_lookup, encrypted in record_rows:
-            value = json.loads(
-                self.codec.decrypt(
-                    encrypted,
-                    context=f"screening-record:{bytes(report_lookup).hex()}",
-                ).decode("utf-8")
-            )
+            try:
+                value = json.loads(
+                    self.codec.decrypt(
+                        encrypted,
+                        context=f"screening-record:{bytes(report_lookup).hex()}",
+                    ).decode("utf-8")
+                )
+            except (InvalidTag, KeyProviderUnavailable, UnicodeDecodeError, json.JSONDecodeError):
+                # Preserve an unreadable historical row; other sessions must still load.
+                continue
+            if not isinstance(value, dict):
+                continue
             session_id = value.get("session_id")
             if isinstance(session_id, str) and session_id:
                 indexed_session_ids.add(session_id)
@@ -742,27 +749,35 @@ class InstitutionLocalStore:
         needle = query.strip().casefold()
         records: list[ScreeningRecordRow] = []
         for report_lookup, encrypted in rows:
-            value = json.loads(
-                self.codec.decrypt(
-                    encrypted,
-                    context=f"screening-record:{bytes(report_lookup).hex()}",
-                ).decode("utf-8")
-            )
-            subject_display_id = str(value["subject_display_id"])
-            if needle and needle not in subject_display_id.casefold():
-                continue
-            captured_at = datetime.fromisoformat(str(value["captured_at"]))
-            records.append(
-                ScreeningRecordRow(
-                    subject_display_id=subject_display_id,
-                    performed_at_label=captured_at.strftime("%m-%d %H:%M"),
-                    screening_label=str(value["screening_label"]),
-                    report_status_label=str(value["report_status_label"]),
-                    performed_on=captured_at.date(),
-                    report_id=str(value["report_id"]),
-                    report_version=int(value["report_version"]),
+            try:
+                value = json.loads(
+                    self.codec.decrypt(
+                        encrypted,
+                        context=f"screening-record:{bytes(report_lookup).hex()}",
+                    ).decode("utf-8")
                 )
-            )
+                if not isinstance(value, dict):
+                    continue
+                subject_display_id = str(value["subject_display_id"])
+                if needle and needle not in subject_display_id.casefold():
+                    continue
+                captured_at = datetime.fromisoformat(str(value["captured_at"]))
+                records.append(
+                    ScreeningRecordRow(
+                        subject_display_id=subject_display_id,
+                        performed_at_label=captured_at.strftime("%m-%d %H:%M"),
+                        screening_label=str(value["screening_label"]),
+                        report_status_label=str(value["report_status_label"]),
+                        performed_on=captured_at.date(),
+                        report_id=str(value["report_id"]),
+                        report_version=int(value["report_version"]),
+                    )
+                )
+            except (
+                InvalidTag, KeyProviderUnavailable, UnicodeDecodeError,
+                json.JSONDecodeError, KeyError, TypeError, ValueError,
+            ):
+                continue
         return tuple(records)
 
     def load_report(self, report_id: str, version: int) -> str:

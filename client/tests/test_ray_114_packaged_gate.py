@@ -113,3 +113,23 @@ def test_failure_never_creates_workbench_and_retry_starts_a_new_attempt(qtbot) -
     gate.retry()
     qtbot.waitUntil(lambda: coordinators[0].calls > first_calls, timeout=2_000)
     assert created == []
+
+
+def test_workbench_creation_failure_shows_retryable_internal_error(qtbot) -> None:
+    def fail_workbench() -> QWidget:
+        raise ValueError("local record cannot be loaded")
+
+    gate = MandatoryStartupGate(
+        coordinator_factory=lambda callback: _Coordinator(callback, passes=True),
+        workbench_factory=fail_workbench,
+        quit_application=lambda: None,
+    )
+    qtbot.addWidget(gate.window)
+
+    gate.start()
+    qtbot.waitUntil(
+        lambda: gate.window.presentation.state is StartupValidationState.INTERNAL_ERROR,
+        timeout=2_000,
+    )
+    assert gate.window.isVisible()
+    assert gate.workbench is None

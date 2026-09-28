@@ -9,6 +9,8 @@ import hashlib
 import json
 from typing import Protocol
 
+from cryptography.exceptions import InvalidTag
+
 from client.local_analysis.models import (
     LocalAnalysisResult,
     LocalMetricValue,
@@ -19,6 +21,7 @@ from client.local_analysis.models import (
 from client.local_analysis.service import build_basic_report_document
 
 from .institution_store import InstitutionLocalStore
+from client.spool.state_store import KeyProviderUnavailable
 
 
 class _PhysicalRecoveryStore(Protocol):
@@ -79,7 +82,10 @@ def recover_missing_screening_records(
                 generated_at=clock(),
             )
             institution.save_report(report)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (
+            InvalidTag, KeyProviderUnavailable, KeyError, TypeError, ValueError,
+            UnicodeDecodeError, json.JSONDecodeError,
+        ):
             unavailable += 1
             continue
         recovered += 1
