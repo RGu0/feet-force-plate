@@ -127,6 +127,45 @@ def test_copy_waits_for_cloud_ingested_then_survives_lost_response_and_restart(t
     restarted.close()
 
 
+def test_copy_retry_after_overrides_local_backoff_and_plain_retry_uses_foundation_policy(tmp_path) -> None:
+    local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
+    report = _report()
+    local.save_report(report)
+    clock_ns = [1_000_000_000]
+
+    class RetryCloud(_Cloud):
+        retry_after_seconds: float | None = 1.0
+
+        def upload_basic_report_copy(self, _token: str, **_payload) -> dict:
+            raise UploadRetryable("synthetic throttling", retry_after_seconds=self.retry_after_seconds)
+
+    cloud = RetryCloud()
+    uploader = ReportCopyUploader(
+        local.path, _Key(), _Physical(str(uuid4())), cloud, _Renderer(),
+        now_ns=lambda: clock_ns[0],
+    )
+    try:
+        assert uploader.run_once(_Tokens()) is ReportCopyOutcome.DEFERRED
+        with sqlite3.connect(local.path) as database:
+            first = database.execute(
+                "SELECT attempt_count,next_attempt_at_ns FROM institution_report_copy_handoffs WHERE session_id=?",
+                (report.session_id,),
+            ).fetchone()
+        assert first == (1, clock_ns[0] + 1_000_000_000)
+
+        clock_ns[0] = first[1]
+        cloud.retry_after_seconds = None
+        assert uploader.run_once(_Tokens()) is ReportCopyOutcome.DEFERRED
+        with sqlite3.connect(local.path) as database:
+            second = database.execute(
+                "SELECT attempt_count,next_attempt_at_ns FROM institution_report_copy_handoffs WHERE session_id=?",
+                (report.session_id,),
+            ).fetchone()
+        assert second == (2, clock_ns[0] + 10_000_000_000)
+    finally:
+        uploader.close()
+
+
 def test_changed_cloud_receipt_blocks_copy_without_erasing_local_report(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()

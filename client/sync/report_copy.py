@@ -16,6 +16,7 @@ from client.reporting.models import BasicReportDocument
 from client.spool.state_store import KeyProvider, SensitiveBlobCodec
 from client.sync.persistent_upload import (
     UploadAuthenticationRequired, UploadBlocked, UploadConflict, UploadRetryable,
+    upload_retry_delay_seconds,
 )
 
 
@@ -183,9 +184,9 @@ class ReportCopyUploader:
                 (session_id,),
             ).fetchone()
             attempts = int(row[0]) if row else 1
-            delay = min(900.0, 5.0 * (2 ** min(attempts - 1, 8)))
-            if retry_after_seconds is not None:
-                delay = max(delay, retry_after_seconds)
+            delay = upload_retry_delay_seconds(
+                attempts, retry_after_seconds=retry_after_seconds,
+            )
             self._db.execute(
                 """UPDATE institution_report_copy_handoffs
                    SET state='RETRY_WAIT', next_attempt_at_ns=?

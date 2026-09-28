@@ -62,6 +62,12 @@ PR #59 已合入 `master`（merge commit `2893e7629c53b984782ce50c617f19b3e55676
 
 该会话的报告副本未通过：云端记录的会话协议为回放调试用 `standard-static-bilateral / v1-replay-debug/1.0.1`，本地真机报告为 `standard-static-balance / static-balance/live-hardware-demo/1`。服务端按协议绑定规则拒绝上传，云端副本数为 0，本地副本交接为 `BLOCKED`；因此这次检测不能记作 R10 报告副本验收通过。根因是打包客户端的真机运行入口误用了回放默认协议。后续修复使真机会话登记与真实报告共用协议标识，并以回归测试覆盖；旧会话的不可变登记和原始数据不因代码修复而自动改写。最终验收须用修复后的精确提交包取得云端报告收据，并核对冻结前后的列表、读取和导出结果。本节是内部故障及进展记录，不构成客户交付放行。
 
+## RAY-99 R10 修复版补测结果（2026-09-28）
+
+用户授权的一次补测使用提交 `665c159939a0eda1edf720d87a435b471745c8a1` 的内部未签名 Windows ZIP（SHA-256 `d6156b3e9c8701966181de9bae575d38d01e6c10eef328f3f9ff34e9fbefd347`），另建合成机构编号，不复用上节身份冲突会话。受看护完成四段后，本地为 `CLOSED/VALID`、4 条阶段确认、16 个保留原始分段、可读取的基础报告；原始交接为 `CLOUD_CONFIRMED`，报告副本交接为 `CONFIRMED`。只读云端核对确认 `INGESTED/VALID`、16 段、恰好 1 份 `LOCAL_BASIC_COPY`，协议为 `standard-static-balance / static-balance/live-hardware-demo/1`，文档及 PDF 摘要与本地一致。机构授权的报告列表、直接读取和 PDF 导出均与本地副本吻合；客户端及联调服务分别重启后，报告仍可读，云端 16 段与单份副本保持不变。服务端运行提交 `933abcaa364cfed8fde50a578c9b55a885cb3ef7`，其 `cloud` 与 `deploy` Git 树和客户端提交相同。
+
+该补测仅证明正常上传和报告副本路径。受控断网、慢网、容量边界及后续代码提交的精确版本门槛仍须分别核对，不能据此将 #52 转 Ready 或宣称客户签名交付。可审计摘要在共享证据 `evidence/ray-99/windows-packaged-acceptance/acceptance/2026-09-28-r10-supplemental-field-report-copy-665c159.json`；上节失败记录保留原样。
+
 ## 发布标识
 
 - [ ] 应用版本：`________________`

@@ -67,6 +67,25 @@ _UPLOAD_RETRY_POLICY = RetryPolicy(
 )
 
 
+def upload_retry_delay_seconds(
+    attempt_count: int, *, retry_after_seconds: float | None,
+) -> float:
+    """Use Foundation's shared upload retry rule for raw and report handoffs."""
+
+    # A fixed origin avoids a lossy datetime round trip for the stored ns clock.
+    origin = datetime(1970, 1, 1, tzinfo=UTC)
+    next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
+        now=origin,
+        attempt_count=attempt_count,
+        retry_after=(
+            timedelta(seconds=retry_after_seconds)
+            if retry_after_seconds is not None
+            else None
+        ),
+    )
+    return (next_attempt - origin).total_seconds()
+
+
 class UploadError(RuntimeError):
     """Safe upload failure carrying only a diagnostic code and generic message."""
 
@@ -596,19 +615,9 @@ class PersistentUploadQueue:
         *,
         retry_after_seconds: float | None,
     ) -> float:
-        # Use a fixed origin to obtain the policy's delay, then let _defer add it
-        # to the original nanosecond clock without a lossy datetime round trip.
-        origin = datetime(1970, 1, 1, tzinfo=UTC)
-        next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
-            now=origin,
-            attempt_count=attempt_count,
-            retry_after=(
-                timedelta(seconds=retry_after_seconds)
-                if retry_after_seconds is not None
-                else None
-            ),
+        return upload_retry_delay_seconds(
+            attempt_count, retry_after_seconds=retry_after_seconds,
         )
-        return (next_attempt - origin).total_seconds()
 
     def _block_unexpected(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         self._store.mark_sync_handoff_blocked(
