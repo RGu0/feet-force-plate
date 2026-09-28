@@ -23,8 +23,8 @@ by the cloud security group or host firewall. The migration role applies
 history. No application role is an owner, superuser, or `BYPASSRLS` role.
 
 For the RAY-99 upgrade, deploy the unverified-session-hold release and verify
-migration 0009 before deploying controlled identity recovery. The release
-installer refuses migration 0010 when the hold table is absent. A successful
+migrations 0009 (hold) and 0010 (report copy) before controlled identity
+recovery migration 0011. The release installer refuses migration 0011 when the hold table is absent. A successful
 installer run does not itself establish the real incident hold or prove a
 backup restore; record those as separate acceptance evidence.
 

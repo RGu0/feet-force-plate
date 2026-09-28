@@ -18,10 +18,10 @@
 
 ## 本机开发环境
 
-本仓库唯一受控的命令入口是 `./dev`（macOS/Linux）与 `pwsh -File dev.ps1`（Windows）。不要直接运行 `uv sync`、`uv run`、系统 Python、pip 或共享 Conda 环境：入口在同步依赖之前先执行 `scripts/prepare_foundation_artifact.py`，按 [`foundation-artifact.lock.json`](foundation-artifact.lock.json) 校验私有 `techflex-cloud-foundation` wheel 的版本与 SHA-256。绕过入口得到的环境缺少该 wheel，应用启动即失败。
+本仓库唯一受控的命令入口是 `./dev`（macOS/Linux）与 `pwsh -File dev.ps1`（Windows）。不要直接运行 `uv sync`、`uv run`、系统 Python、pip 或共享 Conda 环境。入口按 [`pyproject.toml`](pyproject.toml) 中的公开 GitHub Release URL 和 [`uv.lock`](uv.lock) 中的 SHA-256 安装并校验 `techflex-cloud-foundation` wheel，无需工作树内的本地 wheel。
 
 ```bash
-./dev setup            # 下载并校验 foundation wheel，再按锁文件同步环境
+./dev setup            # 从 GitHub Release 下载并校验 foundation wheel，按锁文件同步环境
 ./dev test
 ./dev lint
 ./dev build
@@ -33,11 +33,11 @@ pwsh -File dev.ps1 setup
 pwsh -File dev.ps1 run python main.py
 ```
 
-`./dev setup` 需要能访问私有仓库 `RGu0/techflex-cloud-foundation`：本机先完成 `gh auth login`，CI 使用 `TECHFLEX_FOUNDATION_RELEASE_TOKEN`。校验通过的 wheel 缓存在被忽略的 `.foundation-artifacts/`；SHA-256 不匹配时入口直接失败，不会退回到未校验的副本。
+`./dev setup` 需要能访问公开的 Foundation GitHub Release。uv 自行下载和缓存 wheel，并按 `uv.lock` 校验 SHA-256；不需要 `gh` 登录或专用 Release 令牌。摘要不匹配时同步失败。
 
 `scripts/local-env.sh` 与 `scripts/local-env.ps1` 现在只是转发到 `./dev` 的向后兼容壳，新脚本和文档不要再引用它们。
 
-不要在 OneDrive 中共享或复用 `.venv`，也不要跨机器复用 uv 的集中式环境。虚拟环境包含创建它的电脑的绝对解释器路径，跨用户目录、操作系统或 CPU 架构都会失效；应同步 `pyproject.toml`、`uv.lock`、`.python-version` 和 `foundation-artifact.lock.json`，在每台电脑本机重建环境。
+不要在 OneDrive 中共享或复用 `.venv`，也不要跨机器复用 uv 的集中式环境。虚拟环境包含创建它的电脑的绝对解释器路径，跨用户目录、操作系统或 CPU 架构都会失效；应同步 `pyproject.toml`、`uv.lock` 和 `.python-version`，在每台电脑本机重建环境。
 
 不要设置 `UV_PROJECT_ENVIRONMENT`：显式路径会绕过 uv 的集中式环境行为，可能意外共享同一个可变环境。`UV_BIN` 可指定本机 uv 的位置。修改依赖后更新 `pyproject.toml`、重新生成并复核 `uv.lock`，再通过 `./dev` 验证锁文件。
 

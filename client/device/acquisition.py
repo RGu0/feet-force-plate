@@ -193,6 +193,12 @@ class LatestFrameMailbox:
         with self._lock:
             return self._frame
 
+    def clear(self) -> None:
+        """Drop the preview frame at a capture-stage boundary."""
+
+        with self._lock:
+            self._frame = None
+
     @property
     def publish_count(self) -> int:
         with self._lock:

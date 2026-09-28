@@ -63,6 +63,30 @@ def test_live_capture_telemetry_records_only_safe_failure_metadata() -> None:
     ]
 
 
+def test_report_generation_telemetry_records_only_the_safe_error_code() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    live_runtime._Telemetry(recorder).record_error(
+        code="E-RPT-001",
+        session_id="private-session-id",
+        technical_detail="KeyError: private-session-id",
+    )
+
+    assert recorder.calls == [
+        (
+            SafeClientEventName.REPORT_GENERATION_FAILED,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-RPT-001"},
+        )
+    ]
+
+
 def test_live_capture_telemetry_records_the_initialization_failure_boundary() -> None:
     class Recorder:
         def __init__(self) -> None:
@@ -269,6 +293,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     capture: Capture | None = None
     processor: Processor | None = None
     capture_kwargs: dict[str, object] = {}
+    connected_kwargs: dict[str, object] = {}
 
     def make_capture(**kwargs):
         nonlocal capture
@@ -324,6 +349,11 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     monkeypatch.setattr(live_runtime, "LivePhysicalCapture", make_capture)
     monkeypatch.setattr(live_runtime, "QtLiveHardwareAcquisition", make_acquisition)
     monkeypatch.setattr(live_runtime, "LivePhysicalProcessor", make_processor)
+    monkeypatch.setattr(
+        live_runtime,
+        "recover_missing_screening_records",
+        lambda **_kwargs: events.append("recover-records"),
+    )
     monkeypatch.setattr(live_runtime, "ParticipantWorkflow", lambda **_kwargs: object())
     monkeypatch.setattr(live_runtime, "ConsentWorkflow", lambda **_kwargs: object())
     monkeypatch.setattr(
@@ -339,7 +369,10 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     monkeypatch.setattr(
         live_runtime,
         "build_connected_ui",
-        lambda **_kwargs: SimpleNamespace(controller=controller),
+        lambda **kwargs: (
+            connected_kwargs.update(kwargs),
+            SimpleNamespace(controller=controller),
+        )[1],
     )
 
     live_runtime.build_live_institution_runtime(
@@ -370,6 +403,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert len(inspect.signature(acquisition.capture_session).parameters) == 2
     assert acquisition.prepare_session == capture.prepare_session
     assert events.index("processor") < events.index("callbacks")
+    assert events.index("processor") < events.index("recover-records") < events.index("callbacks")
     formal_upload = capture_kwargs["formal_upload"]
     assert formal_upload.client_installation_id == (
         "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
@@ -378,6 +412,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert formal_upload.app_version == "9.8.7-authoritative"
     assert formal_upload.payload_schema == "raw-segment/7"
     assert formal_upload.calibration_profile == "calibration-authoritative/42"
+    read_models = connected_kwargs["controller_options"]["read_models"]
+    assert read_models.tenant_id == "tenant-1"
+    assert read_models.institution is institution
     callbacks = acquisition.callbacks
     callbacks["on_progress"](7)
     result = SimpleNamespace(stage_windows=("window-1",))

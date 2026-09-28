@@ -43,7 +43,7 @@ if [[ "$(sha256sum "$release_archive" | sed 's/ .*//')" != "$archive_sha256" ]];
     echo "release archive checksum mismatch" >&2
     exit 1
 fi
-for command_name in age curl nginx openssl pg_isready psql runuser systemctl tar uv; do
+for command_name in age curl nginx openssl pg_isready psql python3 runuser systemctl tar uv; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "required command is missing: $command_name" >&2
         exit 1
@@ -64,6 +64,17 @@ trap cleanup EXIT
 release_source="$install_root/release"
 install -d -o "$service_user" -g "$service_group" -m 0700 "$release_source"
 tar -xzf "$release_archive" -C "$release_source"
+foundation_info="$(python3 "$release_source/deploy/aliyun/seed/verify_foundation_release_lock.py" \
+    "$release_source/pyproject.toml" "$release_source/uv.lock")"
+read -r foundation_url foundation_sha256 <<<"$foundation_info"
+foundation_wheel="$install_root/foundation-release.whl"
+curl --fail --location --silent --show-error --retry-all-errors --retry 5 --retry-delay 2 \
+    --connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' \
+    --output "$foundation_wheel" "$foundation_url"
+if [[ "$(sha256sum "$foundation_wheel" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
+    echo "foundation release wheel digest mismatch" >&2
+    exit 1
+fi
 chown -R "$service_user:$service_group" "$release_source"
 chmod -R a+rX "$release_source"
 chmod 0755 \
@@ -175,6 +186,13 @@ role_wrapper="$install_root/roles.sql"
 chown postgres:postgres "$role_wrapper"
 chmod 0600 "$role_wrapper"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -f "$role_wrapper"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0008_activation_projection_grants.sql"
+apply_migration ops.session_holds "$release_source/cloud/migrations/0009_unverified_session_holds.sql"
+apply_migration reporting.local_basic_report_copies "$release_source/cloud/migrations/0010_local_basic_report_copies.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;
+     GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;"
 
 cp -a /var/lib/pgsql/data/pg_hba.conf "/var/lib/pgsql/data/pg_hba.conf.pre-seed.$(date -u +%Y%m%dT%H%M%SZ)"
 install -o postgres -g postgres -m 0600 \
@@ -183,10 +201,10 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -Atqc "ALTER SYSTEM SET password_
 systemctl restart postgresql
 pg_isready -h 127.0.0.1 -p 5432 >/dev/null
 if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT to_regclass('ops.session_holds') IS NOT NULL")" != "t" ]]; then
-    echo "RAY-99 session-hold migration 0009 must precede identity recovery 0010" >&2
+    echo "RAY-99 session-hold migration 0009 must precede identity recovery 0011" >&2
     exit 1
 fi
-apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0010_controlled_identity_recovery.sql"
+apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0011_controlled_identity_recovery.sql"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then

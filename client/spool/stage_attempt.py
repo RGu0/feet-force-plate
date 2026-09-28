@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
 from pathlib import Path
 import shutil
 import uuid
@@ -16,12 +15,6 @@ from .state_store import KeyProvider
 
 _SEALED_ATTEMPT_PROVENANCE = object()
 _SEALED_ATTEMPT_FACTORY_CAPABILITY = object()
-
-
-def _storage_identity(prefix: str, value: str) -> str:
-    """Keep private temporary paths short and independent of identifier length."""
-
-    return f"{prefix}-{hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]}"
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -97,16 +90,18 @@ class StageAttemptSpool:
     ) -> None:
         if not session_id or not stage_id or not versions:
             raise ValueError("stage-attempt identity and versions are required")
+        if not 5.0 <= segment_duration_seconds <= 10.0:
+            raise ValueError("segment duration must be between 5 and 10 seconds")
         self._session_id = session_id
         self._stage_id = stage_id
-        self._attempt_id = uuid.uuid4().hex
         self._key_provider = key_provider
-        self._staging_directory = (
-            Path(root)
-            / ".stage-attempts"
-            / _storage_identity("session", session_id)
-            / _storage_identity("stage", stage_id)
-            / self._attempt_id
+        # Stage spools are disposable, globally unique by their random attempt
+        # identifier, and must remain below the Windows legacy path limit even
+        # when the installation directory is deeply nested.  Keep no session or
+        # stage identity in this private filesystem path; both remain bound in
+        # the sealed segment and attempt metadata.
+        self._attempt_id, self._staging_directory = self._reserve_staging_directory(
+            Path(root) / ".sa"
         )
         self._writer = ImmutableSegmentWriter(
             self._staging_directory.parent,
@@ -114,12 +109,25 @@ class StageAttemptSpool:
             key_provider=key_provider,
             versions=versions,
             segment_duration_seconds=segment_duration_seconds,
-            storage_directory_name=self._attempt_id,
+            storage_directory_name=self._staging_directory.name,
         )
         self._sealed_segments: list[SealedSegment] = []
         self._has_open_frames = False
         self._sealed_attempt: SealedStageAttempt | None = None
         self._discarded = False
+
+    @staticmethod
+    def _reserve_staging_directory(root: Path) -> tuple[str, Path]:
+        root.mkdir(parents=True, exist_ok=True)
+        for _ in range(16):
+            attempt_id = uuid.uuid4().hex
+            directory = root / attempt_id[:16]
+            try:
+                directory.mkdir()
+            except FileExistsError:
+                continue
+            return attempt_id, directory
+        raise RuntimeError("could not reserve a unique stage attempt directory")
 
     @property
     def staging_directory(self) -> Path:

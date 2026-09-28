@@ -267,6 +267,10 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(granted.status_code, 201, granted.text)
 
     async def test_suspension_blocks_new_test_but_existing_upload_continues(self) -> None:
+        await self.create_subject_and_consent(self.session.access_token)
+        existing = await self.create_session(self.session.access_token, self.session_id)
+        self.assertEqual(existing.status_code, 201, existing.text)
+
         await self.platform.control_license(
             self.operator,
             self.provisioned.license_id,
@@ -294,9 +298,15 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(rejected_lease.status_code, 409, rejected_lease.text)
 
-        await self.create_subject_and_consent(refreshed.access_token)
-        created = await self.create_session(refreshed.access_token, self.session_id)
-        self.assertEqual(created.status_code, 201, created.text)
+        blocked_session_id = uuid4()
+        blocked = await self.create_session(refreshed.access_token, blocked_session_id)
+        self.assertEqual(blocked.status_code, 403, blocked.text)
+
+        not_created = await self.client.get(
+            f"/v1/sessions/{blocked_session_id}/status",
+            headers=self.headers(refreshed.access_token),
+        )
+        self.assertEqual(not_created.status_code, 404, not_created.text)
 
         payload = b"captured before suspension"
         metadata = SegmentMetadata(

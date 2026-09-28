@@ -45,7 +45,7 @@ R8 取代上面的 R6 操作员自行勾选“同一人”流程。客户端仅�
 上面的 R5–R8 记录保留当时的事实与门槛。2026-09-23 的身份未核实会话已随联调环境测试业务数据清理，不再作为冻结、处置或补传验收对象；清理审计保留。R9 不放宽 R8 的身份核对和失败关闭要求。
 
 - `unverified-session-hold`：新建合成有效会话，通过正常上传接口入库后由平台 OWNER/SUPPORT 加工单暂停；核对报告列表、直接访问、发布和新分析被拒绝，原始对象与 `INGESTED` 状态保留。跨租户及无权限请求拒绝。测试留存策略下的 `RESTRICT_AND_DISPOSE` 仅以 `PLANNED` 任务与持续暂停为通过条件，不能宣称实际删除。
-- `windows-packaged-acceptance`：使用集成 PR #59、迁移 0009/0010 的精确提交重新构建 Windows 包；仅一次新的真机四段检测，其余边界及故障使用合成输入。记录 16 段本地交接、基础报告、断网和重启恢复、两项独立身份字段云端匹配、新同意和最终 `INGESTED/VALID`。终端不接收身份明文，研究同意默认关闭。
+- `windows-packaged-acceptance`：使用集成 PR #59、迁移 0009/0010/0011 的精确提交重新构建 Windows 包；仅一次新的真机四段检测，其余边界及故障使用合成输入。记录 16 段本地交接、基础报告、断网和重启恢复、两项独立身份字段云端匹配、新同意和最终 `INGESTED/VALID`。终端不接收身份明文，研究同意默认关闭。
 - 本节只用于 RAY-99 内部验收。候选包可为 `unsigned-development`；下方客户交付签名和放行清单仍须独立完成。
 
 ## RAY-99 R10 本地基础报告云端副本验收门槛（2026-09-28）
@@ -69,8 +69,8 @@ R10 在 R9 基础上增加 `LOCAL_BASIC_COPY`。客户端完成真机四段并�
 - [ ] `FeetForcePlate.exe` 的 Authenticode 状态为 `Valid`，证书主体、有效期与时间戳符合机构要求。
 - [ ] ZIP 摘要已由独立人员复核；交付渠道使用受控下载或受控介质。
 - [ ] ZIP 中包含 DO-P4864 设备规格、应用资源和支持诊断公钥（若本次交付启用诊断导出）。
-- [ ] 构建机器上 `pwsh -File dev.ps1 setup` 已成功校验 `foundation-artifact.lock.json` 锁定的 `techflex-cloud-foundation` 版本与 SHA-256；本次构建未使用未校验的 wheel 或绕过 `./dev` / `dev.ps1` 的环境。
-- [ ] 打包产物内的 foundation 版本与 `foundation-artifact.lock.json` 一致，并记入 `release-manifest.json`。
+- [ ] 构建机器上 `pwsh -File dev.ps1 setup` 已从公开 GitHub Release 安装 `techflex-cloud-foundation`，并按 `uv.lock` 校验锁定版本与 SHA-256；本次构建未使用未校验的 wheel 或绕过 `./dev` / `dev.ps1` 的环境。
+- [ ] 打包产物内的 foundation 版本与 `pyproject.toml`、`uv.lock` 一致，并记入 `release-manifest.json`。
 
 ## 受控配置与安全
 
@@ -88,6 +88,15 @@ R10 在 R9 基础上增加 `LOCAL_BASIC_COPY`。客户端完成真机四段并�
 - [ ] 账号/License 与授权硬件绑定已在真实网络环境验收。
 - [ ] 报告预览、PDF 导出、打印（如交付范围包含打印）和支持诊断导出已验收。
 - [ ] 更新、回退、删除应用目录与保留业务数据的操作已按机构流程演练。
+
+## RAY-99 身份未核实会话处置
+
+- [ ] 平台管理员已在目标环境用 OWNER/SUPPORT 独立身份和事件工单，对确切租户与会话执行 `POST /v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold`；保存脱敏的隔离状态、事件编号、请求摘要与审计引用。桌面端 `CLOUD_CONFIRMED` 不是身份核实证据。
+- [ ] 确认隔离期间不会启动新分析、发布新报告或通过现有报告接口读取旧报告；原始对象和 `INGESTED` 状态仍保留。
+- [ ] 若使用 RAY-99 `LOCAL_BASIC_COPY`，确认上传只在 `INGESTED` / `VALID` 与新必要同意后执行；报告列表、详情及 PDF 导出均实时检查冻结，响应不缓存，副本清楚标注为本地基础结果而非云端完整分析。
+- [ ] 隐私/服务负责人通过短时受控授权核查原始机构档案、云端身份、同意状态及已有分析/报告，再以独立工单记录处置：有可验证合法依据才可选择 `RETAIN_WITH_VALID_BASIS`；否则选择 `RESTRICT_AND_DISPOSE` 并指定本租户已批准的保留策略。
+- [ ] `RESTRICT_AND_DISPOSE` 只建立 `PLANNED` 的限制任务，隔离继续生效；任务执行、数据留存/删除及撤回同意须在各自受控流程另行完成和留证。`RETAIN_WITH_VALID_BASIS` 仍需第二次明确的 `/hold/release` 操作，不能由身份匹配或新同意自动放行。
+- [ ] RAY-99 内部验收以新建合成会话证明冻结与计划处置；2026-09-23 的旧测试会话已清理，不再作为验收样本。内部验收结果不得写成客户签名交付或正式发布。
 
 ## 放行结论
 

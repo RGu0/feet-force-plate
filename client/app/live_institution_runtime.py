@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from client.app.heatmap import PhysicalGridOverlay
+from client.app.institution_read_models import InstitutionUiReadModels
+from client.app.report_index_recovery import recover_missing_screening_records
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
@@ -37,7 +39,16 @@ class _Telemetry:
         self._recorder = recorder
 
     def record_error(self, *, code: str, **_event) -> None:
-        if code not in self._LIVE_CAPTURE_CODES or self._recorder is None:
+        if self._recorder is None:
+            return
+        if code == "E-RPT-001":
+            self._recorder.record(
+                SafeClientEventName.REPORT_GENERATION_FAILED,
+                SafeClientEventOutcome.FAILED,
+                error_code=code,
+            )
+            return
+        if code not in self._LIVE_CAPTURE_CODES:
             return
         technical_detail = str(_event.get("technical_detail", ""))
         event_name = SafeClientEventName.LIVE_CAPTURE_FAILED
@@ -176,6 +187,11 @@ def build_live_institution_runtime(
         spool_root=data_root / "spool",
         reports=institution,
     )
+    recover_missing_screening_records(
+        institution=institution,
+        physical_store=physical_store,
+        tenant_id=session.tenant_id,
+    )
     participant = ParticipantWorkflow(
         tenant_id=session.tenant_id,
         issuer="institution-ui",
@@ -211,6 +227,12 @@ def build_live_institution_runtime(
         controller_options={
             "participant": participant,
             "consent": consent,
+            "read_models": InstitutionUiReadModels(
+                institution=institution,
+                tenant_id=session.tenant_id,
+                physical_store=physical_store,
+                app_version=app_version,
+            ),
             "consent_policy": ConsentPolicy("institution-screening/1", ("SCREENING",), ("SCREENING",)),
             "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
                 hardware.display_geometry, specification_id=hardware.specification_id

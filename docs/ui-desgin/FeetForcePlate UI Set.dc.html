@@ -342,7 +342,7 @@
             <h2 class="h2" style="margin-bottom:8px">基础信息（选填，可直接继续）</h2>
             <p class="lead" style="margin:0 0 28px">以下信息用于提高分析参考性，可跳过；标签为「本人/机构提供」，不作为临床确诊。</p>
             <div style="display:flex;gap:16px;margin-bottom:24px">
-              <div style="flex:1"><span class="fld-l">年龄段</span><div class="selbox">60–69 <span style="color:var(--text-disabled)">▾</span></div></div>
+              <div style="flex:1"><x-import component-from-global-scope="SteadyHealthDesignSystem_400653.Field" label="年龄" unit="岁" value="60" on-change="{{ noop }}" hint-size="100%,78px"></x-import></div>
               <div style="flex:1"><span class="fld-l">性别</span><div class="selbox ph-sel">请选择 / 不提供 <span>▾</span></div></div>
             </div>
             <div style="display:flex;gap:16px;margin-bottom:28px">

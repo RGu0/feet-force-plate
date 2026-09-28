@@ -43,21 +43,45 @@ class SensitiveBlobCodec:
         self._key_provider = key_provider
 
     def encrypt(self, plaintext: bytes, *, context: str) -> bytes:
-        key = self._load_key()
+        current = getattr(self._key_provider, "get_current_key", None)
+        if current is None:
+            key = self._load_key()
+            prefix = b"\x01"
+        else:
+            version, key = current()
+            if version < 1 or version > 2**32 - 1:
+                raise ValueError("OS key version is invalid")
+            prefix = b"\x02" + version.to_bytes(4, "big")
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         nonce = os.urandom(12)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext, context.encode("utf-8"))
-        return b"\x01" + nonce + ciphertext
+        return prefix + nonce + ciphertext
 
     def decrypt(self, envelope: bytes, *, context: str) -> bytes:
-        if len(envelope) < 30 or envelope[0] != 1:
+        if len(envelope) < 30:
             raise ValueError("unsupported or truncated sensitive blob envelope")
-        key = self._load_key()
+        if envelope[0] == 1:
+            version_reader = getattr(self._key_provider, "get_key_for_version", None)
+            key = self._load_key() if version_reader is None else version_reader(1)
+            nonce_offset = 1
+        elif envelope[0] == 2 and len(envelope) >= 34:
+            version_reader = getattr(self._key_provider, "get_key_for_version", None)
+            if version_reader is None:
+                raise ValueError("versioned sensitive blob requires a versioned key provider")
+            version = int.from_bytes(envelope[1:5], "big")
+            if version < 1:
+                raise ValueError("sensitive blob key version is invalid")
+            key = version_reader(version)
+            nonce_offset = 5
+        else:
+            raise ValueError("unsupported or truncated sensitive blob envelope")
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         return AESGCM(key).decrypt(
-            envelope[1:13], envelope[13:], context.encode("utf-8")
+            envelope[nonce_offset:nonce_offset + 12],
+            envelope[nonce_offset + 12:],
+            context.encode("utf-8"),
         )
 
     def _load_key(self) -> bytes:
@@ -945,7 +969,7 @@ class StateStore:
         session_id: str,
         plaintext: bytes,
     ) -> None:
-        """Attach a non-authoritative local result to an existing upload handoff."""
+        """Attach a local result without coupling it to the upload state."""
 
         encrypted = self._codec.encrypt(
             plaintext,
@@ -954,7 +978,7 @@ class StateStore:
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs SET supporting_local_analysis=?
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING')""",
+                WHERE session_id=?""",
                 (encrypted, session_id),
             ).rowcount
         if not changed:
@@ -1336,6 +1360,21 @@ class StateStore:
         if row is None:
             raise KeyError(session_id)
         return str(row[0]), str(row[1]), row[2]
+
+    def completed_valid_session_identity(self, session_id: str) -> tuple[str, int]:
+        """Return the minimal identity needed to restore a missing local record."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT subject_uuid, started_at_ns
+                FROM sessions
+                WHERE session_id=? AND lifecycle_status='CLOSED'
+                    AND validity_status='VALID'""",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return str(row[0]), int(row[1])
 
     def upload_state(self, task_id: str) -> str:
         with self._lock:
