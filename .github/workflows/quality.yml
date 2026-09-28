@@ -24,11 +24,7 @@ jobs:
         with:
           version: "latest"
           python-version: ${{ matrix.python }}
-      - name: Download and verify locked private foundation artifact
-        env:
-          GH_TOKEN: ${{ secrets.TECHFLEX_FOUNDATION_RELEASE_TOKEN }}
-        run: python scripts/prepare_foundation_artifact.py --download
-      - name: Verify locked artifact environment
+      - name: Install locked dependencies from public Foundation Release
         run: uv sync --extra dev --locked
       - name: Static quality gates
         run: |
@@ -53,7 +49,6 @@ jobs:
           tests/foundation/test_versioned_foundation_consumer.py
           tests/foundation/test_tls_compat.py
           tests/test_project_command_contract.py
-          tests/test_prepare_foundation_artifact.py
           --junitxml=pytest-results.xml
       - name: Unprivileged integration public bundle root gate
         if: runner.os == 'Linux'
@@ -69,8 +64,6 @@ jobs:
       - name: Clean Windows managed Python bootstrap regression
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.TECHFLEX_FOUNDATION_RELEASE_TOKEN }}
         run: ./tests/test_clean_windows_managed_python_bootstrap.ps1
       - name: Archive test result
         uses: actions/upload-artifact@v4

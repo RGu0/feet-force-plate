@@ -39,7 +39,16 @@ class _Telemetry:
         self._recorder = recorder
 
     def record_error(self, *, code: str, **_event) -> None:
-        if code not in self._LIVE_CAPTURE_CODES or self._recorder is None:
+        if self._recorder is None:
+            return
+        if code == "E-RPT-001":
+            self._recorder.record(
+                SafeClientEventName.REPORT_GENERATION_FAILED,
+                SafeClientEventOutcome.FAILED,
+                error_code=code,
+            )
+            return
+        if code not in self._LIVE_CAPTURE_CODES:
             return
         technical_detail = str(_event.get("technical_detail", ""))
         event_name = SafeClientEventName.LIVE_CAPTURE_FAILED

@@ -4,8 +4,18 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPageSize, QPdfWriter, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QImage,
+    QPainter,
+    QPageSize,
+    QPdfWriter,
+    QPen,
+)
 
+from client.app.design_system import bundled_font_paths
 from client.app.heatmap_display import (
     HeatmapDisplayConfig,
     HeatmapDisplayRefiner,
@@ -15,7 +25,31 @@ from client.app.heatmap_display import (
 from .models import BasicReportDocument, ReportMetric, ReportStage
 
 
-_FONT_FAMILY = "PingFang SC"
+_REPORT_FONT_FAMILY: str | None = None
+
+
+def report_font() -> QFont:
+    """Return the packaged CJK font used by every PDF text draw call."""
+
+    global _REPORT_FONT_FAMILY
+    if _REPORT_FONT_FAMILY is None:
+        font_path = bundled_font_paths()[0]
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if font_id < 0 or not families:
+            raise RuntimeError(f"Could not register report font: {font_path.name}")
+        _REPORT_FONT_FAMILY = families[0]
+    return QFont(_REPORT_FONT_FAMILY)
+
+
+def _font(
+    point_size: int,
+    weight: QFont.Weight = QFont.Weight.Normal,
+) -> QFont:
+    font = report_font()
+    font.setPointSize(point_size)
+    font.setWeight(weight)
+    return font
 
 
 def build_stage_heatmap_image(
@@ -91,7 +125,7 @@ class BasicReportPdfRenderer:
         painter.fillRect(0, 0, width, height, QColor("#ffffff"))
         y = margin
         painter.setPen(QColor("#0f172a"))
-        painter.setFont(QFont(_FONT_FAMILY, 20, QFont.Weight.Bold))
+        painter.setFont(_font(20, QFont.Weight.Bold))
         painter.drawText(
             QRect(margin, y, content_width, 60),
             Qt.AlignmentFlag.AlignLeft,
@@ -102,11 +136,11 @@ class BasicReportPdfRenderer:
         y += 78
         if report.kind == "V1_REPLAY_DEBUG":
             painter.setPen(QColor("#b45309"))
-            painter.setFont(QFont(_FONT_FAMILY, 10, QFont.Weight.Bold))
+            painter.setFont(_font(10, QFont.Weight.Bold))
             painter.drawText(margin, y, "回放调试数据，不代表本次受试者真实测量")
             y += 34
             painter.setPen(QColor("#0f172a"))
-        painter.setFont(QFont(_FONT_FAMILY, 10))
+        painter.setFont(_font(10))
         for line in (
             f"报告编号：{report.report_id}  版本：{report.version}",
             f"受试者：{report.subject_display_id}",
@@ -117,7 +151,7 @@ class BasicReportPdfRenderer:
             y += 34
         y += 20
         y = self._draw_section_title(painter, margin, y, "筛查摘要")
-        painter.setFont(QFont(_FONT_FAMILY, 10))
+        painter.setFont(_font(10))
         painter.drawText(
             QRect(margin, y, content_width, 92),
             Qt.TextFlag.TextWordWrap,
@@ -125,14 +159,14 @@ class BasicReportPdfRenderer:
         )
         y += 106
         y = self._draw_section_title(painter, margin, y, "基础相对指标")
-        painter.setFont(QFont(_FONT_FAMILY, 10))
+        painter.setFont(_font(10))
         for metric in report.metrics:
             painter.drawText(margin + 20, y, self._metric_text(metric))
             y += 32
         if report.stages:
             y += 24
             y = self._draw_section_title(painter, margin, y, "四阶段图表")
-            painter.setFont(QFont(_FONT_FAMILY, 10))
+            painter.setFont(_font(10))
             painter.setPen(QColor("#334155"))
             for stage in report.stages:
                 painter.drawText(margin + 20, y, f"• {stage.title}")
@@ -147,7 +181,7 @@ class BasicReportPdfRenderer:
                 "表示前后方向；本报告不提供正常范围或风险分级。",
             )
         painter.setPen(QColor("#334155"))
-        painter.setFont(QFont(_FONT_FAMILY, 9))
+        painter.setFont(_font(9))
         painter.drawText(
             QRect(margin, height - 215, content_width, 96),
             Qt.TextFlag.TextWordWrap,
@@ -168,9 +202,9 @@ class BasicReportPdfRenderer:
         painter.fillRect(0, 0, width, height, QColor("#ffffff"))
         margin = 72
         painter.setPen(QColor("#0f172a"))
-        painter.setFont(QFont(_FONT_FAMILY, 15, QFont.Weight.Bold))
+        painter.setFont(_font(15, QFont.Weight.Bold))
         painter.drawText(margin, 72, "四阶段平均压力分布与描述性参数")
-        painter.setFont(QFont(_FONT_FAMILY, 9))
+        painter.setFont(_font(9))
         painter.setPen(QColor("#64748b"))
         painter.drawText(margin, 103, "热图按各阶段有效帧取均值，并采用与实时 UI 一致的显示精修。")
         section_top = 132
@@ -195,7 +229,7 @@ class BasicReportPdfRenderer:
         painter.drawRoundedRect(bounds, 10.0, 10.0)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QColor("#0f172a"))
-        painter.setFont(QFont(_FONT_FAMILY, 12, QFont.Weight.Bold))
+        painter.setFont(_font(12, QFont.Weight.Bold))
         painter.drawText(
             QRectF(bounds.left() + 20, bounds.top() + 16, bounds.width() - 40, 34),
             Qt.AlignmentFlag.AlignLeft,
@@ -203,7 +237,7 @@ class BasicReportPdfRenderer:
         )
         chart = QRectF(bounds.left() + 20, bounds.top() + 58, 500, 375)
         self._draw_heatmap(painter, stage.relative_heatmap, chart)
-        painter.setFont(QFont(_FONT_FAMILY, 8))
+        painter.setFont(_font(8))
         painter.setPen(QColor("#64748b"))
         painter.drawText(
             QRectF(chart.left(), chart.bottom() + 8, chart.width(), 25),
@@ -212,10 +246,10 @@ class BasicReportPdfRenderer:
         )
         metrics_left = chart.right() + 28
         metrics_top = bounds.top() + 63
-        painter.setFont(QFont(_FONT_FAMILY, 9, QFont.Weight.Bold))
+        painter.setFont(_font(9, QFont.Weight.Bold))
         painter.setPen(QColor("#334155"))
         painter.drawText(metrics_left, metrics_top, "阶段参数")
-        painter.setFont(QFont(_FONT_FAMILY, 8))
+        painter.setFont(_font(8))
         y = metrics_top + 31
         for metric in stage.metrics:
             painter.setPen(QColor("#475569"))
@@ -270,7 +304,7 @@ class BasicReportPdfRenderer:
         title: str,
     ) -> int:
         painter.setPen(QColor("#0f172a"))
-        painter.setFont(QFont(_FONT_FAMILY, 13, QFont.Weight.Bold))
+        painter.setFont(_font(13, QFont.Weight.Bold))
         painter.drawText(x, y, title)
         return y + 38
 
@@ -292,7 +326,7 @@ class BasicReportPdfRenderer:
         painter.setPen(QPen(QColor("#94a3b8"), 1))
         painter.drawLine(margin, height - 95, width - margin, height - 95)
         painter.setPen(QColor("#475569"))
-        painter.setFont(QFont(_FONT_FAMILY, 8))
+        painter.setFont(_font(8))
         painter.drawText(
             QRect(margin, height - 78, width - margin * 2, 38),
             Qt.AlignmentFlag.AlignLeft,

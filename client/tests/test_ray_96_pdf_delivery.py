@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtPdf import QPdfDocument
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontDatabase
 
 from client.reporting import pdf as report_pdf
 from client.reporting.delivery import ReportDeliveryService
@@ -95,6 +95,15 @@ def test_a4_pdf_renderer_creates_readable_versioned_pdf(qtbot, tmp_path: Path) -
     assert document.load(str(destination)) is QPdfDocument.Error.None_
     assert document.pageCount() == 3
     assert destination.stat().st_size > 5_000
+
+
+def test_pdf_renderer_registers_the_bundled_chinese_font(qtbot) -> None:
+    _ = qtbot
+
+    font = report_pdf.report_font()
+
+    assert font.family() == "Noto Sans SC"
+    assert font.family() in QFontDatabase.families()
 
 
 def test_report_heatmap_uses_ui_noise_cleanup_and_black_zero_background() -> None:

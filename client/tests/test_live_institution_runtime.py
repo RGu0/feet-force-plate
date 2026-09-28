@@ -63,6 +63,30 @@ def test_live_capture_telemetry_records_only_safe_failure_metadata() -> None:
     ]
 
 
+def test_report_generation_telemetry_records_only_the_safe_error_code() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, dict[str, object]]] = []
+
+        def record(self, name, outcome, **kwargs) -> None:
+            self.calls.append((name, outcome, kwargs))
+
+    recorder = Recorder()
+    live_runtime._Telemetry(recorder).record_error(
+        code="E-RPT-001",
+        session_id="private-session-id",
+        technical_detail="KeyError: private-session-id",
+    )
+
+    assert recorder.calls == [
+        (
+            SafeClientEventName.REPORT_GENERATION_FAILED,
+            SafeClientEventOutcome.FAILED,
+            {"error_code": "E-RPT-001"},
+        )
+    ]
+
+
 def test_live_capture_telemetry_records_the_initialization_failure_boundary() -> None:
     class Recorder:
         def __init__(self) -> None:
