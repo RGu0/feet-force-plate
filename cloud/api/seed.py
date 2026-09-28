@@ -238,6 +238,14 @@ async def build_seed_app(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
     data_repository = PostgresPlatformRepository(tenant_pool)
+    from cloud.session_hold.postgres import PostgresSessionHoldRepository
+    from cloud.session_hold.service import SessionHoldService
+    from cloud.report_copy.object_store import LocalBasicPdfStore
+    from cloud.report_copy.postgres import PostgresLocalBasicCopyRepository
+    from cloud.report_copy.service import LocalBasicCopyService
+
+    hold_repository = PostgresSessionHoldRepository(platform_pool)
+    session_holds = SessionHoldService(hold_repository)
     if object_store_factory is not None:
         objects = object_store_factory(settings)
     elif settings.object_backend == "aliyun-oss":
@@ -307,6 +315,11 @@ async def build_seed_app(
             platform_access=platform_access,
             platform_tokens=platform_tokens,
             platform_sensitive=SensitiveAccessService(access_repository),
+            session_holds=session_holds,
+            report_copies=LocalBasicCopyService(
+                PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
+                hold_repository,
+            ),
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)

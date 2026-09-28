@@ -186,8 +186,19 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "0005_sales_inventory_activation.sql" in text
     assert "0006_inventory_activation_pairing.sql" in text
     assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
+    assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
+    assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
+    assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
+    assert text.index("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup") > text.index(
+        "0010_local_basic_report_copies.sql"
+    )
     assert "install_tls_file" in text
     assert "readlink -f" in text
+    assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
+    assert "verify_foundation_release_lock.py" in text
+    assert "curl --fail --location" in text
+    assert "--retry-all-errors --retry 5" in text
+    assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
 

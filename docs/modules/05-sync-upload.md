@@ -74,6 +74,12 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 7. 再查询 `status`，仅在服务端为 `INGESTED` 且 `VALID` 后标记 `CLOUD_CONFIRMED`。
 
 基础报告快照及内部质量/运行日志是独立的低优先级业务，不改变原始会话的确认条件。
+RAY-99 的 `LOCAL_BASIC_COPY` 在本地基础报告生成后进入独立的持久待传队列；仅当
+会话最终确认 `INGESTED` / `VALID`，且身份核对与新必要同意完成后，才通过
+`POST /v1/sessions/{id}/basic-report-copy` 上传原始 JSON 和本地渲染 PDF。
+断网或响应丢失时重用同一报告 ID、版本、摘要和幂等键；服务器回执确认前保留
+本地报告。云端副本的列表、详情与 PDF 导出分别使用 `/v1/reports`、
+`/v1/reports/{report_id}/versions/1` 和其 `/pdf` 子路径，均受当前冻结状态约束。
 
 服务器可在分段到达时预解码和预处理，但最终清单确认前不得发布完整报告。
 

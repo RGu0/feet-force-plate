@@ -28,6 +28,8 @@ from cloud.analysis.ports import (
     CloudQualityAssessor,
     RawSessionLoader,
 )
+from cloud.session_hold.repository import SessionHoldReader
+from cloud.session_hold.service import SessionHeld
 
 
 def _canonical_sha256(value: object) -> str:
@@ -109,6 +111,7 @@ class AnalysisOrchestrator:
         model_set_version: str,
         report_schema_version: str,
         parameters: Mapping[str, Any],
+        holds: SessionHoldReader,
     ) -> None:
         self.loader = loader
         self.quality_assessor = quality_assessor
@@ -120,6 +123,7 @@ class AnalysisOrchestrator:
         self.model_set_version = model_set_version
         self.report_schema_version = report_schema_version
         self.parameters = dict(parameters)
+        self.holds = holds
 
     def handle(self, event: SessionIngestedEvent) -> AnalysisRun:
         if event.event_type != "session.ingested.v1":
@@ -128,6 +132,9 @@ class AnalysisOrchestrator:
             raise ValueError(
                 "standard estimated-force sessions must be handled by PhysicalAnalysisOrchestrator"
             )
+
+        if self.holds.is_held(event.tenant_id, event.session_id):
+            raise SessionHeld("session is under administrative hold")
 
         key = AnalysisRunKey(
             tenant_id=event.tenant_id,

@@ -1,3 +1,6 @@
+import base64
+import binascii
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
@@ -7,7 +10,7 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
@@ -31,6 +34,11 @@ from cloud.ingestion.principal import (
     legacy_terminal_principal,
     tenant_ingestion_principal,
 )
+from cloud.session_hold.models import (
+    HoldApplyBody, HoldApplyRequest, HoldDispositionBody,
+    HoldDispositionRequest, HoldReleaseBody, HoldReleaseRequest,
+)
+from cloud.report_copy.models import LocalBasicCopyRequest
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -90,6 +98,8 @@ class ServiceContainer:
     platform_reports: object | None = None
     platform_subjects: object | None = None
     validation_telemetry: object | None = None
+    session_holds: object | None = None
+    report_copies: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -140,6 +150,9 @@ def create_app(container: ServiceContainer) -> FastAPI:
             )
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = str(request.state.correlation_id)
+        if request.url.path.startswith("/v1/reports") or request.url.path.endswith("/basic-report-copy"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     @app.exception_handler(PlatformError)
@@ -480,9 +493,97 @@ def create_app(container: ServiceContainer) -> FastAPI:
             tenant_id: UUID,
             context: PlatformAccessDependency,
         ):
+            if container.session_holds is None:
+                raise RepositoryUnavailable("report hold check unavailable")
+            binding = getattr(container.platform_reports, "session_for_report", None)
+            if binding is None:
+                raise RepositoryUnavailable("report session binding unavailable")
             result = await container.platform_reports.list_masked_reports(
                 context,
                 tenant_id,
+            )
+            visible = []
+            for row in result:
+                if getattr(row, "tenant_id", None) != tenant_id:
+                    raise RepositoryUnavailable("report tenant binding unavailable")
+                session_id = await binding(context, tenant_id, row.report_id)
+                if not isinstance(session_id, UUID):
+                    raise RepositoryUnavailable("report session binding unavailable")
+                hold = await container.session_holds.status(context, tenant_id, session_id)
+                if not hold.held:
+                    visible.append(row)
+            return _data_response(request, visible)
+
+    if container.session_holds is not None and container.platform_tokens is not None:
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_apply_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldApplyBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.apply(
+                context,
+                HoldApplyRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    ticket_reference=body.ticket_reference,
+                    reason_code=body.reason_code,
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.get("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_session_hold_status(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            context: PlatformAccessDependency,
+        ):
+            result = await container.session_holds.status(context, tenant_id, session_id)
+            return _data_response(request, result)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/disposition")
+        async def platform_dispose_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldDispositionBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.dispose(
+                context,
+                HoldDispositionRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/release")
+        async def platform_release_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldReleaseBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.release(
+                context,
+                HoldReleaseRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
             )
             return _data_response(request, result)
 
@@ -785,5 +886,69 @@ def create_app(container: ServiceContainer) -> FastAPI:
     ):
         result = await container.ingestion.get_status(context, session_id)
         return _data_response(request, result)
+
+    def report_copy_service():
+        if container.report_copies is None:
+            raise RepositoryUnavailable("basic report copy service unavailable")
+        return container.report_copies
+
+    @app.post("/v1/sessions/{session_id}/basic-report-copy")
+    async def upload_local_basic_copy(
+        request: Request, session_id: UUID, context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+    ):
+        payload = bytearray()
+        async for chunk in request.stream():
+            if len(payload) + len(chunk) > 12 * 1024 * 1024:
+                raise RequestContractError("report copy request exceeds size limit")
+            payload.extend(chunk)
+        try:
+            body = json.loads(payload)
+            if not isinstance(body, dict):
+                raise ValueError("body must be object")
+            pdf = base64.b64decode(body["pdf_base64"], validate=True)
+            copy = LocalBasicCopyRequest(
+                session_id=session_id, report_id=body["report_id"],
+                version=body["version"], source=body["source"],
+                document_json=body["document_json"], pdf_bytes=pdf,
+                document_sha256=body["document_sha256"],
+                pdf_sha256=body["pdf_sha256"],
+                consent_record_id=UUID(body["consent_record_id"]),
+            )
+        except (KeyError, ValueError, TypeError, binascii.Error) as exc:
+            raise RequestContractError("invalid report copy request") from exc
+        result = await report_copy_service().accept(context, copy, idempotency_key)
+        return _data_response(request, result, 201)
+
+    @app.get("/v1/reports")
+    async def list_local_basic_copies(request: Request, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        rows = await report_copy_service().list_for_tenant(context.tenant_id, context.account_id)
+        return _data_response(request, [
+            {"report_id": row.report_id, "version": row.version, "source": row.source,
+             "session_id": row.session_id, "status": "BASIC_READY"}
+            for row in rows
+        ])
+
+    @app.get("/v1/reports/{report_id}/versions/1")
+    async def get_local_basic_copy(request: Request, report_id: str, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        row = await report_copy_service().get(context.tenant_id, context.account_id, report_id)
+        return _data_response(request, {
+            "report_id": row.report_id, "version": row.version, "source": row.source,
+            "document": json.loads(row.document_json),
+        })
+
+    @app.get("/v1/reports/{report_id}/versions/1/pdf")
+    async def export_local_basic_copy(request: Request, report_id: str, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        payload = await report_copy_service().export_pdf(context.tenant_id, context.account_id, report_id)
+        return Response(
+            content=payload, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{report_id}.pdf"'},
+        )
 
     return app

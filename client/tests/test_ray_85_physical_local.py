@@ -50,6 +50,8 @@ from cloud.analysis.physical_orchestrator import (
     InMemoryQuestionnaireLoader,
     PhysicalAnalysisOrchestrator,
 )
+
+
 from cloud.analysis.physical_runs import (
     InMemoryPhysicalAnalysisRepository,
     PhysicalRunStatus,
@@ -68,6 +70,11 @@ from cloud.analysis.risk_rules import (
     QuestionnaireSnapshot,
     questionnaire_snapshot_sha256,
 )
+
+
+class _UnheldTestReader:
+    def is_held(self, tenant_id: str, session_id: str) -> bool:
+        return False
 
 
 def _stage(
@@ -702,6 +709,7 @@ def test_local_result_aligns_with_same_input_cloud_orchestrator_run() -> None:
         correlation_id="correlation-ray-85",
     )
     orchestrator = PhysicalAnalysisOrchestrator(
+        holds=_UnheldTestReader(),
         loader=InMemoryPhysicalSessionLoader(cloud_session),
         repository=InMemoryPhysicalAnalysisRepository(),
         parameters=parameters,
