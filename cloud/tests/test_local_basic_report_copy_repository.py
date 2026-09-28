@@ -56,7 +56,7 @@ class _Connection:
                 ingest_status=self.ingest_status, validity_status=self.validity_status,
             ) if args[0] == self.tenant_id and args[1] == self.request.session_id else None
         if "FROM subject.consents" in sql:
-            assert "ARRAY['SCREENING_SERVICE']" in sql
+            assert "ARRAY['SCREENING','SCREENING_SERVICE']" in sql
             return {"consent_record_id": self.request.consent_record_id} if self.consent_active else None
         if "FROM reporting.local_basic_report_copies" in sql:
             return self.copy
