@@ -204,6 +204,11 @@ class PostgresRecoveryCaseRepository:
         actor_id: UUID, grant_id: UUID, ticket_sha256: str,
     ) -> RecoveryComparisonResult:
         async with tenant_transaction(self._platform_pool, tenant_id) as connection:
+            # Serialize with tenant registration without granting tenant UPDATE on cases.
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-case:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                tenant_id, case_id,
+            )
             case = await connection.fetchrow(
                 """SELECT * FROM ops.identity_recovery_cases
                    WHERE tenant_id=$1 AND case_id=$2 FOR UPDATE""",
@@ -290,6 +295,11 @@ class PostgresRecoveryCaseRepository:
                 "SELECT pg_advisory_xact_lock(hashtextextended('recovery-register:' || $1::uuid::text || ':' || $2::text, 0))",
                 tenant_id, key_sha256,
             )
+            # The tenant role may read cases but cannot SELECT FOR UPDATE on them.
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-case:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                tenant_id, case_id,
+            )
             prior = await connection.fetchrow(
                 """SELECT * FROM ops.identity_recovery_registrations
                    WHERE tenant_id=$1 AND key_sha256=$2""",
@@ -307,7 +317,7 @@ class PostgresRecoveryCaseRepository:
                 raise IdempotencyConflict("recovery registration binding conflict")
             case = await connection.fetchrow(
                 """SELECT * FROM ops.identity_recovery_cases
-                   WHERE tenant_id=$1 AND case_id=$2 FOR UPDATE""",
+                   WHERE tenant_id=$1 AND case_id=$2""",
                 tenant_id, case_id,
             )
             if case is None or case["terminal_id"] != context.terminal_id:
