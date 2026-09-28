@@ -68,6 +68,9 @@ class _Gateway:
     def delete(self, key: str) -> None:
         self.objects.pop(key, None)
 
+    def get(self, key: str) -> bytes:
+        return self.objects[key].body
+
     def check_ready(self) -> None:
         self.ready_checks += 1
 

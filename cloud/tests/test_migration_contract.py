@@ -7,6 +7,7 @@ from pathlib import Path
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.sql"
 HOLD_MIGRATION = Path(__file__).parents[1] / "migrations" / "0009_unverified_session_holds.sql"
+COPY_MIGRATION = Path(__file__).parents[1] / "migrations" / "0010_local_basic_report_copies.sql"
 
 
 class MigrationContractTests(unittest.TestCase):
@@ -86,6 +87,16 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("FOREIGN KEY (tenant_id, session_id) REFERENCES screening.sessions", sql)
         self.assertIn("CREATE TABLE ops.session_hold_dispositions", sql)
         self.assertIn("GRANT SELECT, INSERT ON ops.session_hold_dispositions TO ffp_platform_app", sql)
+
+    def test_local_basic_copy_is_separate_and_rls_guarded(self) -> None:
+        sql = COPY_MIGRATION.read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE reporting.local_basic_report_copies", sql)
+        self.assertIn("PRIMARY KEY (tenant_id, session_id)", sql)
+        self.assertIn("UNIQUE (tenant_id, report_id, version)", sql)
+        self.assertIn("ENABLE ROW LEVEL SECURITY", sql)
+        self.assertIn("FORCE ROW LEVEL SECURITY", sql)
+        self.assertIn("tenant_id = ops.current_tenant_id()", sql)
+        self.assertNotIn("ALTER TABLE screening.sessions", sql)
 
 
 
