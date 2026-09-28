@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from cloud.api.errors import (
     IdempotencyConflict, RequestContractError, ResourceNotFound,
-    TenantAccessDenied,
+    TenantAccessDenied, SessionHeldForReportCopy,
 )
 from cloud.api.postgres import tenant_transaction
 from cloud.ingestion.principal import IngestionPrincipal
@@ -66,7 +66,8 @@ class PostgresLocalBasicCopyRepository:
                 )
                 session = await connection.fetchrow(
                     """SELECT session_id, tenant_id, terminal_id, subject_uuid,
-                              consent_record_id, ingest_status, validity_status
+                              consent_record_id, ingest_status, validity_status,
+                              test_protocol_id, test_protocol_version
                        FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2""",
                     context.tenant_id, request.session_id,
                 )
@@ -78,6 +79,12 @@ class PostgresLocalBasicCopyRepository:
                     raise TenantAccessDenied("session consent binding mismatch")
                 if session["ingest_status"] != "INGESTED" or session["validity_status"] != "VALID":
                     raise RequestContractError("session is not ingested and valid")
+                document = json.loads(request.document_json)
+                if (
+                    document["protocol_id"] != session["test_protocol_id"]
+                    or document["protocol_version"] != session["test_protocol_version"]
+                ):
+                    raise RequestContractError("report protocol binding mismatch")
                 consent = await connection.fetchrow(
                     """SELECT consent_record_id FROM subject.consents
                        WHERE tenant_id=$1 AND consent_record_id=$2 AND subject_uuid=$3
@@ -93,7 +100,7 @@ class PostgresLocalBasicCopyRepository:
                     context.tenant_id, request.session_id,
                 )
                 if held:
-                    raise TenantAccessDenied("session is held")
+                    raise SessionHeldForReportCopy("session is held")
                 prior_key = await connection.fetchrow(
                     """SELECT tenant_id, session_id, report_id, version, source, document_json,
                               document_sha256, pdf_sha256, pdf_object_key, pdf_size_bytes,
@@ -184,7 +191,12 @@ class PostgresLocalBasicCopyRepository:
                 """SELECT tenant_id, session_id, report_id, version, source, document_json,
                           document_sha256, pdf_sha256, pdf_object_key, pdf_size_bytes
                    FROM reporting.local_basic_report_copies
-                   WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100""",
+                   WHERE tenant_id=$1 AND NOT EXISTS (
+                       SELECT 1 FROM ops.session_holds hold
+                       WHERE hold.tenant_id=local_basic_report_copies.tenant_id
+                         AND hold.session_id=local_basic_report_copies.session_id
+                         AND hold.state='HELD'
+                   ) ORDER BY created_at DESC LIMIT 100""",
                 tenant_id,
             )
         return tuple(_record(row) for row in rows)

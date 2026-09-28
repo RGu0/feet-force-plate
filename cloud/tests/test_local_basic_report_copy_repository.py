@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
-from cloud.api.errors import IdempotencyConflict, RequestContractError, TenantAccessDenied
+from cloud.api.errors import (
+    IdempotencyConflict, RequestContractError, SessionHeldForReportCopy,
+    TenantAccessDenied,
+)
 from cloud.ingestion.principal import IngestionPrincipal
 from cloud.report_copy.postgres import PostgresLocalBasicCopyRepository
 from cloud.tests.test_local_basic_report_copy import copy_request
@@ -34,6 +38,9 @@ class _Connection:
         self.copy = None
         self.subject_id = uuid4()
         self.session_consent_id = request.consent_record_id
+        document = json.loads(request.document_json)
+        self.protocol_id = document["protocol_id"]
+        self.protocol_version = document["protocol_version"]
 
     def transaction(self):
         return _Transaction()
@@ -54,6 +61,7 @@ class _Connection:
                 terminal_id=self.terminal_id, subject_uuid=self.subject_id,
                 consent_record_id=self.session_consent_id,
                 ingest_status=self.ingest_status, validity_status=self.validity_status,
+                test_protocol_id=self.protocol_id, test_protocol_version=self.protocol_version,
             ) if args[0] == self.tenant_id and args[1] == self.request.session_id else None
         if "FROM subject.consents" in sql:
             assert "ARRAY['SCREENING','SCREENING_SERVICE']" in sql
@@ -136,7 +144,7 @@ def test_rejects_unusable_or_unbound_session(failure: str) -> None:
             db.session_consent_id = uuid4()
         else:
             db.terminal_id = uuid4()
-        with pytest.raises((RequestContractError, TenantAccessDenied)):
+        with pytest.raises((RequestContractError, TenantAccessDenied, SessionHeldForReportCopy)):
             await repo.accept(principal, request, "key")
         assert objects.put_count == 0
     asyncio.run(exercise())
@@ -155,4 +163,35 @@ def test_changed_content_or_idempotency_key_conflicts() -> None:
                 pdf_sha256=hashlib.sha256(changed_pdf).hexdigest(),
             ), "key")
         assert objects.put_count == 1
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("field", ["protocol_id", "protocol_version"])
+def test_rejects_report_for_another_session_protocol(field: str) -> None:
+    async def exercise():
+        repo, principal, request, db, objects = _setup()
+        setattr(db, field, "a-different-protocol")
+        with pytest.raises(RequestContractError, match="protocol binding"):
+            await repo.accept(principal, request, "key")
+        assert objects.put_count == 0
+    asyncio.run(exercise())
+
+
+def test_listing_filters_held_sessions_before_limit() -> None:
+    class ListingConnection:
+        async def fetch(self, sql, *_args):
+            assert "NOT EXISTS" in sql
+            assert "ops.session_holds" in sql
+            assert "LIMIT 100" in sql
+            return []
+
+        def transaction(self):
+            return _Transaction()
+
+        async def execute(self, *_args):
+            pass
+
+    async def exercise():
+        repo = PostgresLocalBasicCopyRepository(_Pool(ListingConnection()), _Objects())
+        assert await repo.list_for_tenant(uuid4()) == ()
     asyncio.run(exercise())
