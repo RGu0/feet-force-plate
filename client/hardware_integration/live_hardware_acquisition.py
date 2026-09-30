@@ -21,7 +21,7 @@ class QtLiveHardwareAcquisition(QObject):
         self,
         capture_session: Callable[[str, StageRecordingGate], object],
         *,
-        prepare_session: Callable[[str], None] | None = None,
+        prepare_session: Callable[[str], object | None] | None = None,
         expected_stage_ids: tuple[str, ...] | None = None,
         parent: QObject | None = None,
     ) -> None:
@@ -69,7 +69,10 @@ class QtLiveHardwareAcquisition(QObject):
 
     def start_stage(self, session_id: str, stage) -> None:
         if self._session_id is None:
-            self._prepare_session(session_id)
+            preflight_result = self._prepare_session(session_id)
+            if preflight_result is not None:
+                self._on_complete(preflight_result)
+                return
             self._session_id = session_id
             self._gate.bind_session(session_id)
         elif self._session_id != session_id:

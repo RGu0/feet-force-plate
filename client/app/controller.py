@@ -110,6 +110,8 @@ class ApplicationController:
         read_models: UiReadModelPort | None = None,
         device_support: _DeviceSupportPort | None = None,
         engineering_maintenance: EngineeringMaintenanceService | None = None,
+        engineering_login: Callable[[str, str], EngineeringMaintenanceService | None]
+        | None = None,
         session_deletion: CompletedSessionDeletionService | None = None,
         subject_recovery=None,
         physical_grid: PhysicalGridOverlay | None = None,
@@ -124,6 +126,7 @@ class ApplicationController:
         self._read_models = read_models
         self._device_support = device_support
         self._engineering_maintenance = engineering_maintenance
+        self._engineering_login = engineering_login
         self._session_deletion = session_deletion
         self._subject_recovery = subject_recovery
         onboarding_dependencies = (participant, consent, consent_policy)
@@ -138,7 +141,7 @@ class ApplicationController:
             physical_grid=physical_grid,
         )
         self.window.set_engineering_maintenance_available(
-            engineering_maintenance is not None
+            engineering_maintenance is not None or engineering_login is not None
         )
         self.window.set_session_deletion_available(session_deletion is not None)
         self.window.set_subject_recovery_available(subject_recovery is not None)
@@ -195,7 +198,9 @@ class ApplicationController:
             self._dispatch_device_support(action)
             return
         if action == "OPEN_ENGINEERING_MAINTENANCE":
-            if self._engineering_maintenance is None:
+            if self._engineering_login is not None:
+                self.window.show_engineering_login(self._engineering_login)
+            elif self._engineering_maintenance is None:
                 self.window.show_form_error("工程检修功能尚未接入当前运行环境")
             else:
                 self.window.show_engineering_maintenance(self._engineering_maintenance)

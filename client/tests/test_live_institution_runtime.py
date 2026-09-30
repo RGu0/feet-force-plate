@@ -288,6 +288,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     institution = SimpleNamespace(consent_port=lambda: object())
     controller = _FakeController()
     physical_store = PhysicalStore()
+    live_runtime.EngineeringDeviceBindingStore(tmp_path).register_device_id("FFP-001")
     baseline: object | None = None
     acquisition: Acquisition | None = None
     capture: Capture | None = None
@@ -392,6 +393,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         export_destination=lambda: None,
         app_version="9.8.7-authoritative",
         payload_schema="raw-segment/7",
+        engineering_login=lambda _login, _password: None,
     )
 
     assert (
@@ -412,6 +414,9 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert formal_upload.app_version == "9.8.7-authoritative"
     assert formal_upload.payload_schema == "raw-segment/7"
     assert formal_upload.calibration_profile == "calibration-authoritative/42"
+    assert callable(capture_kwargs["dynamic_defect_mask_loader"])
+    assert capture_kwargs["dynamic_defect_mask_loader"]().device_id == "FFP-001"
+    assert connected_kwargs["controller_options"]["engineering_login"] is not None
     read_models = connected_kwargs["controller_options"]["read_models"]
     assert read_models.tenant_id == "tenant-1"
     assert read_models.institution is institution
