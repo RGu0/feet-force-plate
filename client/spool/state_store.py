@@ -1033,9 +1033,6 @@ class StateStore:
             or binding.permit.session_id != binding.session_id
         ):
             raise ValueError("migration binding request or permit mismatch")
-        self.record_expected_cloud_manifest_sha256(
-            session_id, binding.manifest_sha256
-        )
         encrypted = self._codec.encrypt(
             binding.model_dump_json().encode("utf-8"),
             context=f"legacy_migration_binding:{session_id}",
@@ -1052,6 +1049,14 @@ class StateStore:
                 if prior != binding:
                     raise ValueError("legacy migration binding is immutable")
                 return
+            cursor = self._connection.execute(
+                "UPDATE sync_handoffs SET expected_cloud_manifest_sha256=? "
+                "WHERE session_id=? AND (expected_cloud_manifest_sha256 IS NULL "
+                "OR expected_cloud_manifest_sha256=?)",
+                (binding.manifest_sha256, session_id, binding.manifest_sha256),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("immutable cloud manifest digest mismatch")
             self._connection.execute(
                 "INSERT INTO legacy_migration_bindings(session_id, encrypted_payload, recorded_at_ns) "
                 "VALUES(?,?,?)",
