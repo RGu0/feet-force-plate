@@ -221,7 +221,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
 
     from client.app import live_institution_runtime
     from shared.contracts.capture_grants import CaptureCredential
-    from client.app.institution_store import InstitutionLocalStore
+    from client.tests.test_local_capture_grants import open_store
     from client.tests.test_p3_persistent_upload import (
         PersistentUploadQueueTests, _IngestionService, _Tokens,
     )
@@ -240,9 +240,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
     segment = pending._seal(0)
     credential = CaptureCredential(session_id=pending.session_id, kind="grant", token="packaged-grant-secret-123456")
     pending._commit(segment, credential=credential)
-    institution = InstitutionLocalStore.open(
-        data_root / "institution", key_provider=pending.keys, query_index_key=b"q" * 32,
-    )
+    institution = open_store(data_root / "institution", key_provider=pending.keys)
     upload = None
     try:
         tenant_id = str(uuid4())

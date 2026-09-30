@@ -1,8 +1,10 @@
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
 
 from client.app.institution_store import InstitutionLocalStore
+from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
@@ -14,8 +16,24 @@ class Key:
         return b"k" * 32
 
 
-def open_store(path):
-    return InstitutionLocalStore.open(path, key_provider=Key(), query_index_key=b"q" * 32)
+class _TestConsentSigner:
+    def sign(
+        self,
+        request: ConsentRequest,
+        *,
+        consent_record_id: str,
+        granted_at: datetime,
+    ) -> str:
+        return "test-consent-signature"
+
+
+def open_store(path, *, key_provider=None):
+    return InstitutionLocalStore.open(
+        path,
+        key_provider=key_provider or Key(),
+        query_index_key=b"q" * 32,
+        consent_signer=_TestConsentSigner(),
+    )
 
 
 def participant(store):
