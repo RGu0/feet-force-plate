@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from cloud.access_control.capture_grants import CaptureGrantService
 from cloud.access_control.lease_service import HardwareLeaseService
 from cloud.access_control.platform_iam import PlatformIdentityService, SensitiveAccessService
 from cloud.access_control.platform_service import PlatformProvisioningService
@@ -241,7 +242,7 @@ async def build_seed_app(
     access_repository = PostgresAccessRepository(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
-    data_repository = PostgresPlatformRepository(tenant_pool)
+    data_repository = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
     from cloud.session_hold.postgres import PostgresSessionHoldRepository
     from cloud.session_hold.service import SessionHoldService
     from cloud.report_copy.object_store import LocalBasicPdfStore
@@ -316,6 +317,7 @@ async def build_seed_app(
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
             hardware_leases=HardwareLeaseService(access_repository),
+            capture_grants=CaptureGrantService(data_repository),
             platform_identities=platform_identities,
             platform_access=platform_access,
             platform_tokens=platform_tokens,

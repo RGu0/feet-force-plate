@@ -173,6 +173,8 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
 apply_migration_if_column_missing sales inventory_batches activation_binding_mode "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
 apply_migration_if_column_missing screening session_manifests eligibility_reason "$release_source/cloud/migrations/0007_completion_receipt_fields.sql"
+apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"
+apply_migration_if_column_missing screening sessions expected_manifest_sha256 "$release_source/cloud/migrations/0010_session_expected_manifest.sql"
 
 role_wrapper="$install_root/roles.sql"
 {
@@ -205,6 +207,7 @@ if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT to_regcla
     exit 1
 fi
 apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0011_controlled_identity_recovery.sql"
+apply_migration screening.upload_migration_permits_recovery_binding "$release_source/cloud/migrations/0012_recovery_bound_migration_permits.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
      ops.identity_recovery_comparisons, ops.identity_recovery_registrations

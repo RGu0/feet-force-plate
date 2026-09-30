@@ -19,7 +19,7 @@ def test_backup_is_custom_format_manifested_encrypted_and_atomically_published()
     assert "PRIVATE_KEY" not in text
     assert 'sha256sum "$bundle_final" >"$bundle_final.sha256.tmp"' in text
     assert 'mv "$bundle_final.sha256.tmp" "$bundle_final.sha256"' in text
-    assert "0007_completion_receipt_fields,0008_activation_projection_grants,0009_unverified_session_holds,0010_local_basic_report_copies,0011_controlled_identity_recovery" in text
+    assert "0007_completion_receipt_fields,0008_activation_projection_grants,0009_unverified_session_holds,0010_local_basic_report_copies,0011_controlled_identity_recovery,0012_recovery_bound_migration_permits" in text
 
 
 def test_retention_preserves_newest_verified_backup() -> None:

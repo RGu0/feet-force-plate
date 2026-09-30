@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from client.app.institution_store import InstitutionLocalStore
 from client.app.report_index_recovery import recover_missing_screening_records
@@ -16,6 +17,7 @@ from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
+from shared.contracts.capture_grants import CaptureGrant
 
 
 
@@ -114,7 +116,7 @@ def test_retained_local_analysis_rebuilds_missing_record_once(tmp_path: Path) ->
             evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    session_id = institution.create_session(
+    session_id = institution.create_engineering_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
     )
@@ -167,9 +169,13 @@ def test_recovery_reindexes_existing_report_without_replacing_queued_copy(tmp_pa
             evidence_type="OPERATOR_CONFIRMED",
         )
     )
+    institution.add_capture_grants("tenant-1", "terminal-1", (
+        CaptureGrant(session_id=uuid4(), token="report-recovery-grant-1234567890"),
+    ))
     session_id = institution.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
+        tenant_id="tenant-1", installation_id="terminal-1",
     )
     institution.finalize(session_id)
     physical = _PhysicalStore(
@@ -215,9 +221,13 @@ def test_unreadable_historical_report_does_not_block_workbench_recovery(tmp_path
             evidence_type="OPERATOR_CONFIRMED",
         )
     )
+    institution.add_capture_grants("tenant-1", "terminal-1", (
+        CaptureGrant(session_id=uuid4(), token="report-recovery-grant-1234567890"),
+    ))
     session_id = institution.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
+        tenant_id="tenant-1", installation_id="terminal-1",
     )
     institution.finalize(session_id)
     physical = _PhysicalStore(

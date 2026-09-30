@@ -12,6 +12,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
+from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization, UploadMigrationPermitRequest
+
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
     PlatformAccessContext,
@@ -95,6 +97,7 @@ class ServiceContainer:
     tenant_access: object | None = None
     tenant_tokens: TenantAccessTokenIssuer | None = None
     hardware_leases: object | None = None
+    capture_grants: object | None = None
     platform_identities: object | None = None
     platform_access: object | None = None
     platform_tokens: PlatformAccessTokenIssuer | None = None
@@ -319,6 +322,16 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return await container.platform_identities.verify_access_token(token)
 
     PlatformAccessDependency = Annotated[PlatformAccessContext, Depends(platform_context)]
+
+    async def migration_platform_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ) -> PlatformAccessContext:
+        try:
+            return await platform_context(authorization)
+        except AuthenticationError:
+            raise TenantAccessDenied("platform owner approval required") from None
+
+    MigrationPlatformDependency = Annotated[PlatformAccessContext, Depends(migration_platform_context)]
 
     def source_fingerprint(request: Request) -> bytes:
         host = request.client.host if request.client is not None else "unknown"
@@ -784,14 +797,62 @@ def create_app(container: ServiceContainer) -> FastAPI:
         )
         return _data_response(request, result)
 
+    @app.post("/v1/platform/upload-migration-permits")
+    async def approve_upload_migration_permit(
+        request: Request, body: UploadMigrationPermitRequest, context: MigrationPlatformDependency,
+    ):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("迁移核准服务暂不可用")
+        result = await container.capture_grants.approve_migration(context, body)
+        # Only this issuance response reveals the secret, once. Neither the
+        # ordinary model serializer nor persistent records expose it.
+        response = _data_response(request, {
+            "session_id": str(result.session_id), "token": result.token.get_secret_value(),
+        }, 201)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/v1/access/capture-grants")
+    async def issue_capture_grants(request: Request, body: CaptureGrantBatchRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        result = await container.capture_grants.issue(context, body.count)
+        # This is the only transport boundary that reveals newly issued secrets.
+        return _data_response(request, {"grants": [
+            {"session_id": str(grant.session_id), "token": grant.token.get_secret_value()}
+            for grant in result.grants
+        ]}, 201)
+
+    @app.post("/v1/access/capture-grants/retire")
+    async def retire_capture_grant(request: Request, body: RetireCaptureGrantRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        await container.capture_grants.retire(context, body.session_id, body.reason)
+        return _data_response(request, {"session_id": str(body.session_id), "state": "RETIRED"})
+
     @app.post("/v1/sessions")
     async def create_session(
         request: Request,
         body: SessionCreateRequest,
         context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
+        capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
+        expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
     ):
-        result = await container.ingestion.create_session(context, body, idempotency_key)
+        authorization = None
+        if capture_authorization is not None or expected_manifest is not None:
+            try:
+                kind, token = (capture_authorization or "").split(" ", 1)
+                if any(character.isspace() for character in token):
+                    raise ValueError("invalid opaque token")
+                authorization = SessionAuthorization(
+                    session_id=body.session_id, kind=kind, token=token,
+                    manifest_sha256=expected_manifest,
+                )
+            except ValueError:
+                # Never include credential values or Pydantic input in errors.
+                raise RequestValidationError([{"loc": ("header", "X-Capture-Authorization"), "type": "value_error", "msg": "invalid authorization headers"}]) from None
+        result = await container.ingestion.create_session(context, body, idempotency_key, authorization)
         return _data_response(request, result, 200 if result.idempotent_replay else 201)
 
     @app.post("/v1/identity-recovery/cases")
@@ -831,11 +892,25 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request, case_id: UUID, body: RecoveryRegistrationRequest,
         context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+        capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
+        expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
     ):
         if container.identity_recovery is None:
             raise RepositoryUnavailable("identity recovery is unavailable")
+        authorization = None
+        if capture_authorization is not None or expected_manifest is not None:
+            try:
+                kind, token = (capture_authorization or "").split(" ", 1)
+                if any(character.isspace() for character in token):
+                    raise ValueError("invalid opaque token")
+                authorization = SessionAuthorization(
+                    session_id=body.session.session_id, kind=kind, token=token,
+                    manifest_sha256=expected_manifest,
+                )
+            except ValueError:
+                raise RequestValidationError([{"loc": ("header", "X-Capture-Authorization"), "type": "value_error", "msg": "invalid authorization headers"}]) from None
         result = await container.identity_recovery.register(
-            context, case_id, body, idempotency_key,
+            context, case_id, body, idempotency_key, authorization,
         )
         return _data_response(request, result, 201)
 

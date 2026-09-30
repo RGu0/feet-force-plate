@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
+import json
 import os
 from pathlib import Path
 import re
@@ -13,6 +15,7 @@ from typing import Protocol
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from shared.contracts.capture_grants import CaptureCredential, LegacyMigrationBinding
 from shared.contracts.client_sync import (
     FormalUploadEnvelope,
     SubjectRecoveryAuthorization,
@@ -20,7 +23,7 @@ from shared.contracts.client_sync import (
 )
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -439,6 +442,19 @@ class StateStore:
                     )
                 self._connection.execute("PRAGMA user_version=9")
             if version < 10:
+                columns = {
+                    str(row[1]) for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    )
+                }
+                if "upload_credential" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_credential BLOB"
+                    )
+                if "expected_cloud_manifest_sha256" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN expected_cloud_manifest_sha256 TEXT"
+                    )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS subject_recovery_authorizations (
                         session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
@@ -448,6 +464,26 @@ class StateStore:
                 )
                 self._connection.execute("PRAGMA user_version=10")
             if version < 11:
+                columns = {
+                    str(row[1]) for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    )
+                }
+                if "upload_credential" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_credential BLOB"
+                    )
+                if "expected_cloud_manifest_sha256" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN expected_cloud_manifest_sha256 TEXT"
+                    )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorizations (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS subject_recovery_authorization_history (
                         history_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -458,6 +494,25 @@ class StateStore:
                     )"""
                 )
                 self._connection.execute("PRAGMA user_version=11")
+            if version < 12:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS legacy_migration_bindings (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.executescript(
+                    """CREATE TRIGGER IF NOT EXISTS immutable_legacy_migration_binding_update
+                       BEFORE UPDATE ON legacy_migration_bindings BEGIN
+                         SELECT RAISE(ABORT, 'legacy migration binding is append-only');
+                       END;
+                       CREATE TRIGGER IF NOT EXISTS immutable_legacy_migration_binding_delete
+                       BEFORE DELETE ON legacy_migration_bindings BEGIN
+                         SELECT RAISE(ABORT, 'legacy migration binding is append-only');
+                       END;"""
+                )
+                self._connection.execute("PRAGMA user_version=12")
 
     def record_validation_audit(
         self,
@@ -702,6 +757,7 @@ class StateStore:
         segments: tuple[ValidSegmentRecord, ...],
         artifacts: tuple[ValidArtifactRecord, ...] = (),
         upload_envelope: FormalUploadEnvelope | None = None,
+        upload_credential: CaptureCredential | None = None,
     ) -> None:
         """Atomically register only a fully validated, already-promoted session."""
 
@@ -716,6 +772,19 @@ class StateStore:
         if len({artifact.artifact_id for artifact in artifacts}) != len(artifacts):
             raise ValueError("artifact ids must be unique")
         encrypted_upload_envelope: bytes | None = None
+        encrypted_credential = None
+        if upload_credential is not None:
+            if upload_credential.session_id != UUID(session_id):
+                raise ValueError("capture authorization session mismatch")
+            if upload_envelope is None:
+                raise ValueError("capture authorization requires a formal upload envelope")
+            encrypted_credential = self._codec.encrypt(
+                json.dumps({
+                    **upload_credential.model_dump(mode="json"),
+                    "token": upload_credential.token.get_secret_value(),
+                }).encode(),
+                context=f"capture_authorization:{session_id}",
+            )
         if upload_envelope is not None:
             try:
                 matches_session = UUID(session_id) == upload_envelope.session_id
@@ -792,15 +861,49 @@ class StateStore:
             )
             self._connection.execute(
                 """INSERT INTO sync_handoffs(
-                    session_id, manifest_sha256, state, created_at_ns, upload_envelope
-                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?, ?)""",
+                    session_id, manifest_sha256, state, created_at_ns, upload_envelope, upload_credential
+                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?, ?, ?)""",
                 (
                     session_id,
                     manifest_sha256,
                     ended_at_ns,
                     encrypted_upload_envelope,
+                    encrypted_credential,
                 ),
             )
+
+    def sync_handoff_credential(self, session_id: str) -> CaptureCredential | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT upload_credential FROM sync_handoffs WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        if row[0] is None:
+            return None
+        plaintext = self._codec.decrypt(
+            bytes(row[0]), context=f"capture_authorization:{session_id}"
+        )
+        try:
+            credential = CaptureCredential.model_validate_json(plaintext)
+        except ValueError:
+            # Validation errors may include the rejected input credential.
+            raise ValueError("invalid encrypted capture authorization") from None
+        if credential.session_id != UUID(session_id):
+            raise ValueError("capture authorization session mismatch")
+        return credential
+
+    def record_expected_cloud_manifest_sha256(self, session_id: str, digest: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError("invalid cloud manifest digest")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE sync_handoffs SET expected_cloud_manifest_sha256=? WHERE session_id=? "
+                "AND (expected_cloud_manifest_sha256 IS NULL OR expected_cloud_manifest_sha256=?)",
+                (digest, session_id, digest),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("immutable cloud manifest digest mismatch")
 
     def sync_handoff_state(self, session_id: str) -> str:
         stored_session_id = self._stored_sync_handoff_id(session_id)
@@ -875,6 +978,90 @@ class StateStore:
             bytes(row[0]), context=f"subject_recovery:{stored_session_id}"
         )
         return SubjectRecoveryAuthorization.model_validate_json(plaintext)
+
+    def legacy_migration_binding(self, session_id: str) -> LegacyMigrationBinding | None:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM legacy_migration_bindings WHERE session_id=?",
+                (stored_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        plaintext = self._codec.decrypt(
+            bytes(row[0]), context=f"legacy_migration_binding:{stored_session_id}"
+        )
+        binding = LegacyMigrationBinding.model_validate_json(plaintext)
+        if str(binding.session_id) != str(UUID(stored_session_id)):
+            raise ValueError("legacy migration binding session mismatch")
+        return binding
+
+    def record_legacy_migration_binding(self, binding: LegacyMigrationBinding) -> None:
+        """Persist a reviewed permit and its immutable final-identity bindings."""
+
+        session_id = self._stored_sync_handoff_id(str(binding.session_id))
+        envelope = self.sync_handoff_envelope(session_id)
+        recovery = self.subject_recovery_authorization(session_id)
+        if (
+            binding.original_envelope_sha256 != canonical_sha256(envelope)
+            or binding.original_subject_uuid != envelope.subject.subject_uuid
+        ):
+            raise ValueError("migration binding does not match immutable envelope")
+        if recovery is not None:
+            if (
+                binding.reconciliation_case_id != recovery.case_id
+                or binding.final_subject_uuid != recovery.cloud_subject_uuid
+                or binding.final_consent_id != recovery.replacement_consent.consent_record_id
+                or binding.final_consent_sha256 != canonical_sha256(recovery.replacement_consent)
+            ):
+                raise ValueError("migration binding does not match identity reconciliation")
+            final_request = envelope.session_request().model_copy(update={
+                "subject_uuid": recovery.cloud_subject_uuid,
+                "consent_record_id": recovery.replacement_consent.consent_record_id,
+            })
+        else:
+            if (
+                binding.reconciliation_case_id is not None
+                or binding.final_subject_uuid != envelope.subject.subject_uuid
+                or binding.final_consent_id != envelope.consent.consent_record_id
+                or binding.final_consent_sha256 != canonical_sha256(envelope.consent)
+            ):
+                raise ValueError("migration binding does not match original identity and consent")
+            final_request = envelope.session_request()
+        if (
+            binding.request_sha256 != canonical_sha256(final_request)
+            or binding.permit.session_id != binding.session_id
+        ):
+            raise ValueError("migration binding request or permit mismatch")
+        encrypted = self._codec.encrypt(
+            binding.model_dump_json().encode("utf-8"),
+            context=f"legacy_migration_binding:{session_id}",
+        )
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM legacy_migration_bindings WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is not None:
+                prior = LegacyMigrationBinding.model_validate_json(self._codec.decrypt(
+                    bytes(row[0]), context=f"legacy_migration_binding:{session_id}"
+                ))
+                if prior != binding:
+                    raise ValueError("legacy migration binding is immutable")
+                return
+            cursor = self._connection.execute(
+                "UPDATE sync_handoffs SET expected_cloud_manifest_sha256=? "
+                "WHERE session_id=? AND (expected_cloud_manifest_sha256 IS NULL "
+                "OR expected_cloud_manifest_sha256=?)",
+                (binding.manifest_sha256, session_id, binding.manifest_sha256),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("immutable cloud manifest digest mismatch")
+            self._connection.execute(
+                "INSERT INTO legacy_migration_bindings(session_id, encrypted_payload, recorded_at_ns) "
+                "VALUES(?,?,?)",
+                (session_id, encrypted, int(datetime.now(UTC).timestamp() * 1_000_000_000)),
+            )
 
     def subject_recovery_candidates(self) -> tuple[str, ...]:
         """Identity-blocked sessions that an operator may inspect for recovery."""

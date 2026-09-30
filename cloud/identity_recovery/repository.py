@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from cloud.api.errors import IdempotencyConflict, ResourceNotFound, TenantAccessDenied
 from cloud.ingestion.principal import IngestionPrincipal
 from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.identity_recovery import RecoveryCaseCreateRequest
 
 from .models import RecoveryCaseRecord
@@ -137,6 +138,7 @@ class InMemoryRecoveryCaseRepository:
         self, context: IngestionPrincipal, case_id: UUID,
         request: RecoveryRegistrationRequest, idempotency_key: str,
         request_sha256: str, *, replay_only: bool,
+        authorization: SessionAuthorization | None = None,
     ) -> RecoveryRegistrationResult:
         async with self._lock:
             key = (context.tenant_id, idempotency_key)
@@ -182,7 +184,7 @@ class InMemoryRecoveryCaseRepository:
                 )
                 await data.create_session(
                     context, request.session, f"recovery-session:{case_id}",
-                    recovery_case_id=case_id,
+                    authorization=authorization, recovery_case_id=case_id,
                 )
             except Exception:
                 for name, state in snapshot.items():

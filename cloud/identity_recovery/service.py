@@ -12,6 +12,7 @@ from cloud.api.errors import IdempotencyConflict, RequestContractError, Reposito
 from cloud.ingestion.principal import IngestionPrincipal
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.access_control import PlatformRole
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryCaseSummary, RecoveryComparisonResult,
     RecoveryRegistrationRequest, RecoveryRegistrationResult,
@@ -127,6 +128,7 @@ class IdentityRecoveryService:
     async def register(
         self, context: IngestionPrincipal, case_id: UUID,
         request: RecoveryRegistrationRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> RecoveryRegistrationResult:
         context.ensure_can_upload()
         if not idempotency_key or len(idempotency_key) > 128:
@@ -150,6 +152,7 @@ class IdentityRecoveryService:
             return await self._repository.register(
                 context, case_id, request, idempotency_key,
                 canonical_sha256(request), replay_only=True,
+                authorization=authorization,
             )
         if request.consent.evidence_type not in {"SUBJECT_CONFIRMED", "REPRESENTATIVE_CONFIRMED"}:
             raise RequestContractError("fresh subject or representative consent is required")
@@ -163,5 +166,5 @@ class IdentityRecoveryService:
             raise RequestContractError("fresh consent time is invalid")
         return await self._repository.register(
             context, case_id, request, idempotency_key, canonical_sha256(request),
-            replay_only=False,
+            replay_only=False, authorization=authorization,
         )

@@ -48,6 +48,7 @@ from client.local_analysis.models import LocalQualityStatus
 from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
+from shared.contracts.capture_grants import CaptureCredential
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import ProtocolSnapshot
 from shared.contracts.client_sync import (
@@ -153,26 +154,41 @@ class _PreparedCaptureSession:
     started_at_ns: int
     protocol_profile: str
     upload_envelope: FormalUploadEnvelope | None
+    upload_credential: CaptureCredential | None
 
 
 class InstitutionLiveSessions:
     """One local workflow session maps to one physical encrypted capture."""
 
-    def __init__(self, store: InstitutionLocalStore) -> None:
+    def __init__(self, store: InstitutionLocalStore, *, tenant_id: str,
+                 installation_id: str, replenish=None) -> None:
         self._store = store
+        self._tenant_id = tenant_id
+        self._installation_id = installation_id
+        self._replenish = replenish
         self._metadata: dict[str, LiveSessionMetadata] = {}
 
     def create_session(
         self, context: ScreeningParticipantContext, protocol: ProtocolSnapshot
     ) -> str:
-        session_id = self._store.create_session(context, protocol)
+        if self._replenish is not None:
+            self._replenish()
+        session_id = self._store.create_session(
+            context, protocol, self._tenant_id, self._installation_id
+        )
+        self._remember_metadata(session_id, context, protocol)
+        return session_id
+
+    def _remember_metadata(self, session_id, context, protocol) -> None:
         self._metadata[session_id] = LiveSessionMetadata(
             context.subject_uuid,
             context.consent_record_id,
             datetime.now(UTC),
             protocol,
         )
-        return session_id
+
+    def capture_credential(self, session_id: str):
+        return self._store.capture_credential(session_id)
 
     def metadata(self, session_id: str) -> LiveSessionMetadata:
         try:
@@ -194,6 +210,19 @@ class InstitutionLiveSessions:
 
     def consent_upload_request(self, consent_record_id: str):
         return self._store.consent_upload_request(consent_record_id)
+
+
+class EngineeringLiveSessions(InstitutionLiveSessions):
+    """Explicit nonformal test/engineering path, never used by packaged composition."""
+
+    def __init__(self, store: InstitutionLocalStore) -> None:
+        self._store = store
+        self._metadata = {}
+
+    def create_session(self, context, protocol) -> str:
+        session_id = self._store.create_engineering_session(context, protocol)
+        self._remember_metadata(session_id, context, protocol)
+        return session_id
 
 
 class LivePhysicalCapture:
@@ -219,6 +248,8 @@ class LivePhysicalCapture:
     ) -> None:
         if stage_seconds <= 0:
             raise ValueError("stage_seconds must be positive")
+        if formal_upload is not None and isinstance(sessions, EngineeringLiveSessions):
+            raise ValueError("formal capture requires grant-bound institution sessions")
         if read_size <= 0:
             raise ValueError("read_size must be positive")
         if storage_append_timeout_s is not None and storage_append_timeout_s < 0:
@@ -268,6 +299,10 @@ class LivePhysicalCapture:
                 started_at_ns=started_at_ns,
                 protocol_profile=protocol_profile,
                 upload_envelope=upload_envelope,
+                upload_credential=(
+                    self._sessions.capture_credential(session_id)
+                    if self._formal_upload is not None else None
+                ),
             )
 
     def capture(
@@ -464,6 +499,9 @@ class LivePhysicalCapture:
                     versions=stager_versions,
                     started_at_ns=started_at_ns,
                     upload_envelope=upload_envelope,
+                    upload_credential=(
+                        prepared.upload_credential if prepared is not None else None
+                    ),
                     expected_stage_ids=gate.expected_stage_ids,
                 ),
             )
