@@ -445,7 +445,7 @@ def test_capture_identifies_state_initialization_failures_without_exposing_detai
     ):
         capture.capture("session-1", gate)
 
-    assert hardware.connections[0].closed
+    assert hardware.connections == []
 
 
 def test_close_failure_cannot_override_stage_error_or_keep_worker_claimed(tmp_path) -> None:

@@ -39,7 +39,11 @@ from client.device.session_ui import (
     processing_failed,
 )
 from client.device.transport import TransportDisconnected
-from client.hardware_standardization.dynamic_defect_mask import DynamicDefectMask
+from client.hardware_standardization.dynamic_defect_mask import (
+    DeviceHealthStatus,
+    DynamicDefectMask,
+    DynamicDefectPolicy,
+)
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.local_analysis.service import (
     ProcessingOutcome,
@@ -153,7 +157,7 @@ class _LiveCaptureState:
 class _PreparedCaptureSession:
     metadata: LiveSessionMetadata
     started_at_ns: int
-    protocol_profile: str
+    protocol_profile: str | None
     upload_envelope: FormalUploadEnvelope | None
     dynamic_defect_mask: DynamicDefectMask | None
     dynamic_defect_mask_load_failed: bool
@@ -247,6 +251,7 @@ class LivePhysicalCapture:
         self._read_size = read_size
         self._formal_upload = formal_upload
         self._dynamic_defect_mask_loader = dynamic_defect_mask_loader
+        self._dynamic_defect_policy = DynamicDefectPolicy()
         self._prepared_sessions: dict[str, _PreparedCaptureSession] = {}
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
@@ -254,15 +259,23 @@ class LivePhysicalCapture:
         self._active_workers: set[str] = set()
         self._state_lock = threading.Lock()
 
-    def prepare_session(self, session_id: str) -> None:
+    def prepare_session(self, session_id: str) -> LiveHardwareSessionResult | None:
         """Freeze upload metadata on the caller thread before device I/O starts."""
 
         with self._state_lock:
-            if session_id in self._states or session_id in self._prepared_sessions:
-                return
-            metadata = self._sessions.metadata(session_id)
+            if session_id in self._states:
+                return None
+            prepared = self._prepared_sessions.get(session_id)
+            if prepared is not None:
+                return self._unusable_mask_result(session_id, prepared)
+            try:
+                metadata = self._sessions.metadata(session_id)
+            except Exception as exc:
+                raise _CaptureInitializationError("metadata", exc) from exc
             started_at_ns = self._wall_time_ns()
-            protocol_profile = self._hardware.capture_profile_version
+            protocol_profile = getattr(self._hardware, "capture_profile_version", None)
+            if self._formal_upload is not None and protocol_profile is None:
+                raise RuntimeError("formal upload requires the hardware capture profile")
             upload_envelope = self._formal_upload_envelope(
                 session_id=session_id,
                 metadata=metadata,
@@ -273,8 +286,8 @@ class LivePhysicalCapture:
             try:
                 dynamic_defect_mask = self._load_dynamic_defect_mask()
             except Exception:
-                # Defer a fixed failure marker to the worker's existing capture
-                # failure path; never surface local paths or exception details.
+                # Fail closed with the fixed sensor-health result; never expose
+                # local paths or exception details in the operator boundary.
                 dynamic_defect_mask = None
                 dynamic_defect_mask_load_failed = True
             self._prepared_sessions[session_id] = _PreparedCaptureSession(
@@ -285,10 +298,46 @@ class LivePhysicalCapture:
                 dynamic_defect_mask=dynamic_defect_mask,
                 dynamic_defect_mask_load_failed=dynamic_defect_mask_load_failed,
             )
+            return self._unusable_mask_result(
+                session_id, self._prepared_sessions[session_id]
+            )
+
+    def _unusable_mask_result(
+        self, session_id: str, prepared: _PreparedCaptureSession
+    ) -> LiveHardwareSessionResult | None:
+        mask_unusable = prepared.dynamic_defect_mask_load_failed or (
+            prepared.dynamic_defect_mask is not None
+            and prepared.dynamic_defect_mask.health_status(self._dynamic_defect_policy)
+            is DeviceHealthStatus.HEALTH_UNAVAILABLE
+        )
+        if not mask_unusable:
+            return None
+        reason = "DEVICE_DYNAMIC_DEFECT_MASK_UNUSABLE"
+        return LiveHardwareSessionResult(
+            AcquisitionResult(
+                session_id=session_id,
+                outcome=AcquisitionOutcome.INVALID,
+                frames_stored=0,
+                reason=reason,
+            ),
+            SessionValidity.INVALID,
+            reason,
+            False,
+            from_quality_reasons((reason,)),
+        )
 
     def capture(
         self, session_id: str, gate: StageRecordingGate
     ) -> HardwareSessionResult:
+        try:
+            preflight_result = self.prepare_session(session_id)
+        except _CaptureInitializationError as exc:
+            gate.cancel_current_stage()
+            raise RetryableStageCaptureError(
+                f"capture initialization failed: {exc.boundary}"
+            ) from exc
+        if preflight_result is not None:
+            return preflight_result
         reference = self._baseline.reference
         if reference is None:
             raise RuntimeError("P-05 empty-board baseline is required before capture")
@@ -414,7 +463,10 @@ class LivePhysicalCapture:
             else:
                 metadata = prepared.metadata
                 started_at_ns = prepared.started_at_ns
-                if parser.profile.version != prepared.protocol_profile:
+                if (
+                    prepared.protocol_profile is not None
+                    and parser.profile.version != prepared.protocol_profile
+                ):
                     raise RuntimeError("prepared parser profile changed before capture")
                 dynamic_defect_mask = prepared.dynamic_defect_mask
                 if prepared.dynamic_defect_mask_load_failed:
@@ -437,6 +489,7 @@ class LivePhysicalCapture:
             quality_gate = DoP4864HardwareQualityGate(
                 baseline_reference=reference,
                 dynamic_defect_mask=dynamic_defect_mask,
+                dynamic_defect_policy=self._dynamic_defect_policy,
             )
             versions = {
                 "institution_live": "institution-live-ui/1",
