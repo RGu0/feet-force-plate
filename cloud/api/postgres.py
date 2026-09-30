@@ -142,6 +142,33 @@ class PostgresPlatformRepository:
                                 reason=request.reason, evidence_reference=request.evidence_reference)),
             )
 
+    async def validate_migration_reconciliation(self, request) -> bool:
+        if self._platform_pool is None or request.reconciliation_reference is None:
+            return False
+        async with tenant_transaction(self._platform_pool, request.tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                request.tenant_id, request.session_id,
+            )
+            return bool(await connection.fetchval(
+                """SELECT EXISTS(
+                   SELECT 1 FROM ops.identity_recovery_cases c
+                   JOIN ops.identity_recovery_receipts r
+                     ON r.tenant_id=c.tenant_id AND r.case_id=c.case_id
+                   WHERE c.tenant_id=$1 AND c.case_id=$2 AND c.session_id=$3
+                     AND c.terminal_id=$4 AND c.status='MATCHED'
+                     AND c.original_subject_uuid=$5 AND c.cloud_subject_uuid=$6
+                     AND c.envelope_sha256=$7 AND r.receipt_id IS NOT NULL
+                     AND r.expires_at > clock_timestamp() AND r.consumed_at IS NULL
+                     AND r.terminal_id=c.terminal_id AND r.session_id=c.session_id
+                     AND r.original_subject_uuid=c.original_subject_uuid
+                     AND r.cloud_subject_uuid=c.cloud_subject_uuid
+                     AND r.envelope_sha256=c.envelope_sha256)""",
+                request.tenant_id, request.reconciliation_reference, request.session_id,
+                request.installation_id, request.original_subject_uuid,
+                request.final_subject_uuid, request.original_envelope_sha256,
+            ))
+
     async def insert_migration_permit(self, context, request, token_sha256):
         from shared.contracts.access_control import PlatformRole
 
@@ -150,6 +177,10 @@ class PostgresPlatformRepository:
         if PlatformRole.OWNER not in context.roles or context.expires_at <= datetime.now(UTC):
             raise TenantAccessDenied("migration owner required")
         async with tenant_transaction(self._platform_pool, request.tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                request.tenant_id, request.session_id,
+            )
             owner = await connection.fetchval(
                 """SELECT i.platform_identity_id FROM iam.platform_identities i
                    JOIN iam.platform_identity_role_bindings b USING (platform_identity_id)
@@ -162,6 +193,26 @@ class PostgresPlatformRepository:
             )
             if owner is None:
                 raise TenantAccessDenied("migration owner required")
+            if request.identity_conflict:
+                matched = await connection.fetchval(
+                    """SELECT EXISTS(
+                       SELECT 1 FROM ops.identity_recovery_cases c
+                       JOIN ops.identity_recovery_receipts r
+                         ON r.tenant_id=c.tenant_id AND r.case_id=c.case_id
+                       WHERE c.tenant_id=$1 AND c.case_id=$2 AND c.session_id=$3
+                         AND c.terminal_id=$4 AND c.status='MATCHED'
+                         AND c.original_subject_uuid=$5 AND c.cloud_subject_uuid=$6
+                         AND c.envelope_sha256=$7 AND r.expires_at > clock_timestamp()
+                         AND r.consumed_at IS NULL AND r.terminal_id=c.terminal_id
+                         AND r.session_id=c.session_id AND r.original_subject_uuid=c.original_subject_uuid
+                         AND r.cloud_subject_uuid=c.cloud_subject_uuid
+                         AND r.envelope_sha256=c.envelope_sha256)""",
+                    request.tenant_id, request.reconciliation_reference, request.session_id,
+                    request.installation_id, request.original_subject_uuid,
+                    request.final_subject_uuid, request.original_envelope_sha256,
+                )
+                if not matched:
+                    raise TenantAccessDenied("migration reconciliation is not a persisted MATCHED case")
             hardware_id = await connection.fetchval(
                 """SELECT h.hardware_id FROM device.client_installations i
                    JOIN device.license_assignments la ON la.tenant_id=i.tenant_id AND la.account_id=i.account_id
@@ -181,12 +232,17 @@ class PostgresPlatformRepository:
             inserted = await connection.fetchval(
                 """INSERT INTO screening.upload_migration_permits
                    (tenant_id,session_id,installation_id,account_id,license_id,hardware_id,token_sha256,
-                    consumed_request_sha256,expected_manifest_sha256,approver_id,approval_reason,evidence_reference)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                    consumed_request_sha256,expected_manifest_sha256,approver_id,approval_reason,evidence_reference,
+                    original_envelope_sha256,original_subject_uuid,final_subject_uuid,consent_record_id,
+                    consent_sha256,reconciliation_case_id)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                    ON CONFLICT (tenant_id,session_id) DO NOTHING RETURNING session_id""",
                 request.tenant_id, request.session_id, request.installation_id, request.account_id,
                 request.license_id, hardware_id, token_sha256, request.request_sha256, request.manifest_sha256,
                 context.platform_identity_id, request.reason, request.evidence_reference,
+                request.original_envelope_sha256, request.original_subject_uuid,
+                request.final_subject_uuid, request.consent_record_id, request.consent_sha256,
+                request.reconciliation_reference,
             )
             if inserted is None:
                 raise TenantAccessDenied("migration permit already issued")
@@ -611,12 +667,28 @@ class PostgresPlatformRepository:
         context.ensure_can_upload()
         digest = canonical_sha256(request)
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            # This lock is shared with RAY-99 recovery-case creation and
+            # registration, preventing a generic create from racing past the
+            # durable identity-recovery guard.
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                context.tenant_id, request.session_id,
+            )
             # Lock order: idempotency key, tenant/session (including absent row),
-            # session row, authorization row. All registration callers use it.
+            # session row, authorization row. Recovery registration acquires
+            # the same recovery-session lock before its own idempotency/case
+            # locks, then locks its session/authorization row in this order.
             for key in (f"session.create:{context.tenant_id}:{idempotency_key}", f"session:{context.tenant_id}:{request.session_id}"):
                 lock_id = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
                 await connection.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock_id)
             await self._require_active_terminal(connection, context)
+            protected = await connection.fetchval(
+                """SELECT EXISTS(SELECT 1 FROM ops.identity_recovery_cases
+                   WHERE tenant_id=$1 AND session_id=$2)""",
+                context.tenant_id, request.session_id,
+            )
+            if protected:
+                raise TenantAccessDenied("session requires controlled identity recovery")
             replay = await self._idempotency(
                 connection, context.tenant_id, "session.create", idempotency_key, digest
             )
@@ -653,6 +725,17 @@ class PostgresPlatformRepository:
                     or (row["expected_manifest_sha256"] is not None and row["expected_manifest_sha256"] != authorization.manifest_sha256)
                 ):
                     raise TenantAccessDenied("采集授权不匹配")
+                if authorization.kind == "migration_permit":
+                    consent_sha256 = await connection.fetchval(
+                        "SELECT evidence_hash FROM subject.consents WHERE tenant_id=$1 AND consent_record_id=$2 AND subject_uuid=$3 AND revoked_at IS NULL",
+                        context.tenant_id, request.consent_record_id, request.subject_uuid,
+                    )
+                    if (
+                        row["final_subject_uuid"] != request.subject_uuid
+                        or row["consent_record_id"] != request.consent_record_id
+                        or row["consent_sha256"] != consent_sha256
+                    ):
+                        raise TenantAccessDenied("migration permit consent binding mismatch")
             if existing is not None:
                 response = SessionCreateResponse(session_id=request.session_id, ingest_status=record.ingest_status, idempotent_replay=True)
                 if replay is None:
@@ -780,7 +863,7 @@ class PostgresPlatformRepository:
             await self._require_active_terminal(connection, context)
             row = await connection.fetchrow(
                 """
-                SELECT e.subject_uuid, e.masked_value, p.profile_json
+                SELECT e.subject_uuid, e.external_identifier_id, e.masked_value, p.profile_json
                 FROM subject.external_identifiers e
                 JOIN subject.subjects s
                   ON s.tenant_id=e.tenant_id AND s.subject_uuid=e.subject_uuid
@@ -798,6 +881,7 @@ class PostgresPlatformRepository:
                 return None
             return SubjectSummary(
                 subject_uuid=row["subject_uuid"],
+                external_identifier_id=row["external_identifier_id"],
                 external_id_masked=row["masked_value"],
                 analysis_profile=_json_value(row["profile_json"]) if row["profile_json"] else {},
             )
@@ -831,7 +915,7 @@ class PostgresPlatformRepository:
             if external is not None:
                 existing = await connection.fetchrow(
                     """
-                    SELECT e.subject_uuid, e.masked_value, p.profile_json
+                    SELECT e.subject_uuid, e.external_identifier_id, e.masked_value, p.profile_json
                     FROM subject.external_identifiers e
                     LEFT JOIN subject.analysis_profiles p
                       ON p.tenant_id=e.tenant_id AND p.subject_uuid=e.subject_uuid
@@ -846,6 +930,7 @@ class PostgresPlatformRepository:
             if existing is not None:
                 response = SubjectSummary(
                     subject_uuid=existing["subject_uuid"],
+                    external_identifier_id=existing["external_identifier_id"],
                     external_id_masked=existing["masked_value"],
                     conflict=True,
                     analysis_profile=(
@@ -909,6 +994,7 @@ class PostgresPlatformRepository:
                         key_version,
                     ):
                         raise ValueError("protected external identifier fields are required")
+                    external_identifier_id = uuid4()
                     await connection.execute(
                         """
                         INSERT INTO subject.external_identifiers (
@@ -917,7 +1003,7 @@ class PostgresPlatformRepository:
                             normalized_hmac, masked_value, key_version, status
                         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'ACTIVE')
                         """,
-                        uuid4(),
+                        external_identifier_id,
                         context.tenant_id,
                         request.subject_uuid,
                         external.issuer,
@@ -930,6 +1016,9 @@ class PostgresPlatformRepository:
                     )
                 response = SubjectSummary(
                     subject_uuid=request.subject_uuid,
+                    external_identifier_id=(
+                        external_identifier_id if external is not None else None
+                    ),
                     external_id_masked=masked_value,
                     analysis_profile=request.analysis_profile,
                 )

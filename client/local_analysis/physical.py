@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from client.hardware_standardization.public_export import PhysicalPressureSession
+from client.hardware_integration.live_hardware_demo import LIVE_STATIC_BALANCE_PROTOCOL_ID
 from client.spool.session_commit import read_committed_physical_session
 from client.spool.state_store import KeyProvider, StateStore
 from cloud.analysis.coordinates import board_to_subject_coordinates
@@ -32,7 +33,7 @@ from .models import (
 
 _RESULT_VERSION = 2
 _ALGORITHM_VERSION = "local-physical-analysis/2.0"
-_PROTOCOL_ID = "standard-static-balance"
+_PROTOCOL_ID = LIVE_STATIC_BALANCE_PROTOCOL_ID
 _WITHHELD_REASON = "LOCAL_PHYSICAL_FEATURE_NOT_CUSTOMER_RELEASED"
 _RELATIVE_BASIC_VERSION = "physical-relative-basic/2.0"
 _MINIMUM_RELATIVE_SAMPLE_RATE_HZ = 10.0

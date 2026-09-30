@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from shared.contracts.cloud import (
     SubjectCreateRequest,
     SubjectResolveRequest,
     SubjectSummary,
+    IdentityProfileInput,
 )
 
 
@@ -94,6 +96,16 @@ class IdentityProtector:
             nonce, canonical_json_bytes(value), associated_data
         )
         return ProtectedIdentityProfile(ciphertext, nonce, self.key_version)
+
+    def unprotect_identity_profile(
+        self, ciphertext: bytes, nonce: bytes, key_version: str,
+        *, tenant_id: str, subject_uuid: str,
+    ) -> IdentityProfileInput:
+        if key_version != self.key_version:
+            raise ValueError("unsupported identity key version")
+        associated_data = f"{tenant_id}\x1f{subject_uuid}\x1fidentity-profile".encode("utf-8")
+        plaintext = self._cipher.decrypt(nonce, ciphertext, associated_data)
+        return IdentityProfileInput.model_validate(json.loads(plaintext))
 
 
 class SubjectConsentService:

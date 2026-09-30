@@ -31,9 +31,7 @@ class CaptureGrantService:
         decision = None
         if PlatformRole.OWNER not in context.roles:
             decision = "OWNER_REQUIRED"
-        elif request.identity_conflict:
-            # RAY-99 has no persisted, independently verifiable mapping source
-            # here yet. A caller-provided reference is not reconciliation proof.
+        elif request.identity_conflict and not await self._repository.validate_migration_reconciliation(request):
             decision = "RECONCILIATION_UNVERIFIABLE"
         elif not all((request.local_valid_reviewed, request.immutable_manifest_reviewed,
                       request.original_consent_reviewed, request.historical_authorization_reviewed)):

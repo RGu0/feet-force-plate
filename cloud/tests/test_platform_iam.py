@@ -180,6 +180,13 @@ def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> N
         assert identity.display_name == "Patient One"
         assert identity.grant_id == grant.grant_id
 
+        with pytest.raises(PlatformPermissionDenied):
+            await sensitive.read_identity(
+                support, grant_id=grant.grant_id, tenant_id=tenant_id,
+                subject_id=uuid4(),
+                identity_loader=lambda: ("Patient Two", "other@example.test"),
+            )
+
         clock.value += timedelta(minutes=15)
         with pytest.raises(PlatformPermissionDenied):
             await sensitive.read_identity(
@@ -196,13 +203,14 @@ def test_sensitive_identity_requires_support_or_owner_and_15_minute_grant() -> N
             "sensitive-access.grant",
             "sensitive-access.use",
             "sensitive-access.deny",
+            "sensitive-access.deny",
         ]
         deny_reasons = [
             dict(event.details).get("reason")
             for event in await repository.audit_events(tenant_id=tenant_id)
             if event.action == "sensitive-access.deny"
         ]
-        assert deny_reasons == ["role_unauthorized", "context_inactive"]
+        assert deny_reasons == ["role_unauthorized", "grant_invalid", "context_inactive"]
 
     asyncio.run(exercise())
 

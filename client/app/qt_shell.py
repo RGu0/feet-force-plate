@@ -82,6 +82,7 @@ _ACTION_LABELS = {
     "EXPORT_DIAGNOSTIC": "导出问题诊断包",
     "OPEN_ENGINEERING_MAINTENANCE": "工程检修",
     "OPEN_SESSION_DELETION": "本地会话清理",
+    "OPEN_SUBJECT_RECOVERY": "核对待传档案",
 }
 
 _WIZARD_STEPS = ("受试者", "选填信息", "授权确认", "设备预检", "站位引导")
@@ -896,6 +897,22 @@ class ScreeningWindow(QMainWindow):
         )
         assert entry is not None
         entry.setVisible(available)
+
+    def set_subject_recovery_available(self, available: bool) -> None:
+        entry = self._pages[PageId.SUPPORT].findChild(
+            QPushButton, "OPEN_SUBJECT_RECOVERY"
+        )
+        assert entry is not None
+        entry.setVisible(available)
+
+    def show_subject_recovery(self, service) -> None:
+        from .subject_recovery_dialog import SubjectRecoveryDialog
+
+        dialog = SubjectRecoveryDialog(service, self)
+        self._subject_recovery_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def show_engineering_maintenance(self, service: EngineeringMaintenanceService) -> None:
         """Open a separately confirmed, read-only engineering projection."""
@@ -2088,6 +2105,9 @@ class ScreeningWindow(QMainWindow):
         deletion.setVisible(False)
         deletion.setToolTip("仅在部署明确接入单会话人工清理服务时可用")
         action_layout.addWidget(deletion)
+        recovery = self._action_button("OPEN_SUBJECT_RECOVERY", primary=False, ghost=True)
+        recovery.setVisible(False)
+        action_layout.addWidget(recovery)
         action_layout.addStretch(1)
         inner_layout.addWidget(actions)
         note = self._label("诊断包默认不含原始会话与身份明文；附加会话数据需要独立确认。支持热线 400-820-1120。", "supportNote")

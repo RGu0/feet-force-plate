@@ -154,6 +154,8 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.data_repository._migration_permits[key] = replace(
             self.data_repository._capture_grants.pop(key),
             consumed_request_sha256=canonical_sha256(request), expected_manifest_sha256="a" * 64,
+            final_subject_uuid=request.subject_uuid, consent_record_id=request.consent_record_id,
+            consent_sha256=canonical_sha256(self.consent_request()),
         )
         authorization = authorization.model_copy(update={"kind": "migration_permit"})
         for body, auth in (
@@ -368,6 +370,18 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
             started_at=self.now,
         )
 
+    def consent_request(self) -> ConsentCreateRequest:
+        return ConsentCreateRequest(
+            consent_record_id=self.consent_id,
+            subject_uuid=self.subject_id,
+            policy_version="privacy-policy/1.0",
+            purpose_codes=("SCREENING_SERVICE",),
+            data_categories=("PRESSURE_RAW", "ANALYSIS_PROFILE"),
+            granted_at=self.now,
+            evidence_type="OPERATOR_CONFIRMED",
+            terminal_signature="signed-client-evidence",
+        )
+
     async def create_session(self, token: str, session_id: UUID):
         headers = self.headers(token)
         headers["Idempotency-Key"] = f"create-{session_id}"
@@ -403,16 +417,7 @@ class TenantAccessIngestionTests(unittest.IsolatedAsyncioTestCase):
 
         consent_headers = self.headers(token)
         consent_headers["Idempotency-Key"] = "create-seed-consent"
-        consent = ConsentCreateRequest(
-            consent_record_id=self.consent_id,
-            subject_uuid=self.subject_id,
-            policy_version="privacy-policy/1.0",
-            purpose_codes=("SCREENING_SERVICE",),
-            data_categories=("PRESSURE_RAW", "ANALYSIS_PROFILE"),
-            granted_at=self.now,
-            evidence_type="OPERATOR_CONFIRMED",
-            terminal_signature="signed-client-evidence",
-        )
+        consent = self.consent_request()
         granted = await self.client.post(
             "/v1/consents",
             headers=consent_headers,

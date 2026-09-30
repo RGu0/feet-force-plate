@@ -28,6 +28,8 @@ class CaptureGrantApiTests(TenantAccessIngestionTests):
                       license_id=self.session.license_id, installation_id=self.installation_id,
                       hardware_id=self.session.hardware_id, session_id=self.session_id,
                       request_sha256="a" * 64, manifest_sha256="b" * 64,
+                      final_subject_uuid=self.subject_id, consent_record_id=self.consent_id,
+                      consent_sha256=canonical_sha256(self.consent_request()),
                       evidence_reference="evidence/ray-513/review-1", reason="LEGACY_VALID_SESSION_REVIEWED",
                       identity_conflict=False, reconciliation_reference=None,
                       local_valid_reviewed=True, immutable_manifest_reviewed=True,
@@ -38,12 +40,13 @@ class CaptureGrantApiTests(TenantAccessIngestionTests):
     async def test_migration_unverifiable_reconciliation_denied_and_audited(self):
         service = CaptureGrantService(self.data_repository)
         owner = await self.migration_owner()
-        for reference in (None, "evidence/ray-99/claimed-mapping"):
+        for reference in (uuid4(),):
             with self.assertRaises(TenantAccessDenied):
                 await service.approve_migration(owner, self.migration_request(
-                    identity_conflict=True, reconciliation_reference=reference))
+                    identity_conflict=True, reconciliation_reference=reference,
+                    original_envelope_sha256="d" * 64, original_subject_uuid=uuid4()))
         self.assertFalse(self.data_repository._migration_permits)
-        self.assertEqual(len(self.data_repository._migration_audits), 2)
+        self.assertEqual(len(self.data_repository._migration_audits), 1)
 
     async def test_migration_owner_approval_stores_only_digest_and_rejects_reissue(self):
         owner = await self.migration_owner()

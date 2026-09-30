@@ -44,7 +44,40 @@ License 暂停须阻止新的无凭据云端 session 登记，同时不能使此
 
 ### 3.4 上线前旧会话的受控迁移
 
-旧版 `VALID` 会话如已在云端登记，按上节已有 session 规则重试，不需要补发额度。未登记且无额度的旧会话在 License 暂停后**不自动放行**；队列保留数据和明确的“需迁移核准”状态。若 RAY-99 的受试者 UUID / 同意冲突尚未解决，必须先由操作员完成受控身份核对、新同意及持久映射，由该持久映射形成最终 cloud `SessionCreateRequest`，然后计算 canonical digest；原始上传封套与原同意审计保持不可变。RAY-513 不自行实现或绕过 RAY-99 的身份恢复流程，相关组合验收依赖该流程完成。
+旧版 `VALID` 会话如已在云端登记，按上节已有 session 规则重试，不需要补发额度。未登记且无额度的旧会话在 License 暂停后**不自动放行**；队列保留数据和明确的“需迁移核准”状态。若 RAY-99 的受试者 UUID / 同意冲突尚未解决，必须先由操作员完成受控身份核对，取得与原 session、原 subject、云端 subject 及原 envelope 摘要绑定的持久 recovery case 和 MATCHED receipt。该 reconciliation 阶段先于首次 session registration 完成。RAY-99 当前把新 consent、最终 session 和 recovery registration 放在同一个注册事务；RAY-513 必须将授权校验/消费接入这个事务，不能让 recovery route 绕过 grant 或 legacy permit。原始上传封套与原同意保持不可变。
+
+平台负责人核准的 RAY-513 migration permit 在身份冲突场景必须引用实际持久化的 RAY-99 case UUID，并绑定原 envelope SHA-256、原 subject UUID、最终云端 subject UUID、replacement consent ID、replacement consent canonical SHA-256、最终 `SessionCreateRequest` 摘要和最终 manifest 摘要。case 的 tenant/session/original subject/cloud subject/envelope digest 必须逐字段匹配。reference 是 UUID 外键语义，不接受自由文本。
+
+### 3.5 RAY-99 recovery 注册与 RAY-513 授权的原子接线
+
+RAY-99 的 case 创建及平台 MATCHED receipt 是独立且已持久化的 reconciliation 阶段；它本身不创建 session。随后 `POST /v1/identity-recovery/cases/{case_id}/register` 是可能首次创建云端 session 的入口，必须与 `POST /v1/sessions` 一样受 RAY-513 首次登记规则保护。最小接线是在既有 recovery registration 请求头接受相同的 `SessionAuthorization` 方案，并把授权验证放进 recovery repository 已有 tenant transaction；不增加中间的半注册 session，也不先提交 consent 再留下孤立 session。
+
+授权按当前 principal 与目标 session 状态裁定：
+
+| 情况 | 允许条件 | 持久化动作 |
+|---|---|---|
+| `allow_upload=false` | 一律拒绝，包括登记重放与已登记会话后续上传 | 不新增 consent/session/recovery registration，也不消费凭据 |
+| 已有完全相同的 recovery registration | 当前仍 `allow_upload=true`，且相同 recovery idempotency key/request digest | 返回原回执；不再次消费 grant/permit |
+| 首次登记、`allow_new_test=true` | 保留当前 active-principal 建 session 能力；若提供 grant/permit 则必须校验并消费 | consent、session、recovery registration 与所提供授权同一事务写入 |
+| 首次登记、`allow_new_test=false`、有效 pre-issued grant | grant 的 tenant/account/install/hardware/session/request/manifest 全部匹配 | 同事务消费 grant 并写 consent/session/recovery registration |
+| 首次登记、`allow_new_test=false`、无 grant 的旧 `VALID` 会话 | 必须有负责人签发的一次性 migration permit；身份冲突时还须命中上表所述持久 RAY-99 case | 同事务消费 permit 并写 consent/session/recovery registration |
+| 暂停后的裸首次登记、无效凭据或不匹配最终 consent/subject | 一律拒绝且无副作用 | 原 envelope、同意及分段留在本地；不消费凭据 |
+
+普通 `/v1/sessions` 和 recovery `/register` 共用相同的 authorization row/digest 校验规则。recovery 路径额外核对 RAY-99 receipt 与 case；permit 路径额外核对绑定的 reconciliation case、original envelope digest 及最终 subject/consent IDs。两种路径均先应用 `allow_upload`，然后先解决同一 session 的并发锁，再处理幂等重放与新建。新建时必须在同一事务内验证并消费授权、插入 consent/session、消费 recovery receipt、写入 `identity_recovery_registrations`；事务回滚不得留下其中任何单项副作用。`SessionCreateRequest` 保持不变，request digest 仍只由最终 session DTO 计算；replacement consent 的 canonical digest 及 RAY-99 registration digest 分别保留，manifest digest 通过现有授权头/持久列绑定。
+
+终端先持久化不可变 `LegacyMigrationBinding`：原 envelope SHA-256、RAY-99 case UUID、原/最终 subject UUID、final consent ID 与 canonical SHA-256、最终 request/manifest digest、审批引用和加密 permit。重启重试必须重算原 envelope、replacement consent、最终 session request 与本地 manifest；任一 digest 或 UUID 不符，队列阻断且保留原始材料。未解决/过期/拒绝的 RAY-99 reconciliation 不允许发起 legacy permit 消费。若请求响应丢失，重用同一 case、receipt、session、consent、授权及 idempotency key；服务端精确重放原 registration，不能再消费 token 或创建重复 session。
+
+### 技术审查记录（2026-09-30）
+
+- **兼容性：** RAY-99 已把 reconciliation 分成 case 创建、平台 MATCHED receipt 与 terminal registration。前两个步骤已持久化身份关系，足以供 permit 核对；不必增加“暂存云 session”或另造 subject merge。现有 registration 仍同时创建 replacement consent/session/registration。
+- **最小接线：** 扩展既有 recovery registration 入口接受 Task 1 的 `SessionAuthorization` 和 final manifest digest；新建 consent/session、RAY-99 registration/receipt 消费及 RAY-513 grant/permit 消费都留在同一个 tenant transaction。这样暂停下的无 grant 旧会话不能只凭 RAY-99 receipt 注册，且失败回滚不会留下孤立 consent 或 session。
+- **状态适用性：** `allow_upload=false` 拒绝全部路径；active principal 保留原 active 首登语义，不强制所有 recovery 使用 legacy permit；已有精确 recovery registration 在 `allow_upload=true` 下只做幂等重放；paused 首登由有效 grant 放行，paused 的无 grant legacy `VALID` 必须持 owner permit。对 recovery 路径提供的 grant/permit 无论 License 当前 active 与否都必须校验，不忽略凭据。
+- **原子与竞争：** PostgreSQL recovery case 创建、普通 session 创建和 recovery registration 必须共享 `recovery-session:<tenant>:<session>` advisory lock；recovery registration 的锁顺序为 session → registration idempotency key → case → receipt → session/authorization row。permit/grant 的校验/更新、会话唯一键、consent insert、receipt consume、recovery registration、授权审计均在同一事务，正确重试只返回先前结果且不二次消费。实现需确认 app-role RLS/privileges 可在该事务完成此读写。
+- **摘要完整性：** session request digest 不包含 consent 内容，所以 permit 另存 replacement-consent canonical SHA-256；registration 检查 consent ID、subject ID、consent digest、request digest、manifest digest 均与 permit/binding 一致。`SessionCreateRequest` 本身不改字段。
+- **客户端恢复：** queue 在 recovery registration 前验证 immutable envelope、replacement consent、final session request 与 manifest；只在所有本地绑定一致时发送授权。original envelope/consent 不回写；secret 仍仅以 `SecretStr` 传输并用现有 AES-GCM state store 加密。
+- **回归矩阵：** 覆盖 active/no credential、active/credential、paused/grant、paused/permit、paused/no credential、existing replay、`allow_upload=false`、receipt/permit 过期、case/consent/session/digest 交叉错配、并发首登、丢响应重试与事务中途故障；验证全部拒绝路径无 session/consent/permit 消费副作用，且原始文件/封套摘要不变。
+
+审查结论：该方案保留 RAY-99 的身份核对职责和 RAY-513 的暂停后首次登记授权要求，依赖现有持久 recovery case/receipt，未发现互斥的已确认 acceptance。当前 master API 未接线 authorization 属实现缺口，按本计划修复；开工前还需把 consent digest 与迁移列纳入契约/SQL/测试。
 
 平台 `PLATFORM_OWNER` 使用独立的 `POST /v1/platform/upload-migration-permits`，提交 tenant、account、License、采集时安装/硬件、最终 session UUID、最终请求 SHA-256、最终清单 SHA-256、证据引用，以及固定的非敏感审批理由代码 `LEGACY_VALID_SESSION_REVIEWED`；接口拒绝自由文本理由。详细审批说明只保存在受限证据中，`evidence_reference` 仅是没有敏感内容的引用。审批材料须包括本地 `VALID`/不可变分段与原同意，并核对可取得的采集时授权证据（例如保留的签名 License 版本或服务端历史发行审计）；证据不足时不能自动核准。服务器在许可记录和审计中保存审批者、固定理由代码、证据引用与摘要，不复制详细说明、原始数据或敏感凭据。仅负责人可签发，签发本身及拒绝留审计。许可是高熵、一次性、仅供该 session 与两个摘要使用的不透明令牌；消费与云端新建 session 在同一事务。负责人核准代表明确的风险承担，不应在产品或证据中描述成自动验证了真实采集时刻。
 
@@ -60,7 +93,7 @@ License 暂停须阻止新的无凭据云端 session 登记，同时不能使此
 
 1. 合同/数据库/服务测试：活跃发行及上限、暂停不能发行、裸请求 403 且无副作用、跨租户/安装/硬件/会话/摘要拒绝、注销后拒绝、并发消费唯一、丢响应后同会话幂等、已有会话无新 grant 重试、`allow_upload=false` 硬拒绝、最终清单摘要匹配。
 2. 客户端组合测试：正式 workflow 从预发 UUID 创建本地会话；有效会话晋升与授权交接原子；取消/无效/崩溃烧掉额度；24 小时、50 次、2 GiB 本地门槛；进程重启/网络恢复/长期延迟上传；额度耗尽只挡新测；权限错误保留原始数据。覆盖真实 `PersistentUploadQueue`，不以直接 `put_segment`/`complete_session` 单测替代。
-3. 人工迁移测试：无额度旧会话自动拒绝；审批需负责人身份、理由和证据引用；受试者/同意冲突在核准前解决；许可只匹配最终请求与清单摘要；重复或换会话使用失败；拒批与失联不删除原始数据。测试使用脱敏 fixture，不把本机测试说成 Windows 真机验收。
+3. 人工迁移及 recovery 组合测试：暂停后无额度裸登记自动拒绝；审批需负责人身份、固定理由和证据引用；冲突场景 permit 必须引用已持久 MATCHED RAY-99 case，并匹配原 envelope、原/最终 subject、final consent ID、最终请求与清单摘要；recovery registration 首建会话须原子消费 permit，不能只靠 MATCHED receipt 越过 RAY-513；active recovery 不被强制要求 legacy permit；有效 grant 可在暂停后授权 recovery 首登；已有完全相同 registration 在 `allow_upload=true` 下精确幂等且不二次消费；`allow_upload=false` 包括重放在内全部拒绝；错误 consent、旧 digest、过期 receipt 和跨 case reference 无副作用；响应丢失/重启不重复建会话；拒批与失联不删除原始数据。测试使用脱敏 fixture，不把本机测试说成 Windows 真机验收。
 4. 受管测试、lint/build、跨平台 CI、PR head 自审与证据齐全后合并本 scope。Aliyun 先发布包含 R5 修正的**精确提交**，再与 RAY-120 D10 候选明确集成；不得只部署 PR #56 或直接把当前 `master` 当成 D10 候选。受控 seed 验证暂停后裸请求 403、持合法额度的有效会话首次登记/补传、同会话重试及人工许可拒绝/通过路径，然后重跑 RAY-120 live acceptance。部署、审计与证据不得打印密钥或令牌。
 
 此设计 scope 的 PR 不能仅因 CI 通过就标记 RAY-513 Done；须按 R5 证据与合并状态重验旧 `license-new-session-gate` 和新 scope，再核对 RAY-120 的父级验收门槛。

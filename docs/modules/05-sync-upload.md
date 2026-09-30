@@ -75,9 +75,17 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 
 会话的 subject/consent 引用若发生身份冲突，队列必须先完成 RAY-99 受控核对：服务端匹配回执与持久 case/registration 映射必须对应原 session 和原 envelope 摘要，且注册请求必须携带针对云端 subject 的新必要 consent。成功注册后，队列使用映射后的 subject 和 consent 上传；原 envelope、原 consent 与原始分段保持不可变。缺少服务端映射、回执过期/拒绝或新 consent 不匹配时，队列保持阻断并保留本地材料。
 
-没有预签发 grant 的历史 `VALID` 会话只可通过 RAY-513 单会话人工许可恢复。许可绑定最终 `SessionCreateRequest` 摘要、最终 manifest 摘要和受控身份 reconciliation reference；身份冲突场景必须引用 RAY-99 已持久化的 reconciliation case，不能用操作员自由文本代替。该许可不证明会话采集时间，且不绕过 `allow_upload=false`。许可缺失或任一绑定不一致时不创建云端会话。
+没有预签发 grant 的历史 `VALID` 会话只可通过 RAY-513 单会话人工许可恢复。许可绑定最终 `SessionCreateRequest` 摘要、最终 manifest 摘要、final consent canonical 摘要和受控身份 reconciliation reference；身份冲突场景必须引用 RAY-99 已持久化的 reconciliation case，不能用操作员自由文本代替。该许可不证明会话采集时间，且不绕过 `allow_upload=false`。许可缺失或任一绑定不一致时不创建云端会话。
+
+RAY-99 的 `register_recovery` 是首次云 session 创建入口之一，必须应用与普通 session 注册相同的 RAY-513 authorization。已持久的 MATCHED case/receipt 完成身份核对，但暂停后的无 grant legacy `VALID` 仍需 owner permit；grant/permit 消费与 consent、session、registration 的首次写入同一事务。active principal 保留现行恢复路径，不强制 legacy permit。所有路径继续受 `allow_upload` 约束。
 
 基础报告快照及内部质量/运行日志是独立的低优先级业务，不改变原始会话的确认条件。
+RAY-99 的 `LOCAL_BASIC_COPY` 在本地基础报告生成后进入独立的持久待传队列；仅当
+会话最终确认 `INGESTED` / `VALID`，且身份核对与新必要同意完成后，才通过
+`POST /v1/sessions/{id}/basic-report-copy` 上传原始 JSON 和本地渲染 PDF。
+断网或响应丢失时重用同一报告 ID、版本、摘要和幂等键；服务器回执确认前保留
+本地报告。云端副本的列表、详情与 PDF 导出分别使用 `/v1/reports`、
+`/v1/reports/{report_id}/versions/1` 和其 `/pdf` 子路径，均受当前冻结状态约束。
 
 服务器可在分段到达时预解码和预处理，但最终清单确认前不得发布完整报告。
 

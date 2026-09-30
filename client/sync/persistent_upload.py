@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import base64
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -50,9 +51,14 @@ from shared.contracts.cloud import (
     SessionStatusResponse,
     SessionVersions,
     SubjectCreateRequest,
+    SubjectResolveRequest,
     SubjectSummary,
     TestProtocol,
     ValidityStatus,
+)
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryCaseSummary,
+    RecoveryRegistrationRequest, RecoveryRegistrationResult,
 )
 
 
@@ -61,6 +67,25 @@ _UPLOAD_RETRY_POLICY = RetryPolicy(
     base_delay=timedelta(seconds=5),
     cap_delay=timedelta(seconds=900),
 )
+
+
+def upload_retry_delay_seconds(
+    attempt_count: int, *, retry_after_seconds: float | None,
+) -> float:
+    """Use Foundation's shared upload retry rule for raw and report handoffs."""
+
+    # A fixed origin avoids a lossy datetime round trip for the stored ns clock.
+    origin = datetime(1970, 1, 1, tzinfo=UTC)
+    next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
+        now=origin,
+        attempt_count=attempt_count,
+        retry_after=(
+            timedelta(seconds=retry_after_seconds)
+            if retry_after_seconds is not None
+            else None
+        ),
+    )
+    return (next_attempt - origin).total_seconds()
 
 
 class UploadError(RuntimeError):
@@ -123,6 +148,18 @@ class UploadTokenProvider(Protocol):
 
 
 class IngestionClient(Protocol):
+    def create_recovery_case(
+        self, access_token: str, request: RecoveryCaseCreateRequest, idempotency_key: str,
+    ) -> RecoveryCaseSummary: ...
+
+    def get_recovery_case(self, access_token: str, case_id: UUID) -> RecoveryCaseSummary: ...
+
+    def register_recovery(
+        self, access_token: str, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
+    ) -> RecoveryRegistrationResult: ...
+
     def get_status(
         self, access_token: str, session_id: UUID
     ) -> SessionStatusResponse | None: ...
@@ -133,6 +170,10 @@ class IngestionClient(Protocol):
         request: SubjectCreateRequest,
         idempotency_key: str,
     ) -> SubjectSummary: ...
+
+    def resolve_subject(
+        self, access_token: str, request: SubjectResolveRequest
+    ) -> SubjectSummary | None: ...
 
     def create_consent(
         self,
@@ -300,6 +341,8 @@ class PersistentUploadQueue:
     ) -> UploadCycleOutcome:
         try:
             envelope = self._store.sync_handoff_envelope(handoff.session_id)
+            recovery = self._store.subject_recovery_authorization(handoff.session_id)
+            migration_binding = self._store.legacy_migration_binding(handoff.session_id)
         except KeyProviderUnavailable as exc:
             raise UploadRetryable(
                 "local upload key is temporarily unavailable",
@@ -308,17 +351,11 @@ class PersistentUploadQueue:
         except Exception as exc:
             raise UploadConflict("formal upload envelope is unavailable") from exc
 
-        status = self._client.get_status(access_token, envelope.session_id)
-        if status is not None:
-            self._require_status_session(status, envelope.session_id)
-            if status.ingest_status is IngestStatus.INGESTED:
-                self._require_valid(status)
-                return self._confirm(handoff)
-            self._require_continuable(status)
-
         try:
             credential = self._store.sync_handoff_credential(handoff.session_id)
-            local = self._local_segments(handoff, envelope, require_manifest=credential is not None)
+            local = self._local_segments(
+                handoff, envelope, require_manifest=credential is not None
+            )
         except KeyProviderUnavailable as exc:
             raise UploadRetryable(
                 "local upload key is temporarily unavailable", error_code="E-SYN-503"
@@ -329,30 +366,117 @@ class PersistentUploadQueue:
             self._store.record_expected_cloud_manifest_sha256(handoff.session_id, digest)
         except ValueError as exc:
             raise UploadConflict("immutable cloud manifest changed") from exc
+        session_request = envelope.session_request()
+        if recovery is not None:
+            if (
+                recovery.schema_version != "subject-recovery/2"
+                or recovery.case_id is None or recovery.receipt_id is None
+                or recovery.original_envelope_sha256 != canonical_sha256(envelope)
+                or recovery.session_id != envelope.session_id
+                or recovery.original_subject_uuid != envelope.subject.subject_uuid
+            ):
+                raise UploadBlocked("recovery lacks a server-issued match receipt")
+            consent = recovery.replacement_consent
+            session_request = session_request.model_copy(update={
+                "subject_uuid": recovery.cloud_subject_uuid,
+                "consent_record_id": consent.consent_record_id,
+            })
+        if migration_binding is not None:
+            expected_consent = recovery.replacement_consent if recovery is not None else envelope.consent
+            if (
+                migration_binding.session_id != envelope.session_id
+                or migration_binding.original_envelope_sha256 != canonical_sha256(envelope)
+                or migration_binding.reconciliation_case_id != (recovery.case_id if recovery else None)
+                or migration_binding.original_subject_uuid != envelope.subject.subject_uuid
+                or migration_binding.final_subject_uuid != session_request.subject_uuid
+                or migration_binding.final_consent_id != session_request.consent_record_id
+                or migration_binding.final_consent_sha256 != canonical_sha256(expected_consent)
+                or migration_binding.request_sha256 != canonical_sha256(session_request)
+                or migration_binding.manifest_sha256 != digest
+            ):
+                raise UploadBlocked("legacy migration approval no longer matches this handoff", error_code="E-SYN-428")
+            credential = migration_binding.permit
         authorization = (
             SessionAuthorization(**credential.model_dump(), manifest_sha256=digest)
             if credential is not None else None
         )
-        self._client.create_subject(
-            access_token,
-            envelope.subject,
-            subject_key(envelope),
-        )
-        self._client.create_consent(
-            access_token,
-            envelope.consent,
-            consent_key(envelope),
-        )
-        try:
-            self._client.create_session(
-                access_token, envelope.session_request(), session_key(envelope),
-                **({"authorization": authorization} if authorization is not None else {}),
+        if recovery is not None:
+            try:
+                registration = self._client.register_recovery(
+                    access_token, recovery.case_id,
+                    RecoveryRegistrationRequest(
+                        receipt_id=recovery.receipt_id,
+                        original_subject_uuid=recovery.original_subject_uuid,
+                        original_envelope_sha256=recovery.original_envelope_sha256,
+                        consent=consent, session=session_request,
+                    ),
+                    f"recovery:{recovery.case_id}:{recovery.original_envelope_sha256}",
+                    authorization=authorization,
+                )
+            except UploadConflict as exc:
+                # The server first checks idempotent replay. A 409 here means
+                # there is no committed registration to resume. Keep raw data
+                # blocked and require a new platform comparison/receipt.
+                raise UploadBlocked(
+                    "recovery receipt was rejected; new verification is required",
+                    error_code="E-AUT-403",
+                ) from exc
+            except UploadBlocked as exc:
+                if authorization is None and exc.error_code == "E-AUT-403":
+                    raise UploadBlocked(
+                        "legacy session requires manual migration approval",
+                        error_code="E-SYN-428",
+                    ) from exc
+                raise
+            if (
+                registration.case_id != recovery.case_id
+                or registration.receipt_id != recovery.receipt_id
+                or registration.session_id != envelope.session_id
+                or registration.consent_record_id != consent.consent_record_id
+            ):
+                raise UploadConflict("cloud recovery registration does not match local authorization")
+
+        status = self._client.get_status(access_token, envelope.session_id)
+        if status is not None:
+            self._require_status_session(status, envelope.session_id)
+            if status.ingest_status is IngestStatus.INGESTED:
+                self._require_valid(status)
+                return self._confirm(handoff)
+            self._require_continuable(status)
+
+        if recovery is None:
+            subject = self._client.create_subject(
+                access_token, envelope.subject, subject_key(envelope),
             )
-        except UploadBlocked as exc:
-            if status is None and credential is None and exc.error_code == "E-AUT-403":
-                raise UploadBlocked("legacy session requires manual migration approval",
-                                    error_code="E-SYN-428") from exc
-            raise
+            if subject.subject_uuid != envelope.subject.subject_uuid:
+                raise UploadConflict(
+                    "cloud subject differs from the immutable local consent subject",
+                    error_code="E-SUB-409",
+                )
+            consent = envelope.consent
+            consent_response = self._client.create_consent(
+                access_token, consent, f"consent:{canonical_sha256(consent)}",
+            )
+            if (
+                consent_response.consent_record_id != consent.consent_record_id
+                or consent_response.subject_uuid != consent.subject_uuid
+                or consent_response.policy_version != consent.policy_version
+                or consent_response.revoked_at is not None
+            ):
+                raise UploadConflict("cloud consent does not match upload authorization")
+            try:
+                self._client.create_session(
+                    access_token, session_request,
+                    f"session:{canonical_sha256(session_request)}",
+                    **({"authorization": authorization} if authorization is not None else {}),
+                )
+            except UploadBlocked as exc:
+                if status is None and credential is None and exc.error_code == "E-AUT-403":
+                    raise UploadBlocked(
+                        "legacy session requires manual migration approval",
+                        error_code="E-SYN-428",
+                    ) from exc
+                raise
         remote = self._client.list_segments(access_token, envelope.session_id)
         self._require_segment_list(remote, envelope.session_id, local)
         remote_by_index = {item.index: item.sha256 for item in remote.received}
@@ -508,7 +632,9 @@ class PersistentUploadQueue:
         if isinstance(exc, UploadRetryable):
             return self._defer(handoff, exc)
         if isinstance(exc, UploadConflict):
-            self._store.mark_sync_handoff_conflict(handoff.session_id)
+            self._store.mark_sync_handoff_conflict(
+                handoff.session_id, error_code=exc.error_code
+            )
             return UploadCycleOutcome.CONFLICT
         if isinstance(exc, UploadBlocked):
             self._store.mark_sync_handoff_blocked(
@@ -538,19 +664,9 @@ class PersistentUploadQueue:
         *,
         retry_after_seconds: float | None,
     ) -> float:
-        # Use a fixed origin to obtain the policy's delay, then let _defer add it
-        # to the original nanosecond clock without a lossy datetime round trip.
-        origin = datetime(1970, 1, 1, tzinfo=UTC)
-        next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
-            now=origin,
-            attempt_count=attempt_count,
-            retry_after=(
-                timedelta(seconds=retry_after_seconds)
-                if retry_after_seconds is not None
-                else None
-            ),
+        return upload_retry_delay_seconds(
+            attempt_count, retry_after_seconds=retry_after_seconds,
         )
-        return (next_attempt - origin).total_seconds()
 
     def _block_unexpected(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         self._store.mark_sync_handoff_blocked(
@@ -601,7 +717,11 @@ class PersistentUploadQueue:
                 restored = read_segment(path, self._keys)
             except (OSError, SegmentIntegrityError) as exc:
                 raise UploadConflict("sealed segment integrity verification failed") from exc
-            if restored.session_id != handoff.session_id or restored.segment_index in local:
+            try:
+                same_session = UUID(restored.session_id) == UUID(handoff.session_id)
+            except ValueError:
+                same_session = False
+            if not same_session or restored.segment_index in local:
                 raise UploadConflict(
                     "sealed segments do not form one unambiguous session"
                 )
@@ -675,6 +795,37 @@ class HttpIngestionClient:
             not_found_none=True,
         )
 
+    def create_recovery_case(
+        self, access_token: str, request: RecoveryCaseCreateRequest, idempotency_key: str,
+    ) -> RecoveryCaseSummary:
+        return self._model_request(
+            "POST", "/v1/identity-recovery/cases", RecoveryCaseSummary, access_token,
+            headers={"Idempotency-Key": idempotency_key}, json=request.model_dump(mode="json"),
+        )
+
+    def get_recovery_case(self, access_token: str, case_id: UUID) -> RecoveryCaseSummary:
+        return self._model_request(
+            "GET", f"/v1/identity-recovery/cases/{case_id}",
+            RecoveryCaseSummary, access_token,
+        )
+
+    def register_recovery(
+        self, access_token: str, case_id: UUID,
+        request: RecoveryRegistrationRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
+    ) -> RecoveryRegistrationResult:
+        headers = {"Idempotency-Key": idempotency_key}
+        if authorization is not None:
+            if authorization.session_id != request.session.session_id:
+                raise UploadBlocked("capture authorization session mismatch")
+            headers.update(authorization.headers())
+        return self._model_request(
+            "POST", f"/v1/identity-recovery/cases/{case_id}/register",
+            RecoveryRegistrationResult, access_token,
+            headers=headers,
+            json=request.model_dump(mode="json"),
+        )
+
     def create_subject(
         self,
         access_token: str,
@@ -688,6 +839,14 @@ class HttpIngestionClient:
             access_token,
             headers={"Idempotency-Key": idempotency_key},
             json=request.model_dump(mode="json"),
+        )
+
+    def resolve_subject(
+        self, access_token: str, request: SubjectResolveRequest
+    ) -> SubjectSummary | None:
+        return self._model_request(
+            "POST", "/v1/subjects/resolve", SubjectSummary, access_token,
+            json=request.model_dump(mode="json"), not_found_none=True,
         )
 
     def create_consent(
@@ -788,6 +947,46 @@ class HttpIngestionClient:
             },
             json=manifest.model_dump(mode="json"),
         )
+
+    def upload_basic_report_copy(
+        self, access_token: str, *, session_id: UUID, report_id: str,
+        version: int, source: str, document_json: str, pdf_bytes: bytes,
+        document_sha256: str, pdf_sha256: str, consent_record_id: UUID,
+        idempotency_key: str,
+    ) -> dict:
+        body = {
+            "report_id": report_id, "version": version, "source": source,
+            "document_json": document_json,
+            "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "document_sha256": document_sha256, "pdf_sha256": pdf_sha256,
+            "consent_record_id": str(consent_record_id),
+        }
+        try:
+            response = self._client.request(
+                "POST", f"/v1/sessions/{session_id}/basic-report-copy",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Terminal-ID": str(self._terminal_id),
+                    "Idempotency-Key": idempotency_key,
+                },
+                json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise UploadRetryable("report copy service is unavailable") from exc
+        if response.status_code == 423 and self._safe_error_code(response) == "E-RPT-423":
+            raise UploadRetryable(
+                "report copy is paused by a platform hold",
+                retry_after_seconds=300.0,
+                error_code="E-RPT-423",
+            )
+        self._raise_for_response(response)
+        try:
+            receipt = response.json()["data"]
+            if not isinstance(receipt, dict):
+                raise TypeError("receipt")
+            return receipt
+        except (KeyError, TypeError, ValueError) as exc:
+            raise UploadRetryable("report copy service returned an invalid receipt") from exc
 
     def _model_request(
         self,

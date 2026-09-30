@@ -34,6 +34,10 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.identity_recovery.postgres import (
+    PostgresRecoveryCaseRepository, PostgresRecoveryIdentityReader,
+)
+from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
@@ -239,6 +243,14 @@ async def build_seed_app(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
     data_repository = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
+    from cloud.session_hold.postgres import PostgresSessionHoldRepository
+    from cloud.session_hold.service import SessionHoldService
+    from cloud.report_copy.object_store import LocalBasicPdfStore
+    from cloud.report_copy.postgres import PostgresLocalBasicCopyRepository
+    from cloud.report_copy.service import LocalBasicCopyService
+
+    hold_repository = PostgresSessionHoldRepository(platform_pool)
+    session_holds = SessionHoldService(hold_repository)
     if object_store_factory is not None:
         objects = object_store_factory(settings)
     elif settings.object_backend == "aliyun-oss":
@@ -292,6 +304,7 @@ async def build_seed_app(
         lookup_hmac_key=_secret(settings.identity_lookup_hmac_key, "identity lookup key"),
         key_version=settings.identity_key_version,
     )
+    sensitive = SensitiveAccessService(access_repository)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -308,11 +321,21 @@ async def build_seed_app(
             platform_identities=platform_identities,
             platform_access=platform_access,
             platform_tokens=platform_tokens,
-            platform_sensitive=SensitiveAccessService(access_repository),
+            platform_sensitive=sensitive,
+            session_holds=session_holds,
+            report_copies=LocalBasicCopyService(
+                PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
+                hold_repository,
+            ),
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)
                 )
+            ),
+            identity_recovery=IdentityRecoveryService(
+                PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
+                sensitive=sensitive,
+                identity_reader=PostgresRecoveryIdentityReader(tenant_pool, identity),
             ),
         )
     )

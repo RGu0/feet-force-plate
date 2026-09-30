@@ -11,6 +11,7 @@ import base64
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,14 @@ import uuid
 from collections.abc import Callable
 
 from platformdirs import user_data_path
+from cryptography.exceptions import InvalidTag
+from techflex_cloud_foundation import CredentialVault
 
+from client.security.credential_vault import (
+    SystemCredentialVault,
+    _credential_initialization_lock,
+    get_or_create_credential,
+)
 from client.reporting.models import BasicReportDocument
 from client.app.ui_models import ScreeningRecordRow
 from client.spool.state_store import (
@@ -65,29 +73,90 @@ class KeyringAesKeyProvider:
 
     _SERVICE = "FeetForcePlate.institution-storage"
     _ACCOUNT = "aes256-v1"
+    _ACTIVE_ACCOUNT = "aes256-active-version"
+
+    def __init__(self, vault: CredentialVault | None = None) -> None:
+        self._vault = vault or SystemCredentialVault()
 
     def get_key(self) -> bytes:
+        return self.get_current_key()[1]
+
+    def get_current_key(self) -> tuple[int, bytes]:
+        with _credential_initialization_lock():
+            try:
+                version = self._active_version()
+                encoded = self._vault.get(self._vault_key(version))
+                if encoded is None:
+                    if version != 1:
+                        raise KeyProviderUnavailable("active institution data key is missing")
+                    encoded = base64.b64encode(os.urandom(32)).decode("ascii")
+                    self._vault.set(self._vault_key(1), encoded)
+                    if self._vault.get(self._vault_key(1)) != encoded:
+                        raise KeyProviderUnavailable("institution data key was not retained")
+            except Exception as exc:
+                if isinstance(exc, KeyProviderUnavailable):
+                    raise
+                raise KeyProviderUnavailable(
+                    "system credential storage is temporarily unavailable"
+                ) from exc
+        return version, self._decode_key(encoded)
+
+    def get_key_for_version(self, version: int) -> bytes:
+        if version < 1:
+            raise ValueError("institution data key version is invalid")
         try:
-            import keyring
-        except ImportError as exc:  # pragma: no cover - packaging contract
-            raise KeyProviderUnavailable("system credential storage is required") from exc
-        try:
-            encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
+            encoded = self._vault.get(self._vault_key(version))
         except Exception as exc:
             raise KeyProviderUnavailable(
                 "system credential storage is temporarily unavailable"
             ) from exc
         if encoded is None:
-            key = os.urandom(32)
+            raise KeyProviderUnavailable("institution data key version is missing")
+        return self._decode_key(encoded)
+
+    def rotate_key(self) -> int:
+        """Activate a retained next key; never overwrite an old version."""
+
+        self.get_key()  # Establish the legacy first-use key before taking the lock.
+        with _credential_initialization_lock():
             try:
-                keyring.set_password(
-                    self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode()
-                )
+                old_marker = self._vault.get(self._active_key())
+                old_version = self._parse_version(old_marker)
+                self.get_key_for_version(old_version)
+                if old_version == 2**32 - 1:
+                    raise KeyProviderUnavailable("institution data key version limit reached")
+                next_version = old_version + 1
+                next_key_name = self._vault_key(next_version)
+                encoded = self._vault.get(next_key_name)
+                if encoded is None:
+                    encoded = base64.b64encode(os.urandom(32)).decode("ascii")
+                    self._vault.set(next_key_name, encoded)
+                    if self._vault.get(next_key_name) != encoded:
+                        raise KeyProviderUnavailable("new institution data key was not retained")
+                self._decode_key(encoded)
+                try:
+                    self._vault.set(self._active_key(), str(next_version))
+                    if self._vault.get(self._active_key()) != str(next_version):
+                        raise KeyProviderUnavailable("institution key rotation was not retained")
+                except Exception as exc:
+                    try:
+                        if old_marker is None:
+                            self._vault.delete(self._active_key())
+                        else:
+                            self._vault.set(self._active_key(), old_marker)
+                        if self._vault.get(self._active_key()) != old_marker:
+                            raise KeyProviderUnavailable("institution key rollback was not retained")
+                    except Exception as rollback_exc:
+                        raise KeyProviderUnavailable("institution key rotation state is uncertain") from rollback_exc
+                    raise KeyProviderUnavailable("institution key rotation failed") from exc
+            except KeyProviderUnavailable:
+                raise
             except Exception as exc:
-                raise KeyProviderUnavailable(
-                    "system credential storage is temporarily unavailable"
-                ) from exc
-            return key
+                raise KeyProviderUnavailable("system credential storage is temporarily unavailable") from exc
+        return next_version
+
+    @staticmethod
+    def _decode_key(encoded: str) -> bytes:
         try:
             key = base64.b64decode(encoded.encode("ascii"), validate=True)
         except (UnicodeEncodeError, ValueError) as exc:
@@ -96,10 +165,33 @@ class KeyringAesKeyProvider:
             raise ValueError("stored institution data key is not AES-256")
         return key
 
+    def _active_version(self) -> int:
+        return self._parse_version(self._vault.get(self._active_key()))
+
+    @staticmethod
+    def _parse_version(marker: str | None) -> int:
+        if marker is None:
+            return 1
+        if not marker.isascii() or not marker.isdecimal() or str(int(marker)) != marker:
+            raise ValueError("institution data key version marker is invalid")
+        version = int(marker)
+        if version < 1 or version > 2**32 - 1:
+            raise ValueError("institution data key version marker is invalid")
+        return version
+
+    def _active_key(self) -> str:
+        return f"{self._SERVICE}/{self._ACTIVE_ACCOUNT}"
+
+    def _vault_key(self, version: int) -> str:
+        return f"{self._SERVICE}/aes256-v{version}"
+
 
 class KeyringConsentEvidenceSigner:
     _SERVICE = "FeetForcePlate.institution-storage"
     _ACCOUNT = "consent-evidence-hmac-sha256-v1"
+
+    def __init__(self, vault: CredentialVault | None = None) -> None:
+        self._vault = vault or SystemCredentialVault()
 
     def sign(
         self,
@@ -125,18 +217,20 @@ class KeyringConsentEvidenceSigner:
 
     def _key(self) -> bytes:
         try:
-            import keyring
-        except ImportError as exc:  # pragma: no cover - packaging contract
+            encoded = get_or_create_credential(
+                self._vault,
+                self._vault_key(),
+                lambda: base64.b64encode(os.urandom(32)).decode("ascii"),
+            )
+        except Exception as exc:
             raise RuntimeError("system credential storage is required") from exc
-        encoded = keyring.get_password(self._SERVICE, self._ACCOUNT)
-        if encoded is None:
-            key = os.urandom(32)
-            keyring.set_password(self._SERVICE, self._ACCOUNT, base64.b64encode(key).decode())
-            return key
         key = base64.b64decode(encoded.encode("ascii"), validate=True)
         if len(key) != 32:
             raise RuntimeError("stored consent evidence key is not SHA-256 sized")
         return key
+
+    def _vault_key(self) -> str:
+        return f"{self._SERVICE}/{self._ACCOUNT}"
 
 
 class CaptureGrantExhausted(RuntimeError):
@@ -179,16 +273,17 @@ class InstitutionLocalStore:
         query_index_key: bytes | None = None,
         now: Callable[[], datetime] | None = None,
         consent_signer: ConsentEvidenceSigner | None = None,
+        credential_vault: CredentialVault | None = None,
     ) -> "InstitutionLocalStore":
         storage_root = Path(root) if root is not None else Path(
             user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True)
         )
         return cls(
             storage_root,
-            key_provider=key_provider or KeyringAesKeyProvider(),
-            query_index_key=query_index_key or _load_query_index_key(),
+            key_provider=key_provider or KeyringAesKeyProvider(credential_vault),
+            query_index_key=query_index_key or _load_query_index_key(credential_vault),
             now=now or _utc_now,
-            consent_signer=consent_signer or KeyringConsentEvidenceSigner(),
+            consent_signer=consent_signer or KeyringConsentEvidenceSigner(credential_vault),
         )
 
     def close(self) -> None:
@@ -240,6 +335,20 @@ class InstitutionLocalStore:
             CREATE TABLE IF NOT EXISTS institution_reports (
                 report_lookup BLOB PRIMARY KEY,
                 payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS institution_report_copy_handoffs (
+                session_id TEXT PRIMARY KEY,
+                report_lookup BLOB NOT NULL UNIQUE REFERENCES institution_reports(report_lookup),
+                report_id BLOB NOT NULL,
+                version INTEGER NOT NULL,
+                document_sha256 TEXT NOT NULL,
+                pdf_payload BLOB,
+                pdf_sha256 TEXT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                state TEXT NOT NULL CHECK (state IN ('PENDING','UPLOADING','RETRY_WAIT','CONFIRMED','CONFLICT','BLOCKED')),
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at_ns INTEGER,
+                receipt_sha256 TEXT
             );
             CREATE TABLE IF NOT EXISTS institution_screening_records (
                 report_lookup BLOB PRIMARY KEY
@@ -617,7 +726,8 @@ class InstitutionLocalStore:
 
     def save_report(self, report: BasicReportDocument) -> None:
         context = f"report:{report.report_id}:{report.version}"
-        report_lookup = self._lookup("report", report.report_id, str(report.version))
+        document = report.to_json().encode("utf-8")
+        lookup = self._lookup("report", report.report_id, str(report.version))
         tenant_row = self.db.execute(
             """SELECT subjects.tenant_id
             FROM institution_sessions AS sessions
@@ -627,13 +737,36 @@ class InstitutionLocalStore:
             (report.session_id,),
         ).fetchone()
         with self.db:
-            self.db.execute(
-                "INSERT OR REPLACE INTO institution_reports VALUES (?,?)",
-                (
-                    report_lookup,
-                    self.codec.encrypt(report.to_json().encode("utf-8"), context=context),
-                ),
-            )
+            prior = self.db.execute(
+                "SELECT payload FROM institution_reports WHERE report_lookup=?", (lookup,)
+            ).fetchone()
+            if prior is not None and self.codec.decrypt(prior[0], context=context) != document:
+                raise ValueError("stored report version is immutable")
+            if prior is None:
+                self.db.execute(
+                    "INSERT INTO institution_reports VALUES (?,?)",
+                    (lookup, self.codec.encrypt(document, context=context)),
+                )
+            if report.status.value == "BASIC_READY" and report.kind == "BASIC":
+                prior_handoff = self.db.execute(
+                    "SELECT report_lookup FROM institution_report_copy_handoffs WHERE session_id=?",
+                    (report.session_id,),
+                ).fetchone()
+                if prior_handoff is not None and prior_handoff[0] != lookup:
+                    raise ValueError("session already has a different report copy")
+                self.db.execute(
+                    """INSERT OR IGNORE INTO institution_report_copy_handoffs
+                       (session_id, report_lookup, report_id, version, document_sha256,
+                        idempotency_key, state) VALUES (?,?,?,?,?,?,'PENDING')""",
+                    (report.session_id, lookup,
+                     self.codec.encrypt(report.report_id.encode("ascii"),
+                                        context=f"report_copy_id:{report.session_id}"),
+                     report.version,
+                     hashlib.sha256(document).hexdigest(),
+                     "local-basic-copy:" + hashlib.sha256(
+                         (report.session_id + ":" + report.report_id).encode("utf-8")
+                     ).hexdigest()),
+                )
             if tenant_row is not None:
                 record_payload = _json({
                     "session_id": report.session_id,
@@ -648,12 +781,12 @@ class InstitutionLocalStore:
                     """INSERT OR REPLACE INTO institution_screening_records
                     VALUES (?,?,?,?)""",
                     (
-                        report_lookup,
+                        lookup,
                         str(tenant_row[0]),
                         report.captured_at.isoformat(),
                         self.codec.encrypt(
                             record_payload,
-                            context=f"screening-record:{report_lookup.hex()}",
+                            context=f"screening-record:{lookup.hex()}",
                         ),
                     ),
                 )
@@ -676,12 +809,18 @@ class InstitutionLocalStore:
             (tenant_id,),
         ).fetchall()
         for report_lookup, encrypted in record_rows:
-            value = json.loads(
-                self.codec.decrypt(
-                    encrypted,
-                    context=f"screening-record:{bytes(report_lookup).hex()}",
-                ).decode("utf-8")
-            )
+            try:
+                value = json.loads(
+                    self.codec.decrypt(
+                        encrypted,
+                        context=f"screening-record:{bytes(report_lookup).hex()}",
+                    ).decode("utf-8")
+                )
+            except (InvalidTag, KeyProviderUnavailable, UnicodeDecodeError, json.JSONDecodeError):
+                # Preserve an unreadable historical row; other sessions must still load.
+                continue
+            if not isinstance(value, dict):
+                continue
             session_id = value.get("session_id")
             if isinstance(session_id, str) and session_id:
                 indexed_session_ids.add(session_id)
@@ -724,27 +863,35 @@ class InstitutionLocalStore:
         needle = query.strip().casefold()
         records: list[ScreeningRecordRow] = []
         for report_lookup, encrypted in rows:
-            value = json.loads(
-                self.codec.decrypt(
-                    encrypted,
-                    context=f"screening-record:{bytes(report_lookup).hex()}",
-                ).decode("utf-8")
-            )
-            subject_display_id = str(value["subject_display_id"])
-            if needle and needle not in subject_display_id.casefold():
-                continue
-            captured_at = datetime.fromisoformat(str(value["captured_at"]))
-            records.append(
-                ScreeningRecordRow(
-                    subject_display_id=subject_display_id,
-                    performed_at_label=captured_at.strftime("%m-%d %H:%M"),
-                    screening_label=str(value["screening_label"]),
-                    report_status_label=str(value["report_status_label"]),
-                    performed_on=captured_at.date(),
-                    report_id=str(value["report_id"]),
-                    report_version=int(value["report_version"]),
+            try:
+                value = json.loads(
+                    self.codec.decrypt(
+                        encrypted,
+                        context=f"screening-record:{bytes(report_lookup).hex()}",
+                    ).decode("utf-8")
                 )
-            )
+                if not isinstance(value, dict):
+                    continue
+                subject_display_id = str(value["subject_display_id"])
+                if needle and needle not in subject_display_id.casefold():
+                    continue
+                captured_at = datetime.fromisoformat(str(value["captured_at"]))
+                records.append(
+                    ScreeningRecordRow(
+                        subject_display_id=subject_display_id,
+                        performed_at_label=captured_at.strftime("%m-%d %H:%M"),
+                        screening_label=str(value["screening_label"]),
+                        report_status_label=str(value["report_status_label"]),
+                        performed_on=captured_at.date(),
+                        report_id=str(value["report_id"]),
+                        report_version=int(value["report_version"]),
+                    )
+                )
+            except (
+                InvalidTag, KeyProviderUnavailable, UnicodeDecodeError,
+                json.JSONDecodeError, KeyError, TypeError, ValueError,
+            ):
+                continue
         return tuple(records)
 
     def load_report(self, report_id: str, version: int) -> str:
@@ -755,6 +902,18 @@ class InstitutionLocalStore:
         if row is None:
             raise KeyError(f"unknown report {report_id} v{version}")
         return self.codec.decrypt(row[0], context=f"report:{report_id}:{version}").decode("utf-8")
+
+    def load_basic_report_for_session(self, session_id: str) -> BasicReportDocument | None:
+        row = self.db.execute(
+            """SELECT report_id, version FROM institution_report_copy_handoffs
+               WHERE session_id=?""", (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        report_id = self.codec.decrypt(
+            row[0], context=f"report_copy_id:{session_id}",
+        ).decode("ascii")
+        return BasicReportDocument.from_json(self.load_report(report_id, int(row[1])))
 
     def record_subject_access(self, *, tenant_id: str, subject_uuid: str, purpose: str) -> None:
         self._record_audit(tenant_id, subject_uuid, "SUBJECT_ACCESS", {"purpose": purpose})
@@ -808,21 +967,15 @@ class _InstitutionConsentPort:
         return self._store.create_consent(request)
 
 
-def _load_query_index_key() -> bytes:
-    try:
-        import keyring
-    except ImportError as exc:  # pragma: no cover - packaging contract
-        raise RuntimeError("system credential storage is required") from exc
-    encoded = keyring.get_password(
-        InstitutionLocalStore._QUERY_KEY_SERVICE, InstitutionLocalStore._QUERY_KEY_ACCOUNT
+def _load_query_index_key(vault: CredentialVault | None = None) -> bytes:
+    vault = vault or SystemCredentialVault()
+    key_name = (
+        f"{InstitutionLocalStore._QUERY_KEY_SERVICE}/"
+        f"{InstitutionLocalStore._QUERY_KEY_ACCOUNT}"
     )
-    if encoded is None:
-        key = os.urandom(32)
-        keyring.set_password(
-            InstitutionLocalStore._QUERY_KEY_SERVICE, InstitutionLocalStore._QUERY_KEY_ACCOUNT,
-            base64.b64encode(key).decode("ascii"),
-        )
-        return key
+    encoded = get_or_create_credential(
+        vault, key_name, lambda: base64.b64encode(os.urandom(32)).decode("ascii")
+    )
     key = base64.b64decode(encoded.encode("ascii"), validate=True)
     if len(key) != 32:
         raise RuntimeError("stored institution query key is not SHA-256 sized")

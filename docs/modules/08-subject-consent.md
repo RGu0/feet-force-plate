@@ -83,7 +83,9 @@ ConsentRecord(id, subject_uuid, tenant_id, policy_version,
 
 若离线受试者的机构编号已经映射到不同云端 UUID，RAY-99 流程必须先创建受控 recovery case，并由有权限的核对者对真实身份作出匹配决定。终端仅在收到服务端签发的匹配回执后，才能为云端 UUID 取得新的必要处理同意并注册原会话。服务端持久化 case 与 registration：原/云端 subject UUID、session UUID、原 envelope SHA-256、回执以及最终 consent/session 绑定；队列使用此实际记录，不采信本地自由文本映射声明。
 
-恢复不更改原 envelope、历史 consent 或原始分段；新 consent 是独立记录，绑定云端 UUID。映射、session、原 envelope 摘要或新 consent 有任何不一致，或核对未通过/回执过期，上传继续阻断并保留本地证据。RAY-513 的历史会话人工许可只能引用已持久化的 reconciliation case，并绑定最终请求和 manifest 摘要；许可与客户端时间均不能证明采集发生在 License 暂停之前。
+恢复不更改原 envelope、历史 consent 或原始分段；新 consent 是独立记录，绑定云端 UUID。映射、session、原 envelope 摘要或新 consent 有任何不一致，或核对未通过/回执过期，上传继续阻断并保留本地证据。RAY-513 的历史会话人工许可只能引用已持久化的 reconciliation case，并绑定最终 subject UUID、consent ID 与 canonical 摘要、request 摘要和 manifest 摘要；许可与客户端时间均不能证明采集发生在 License 暂停之前。
+
+RAY-99 recovery registration 是首次云 session 创建入口之一。MATCHED receipt 完成身份核对，但在 License 暂停且会话无 grant 时，不代替 RAY-513 owner migration permit。首次 session 写入必须原子校验并消费适用的 grant/permit；active principal 不会仅因走 recovery 就被强制要求 legacy permit。所有身份恢复仍要求当前 `allow_upload=true`。
 
 ## 8. 合并、撤回与删除
 

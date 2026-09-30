@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from client.app.heatmap import PhysicalGridOverlay
@@ -10,6 +11,10 @@ from client.app.report_index_recovery import recover_missing_screening_records
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
+from client.hardware_integration.live_hardware_demo import (
+    LIVE_STATIC_BALANCE_PROTOCOL_ID,
+    LIVE_STATIC_BALANCE_PROTOCOL_VERSION,
+)
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
     InstitutionLiveSessions,
@@ -225,7 +230,11 @@ def build_live_institution_runtime(
             standardizer=_DeferredBaselineStandardizer(hardware, baseline),
         ),
         export_destination=export_destination,
-        protocol=default_standard_protocol(),
+        protocol=replace(
+            default_standard_protocol(),
+            protocol_id=LIVE_STATIC_BALANCE_PROTOCOL_ID,
+            version=LIVE_STATIC_BALANCE_PROTOCOL_VERSION,
+        ),
         persisted_reports=institution,
         data_source_mode="LIVE",
         controller_options={

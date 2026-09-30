@@ -180,6 +180,7 @@ class SubjectCreateRequest(ContractModel):
 
 class SubjectSummary(ContractModel):
     subject_uuid: UUID
+    external_identifier_id: UUID | None = None
     external_id_masked: str | None = None
     conflict: bool = False
     analysis_profile: dict[str, ProfileValue] = Field(default_factory=dict)

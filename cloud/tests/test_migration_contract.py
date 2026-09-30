@@ -7,6 +7,9 @@ from pathlib import Path
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.sql"
 CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
+HOLD_MIGRATION = Path(__file__).parents[1] / "migrations" / "0009_unverified_session_holds.sql"
+COPY_MIGRATION = Path(__file__).parents[1] / "migrations" / "0010_local_basic_report_copies.sql"
+RECOVERY_PERMIT_MIGRATION = Path(__file__).parents[1] / "migrations" / "0012_recovery_bound_migration_permits.sql"
 
 
 class MigrationContractTests(unittest.TestCase):
@@ -89,6 +92,62 @@ class MigrationContractTests(unittest.TestCase):
         ):
             self.assertIn(required, sql)
 
+    def test_hold_tables_are_tenant_scoped_and_append_only(self) -> None:
+        sql = HOLD_MIGRATION.read_text(encoding="utf-8")
+        for table in ("ops.session_holds", "ops.session_hold_events", "ops.session_hold_idempotency"):
+            self.assertIn(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;", sql)
+            self.assertIn(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;", sql)
+        self.assertIn("UNIQUE (tenant_id, session_id)", sql)
+        self.assertIn("tenant_id = ops.current_tenant_id()", sql)
+        self.assertIn("request_sha256", sql)
+        self.assertIn("FOREIGN KEY (tenant_id, session_id) REFERENCES screening.sessions", sql)
+        self.assertIn("CREATE TABLE ops.session_hold_dispositions", sql)
+        self.assertIn("GRANT SELECT, INSERT ON ops.session_hold_dispositions TO ffp_platform_app", sql)
+
+    def test_local_basic_copy_is_separate_and_rls_guarded(self) -> None:
+        sql = COPY_MIGRATION.read_text(encoding="utf-8")
+        self.assertNotIn("TO ffp_platform_app", sql)
+        self.assertIn("CREATE TABLE reporting.local_basic_report_copies", sql)
+        self.assertIn("PRIMARY KEY (tenant_id, session_id)", sql)
+        self.assertIn("UNIQUE (tenant_id, report_id, version)", sql)
+        self.assertIn("ENABLE ROW LEVEL SECURITY", sql)
+        self.assertIn("FORCE ROW LEVEL SECURITY", sql)
+        self.assertIn("tenant_id = ops.current_tenant_id()", sql)
+        self.assertIn("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;", sql)
+        self.assertIn(
+            "GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;", sql,
+        )
+        self.assertNotIn("ALTER TABLE screening.sessions", sql)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentityRecoveryMigrationContractTests(unittest.TestCase):
+    def test_case_table_is_tenant_isolated_and_has_no_plaintext_identity(self) -> None:
+        sql = (MIGRATION.parent / "0011_controlled_identity_recovery.sql").read_text(encoding="utf-8")
+        self.assertIn("UNIQUE (tenant_id, session_id)", sql)
+        self.assertIn("UNIQUE (tenant_id, key_sha256)", sql)
+        self.assertIn("FORCE ROW LEVEL SECURITY", sql)
+        self.assertIn("ops.current_tenant_id()", sql)
+        self.assertIn("GRANT SELECT (tenant_id, subject_uuid, status)", sql)
+        self.assertIn(
+            "GRANT SELECT (tenant_id, subject_uuid, external_identifier_id, "
+            "issuer, id_type, normalized_hmac, status)", sql,
+        )
+        self.assertIn("identifier_hmac bytea NOT NULL", sql)
+        self.assertIn("CREATE TABLE ops.identity_recovery_receipts", sql)
+        self.assertIn("CREATE TABLE ops.identity_recovery_registrations", sql)
+        self.assertIn("ALTER TABLE ops.identity_recovery_registrations FORCE ROW LEVEL SECURITY", sql)
+        self.assertNotIn("display_name text", sql)
+        self.assertNotIn("contact text", sql)
+
+    def test_migration_permit_binds_reconciliation_and_final_consent(self) -> None:
+        sql = RECOVERY_PERMIT_MIGRATION.read_text(encoding="utf-8")
+        for column in (
+            "original_envelope_sha256", "original_subject_uuid", "final_subject_uuid",
+            "consent_record_id", "consent_sha256", "reconciliation_case_id",
+        ):
+            self.assertIn(column, sql)
+        self.assertIn("REFERENCES ops.identity_recovery_cases(tenant_id, case_id)", sql)

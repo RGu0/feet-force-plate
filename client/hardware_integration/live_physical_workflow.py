@@ -954,6 +954,9 @@ class LivePhysicalProcessor:
         self._attestations[session_id] = LiveAnalysisInputs(completed, captured_windows)
 
     def process(self, session_id: str) -> ProcessingOutcome:
+        saved = self._reports.load_basic_report_for_session(session_id)
+        if saved is not None:
+            return ProcessingOutcome(ProcessingStatus.BASIC_READY, None, saved)
         inputs = self._attestations.get(session_id)
         if (
             inputs is None

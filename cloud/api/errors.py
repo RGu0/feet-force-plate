@@ -32,6 +32,12 @@ class TenantAccessDenied(PlatformError):
     action = "CONTACT_ADMINISTRATOR"
 
 
+class SessionHeldForReportCopy(PlatformError):
+    code = "E-RPT-423"
+    http_status = 423
+    action = "RETRY_AFTER_HOLD_RELEASE"
+
+
 class ResourceNotFound(PlatformError):
     code = "E-API-404"
     http_status = 404

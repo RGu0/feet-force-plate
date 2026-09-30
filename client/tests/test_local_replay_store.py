@@ -33,13 +33,26 @@ from client.workflow.protocol import default_standard_protocol
 
 class _MemoryKeyring:
     def __init__(self) -> None:
-        self.values: dict[tuple[str, str], str] = {}
+        self.values: dict[str, str] = {}
 
-    def get_password(self, service: str, account: str) -> str | None:
-        return self.values.get((service, account))
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
 
-    def set_password(self, service: str, account: str, value: str) -> None:
-        self.values[(service, account)] = value
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
+
+
+def test_local_replay_index_key_uses_the_foundation_credential_vault(tmp_path: Path) -> None:
+    """Fails if local replay reintroduces a direct keyring call."""
+
+    vault = _MemoryKeyring()
+    store = LocalReplayStore(tmp_path, credential_vault=vault)
+    store.db.close()
+
+    assert set(vault.values) == {"FeetForcePlate.local-replay.query-index/hmac-sha256-v1"}
 
 
 class _Report:
@@ -61,7 +74,7 @@ def test_local_replay_store_writes_encrypted_versioned_local_analysis_result(
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-analysis",
-            keyring_backend=keyring,
+            credential_vault=keyring,
         ),
     )
     store = LocalReplayStore(tmp_path, codec=codec)
@@ -121,7 +134,7 @@ def test_local_replay_report_is_dual_encrypted_and_readable_after_reopen(tmp_pat
             terminal_key=KeyringTerminalKeyHandle(
                 service_name="FeetForcePlate.test",
                 account_name="terminal-42",
-                keyring_backend=keyring,
+                credential_vault=keyring,
             ),
         )
 
@@ -144,7 +157,7 @@ def test_local_replay_store_records_each_completed_stage(tmp_path: Path) -> None
             terminal_key=KeyringTerminalKeyHandle(
                 service_name="FeetForcePlate.test",
                 account_name="terminal-42",
-                keyring_backend=keyring,
+                credential_vault=keyring,
             ),
         ),
     )
@@ -168,7 +181,7 @@ def test_local_replay_store_encrypts_updated_profile_fields(tmp_path: Path) -> N
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-profile",
-            keyring_backend=keyring,
+            credential_vault=keyring,
         ),
     )
     store = LocalReplayStore(tmp_path, codec=codec)
@@ -260,7 +273,7 @@ def test_local_consent_reuse_requires_the_same_tenant_and_policy_scope(
             terminal_key=KeyringTerminalKeyHandle(
                 service_name="FeetForcePlate.test",
                 account_name="terminal-consent-scope",
-                keyring_backend=keyring,
+                credential_vault=keyring,
             ),
         ),
         query_index_key=b"c" * 32,
@@ -321,7 +334,7 @@ def test_local_consent_reconfirmation_preserves_prior_receipt(
             terminal_key=KeyringTerminalKeyHandle(
                 service_name="FeetForcePlate.test",
                 account_name="terminal-consent-history",
-                keyring_backend=keyring,
+                credential_vault=keyring,
             ),
         ),
         query_index_key=b"h" * 32,
@@ -398,7 +411,7 @@ def test_legacy_single_consent_is_migrated_without_losing_reuse(
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-consent-migration",
-            keyring_backend=keyring,
+            credential_vault=keyring,
         ),
     )
     subject_id = "subject-legacy"
@@ -501,7 +514,7 @@ def test_local_subject_access_and_export_append_encrypted_audit_events(
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-audit",
-            keyring_backend=keyring,
+                credential_vault=keyring,
         ),
     )
     store = LocalReplayStore(
@@ -587,7 +600,7 @@ def test_local_replay_session_keeps_encrypted_protocol_and_fixture_provenance(tm
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-session",
-            keyring_backend=keyring,
+            credential_vault=keyring,
         ),
     )
     store = LocalReplayStore(tmp_path, codec=codec)

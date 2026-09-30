@@ -363,6 +363,8 @@ def test_live_capture_authorization_operations_are_tenant_scoped_and_one_way() -
                 account_id=first_group.account_id, license_id=first_group.license_id,
                 hardware_id=first_group.hardware_identity, request_sha256=request_digest,
                 manifest_sha256=manifest_digest, evidence_reference="evidence/ray-513/test",
+                original_envelope_sha256="d" * 64, original_subject_uuid=uuid4(),
+                final_subject_uuid=uuid4(), consent_record_id=uuid4(), consent_sha256="c" * 64,
                 reason="LEGACY_VALID_SESSION_REVIEWED", identity_conflict=False, reconciliation_reference=None,
                 local_valid_reviewed=True, immutable_manifest_reviewed=True,
                 original_consent_reviewed=True, historical_authorization_reviewed=True,
@@ -371,7 +373,7 @@ def test_live_capture_authorization_operations_are_tenant_scoped_and_one_way() -
                 (replace(context, roles=frozenset({PlatformRole.SUPPORT})), request),
                 (context, request.model_copy(update={"account_id": second_group.account_id})),
                 (context, request.model_copy(update={"tenant_id": uuid4()})),
-                (context, request.model_copy(update={"identity_conflict": True, "reconciliation_reference": "evidence/claimed"})),
+                (context, request.model_copy(update={"identity_conflict": True, "reconciliation_reference": uuid4()})),
             ):
                 with pytest.raises(TenantAccessDenied):
                     await service.approve_migration(denied_context, denied_request)

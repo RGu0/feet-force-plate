@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 import json
 import os
@@ -14,11 +15,15 @@ from typing import Protocol
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from shared.contracts.client_sync import FormalUploadEnvelope
-from shared.contracts.capture_grants import CaptureCredential
+from shared.contracts.capture_grants import CaptureCredential, LegacyMigrationBinding
+from shared.contracts.client_sync import (
+    FormalUploadEnvelope,
+    SubjectRecoveryAuthorization,
+    canonical_sha256,
+)
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -41,21 +46,45 @@ class SensitiveBlobCodec:
         self._key_provider = key_provider
 
     def encrypt(self, plaintext: bytes, *, context: str) -> bytes:
-        key = self._load_key()
+        current = getattr(self._key_provider, "get_current_key", None)
+        if current is None:
+            key = self._load_key()
+            prefix = b"\x01"
+        else:
+            version, key = current()
+            if version < 1 or version > 2**32 - 1:
+                raise ValueError("OS key version is invalid")
+            prefix = b"\x02" + version.to_bytes(4, "big")
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         nonce = os.urandom(12)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext, context.encode("utf-8"))
-        return b"\x01" + nonce + ciphertext
+        return prefix + nonce + ciphertext
 
     def decrypt(self, envelope: bytes, *, context: str) -> bytes:
-        if len(envelope) < 30 or envelope[0] != 1:
+        if len(envelope) < 30:
             raise ValueError("unsupported or truncated sensitive blob envelope")
-        key = self._load_key()
+        if envelope[0] == 1:
+            version_reader = getattr(self._key_provider, "get_key_for_version", None)
+            key = self._load_key() if version_reader is None else version_reader(1)
+            nonce_offset = 1
+        elif envelope[0] == 2 and len(envelope) >= 34:
+            version_reader = getattr(self._key_provider, "get_key_for_version", None)
+            if version_reader is None:
+                raise ValueError("versioned sensitive blob requires a versioned key provider")
+            version = int.from_bytes(envelope[1:5], "big")
+            if version < 1:
+                raise ValueError("sensitive blob key version is invalid")
+            key = version_reader(version)
+            nonce_offset = 5
+        else:
+            raise ValueError("unsupported or truncated sensitive blob envelope")
         if len(key) != 32:
             raise ValueError("OS key provider must return a 32-byte AES-256 key")
         return AESGCM(key).decrypt(
-            envelope[1:13], envelope[13:], context.encode("utf-8")
+            envelope[nonce_offset:nonce_offset + 12],
+            envelope[nonce_offset + 12:],
+            context.encode("utf-8"),
         )
 
     def _load_key(self) -> bytes:
@@ -426,7 +455,64 @@ class StateStore:
                     self._connection.execute(
                         "ALTER TABLE sync_handoffs ADD COLUMN expected_cloud_manifest_sha256 TEXT"
                     )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorizations (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
                 self._connection.execute("PRAGMA user_version=10")
+            if version < 11:
+                columns = {
+                    str(row[1]) for row in self._connection.execute(
+                        "PRAGMA table_info(sync_handoffs)"
+                    )
+                }
+                if "upload_credential" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_credential BLOB"
+                    )
+                if "expected_cloud_manifest_sha256" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN expected_cloud_manifest_sha256 TEXT"
+                    )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorizations (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS subject_recovery_authorization_history (
+                        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL,
+                        replaced_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.execute("PRAGMA user_version=11")
+            if version < 12:
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS legacy_migration_bindings (
+                        session_id TEXT PRIMARY KEY REFERENCES sync_handoffs(session_id),
+                        encrypted_payload BLOB NOT NULL,
+                        recorded_at_ns INTEGER NOT NULL
+                    )"""
+                )
+                self._connection.executescript(
+                    """CREATE TRIGGER IF NOT EXISTS immutable_legacy_migration_binding_update
+                       BEFORE UPDATE ON legacy_migration_bindings BEGIN
+                         SELECT RAISE(ABORT, 'legacy migration binding is append-only');
+                       END;
+                       CREATE TRIGGER IF NOT EXISTS immutable_legacy_migration_binding_delete
+                       BEFORE DELETE ON legacy_migration_bindings BEGIN
+                         SELECT RAISE(ABORT, 'legacy migration binding is append-only');
+                       END;"""
+                )
+                self._connection.execute("PRAGMA user_version=12")
 
     def record_validation_audit(
         self,
@@ -820,27 +906,245 @@ class StateStore:
                 raise ValueError("immutable cloud manifest digest mismatch")
 
     def sync_handoff_state(self, session_id: str) -> str:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
-                "SELECT state FROM sync_handoffs WHERE session_id=?", (session_id,)
+                "SELECT state FROM sync_handoffs WHERE session_id=?",
+                (stored_session_id,),
             ).fetchone()
         if row is None:
             raise KeyError(session_id)
         return str(row[0])
 
     def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
             row = self._connection.execute(
                 "SELECT upload_envelope FROM sync_handoffs WHERE session_id=?",
-                (session_id,),
+                (stored_session_id,),
             ).fetchone()
         if row is None or row[0] is None:
             raise KeyError(session_id)
         plaintext = self._codec.decrypt(
             bytes(row[0]),
-            context=f"formal_upload_envelope:{session_id}",
+            context=f"formal_upload_envelope:{stored_session_id}",
         )
         return FormalUploadEnvelope.model_validate_json(plaintext)
+
+    def report_copy_consent_id(self, session_id: str) -> str | None:
+        """Return the cloud-bound consent only after a valid raw-session receipt."""
+
+        try:
+            if self.sync_handoff_state(session_id) != "CLOUD_CONFIRMED":
+                return None
+            recovery = self.subject_recovery_authorization(session_id)
+            if recovery is not None:
+                return str(recovery.replacement_consent.consent_record_id)
+            return str(self.sync_handoff_envelope(session_id).consent.consent_record_id)
+        except (KeyError, ValueError):
+            return None
+
+    def _stored_sync_handoff_id(self, session_id: str) -> str:
+        """Resolve legacy hex and canonical UUID spellings without rewriting evidence."""
+
+        aliases = {session_id}
+        try:
+            parsed = UUID(session_id)
+        except ValueError:
+            pass
+        else:
+            aliases.update((str(parsed), parsed.hex))
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT session_id FROM sync_handoffs WHERE session_id IN ({','.join('?' for _ in aliases)})",
+                tuple(aliases),
+            ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("multiple handoffs use the same session UUID")
+        return str(rows[0][0]) if rows else session_id
+
+    def subject_recovery_authorization(
+        self, session_id: str
+    ) -> SubjectRecoveryAuthorization | None:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM subject_recovery_authorizations WHERE session_id=?",
+                (stored_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        plaintext = self._codec.decrypt(
+            bytes(row[0]), context=f"subject_recovery:{stored_session_id}"
+        )
+        return SubjectRecoveryAuthorization.model_validate_json(plaintext)
+
+    def legacy_migration_binding(self, session_id: str) -> LegacyMigrationBinding | None:
+        stored_session_id = self._stored_sync_handoff_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM legacy_migration_bindings WHERE session_id=?",
+                (stored_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        plaintext = self._codec.decrypt(
+            bytes(row[0]), context=f"legacy_migration_binding:{stored_session_id}"
+        )
+        binding = LegacyMigrationBinding.model_validate_json(plaintext)
+        if str(binding.session_id) != str(UUID(stored_session_id)):
+            raise ValueError("legacy migration binding session mismatch")
+        return binding
+
+    def record_legacy_migration_binding(self, binding: LegacyMigrationBinding) -> None:
+        """Persist a reviewed permit and its immutable final-identity bindings."""
+
+        session_id = self._stored_sync_handoff_id(str(binding.session_id))
+        envelope = self.sync_handoff_envelope(session_id)
+        recovery = self.subject_recovery_authorization(session_id)
+        if (
+            binding.original_envelope_sha256 != canonical_sha256(envelope)
+            or binding.original_subject_uuid != envelope.subject.subject_uuid
+        ):
+            raise ValueError("migration binding does not match immutable envelope")
+        if recovery is not None:
+            if (
+                binding.reconciliation_case_id != recovery.case_id
+                or binding.final_subject_uuid != recovery.cloud_subject_uuid
+                or binding.final_consent_id != recovery.replacement_consent.consent_record_id
+                or binding.final_consent_sha256 != canonical_sha256(recovery.replacement_consent)
+            ):
+                raise ValueError("migration binding does not match identity reconciliation")
+            final_request = envelope.session_request().model_copy(update={
+                "subject_uuid": recovery.cloud_subject_uuid,
+                "consent_record_id": recovery.replacement_consent.consent_record_id,
+            })
+        else:
+            if (
+                binding.reconciliation_case_id is not None
+                or binding.final_subject_uuid != envelope.subject.subject_uuid
+                or binding.final_consent_id != envelope.consent.consent_record_id
+                or binding.final_consent_sha256 != canonical_sha256(envelope.consent)
+            ):
+                raise ValueError("migration binding does not match original identity and consent")
+            final_request = envelope.session_request()
+        if (
+            binding.request_sha256 != canonical_sha256(final_request)
+            or binding.permit.session_id != binding.session_id
+        ):
+            raise ValueError("migration binding request or permit mismatch")
+        self.record_expected_cloud_manifest_sha256(
+            session_id, binding.manifest_sha256
+        )
+        encrypted = self._codec.encrypt(
+            binding.model_dump_json().encode("utf-8"),
+            context=f"legacy_migration_binding:{session_id}",
+        )
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT encrypted_payload FROM legacy_migration_bindings WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is not None:
+                prior = LegacyMigrationBinding.model_validate_json(self._codec.decrypt(
+                    bytes(row[0]), context=f"legacy_migration_binding:{session_id}"
+                ))
+                if prior != binding:
+                    raise ValueError("legacy migration binding is immutable")
+                return
+            self._connection.execute(
+                "INSERT INTO legacy_migration_bindings(session_id, encrypted_payload, recorded_at_ns) "
+                "VALUES(?,?,?)",
+                (session_id, encrypted, int(datetime.now(UTC).timestamp() * 1_000_000_000)),
+            )
+
+    def subject_recovery_candidates(self) -> tuple[str, ...]:
+        """Identity-blocked sessions that an operator may inspect for recovery."""
+
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT session_id FROM sync_handoffs
+                WHERE upload_envelope IS NOT NULL
+                  AND (state='CONFLICT' AND last_error_code='E-SUB-409'
+                    OR (state='BLOCKED' AND last_error_code='E-AUT-403'))
+                ORDER BY created_at_ns, session_id"""
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def authorize_subject_recovery(
+        self, authorization: SubjectRecoveryAuthorization
+    ) -> None:
+        """Atomically record server-bound consent and release a blocked handoff."""
+
+        if (
+            authorization.schema_version != "subject-recovery/2"
+            or authorization.case_id is None
+            or authorization.receipt_id is None
+            or authorization.receipt_expires_at is None
+            or authorization.platform_ticket_sha256 is None
+            or authorization.receipt_expires_at <= authorization.confirmed_at
+        ):
+            raise ValueError("current server match receipt is required")
+
+        session_id = self._stored_sync_handoff_id(str(authorization.session_id))
+        envelope = self.sync_handoff_envelope(session_id)
+        if (
+            authorization.original_envelope_sha256 != canonical_sha256(envelope)
+            or authorization.original_subject_uuid != envelope.subject.subject_uuid
+            or authorization.replacement_consent.consent_record_id
+            == envelope.consent.consent_record_id
+            or authorization.replacement_consent.policy_version
+            != envelope.consent.policy_version
+            or authorization.replacement_consent.data_categories
+            != envelope.consent.data_categories
+        ):
+            raise ValueError("recovery authorization does not match immutable handoff")
+        encrypted = self._codec.encrypt(
+            authorization.model_dump_json().encode("utf-8"),
+            context=f"subject_recovery:{session_id}",
+        )
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT state, last_error_code FROM sync_handoffs WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is None or row[0] not in {"CONFLICT", "BLOCKED"}:
+                raise ValueError("recovery requires a blocked handoff")
+            if row[0] == "CONFLICT" and row[1] != "E-SUB-409":
+                raise ValueError("conflict has another cause")
+            if row[0] == "BLOCKED" and row[1] != "E-AUT-403":
+                raise ValueError("blocked handoff has another cause")
+            previous = self._connection.execute(
+                """SELECT encrypted_payload, recorded_at_ns
+                FROM subject_recovery_authorizations WHERE session_id=?""",
+                (session_id,),
+            ).fetchone()
+            recorded_at_ns = int(authorization.confirmed_at.timestamp() * 1e9)
+            if previous is not None:
+                if row[0] != "BLOCKED" or row[1] != "E-AUT-403":
+                    raise ValueError("recovery authorization is already recorded")
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorization_history
+                    (session_id, encrypted_payload, recorded_at_ns, replaced_at_ns)
+                    VALUES (?,?,?,?)""",
+                    (session_id, previous[0], previous[1], recorded_at_ns),
+                )
+                self._connection.execute(
+                    """UPDATE subject_recovery_authorizations
+                    SET encrypted_payload=?, recorded_at_ns=? WHERE session_id=?""",
+                    (encrypted, recorded_at_ns, session_id),
+                )
+            else:
+                self._connection.execute(
+                    """INSERT INTO subject_recovery_authorizations
+                    (session_id, encrypted_payload, recorded_at_ns) VALUES (?,?,?)""",
+                    (session_id, encrypted, recorded_at_ns),
+                )
+            self._connection.execute(
+                """UPDATE sync_handoffs SET state='READY_FOR_NETWORK',
+                next_attempt_at_ns=NULL, last_error_code=NULL WHERE session_id=?""",
+                (session_id,),
+            )
 
     def attach_supporting_local_analysis(
         self,
@@ -1003,15 +1307,19 @@ class StateStore:
             str(row[2]) if row[2] is not None else None,
         )
 
-    def mark_sync_handoff_conflict(self, session_id: str) -> None:
+    def mark_sync_handoff_conflict(
+        self, session_id: str, *, error_code: str = "E-SYN-409"
+    ) -> None:
         """Stop automatic retries when a remote immutable digest conflicts."""
 
+        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+            raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs SET state='CONFLICT',
-                    next_attempt_at_ns=NULL, last_error_code='E-SYN-409'
+                    next_attempt_at_ns=NULL, last_error_code=?
                 WHERE session_id=? AND state='UPLOADING'""",
-                (session_id,),
+                (error_code, session_id),
             ).rowcount
         if not changed:
             raise KeyError(session_id)
