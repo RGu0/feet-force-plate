@@ -73,6 +73,10 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 6. 提交最终清单；
 7. 再查询 `status`，仅在服务端为 `INGESTED` 且 `VALID` 后标记 `CLOUD_CONFIRMED`。
 
+会话的 subject/consent 引用若发生身份冲突，队列必须先完成 RAY-99 受控核对：服务端匹配回执与持久 case/registration 映射必须对应原 session 和原 envelope 摘要，且注册请求必须携带针对云端 subject 的新必要 consent。成功注册后，队列使用映射后的 subject 和 consent 上传；原 envelope、原 consent 与原始分段保持不可变。缺少服务端映射、回执过期/拒绝或新 consent 不匹配时，队列保持阻断并保留本地材料。
+
+没有预签发 grant 的历史 `VALID` 会话只可通过 RAY-513 单会话人工许可恢复。许可绑定最终 `SessionCreateRequest` 摘要、最终 manifest 摘要和受控身份 reconciliation reference；身份冲突场景必须引用 RAY-99 已持久化的 reconciliation case，不能用操作员自由文本代替。该许可不证明会话采集时间，且不绕过 `allow_upload=false`。许可缺失或任一绑定不一致时不创建云端会话。
+
 基础报告快照及内部质量/运行日志是独立的低优先级业务，不改变原始会话的确认条件。
 
 服务器可在分段到达时预解码和预处理，但最终清单确认前不得发布完整报告。

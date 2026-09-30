@@ -749,6 +749,8 @@ hardware binding 绑定一台真实压力设备；client installation 只用于�
 客户端具有 **24-hour offline grace**，但断网期间无法证明跨电脑全局排他，
 这是明确限制而不是已解决能力。
 
+RAY-513 的采集授权按安装实例预签发并绑定到单一会话 UUID；最多保留 50 个未完成授权，授权不会仅因补传延迟而过期。没有预签发授权的历史 `VALID` 会话，必须由平台所有者逐会话人工复核，并以一次性许可绑定最终会话请求摘要和清单摘要；客户端时间不能证明采集发生在 License 暂停之前。`allow_upload=false` 仍拒绝所有上传。若旧会话的受试者 UUID 与云端机构编号映射冲突，必须先完成 RAY-99 受控身份核对和针对云端 UUID 的新必要同意；保留原 envelope、原同意和原始分段，不自动合并身份或改写历史证据。缺少持久身份/同意映射时保持阻断。
+
 Platform IAM 与机构账号完全分离，角色为 `PLATFORM_OWNER`、
 `PLATFORM_OPERATIONS`、`PLATFORM_SUPPORT`、`PLATFORM_ENGINEER`。患者身份读取
 必须获得 15 分钟 `SensitiveAccessGrant` 并审计。当前 IP:7443 仅为 seed
