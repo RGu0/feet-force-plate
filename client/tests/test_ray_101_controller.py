@@ -126,6 +126,26 @@ def test_primary_button_dispatches_to_coordinator_and_refreshes_page(qtbot) -> N
     assert controller.window.current_page_id == PageId.SUBJECT_IDENTIFICATION
 
 
+def test_controller_routes_engineering_maintenance_to_packaged_login(
+    qtbot, monkeypatch
+) -> None:
+    def login(_name: str, _password: str) -> None:
+        return None
+
+    controller = ApplicationController(_Coordinator(), engineering_login=login)
+    qtbot.addWidget(controller.window)
+    opened: list[object] = []
+    monkeypatch.setattr(
+        controller.window,
+        "show_engineering_login",
+        lambda callback: opened.append(callback),
+    )
+
+    controller.dispatch("OPEN_ENGINEERING_MAINTENANCE")
+
+    assert opened == [login]
+
+
 def test_controller_drives_the_operator_path_and_deferred_preflight(qtbot) -> None:
     controller = ApplicationController(_Coordinator())
     qtbot.addWidget(controller.window)

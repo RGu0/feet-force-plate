@@ -41,7 +41,7 @@ from client.cloud.runtime import (
     ClientAccessRuntime,
     build_client_access_runtime,
 )
-from client.cloud.access_client import CloudAccessError
+from client.cloud.access_client import CloudAccessClient, CloudAccessError
 from client.hardware_standardization.dynamic_defect_mask import DynamicDefectMaskStore
 from client.startup_validation.persistence import ValidationAuditTrail
 from client.startup_validation.recovery import FailureEscalationPolicy
@@ -942,6 +942,16 @@ def compose_authenticated_session(
                 app_version=APP_VERSION,
                 payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
                 event_recorder=composition.recorder,
+                engineering_login=(
+                    None
+                    if settings is None
+                    else build_packaged_engineering_login(
+                        data_root=data_root,
+                        client_factory=lambda: CloudAccessClient(
+                            settings.base_url, verify=settings.verify
+                        ),
+                    )
+                ),
             )
             if isinstance(upload_runtime, PackagedUploadRuntime):
                 live_runtime.controller.attach_subject_recovery(

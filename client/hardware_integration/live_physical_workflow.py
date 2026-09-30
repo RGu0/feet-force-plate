@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from client.device.session_ui import (
     processing_failed,
 )
 from client.device.transport import TransportDisconnected
+from client.hardware_standardization.dynamic_defect_mask import DynamicDefectMask
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.local_analysis.service import (
     ProcessingOutcome,
@@ -153,6 +155,8 @@ class _PreparedCaptureSession:
     started_at_ns: int
     protocol_profile: str
     upload_envelope: FormalUploadEnvelope | None
+    dynamic_defect_mask: DynamicDefectMask | None
+    dynamic_defect_mask_load_failed: bool
 
 
 class InstitutionLiveSessions:
@@ -214,6 +218,7 @@ class LivePhysicalCapture:
         storage_append_timeout_s: float | None = None,
         read_size: int = FRAME_LENGTH,
         formal_upload: FormalCaptureUpload | None,
+        dynamic_defect_mask_loader: Callable[[], DynamicDefectMask] | None = None,
         monotonic_ns=time.monotonic_ns,
         wall_time_ns=time.time_ns,
     ) -> None:
@@ -241,6 +246,7 @@ class LivePhysicalCapture:
         self._storage_append_timeout_s = storage_append_timeout_s
         self._read_size = read_size
         self._formal_upload = formal_upload
+        self._dynamic_defect_mask_loader = dynamic_defect_mask_loader
         self._prepared_sessions: dict[str, _PreparedCaptureSession] = {}
         self._monotonic_ns = monotonic_ns
         self._wall_time_ns = wall_time_ns
@@ -263,11 +269,21 @@ class LivePhysicalCapture:
                 protocol_profile=protocol_profile,
                 started_at_ns=started_at_ns,
             )
+            dynamic_defect_mask_load_failed = False
+            try:
+                dynamic_defect_mask = self._load_dynamic_defect_mask()
+            except Exception:
+                # Defer a fixed failure marker to the worker's existing capture
+                # failure path; never surface local paths or exception details.
+                dynamic_defect_mask = None
+                dynamic_defect_mask_load_failed = True
             self._prepared_sessions[session_id] = _PreparedCaptureSession(
                 metadata=metadata,
                 started_at_ns=started_at_ns,
                 protocol_profile=protocol_profile,
                 upload_envelope=upload_envelope,
+                dynamic_defect_mask=dynamic_defect_mask,
+                dynamic_defect_mask_load_failed=dynamic_defect_mask_load_failed,
             )
 
     def capture(
@@ -392,11 +408,19 @@ class LivePhysicalCapture:
                     "metadata", lambda: self._sessions.metadata(session_id)
                 )
                 started_at_ns = self._wall_time_ns()
+                dynamic_defect_mask = initialize(
+                    "device-health-mask", self._load_dynamic_defect_mask
+                )
             else:
                 metadata = prepared.metadata
                 started_at_ns = prepared.started_at_ns
                 if parser.profile.version != prepared.protocol_profile:
                     raise RuntimeError("prepared parser profile changed before capture")
+                dynamic_defect_mask = prepared.dynamic_defect_mask
+                if prepared.dynamic_defect_mask_load_failed:
+                    raise _CaptureInitializationError(
+                        "device-health-mask", ValueError("mask snapshot unavailable")
+                    )
 
             def store_local_identity() -> None:
                 self._physical_store.put_subject_ref(
@@ -411,7 +435,8 @@ class LivePhysicalCapture:
 
             initialize("local-identity", store_local_identity)
             quality_gate = DoP4864HardwareQualityGate(
-                baseline_reference=reference
+                baseline_reference=reference,
+                dynamic_defect_mask=dynamic_defect_mask,
             )
             versions = {
                 "institution_live": "institution-live-ui/1",
@@ -487,6 +512,17 @@ class LivePhysicalCapture:
             )
             self._states[session_id] = state
             return state
+
+    def _load_dynamic_defect_mask(self) -> DynamicDefectMask | None:
+        loader = self._dynamic_defect_mask_loader
+        if loader is None:
+            return None
+        mask = loader()
+        if not isinstance(mask, DynamicDefectMask):
+            raise TypeError("dynamic defect mask loader returned an invalid value")
+        if mask.shape != (48, 64):
+            raise ValueError("dynamic defect mask must use the DO-P4864 48x64 shape")
+        return mask
 
     def _formal_upload_envelope(
         self,
