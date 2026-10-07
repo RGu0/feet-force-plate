@@ -431,3 +431,124 @@ def test_live_capture_authorization_operations_are_tenant_scoped_and_one_way() -
             await platform_pool.close()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.skipif(_role_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
+def test_live_suspended_bare_session_replay_preserves_digest_and_tenant_guards() -> None:
+    async def exercise() -> None:
+        import asyncpg
+        from dataclasses import replace
+
+        from cloud.api.errors import IdempotencyConflict, TenantAccessDenied
+        from cloud.api.postgres import PostgresPlatformRepository
+        from cloud.ingestion.object_store import InMemoryObjectStore
+        from cloud.ingestion.principal import IngestionPrincipal
+        from cloud.ingestion.service import IngestionService
+        from shared.contracts.access_control import LicenseState
+        from shared.contracts.cloud import SessionCreateRequest, SessionVersions, TestProtocol
+
+        tenant_dsn, activation_dsn, platform_dsn = _role_dsns() or ("", "", "")
+        tenant_pool = await asyncpg.create_pool(tenant_dsn, min_size=1, max_size=2)
+        activation_pool = await asyncpg.create_pool(activation_dsn, min_size=1, max_size=2)
+        platform_pool = await asyncpg.create_pool(platform_dsn, min_size=1, max_size=2)
+        access = PostgresAccessRepository(
+            tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
+        )
+        now = datetime.now(UTC)
+        try:
+            principals = []
+            groups = []
+            for _ in range(2):
+                tenant = TenantSeed(uuid4(), f"Bare replay regression {uuid4()}")
+                group = replace(
+                    _group(), license_valid_from=now - timedelta(days=1),
+                    license_valid_until=now + timedelta(days=365),
+                    activation_expires_at=now + timedelta(days=7),
+                )
+                installation_id = uuid4()
+                await access.provision_tenant(tenant, group, created_at=now)
+                await access.activate_account_atomically(
+                    login_name_hmac=group.login_name_hmac,
+                    activation_code_hash=group.activation_code_hash,
+                    hardware_identity=group.hardware_identity,
+                    password_hash="$ffp-scrypt$bare-replay-test",
+                    installation_id=installation_id, activated_at=now,
+                    license_key_id="license/2-test", license_document_json='{"schema_version":"license/2"}',
+                    license_signature="s" * 86,
+                )
+                principals.append(IngestionPrincipal(
+                    tenant.tenant_id, installation_id, now + timedelta(minutes=10),
+                    True, True, group.account_id, group.license_id, group.hardware_identity,
+                ))
+                groups.append(group)
+            active, other_tenant = principals
+            subject_id, consent_id = uuid4(), uuid4()
+            async with tenant_transaction(tenant_pool, active.tenant_id) as connection:
+                await connection.execute(
+                    "INSERT INTO subject.subjects (subject_uuid,tenant_id,status) VALUES ($1,$2,'ACTIVE')",
+                    subject_id, active.tenant_id,
+                )
+                await connection.execute(
+                    """INSERT INTO subject.consents
+                       (consent_record_id,tenant_id,subject_uuid,policy_version,purpose_codes,
+                        data_categories,evidence_type,evidence_hash,granted_at)
+                       VALUES ($1,$2,$3,'test/1',ARRAY['SCREENING_SERVICE'],ARRAY['PRESSURE_RAW'],
+                               'OPERATOR_CONFIRMED',$4,$5)""",
+                    consent_id, active.tenant_id, subject_id, "a" * 64, now,
+                )
+            request = SessionCreateRequest(
+                session_id=uuid4(), subject_uuid=subject_id, consent_record_id=consent_id,
+                site_id=None, terminal_id=active.terminal_id,
+                client_installation_id=active.terminal_id, device_id=groups[0].hardware_id,
+                test_protocol=TestProtocol(id="test", version="1"),
+                versions=SessionVersions(app="1", protocol_profile="test/1", payload_schema="raw-segment/1", calibration="test/1"),
+                started_at=now,
+            )
+            repository = PostgresPlatformRepository(tenant_pool)
+            service = IngestionService(
+                repository, InMemoryObjectStore(),
+                supported_payload_schemas={"raw-segment/1"},
+                supported_manifest_schemas={"session-manifest/1"},
+            )
+            key = f"bare-{request.session_id}"
+            created = await service.create_session(active, request, key)
+            assert not created.idempotent_replay
+            license_record = await access.license(groups[0].license_id)
+            await access.replace_license(
+                license_id=license_record.license_id, expected_version=license_record.version,
+                status=LicenseState.SUSPENDED, issued_at=now + timedelta(seconds=1),
+                valid_until=license_record.valid_until, key_id="license/2-test",
+                document_json='{"schema_version":"license/2"}', signature="t" * 86,
+            )
+            suspended = replace(active, allow_new_test=False)
+            replay = await service.create_session(suspended, request, key)
+            assert replay.session_id == created.session_id
+            assert replay.idempotent_replay
+
+            new_request = request.model_copy(update={"session_id": uuid4()})
+            new_key = f"blocked-{new_request.session_id}"
+            with pytest.raises(TenantAccessDenied):
+                await service.create_session(suspended, new_request, new_key)
+            with pytest.raises(IdempotencyConflict):
+                await service.create_session(suspended, request.model_copy(update={"config_snapshot": {"changed": True}}), key)
+            with pytest.raises(IdempotencyConflict):
+                await service.create_session(suspended, request.model_copy(update={"client_installation_id": uuid4()}), key)
+            with pytest.raises(TenantAccessDenied):
+                await service.create_session(other_tenant, request, key)
+            with pytest.raises(TenantAccessDenied):
+                await service.create_session(replace(suspended, terminal_id=uuid4()), request, key)
+
+            async with tenant_transaction(tenant_pool, active.tenant_id) as connection:
+                assert await connection.fetchval("SELECT count(*) FROM screening.sessions WHERE tenant_id=$1", active.tenant_id) == 1
+                assert await connection.fetchval("SELECT count(*) FROM screening.sessions WHERE session_id=$1", new_request.session_id) == 0
+                assert await connection.fetchval("SELECT count(*) FROM ops.idempotency_keys WHERE tenant_id=$1 AND scope='session.create' AND idempotency_key=$2", active.tenant_id, new_key) == 0
+                assert await connection.fetchval("SELECT count(*) FROM screening.capture_grants WHERE tenant_id=$1", active.tenant_id) == 0
+            async with tenant_transaction(tenant_pool, other_tenant.tenant_id) as connection:
+                assert await connection.fetchval("SELECT count(*) FROM screening.sessions WHERE session_id=$1", request.session_id) == 0
+                assert await connection.fetchval("SELECT count(*) FROM ops.idempotency_keys WHERE tenant_id=$1 AND scope='session.create' AND idempotency_key=$2", other_tenant.tenant_id, key) == 0
+        finally:
+            await tenant_pool.close()
+            await activation_pool.close()
+            await platform_pool.close()
+
+    asyncio.run(exercise())
