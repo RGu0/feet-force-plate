@@ -24,6 +24,18 @@ class AccessRepositoryConflict(AccessRepositoryError):
     """A uniqueness or concurrent state transition conflicted."""
 
 
+class TerminalSeatsExhausted(AccessRepositoryConflict):
+    """Every terminal seat of the License is held by an active terminal."""
+
+
+class TerminalInstallationOwned(AccessRepositoryConflict):
+    """The client installation already belongs to another account."""
+
+
+class TerminalRefreshRace(AccessRepositoryConflict):
+    """The refresh session changed between read and rotation."""
+
+
 @dataclass(frozen=True, slots=True)
 class TenantSeed:
     tenant_id: UUID
@@ -100,6 +112,7 @@ class LicenseEntitlementRecord:
     key_id: str | None = None
     document_json: str | None = None
     signature: str | None = None
+    terminal_seats: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +184,41 @@ class RefreshSessionRecord:
     rotated_at: datetime | None = None
     revoked_at: datetime | None = None
     replaced_by_session_id: UUID | None = None
+
+
+TERMINAL_REVOKE_REASONS = ("TERMINAL_REVOKED", "REFRESH_REPLAYED", "SUPERSEDED")
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalRecord:
+    tenant_id: UUID
+    client_installation_id: UUID
+    account_id: UUID
+    license_id: UUID
+    terminal_name: str
+    platform: str
+    status: str
+    refresh_family_id: UUID
+    activated_at: datetime
+    last_refreshed_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalRefreshSessionRecord:
+    refresh_session_id: UUID
+    tenant_id: UUID
+    account_id: UUID
+    client_installation_id: UUID
+    refresh_family_id: UUID
+    refresh_token_hash: bytes
+    issued_at: datetime
+    idle_expires_at: datetime
+    absolute_expires_at: datetime
+    rotated_at: datetime | None = None
+    replaced_by_session_id: UUID | None = None
+    revoked_at: datetime | None = None
+    revoke_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +428,48 @@ class AccessRepository(Protocol):
         platform_identity_id: UUID, used_at: datetime
     ) -> SensitiveAccessGrantRecord: ...
 
+    async def set_terminal_seats(
+        self, *, license_id: UUID, seats: int, changed_at: datetime
+    ) -> LicenseEntitlementRecord: ...
+
+    async def activate_terminal_atomically(
+        self, *, terminal: TerminalRecord, session: TerminalRefreshSessionRecord
+    ) -> TerminalRecord: ...
+
+    async def terminal(self, client_installation_id: UUID) -> TerminalRecord | None: ...
+
+    async def terminals_for_account(
+        self, *, tenant_id: UUID, account_id: UUID
+    ) -> tuple[TerminalRecord, ...]: ...
+
+    async def terminal_refresh_by_hash(
+        self, token_hash: bytes
+    ) -> TerminalRefreshSessionRecord | None: ...
+
+    async def terminal_refresh_session(
+        self, *, tenant_id: UUID, refresh_session_id: UUID
+    ) -> TerminalRefreshSessionRecord | None: ...
+
+    async def rotate_terminal_refresh(
+        self, *, current_token_hash: bytes,
+        replacement: TerminalRefreshSessionRecord, rotated_at: datetime
+    ) -> TerminalRefreshSessionRecord: ...
+
+    async def revoke_terminal_refresh_family(
+        self, *, tenant_id: UUID, refresh_family_id: UUID,
+        reason: str, revoked_at: datetime
+    ) -> None: ...
+
+    async def rename_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, terminal_name: str
+    ) -> TerminalRecord: ...
+
+    async def revoke_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, revoked_at: datetime
+    ) -> TerminalRecord: ...
+
 
 class InMemoryAccessRepository:
     """Immutable-returning repository with explicit atomic transition methods."""
@@ -409,6 +499,9 @@ class InMemoryAccessRepository:
         self._platform_identity_by_login: dict[bytes, UUID] = {}
         self._platform_role_bindings: list[PlatformRoleBindingRecord] = []
         self._sensitive_grants: dict[UUID, SensitiveAccessGrantRecord] = {}
+        self._terminals: dict[UUID, TerminalRecord] = {}
+        self._terminal_sessions: dict[UUID, TerminalRefreshSessionRecord] = {}
+        self._terminal_session_by_hash: dict[bytes, UUID] = {}
 
     async def provision_tenant(
         self,
@@ -1270,6 +1363,193 @@ class InMemoryAccessRepository:
             self._sensitive_grants[grant_id] = used
             return used
 
+    async def set_terminal_seats(
+        self, *, license_id: UUID, seats: int, changed_at: datetime
+    ) -> LicenseEntitlementRecord:
+        if seats < 0:
+            raise ValueError("terminal seats must not be negative")
+        async with self._lock:
+            try:
+                current = self._licenses[license_id]
+            except KeyError as exc:
+                raise AccessRepositoryError("license does not exist") from exc
+            updated = replace(current, terminal_seats=seats)
+            self._licenses[license_id] = updated
+            return updated
+
+    def _revoke_terminal_sessions(
+        self, *, predicate, reason: str, revoked_at: datetime
+    ) -> None:
+        for session_id, session in list(self._terminal_sessions.items()):
+            if session.revoked_at is None and predicate(session):
+                self._terminal_sessions[session_id] = replace(
+                    session, revoked_at=revoked_at, revoke_reason=reason
+                )
+
+    async def activate_terminal_atomically(
+        self, *, terminal: TerminalRecord, session: TerminalRefreshSessionRecord
+    ) -> TerminalRecord:
+        async with self._lock:
+            license_record = self._licenses.get(terminal.license_id)
+            if license_record is None or license_record.tenant_id != terminal.tenant_id:
+                raise AccessRepositoryError("license does not exist")
+            if session.refresh_token_hash in self._terminal_session_by_hash:
+                raise AccessRepositoryConflict("terminal refresh session already exists")
+            existing = self._terminals.get(terminal.client_installation_id)
+            if existing is not None and (
+                existing.tenant_id != terminal.tenant_id
+                or existing.account_id != terminal.account_id
+            ):
+                raise TerminalInstallationOwned("installation belongs to another account")
+            holds_seat = (
+                existing is not None
+                and existing.status == "ACTIVE"
+                and existing.license_id == terminal.license_id
+            )
+            if not holds_seat:
+                used = sum(
+                    row.status == "ACTIVE" and row.license_id == terminal.license_id
+                    for row in self._terminals.values()
+                )
+                if used >= license_record.terminal_seats:
+                    raise TerminalSeatsExhausted("terminal seats are exhausted")
+            if existing is not None:
+                self._revoke_terminal_sessions(
+                    predicate=lambda row: row.client_installation_id
+                    == terminal.client_installation_id,
+                    reason="SUPERSEDED",
+                    revoked_at=terminal.activated_at,
+                )
+            self._terminals[terminal.client_installation_id] = terminal
+            self._terminal_sessions[session.refresh_session_id] = session
+            self._terminal_session_by_hash[session.refresh_token_hash] = (
+                session.refresh_session_id
+            )
+            return terminal
+
+    async def terminal(self, client_installation_id: UUID) -> TerminalRecord | None:
+        async with self._lock:
+            return self._terminals.get(client_installation_id)
+
+    async def terminals_for_account(
+        self, *, tenant_id: UUID, account_id: UUID
+    ) -> tuple[TerminalRecord, ...]:
+        async with self._lock:
+            rows = [
+                row for row in self._terminals.values()
+                if row.tenant_id == tenant_id and row.account_id == account_id
+            ]
+        return tuple(sorted(rows, key=lambda row: (row.activated_at, str(row.client_installation_id))))
+
+    async def terminal_refresh_by_hash(
+        self, token_hash: bytes
+    ) -> TerminalRefreshSessionRecord | None:
+        async with self._lock:
+            session_id = self._terminal_session_by_hash.get(token_hash)
+            return None if session_id is None else self._terminal_sessions[session_id]
+
+    async def terminal_refresh_session(
+        self, *, tenant_id: UUID, refresh_session_id: UUID
+    ) -> TerminalRefreshSessionRecord | None:
+        async with self._lock:
+            session = self._terminal_sessions.get(refresh_session_id)
+            return session if session is not None and session.tenant_id == tenant_id else None
+
+    async def rotate_terminal_refresh(
+        self, *, current_token_hash: bytes,
+        replacement: TerminalRefreshSessionRecord, rotated_at: datetime
+    ) -> TerminalRefreshSessionRecord:
+        async with self._lock:
+            session_id = self._terminal_session_by_hash.get(current_token_hash)
+            current = None if session_id is None else self._terminal_sessions[session_id]
+            terminal = (
+                None if current is None
+                else self._terminals.get(current.client_installation_id)
+            )
+            if (
+                current is None
+                or terminal is None
+                or terminal.status != "ACTIVE"
+                or current.rotated_at is not None
+                or current.revoked_at is not None
+                or replacement.refresh_family_id != current.refresh_family_id
+                or replacement.client_installation_id != current.client_installation_id
+                or replacement.refresh_token_hash in self._terminal_session_by_hash
+            ):
+                raise TerminalRefreshRace("terminal refresh session changed")
+            self._terminal_sessions[current.refresh_session_id] = replace(
+                current,
+                rotated_at=rotated_at,
+                replaced_by_session_id=replacement.refresh_session_id,
+            )
+            self._terminal_sessions[replacement.refresh_session_id] = replacement
+            self._terminal_session_by_hash[replacement.refresh_token_hash] = (
+                replacement.refresh_session_id
+            )
+            self._terminals[terminal.client_installation_id] = replace(
+                terminal, last_refreshed_at=rotated_at
+            )
+            return replacement
+
+    async def revoke_terminal_refresh_family(
+        self, *, tenant_id: UUID, refresh_family_id: UUID,
+        reason: str, revoked_at: datetime
+    ) -> None:
+        if reason not in TERMINAL_REVOKE_REASONS:
+            raise ValueError("unknown terminal revoke reason")
+        async with self._lock:
+            self._revoke_terminal_sessions(
+                predicate=lambda row: row.tenant_id == tenant_id
+                and row.refresh_family_id == refresh_family_id,
+                reason=reason,
+                revoked_at=revoked_at,
+            )
+
+    def _owned_terminal(
+        self, *, tenant_id: UUID, account_id: UUID, client_installation_id: UUID
+    ) -> TerminalRecord:
+        terminal = self._terminals.get(client_installation_id)
+        if (
+            terminal is None
+            or terminal.tenant_id != tenant_id
+            or terminal.account_id != account_id
+        ):
+            raise AccessRepositoryError("terminal does not exist")
+        return terminal
+
+    async def rename_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, terminal_name: str
+    ) -> TerminalRecord:
+        async with self._lock:
+            terminal = self._owned_terminal(
+                tenant_id=tenant_id, account_id=account_id,
+                client_installation_id=client_installation_id,
+            )
+            updated = replace(terminal, terminal_name=terminal_name)
+            self._terminals[client_installation_id] = updated
+            return updated
+
+    async def revoke_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, revoked_at: datetime
+    ) -> TerminalRecord:
+        async with self._lock:
+            terminal = self._owned_terminal(
+                tenant_id=tenant_id, account_id=account_id,
+                client_installation_id=client_installation_id,
+            )
+            if terminal.status == "REVOKED":
+                return terminal
+            updated = replace(terminal, status="REVOKED", revoked_at=revoked_at)
+            self._terminals[client_installation_id] = updated
+            self._revoke_terminal_sessions(
+                predicate=lambda row: row.client_installation_id == client_installation_id,
+                reason="TERMINAL_REVOKED",
+                revoked_at=revoked_at,
+            )
+            return updated
+
 
 __all__ = [
     "AccessActivationRejected",
@@ -1294,4 +1574,10 @@ __all__ = [
     "TenantAccountRecord",
     "TenantRecord",
     "TenantSeed",
+    "TERMINAL_REVOKE_REASONS",
+    "TerminalInstallationOwned",
+    "TerminalRecord",
+    "TerminalRefreshRace",
+    "TerminalRefreshSessionRecord",
+    "TerminalSeatsExhausted",
 ]

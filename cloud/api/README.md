@@ -48,7 +48,14 @@ Provider-only lifecycle commands are:
   --roles PLATFORM_SUPPORT
 ./scripts/local-env.sh python -m cloud.access_control.cli inspect-license \
   --license-id "$FEETFORCEPLATE_LICENSE_ID"
+./scripts/local-env.sh python -m cloud.access_control.cli set-terminal-seats \
+  --platform-login platform-owner --license-id "$FEETFORCEPLATE_LICENSE_ID" --seats 3
 ```
+
+`set-terminal-seats` (RAY-656) sets how many mobile terminals the account may
+activate through `/v1/access/terminal-activate`; it needs a Platform write role,
+is audited as `license.terminal_seats`, and defaults to 0 for every License.
+Lowering it blocks new activations only; active terminals keep their seats.
 
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful

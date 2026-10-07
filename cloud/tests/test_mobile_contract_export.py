@@ -62,3 +62,38 @@ def test_signature_negative_cases_are_rejected():
 def test_success_fixture_uses_real_response_dto():
     from shared.contracts.cloud import SessionCreateResponse
     SessionCreateResponse.model_validate(build_vectors()['success']['data'])
+
+
+def test_terminal_routes_and_distinct_error_codes_are_published():
+    document = build_openapi()
+    activate = document['paths']['/v1/access/terminal-activate']['post']
+    refresh = document['paths']['/v1/access/terminal-refresh']['post']
+    assert activate['responses']['201']['content']['application/json']['schema']['$ref'].endswith(
+        'TerminalCredentialResponseEnvelope')
+    request_schema = document['components']['schemas']['TerminalActivationRequest']
+    assert 'activation_code' not in request_schema['properties']
+    assert set(request_schema['required']) == {
+        'account_name', 'password', 'terminal_name', 'client_installation_id', 'platform'}
+    refresh_codes = {entry['code'] for entry in refresh['x-ffp-error-codes']}
+    assert refresh_codes == {
+        'E-TRM-401-REVOKED', 'E-TRM-401-REFRESH-REPLAYED',
+        'E-TRM-401-REFRESH-EXPIRED', 'E-TRM-401-REFRESH-INVALID'}
+    assert 'E-TRM-409-SEAT-LIMIT' in {entry['code'] for entry in activate['x-ffp-error-codes']}
+    for path in ('/v1/access/terminals', '/v1/access/terminals/{client_installation_id}',
+                 '/v1/access/terminals/{client_installation_id}/revoke'):
+        assert path in document['paths']
+    license_schema = document['components']['schemas']['TerminalLicenseDocument']
+    assert 'seats' in license_schema['required']
+
+
+def test_terminal_vectors_cover_each_error_and_verify_signed_seats():
+    vectors = build_vectors()['terminal']
+    codes = [entry['body']['error']['code'] for entry in vectors['errors'].values()]
+    assert len(codes) == len(set(codes))
+    for name in ('terminal_revoked', 'seat_limit', 'refresh_replayed', 'refresh_expired'):
+        assert name in vectors['errors']
+    assert vectors['refresh_rotation']['replay_grace_seconds'] == 30
+    fixture = vectors['license']
+    public = Ed25519PublicKey.from_public_bytes(base64.b64decode(fixture['public_key_base64']))
+    public.verify(base64.b64decode(fixture['signature_base64']), bytes.fromhex(fixture['canonical_hex']))
+    assert json.loads(bytes.fromhex(fixture['canonical_hex']))['seats'] == 2

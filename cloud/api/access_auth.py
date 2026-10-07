@@ -27,6 +27,10 @@ from shared.contracts.access_control import (
     SignedLicenseV2,
 )
 from shared.contracts.client_sync import canonical_json_bytes
+from shared.contracts.terminal_access import (
+    SignedTerminalLicense,
+    TerminalLicenseDocument,
+)
 
 
 _ACCESS_TTL = timedelta(minutes=15)
@@ -258,6 +262,83 @@ class PlatformAccessTokenIssuer:
 
 
 @dataclass(frozen=True, slots=True)
+class TerminalAccessContext:
+    tenant_id: UUID
+    account_id: UUID
+    license_id: UUID
+    client_installation_id: UUID
+    expires_at: datetime
+
+
+class TerminalAccessTokenIssuer:
+    """Terminal bearer tokens; a distinct type and audience from tenant tokens.
+
+    Terminal credentials are not hardware-bound, so they are deliberately not
+    accepted by the hardware-scoped tenant data plane.
+    """
+
+    token_type = "terminal_access"
+    audience = "feetforceplate-terminal"
+
+    def __init__(self, *, secret: bytes, key_id: str) -> None:
+        if len(secret) < 32:
+            raise ValueError("terminal token secret must contain at least 32 bytes")
+        if not key_id:
+            raise ValueError("terminal token key_id is required")
+        self._secret = secret
+        self._key_id = key_id
+
+    def issue(
+        self,
+        *,
+        tenant_id: UUID,
+        account_id: UUID,
+        license_id: UUID,
+        client_installation_id: UUID,
+        now: datetime | None = None,
+    ) -> str:
+        issued_at = now or datetime.now(UTC)
+        return _issue_hmac_token(
+            secret=self._secret,
+            key_id=self._key_id,
+            token_type=self.token_type,
+            audience=self.audience,
+            payload={
+                "tenant_id": str(tenant_id),
+                "account_id": str(account_id),
+                "sub": str(client_installation_id),
+                "license_id": str(license_id),
+                "client_installation_id": str(client_installation_id),
+                "iat": int(issued_at.timestamp()),
+                "exp": int((issued_at + _ACCESS_TTL).timestamp()),
+                "jti": str(uuid4()),
+            },
+        )
+
+    def verify(self, token: str, *, now: datetime | None = None) -> TerminalAccessContext:
+        payload = _verify_hmac_token(
+            token,
+            secret=self._secret,
+            key_id=self._key_id,
+            token_type=self.token_type,
+            audience=self.audience,
+        )
+        try:
+            context = TerminalAccessContext(
+                tenant_id=UUID(payload["tenant_id"]),
+                account_id=UUID(payload["account_id"]),
+                license_id=UUID(payload["license_id"]),
+                client_installation_id=UUID(payload["client_installation_id"]),
+                expires_at=datetime.fromtimestamp(payload["exp"], UTC),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AuthenticationError("终端访问凭据载荷无效") from exc
+        if context.expires_at <= (now or datetime.now(UTC)):
+            raise AuthenticationError("终端访问凭据已过期")
+        return context
+
+
+@dataclass(frozen=True, slots=True)
 class IssuedRefreshToken:
     raw_token: str
     token_hash: bytes
@@ -277,6 +358,38 @@ class RefreshTokenFactory:
         return hmac.new(
             self._digest_key,
             raw_token.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+
+
+class TerminalRefreshTokenFactory:
+    """Refresh tokens derived from their random session id with a server key.
+
+    Derivation lets a rotation replayed inside the grace window return the
+    identical successor token without the plaintext ever being stored.
+    """
+
+    _DERIVATION_LABEL = b"ffp-terminal-refresh/1|"
+
+    def __init__(self, *, digest_key: bytes) -> None:
+        if len(digest_key) < 32:
+            raise ValueError("terminal refresh key must contain at least 32 bytes")
+        self._digest_key = digest_key
+
+    def derive(self, refresh_session_id: UUID) -> IssuedRefreshToken:
+        raw = _base64url(
+            hmac.new(
+                self._digest_key,
+                self._DERIVATION_LABEL + refresh_session_id.bytes,
+                hashlib.sha256,
+            ).digest()
+        )
+        return IssuedRefreshToken(raw, self.digest(raw))
+
+    def digest(self, raw_token: str) -> bytes:
+        return hmac.new(
+            self._digest_key,
+            b"ffp-terminal-refresh-digest/1|" + raw_token.encode("utf-8"),
             hashlib.sha256,
         ).digest()
 
@@ -310,6 +423,16 @@ class LicenseDocumentSigner:
             signature=base64.b64encode(signature).decode("ascii"),
         )
 
+    def sign_terminal(self, document: TerminalLicenseDocument) -> SignedTerminalLicense:
+        if self._private_key is None:
+            raise RuntimeError("License private key is unavailable")
+        signature = self._private_key.sign(canonical_json_bytes(document))
+        return SignedTerminalLicense(
+            document=document,
+            key_id=self._key_id,
+            signature=base64.b64encode(signature).decode("ascii"),
+        )
+
     def verify(self, bundle: SignedLicenseV2) -> LicenseDocumentV2:
         public_key = self._public_keys.get(bundle.key_id)
         if public_key is None:
@@ -335,5 +458,8 @@ __all__ = [
     "RefreshTokenFactory",
     "TenantAccessContext",
     "TenantAccessTokenIssuer",
+    "TerminalAccessContext",
+    "TerminalAccessTokenIssuer",
+    "TerminalRefreshTokenFactory",
     "reject_local_test_license",
 ]

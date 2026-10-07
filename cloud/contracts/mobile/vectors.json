@@ -127,5 +127,283 @@
       "request_id": "00000000-0000-0000-0000-000000000001",
       "server_time": "2026-10-07T00:00:00Z"
     }
+  },
+  "terminal": {
+    "activation_request": {
+      "account_name": "fixture-clinic",
+      "client_installation_id": "00000000-0000-0000-0000-00000000001e",
+      "password": "fixture-password-0000",
+      "platform": "ios",
+      "terminal_name": "Front desk"
+    },
+    "errors": {
+      "credentials_rejected": {
+        "body": {
+          "error": {
+            "action": "VERIFY_CREDENTIALS",
+            "code": "E-TRM-401-CREDENTIALS",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "installation_conflict": {
+        "body": {
+          "error": {
+            "action": "REGENERATE_INSTALLATION_ID",
+            "code": "E-TRM-409-INSTALLATION-CONFLICT",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "license_inactive": {
+        "body": {
+          "error": {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-403-LICENSE-INACTIVE",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 403
+      },
+      "refresh_expired": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-EXPIRED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "refresh_invalid": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-INVALID",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "refresh_replayed": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "seat_limit": {
+        "body": {
+          "error": {
+            "action": "FREE_TERMINAL_SEAT",
+            "code": "E-TRM-409-SEAT-LIMIT",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "terminal_revoked": {
+        "body": {
+          "error": {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      }
+    },
+    "license": {
+      "canonical_hex": "7b226163636f756e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303062222c22656e61626c65645f6665617475726573223a5b22666978747572652e66656174757265225d2c226973737565645f6174223a22323032362d31302d30375430303a30303a30305a222c226c6963656e73655f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303063222c22736368656d615f76657273696f6e223a227465726d696e616c2d6c6963656e73652f31222c227365617473223a322c22737461747573223a22414354495645222c2274656e616e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303061222c2276616c69645f66726f6d223a22323032362d31302d30375430303a30303a30305a222c2276616c69645f756e74696c223a22323032362d31312d30375430303a30303a30305a222c2276657273696f6e223a317d",
+      "public_key_base64": "k072pPlkPib1tnA4CrqjrbCl/pyj4ITFERYOElOGy7A=",
+      "signature_base64": "nS7QXfUquYpjcKdfkMcraZZ4/vKNZzeWn2XhhmhLAZU9GQIdxTYTckYzrhCP45Q18Js72wj211mVV04cFmaUBg==",
+      "signed_license": {
+        "document": {
+          "account_id": "00000000-0000-0000-0000-00000000000b",
+          "enabled_features": [
+            "fixture.feature"
+          ],
+          "issued_at": "2026-10-07T00:00:00Z",
+          "license_id": "00000000-0000-0000-0000-00000000000c",
+          "schema_version": "terminal-license/1",
+          "seats": 2,
+          "status": "ACTIVE",
+          "tenant_id": "00000000-0000-0000-0000-00000000000a",
+          "valid_from": "2026-10-07T00:00:00Z",
+          "valid_until": "2026-11-07T00:00:00Z",
+          "version": 1
+        },
+        "key_id": "fixture-license/2",
+        "signature": "nS7QXfUquYpjcKdfkMcraZZ4/vKNZzeWn2XhhmhLAZU9GQIdxTYTckYzrhCP45Q18Js72wj211mVV04cFmaUBg=="
+      }
+    },
+    "refresh_request": {
+      "client_installation_id": "00000000-0000-0000-0000-00000000001e",
+      "refresh_token": "fixture-refresh-token-not-a-secret-000000"
+    },
+    "refresh_rotation": {
+      "after_grace_replay_revokes": "whole_refresh_family",
+      "grace_boundary": "inclusive",
+      "in_grace_replay_returns": "identical_refresh_token_new_access_token",
+      "replay_grace_seconds": 30,
+      "scenarios": [
+        {
+          "elapsed_seconds": 30,
+          "expect": {
+            "http_status": 200,
+            "refresh_token": "same_as_successor"
+          },
+          "name": "replay_within_grace",
+          "replay": "original",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 31,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "http_status": 401,
+            "successor_code": "E-TRM-401-REFRESH-REPLAYED"
+          },
+          "name": "replay_after_grace",
+          "replay": "original",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "http_status": 401
+          },
+          "name": "replay_after_successor_used",
+          "replay": "original",
+          "successor_used": true
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401
+          },
+          "name": "refresh_after_revocation",
+          "replay": "successor",
+          "revoke_first": true,
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 2678400,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-EXPIRED",
+            "http_status": 401
+          },
+          "name": "refresh_after_idle_expiry",
+          "replay": "successor",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-INVALID",
+            "http_status": 401
+          },
+          "name": "unknown_refresh_token",
+          "replay": "unknown",
+          "successor_used": false
+        }
+      ]
+    },
+    "seats": {
+      "counts": "ACTIVE terminals of the License",
+      "scenarios": [
+        {
+          "active": 2,
+          "expect": {
+            "code": "E-TRM-409-SEAT-LIMIT",
+            "http_status": 409
+          },
+          "name": "new_installation_over_limit",
+          "seats": 2
+        },
+        {
+          "active": 2,
+          "expect": {
+            "http_status": 201
+          },
+          "name": "reactivate_active_installation",
+          "same_installation": true,
+          "seats": 2
+        },
+        {
+          "active": 2,
+          "expect": {
+            "http_status": 201
+          },
+          "name": "after_revocation",
+          "revoke_first": true,
+          "seats": 2
+        }
+      ],
+      "source": "signed_license.document.seats"
+    }
   }
 }

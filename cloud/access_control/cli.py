@@ -152,8 +152,27 @@ async def _inspect_license(args: argparse.Namespace, app: Any) -> None:
             "tenant_id": str(row.tenant_id), "license_id": str(row.license_id),
             "status": row.status.value, "enabled_features": list(row.enabled_features),
             "valid_from": row.valid_from.isoformat(), "valid_until": row.valid_until.isoformat(),
-            "version": row.version,
+            "version": row.version, "terminal_seats": row.terminal_seats,
         }
+    )
+
+
+async def _set_terminal_seats(args: argparse.Namespace, app: Any) -> None:
+    from uuid import UUID
+
+    platform_password = getpass.getpass("Platform password: ")
+    print(f"License={args.license_id}; terminal seats={args.seats}")
+    if input("Type SEATS to continue: ").strip() != "SEATS":
+        raise RuntimeError("terminal seat change cancelled")
+    login = await app.state.services.platform_identities.login(
+        PlatformLoginRequest(login_name=args.platform_login, password=platform_password)
+    )
+    context = await app.state.services.platform_identities.verify_access_token(login.access_token)
+    row = await app.state.services.platform_access.set_terminal_seats(
+        context, UUID(args.license_id), args.seats
+    )
+    _safe_print(
+        {"license_id": str(row.license_id), "terminal_seats": row.terminal_seats}
     )
 
 
@@ -250,6 +269,10 @@ def _parser() -> argparse.ArgumentParser:
 
     inspect = commands.add_parser("inspect-license")
     inspect.add_argument("--license-id", required=True)
+    seats = commands.add_parser("set-terminal-seats")
+    seats.add_argument("--platform-login", required=True)
+    seats.add_argument("--license-id", required=True)
+    seats.add_argument("--seats", type=int, required=True)
     inventory = commands.add_parser("create-sales-inventory")
     inventory.add_argument("--platform-login", required=True)
     inventory.add_argument("--quantity", type=int, required=True)
@@ -268,6 +291,8 @@ async def _run(args: argparse.Namespace) -> None:
             await _rotate_platform_role(args, app)
         elif args.command == "create-sales-inventory":
             await _create_sales_inventory(args, app)
+        elif args.command == "set-terminal-seats":
+            await _set_terminal_seats(args, app)
         else:
             await _inspect_license(args, app)
     finally:
