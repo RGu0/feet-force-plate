@@ -42,6 +42,7 @@ jobs:
           tests/spool/test_recovery.py
           tests/spool/test_valid_session_commit.py
           cloud/tests/test_client_sync_contract.py
+          cloud/tests/test_mobile_contract_export.py
           cloud/tests/test_segment_ingestion.py
           cloud/tests/test_deployment_assets.py
           tests/cloud/analysis/test_orchestrator.py
@@ -70,4 +71,10 @@ jobs:
         with:
           name: pytest-results-${{ matrix.os }}-py${{ matrix.python }}
           path: pytest-results.xml
+          if-no-files-found: error
+      - name: Archive mobile contract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-contracts-${{ matrix.os }}-${{ github.sha }}
+          path: cloud/contracts/mobile/*.json
           if-no-files-found: error

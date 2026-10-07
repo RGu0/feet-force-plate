@@ -49,6 +49,7 @@ case "$action" in
         [ "$#" -eq 0 ] || { echo "build accepts no arguments" >&2; exit 2; }
         sync --extra build
         "$uv_bin" run --locked --extra dev --extra build python -m compileall -q client cloud shared
+        "$uv_bin" run --locked --extra dev python -m cloud.api.contract_export
         ;;
     run)
         [ "$#" -gt 0 ] || { echo "run requires a command" >&2; exit 2; }
