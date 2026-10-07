@@ -8,6 +8,11 @@ from client.app.institution_store import InstitutionLocalStore
 from client.device.stage_windows import CapturedStageWindow, StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_standardization.dynamic_defect_mask import (
+    DynamicDefectEntry,
+    DynamicDefectMask,
+    DynamicDefectStatus,
+)
 from client.hardware_integration import live_physical_workflow
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
@@ -92,6 +97,9 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
                 payload_schema="raw-segment/7",
                 calibration_profile="calibration-authoritative/42",
             ),
+            dynamic_defect_mask_loader=lambda: (
+                mask_loads.append("loaded") or frozen_mask
+            ),
             wall_time_ns=lambda: 1_786_406_400_000_000_000,
         )
         adapter = DoP4864StandardizationAdapter.observed_compact_8bit()
@@ -106,6 +114,23 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             source_digest="a" * 64,
         )
 
+        frozen_mask = DynamicDefectMask(
+            device_id="FFP-001",
+            mask_version=4,
+            policy_version="dynamic-defect-mask/generic-grid/2",
+            shape=(48, 64),
+            entries=(
+                DynamicDefectEntry(
+                    source_index=100,
+                    status=DynamicDefectStatus.REPAIRABLE,
+                    confirmed_observations=2,
+                    last_observed_session_id="prior-session",
+                ),
+            ),
+        )
+        mask_loads = []
+
+        capture.prepare_session(session_id)
         capture.prepare_session(session_id)
         with ThreadPoolExecutor(max_workers=1) as executor:
             state = executor.submit(
@@ -117,8 +142,24 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
                 ),
                 reference=reference,
             ).result()
+            reconnected_state = executor.submit(
+                capture._state_for_connection,
+                session_id,
+                gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
+                parser=SimpleNamespace(
+                    profile=SimpleNamespace(version="do-p4864/1")
+                ),
+                reference=reference,
+            ).result()
 
         assert state.stager.subject_uuid == metadata.subject_uuid
+        assert mask_loads == ["loaded"]
+        assert reconnected_state is state
+        assert state.quality_gate._dynamic_defect_mask is frozen_mask
+        assert state.attempt_versions["dynamic_defect_mask_version"] == "4"
+        assert state.attempt_versions["dynamic_defect_mask_policy"] == (
+            "dynamic-defect-mask/generic-grid/2"
+        )
         assert state.stager.subject_uuid != session_id
         assert state.stager.upload_envelope.subject.subject_uuid == UUID(
             metadata.subject_uuid

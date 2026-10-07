@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 from client.app.heatmap import PhysicalGridOverlay
 from client.app.institution_read_models import InstitutionUiReadModels
 from client.app.report_index_recovery import recover_missing_screening_records
+from client.app.engineering_maintenance import EngineeringDeviceBindingStore
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
@@ -20,6 +22,10 @@ from client.hardware_integration.live_physical_workflow import (
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
+)
+from client.hardware_standardization.dynamic_defect_mask import (
+    DynamicDefectMask,
+    DynamicDefectMaskStore,
 )
 from client.app.preflight import HardwareLeasePreflight, build_production_preflight
 from client.app.ui_integration import build_connected_ui
@@ -139,6 +145,7 @@ def build_live_institution_runtime(
     app_version: str,
     payload_schema: str,
     event_recorder=None,
+    engineering_login: Callable[[str, str], object] | None = None,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
@@ -163,6 +170,17 @@ def build_live_institution_runtime(
         installation_id=client_installation_id,
         replenish=lambda: access_runtime.replenish_capture_grants(institution, session),
     )
+
+    def load_selected_device_dynamic_mask() -> DynamicDefectMask:
+        selected_device_id = EngineeringDeviceBindingStore(
+            data_root
+        ).selected_device_id
+        if selected_device_id is None or not selected_device_id.strip():
+            raise ValueError("engineer-selected device ID is required")
+        return DynamicDefectMaskStore(
+            data_root, selected_device_id, shape=(48, 64)
+        ).load_for_session()
+
     baseline = LiveBaselinePreflight(hardware)
     lease = HardwareLeasePreflight(access_runtime.hardware_lease_lifecycle(session))
     preflight = build_production_preflight(
@@ -184,6 +202,7 @@ def build_live_institution_runtime(
         spool_root=data_root / "spool",
         latest_frames=raw_mailbox,
         formal_upload=formal_upload,
+        dynamic_defect_mask_loader=load_selected_device_dynamic_mask,
     )
     acquisition = QtLiveHardwareAcquisition(
         capture.capture,
@@ -250,6 +269,7 @@ def build_live_institution_runtime(
             "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
                 hardware.display_geometry, specification_id=hardware.specification_id
             ),
+            "engineering_login": engineering_login,
         },
     )
     acquisition.set_callbacks(
