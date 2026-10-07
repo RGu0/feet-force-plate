@@ -180,12 +180,14 @@ def test_live_capture_authorization_role_and_rls_contract() -> None:
                 "ops.capture_authorization_audit",
             ):
                 row = await tenant.fetchrow(
-                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid=$1::regclass",
+                    "SELECT oid, relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid=$1::regclass",
                     table,
                 )
-                assert tuple(row.values()) == (True, True)
+                assert (row["relrowsecurity"], row["relforcerowsecurity"]) == (True, True)
+                # OID lookup avoids requiring schema USAGE just to inspect a
+                # denied table. Do not grant activation extra schema access.
                 assert not await activation.fetchval(
-                    "SELECT has_table_privilege(current_user, $1, 'SELECT')", table
+                    "SELECT has_table_privilege(current_user, $1::oid, 'SELECT')", row["oid"]
                 )
                 assert not await tenant.fetchval(
                     """SELECT EXISTS (
