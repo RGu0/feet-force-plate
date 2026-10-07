@@ -7,8 +7,12 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux Qt runtime
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.11'
