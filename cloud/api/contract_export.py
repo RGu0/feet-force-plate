@@ -84,11 +84,11 @@ _TERMINAL_OPERATION_ERRORS = {
     ('/v1/access/terminal-refresh', 'post'): (
         errors.TerminalRevoked, errors.TerminalRefreshReplayed,
         errors.TerminalRefreshExpired, errors.TerminalRefreshInvalid),
-    ('/v1/access/terminals', 'get'): (errors.TerminalRevoked,),
+    ('/v1/access/terminals', 'get'): (errors.AuthenticationError, errors.TerminalRevoked),
     ('/v1/access/terminals/{client_installation_id}', 'patch'): (
-        errors.TerminalRevoked, errors.ResourceNotFound),
+        errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
     ('/v1/access/terminals/{client_installation_id}/revoke', 'post'): (
-        errors.TerminalRevoked, errors.ResourceNotFound),
+        errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
 }
 
 

@@ -22,7 +22,7 @@ from .access_control import (
     PasswordValue,
     SecretValue,
 )
-from .cloud import ContractModel, SchemaVersion
+from .cloud import ContractModel
 from .device_policy import FeatureName
 
 
@@ -72,7 +72,8 @@ class TerminalLicenseDocument(ContractModel):
     version: Annotated[int, Field(gt=0)]
     enabled_features: tuple[FeatureName, ...]
     seats: Annotated[int, Field(ge=0)]
-    schema_version: SchemaVersion = "terminal-license/1"
+    # A const, so a signature over this document can never verify as license/2.
+    schema_version: Literal["terminal-license/1"] = "terminal-license/1"
 
     @field_validator("enabled_features")
     @classmethod

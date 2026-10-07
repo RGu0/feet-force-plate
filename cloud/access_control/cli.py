@@ -157,17 +157,54 @@ async def _inspect_license(args: argparse.Namespace, app: Any) -> None:
     )
 
 
+async def _platform_context(app: Any, platform_login: str) -> Any:
+    platform_password = getpass.getpass("Platform password: ")
+    login = await app.state.services.platform_identities.login(
+        PlatformLoginRequest(login_name=platform_login, password=platform_password)
+    )
+    return await app.state.services.platform_identities.verify_access_token(login.access_token)
+
+
+def _terminal_row(row: Any) -> dict[str, Any]:
+    return {
+        "client_installation_id": str(row.client_installation_id),
+        "terminal_name": row.terminal_name, "platform": row.platform,
+        "status": row.status, "activated_at": row.activated_at.isoformat(),
+        "last_refreshed_at": None if row.last_refreshed_at is None
+        else row.last_refreshed_at.isoformat(),
+    }
+
+
+async def _list_terminals(args: argparse.Namespace, app: Any) -> None:
+    from uuid import UUID
+
+    context = await _platform_context(app, args.platform_login)
+    rows = await app.state.services.platform_access.list_terminals(
+        context, UUID(args.license_id)
+    )
+    _safe_print({"license_id": args.license_id, "terminals": [_terminal_row(r) for r in rows]})
+
+
+async def _revoke_terminal(args: argparse.Namespace, app: Any) -> None:
+    from uuid import UUID
+
+    print(f"Terminal={args.client_installation_id}; reason={args.reason_code}")
+    if input("Type REVOKE to continue: ").strip() != "REVOKE":
+        raise RuntimeError("terminal revoke cancelled")
+    context = await _platform_context(app, args.platform_login)
+    row = await app.state.services.platform_access.revoke_terminal(
+        context, UUID(args.client_installation_id), reason_code=args.reason_code
+    )
+    _safe_print(_terminal_row(row))
+
+
 async def _set_terminal_seats(args: argparse.Namespace, app: Any) -> None:
     from uuid import UUID
 
-    platform_password = getpass.getpass("Platform password: ")
     print(f"License={args.license_id}; terminal seats={args.seats}")
     if input("Type SEATS to continue: ").strip() != "SEATS":
         raise RuntimeError("terminal seat change cancelled")
-    login = await app.state.services.platform_identities.login(
-        PlatformLoginRequest(login_name=args.platform_login, password=platform_password)
-    )
-    context = await app.state.services.platform_identities.verify_access_token(login.access_token)
+    context = await _platform_context(app, args.platform_login)
     row = await app.state.services.platform_access.set_terminal_seats(
         context, UUID(args.license_id), args.seats
     )
@@ -273,6 +310,13 @@ def _parser() -> argparse.ArgumentParser:
     seats.add_argument("--platform-login", required=True)
     seats.add_argument("--license-id", required=True)
     seats.add_argument("--seats", type=int, required=True)
+    terminals = commands.add_parser("list-terminals")
+    terminals.add_argument("--platform-login", required=True)
+    terminals.add_argument("--license-id", required=True)
+    revoke = commands.add_parser("revoke-terminal")
+    revoke.add_argument("--platform-login", required=True)
+    revoke.add_argument("--client-installation-id", required=True)
+    revoke.add_argument("--reason-code", required=True)
     inventory = commands.add_parser("create-sales-inventory")
     inventory.add_argument("--platform-login", required=True)
     inventory.add_argument("--quantity", type=int, required=True)
@@ -293,6 +337,10 @@ async def _run(args: argparse.Namespace) -> None:
             await _create_sales_inventory(args, app)
         elif args.command == "set-terminal-seats":
             await _set_terminal_seats(args, app)
+        elif args.command == "list-terminals":
+            await _list_terminals(args, app)
+        elif args.command == "revoke-terminal":
+            await _revoke_terminal(args, app)
         else:
             await _inspect_license(args, app)
     finally:

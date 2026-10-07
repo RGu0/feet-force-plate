@@ -272,6 +272,7 @@ class TerminalAccessService:
         if not in_grace:
             await self._repository.revoke_terminal_refresh_family(
                 tenant_id=current.tenant_id,
+                client_installation_id=current.client_installation_id,
                 refresh_family_id=current.refresh_family_id,
                 reason="REFRESH_REPLAYED",
                 revoked_at=now,

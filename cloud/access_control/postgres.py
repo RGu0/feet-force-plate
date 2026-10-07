@@ -1537,14 +1537,16 @@ class PostgresAccessRepository:
     ) -> TerminalRefreshSessionRecord:
         try:
             async with tenant_transaction(self._activation_pool, replacement.tenant_id) as connection:
-                current_row = await connection.fetchrow(
-                    "SELECT * FROM iam.terminal_refresh_sessions "
-                    "WHERE refresh_token_hash=$1 FOR UPDATE", current_token_hash,
-                )
+                # Lock order for every terminal writer: terminal row, then its
+                # sessions. Revoke, re-activation and family revoke match it.
                 terminal_status = await connection.fetchval(
                     "SELECT status FROM iam.access_terminals "
                     "WHERE client_installation_id=$1 FOR UPDATE",
                     replacement.client_installation_id,
+                )
+                current_row = await connection.fetchrow(
+                    "SELECT * FROM iam.terminal_refresh_sessions "
+                    "WHERE refresh_token_hash=$1 FOR UPDATE", current_token_hash,
                 )
                 current = None if current_row is None else _terminal_refresh(current_row)
                 if (
@@ -1572,18 +1574,24 @@ class PostgresAccessRepository:
         except TerminalRefreshRace:
             raise
         except Exception as exc:
-            if getattr(exc, "sqlstate", None) in {"23503", "23505"}:
+            if getattr(exc, "sqlstate", None) in {"23503", "23505", "40001", "40P01"}:
                 raise TerminalRefreshRace("terminal refresh session changed") from exc
             raise
         return replacement
 
     async def revoke_terminal_refresh_family(
-        self, *, tenant_id: UUID, refresh_family_id: UUID,
-        reason: str, revoked_at: datetime
+        self, *, tenant_id: UUID, client_installation_id: UUID,
+        refresh_family_id: UUID, reason: str, revoked_at: datetime
     ) -> None:
         if reason not in TERMINAL_REVOKE_REASONS:
             raise ValueError("unknown terminal revoke reason")
         async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            # Holding the terminal lock waits out any in-flight rotation, so its
+            # successor is committed and visible before the family is revoked.
+            await connection.execute(
+                "SELECT 1 FROM iam.access_terminals WHERE client_installation_id=$1 FOR UPDATE",
+                client_installation_id,
+            )
             await connection.execute(
                 """UPDATE iam.terminal_refresh_sessions SET revoked_at=$2,revoke_reason=$3
                    WHERE refresh_family_id=$1 AND revoked_at IS NULL""",

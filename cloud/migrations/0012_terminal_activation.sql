@@ -109,9 +109,4 @@ GRANT SELECT, INSERT, UPDATE ON iam.terminal_refresh_sessions TO ffp_activation_
 GRANT SELECT, INSERT ON iam.terminal_directory TO ffp_activation_app;
 GRANT SELECT, INSERT ON iam.terminal_refresh_directory TO ffp_activation_app;
 
-GRANT SELECT ON iam.access_terminals TO ffp_platform_app;
-GRANT SELECT ON iam.terminal_refresh_sessions TO ffp_platform_app;
-GRANT SELECT ON iam.terminal_directory TO ffp_platform_app;
-GRANT SELECT ON iam.terminal_refresh_directory TO ffp_platform_app;
-
 COMMIT;

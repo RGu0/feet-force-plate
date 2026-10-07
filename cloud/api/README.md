@@ -56,6 +56,9 @@ Provider-only lifecycle commands are:
 activate through `/v1/access/terminal-activate`; it needs a Platform write role,
 is audited as `license.terminal_seats`, and defaults to 0 for every License.
 Lowering it blocks new activations only; active terminals keep their seats.
+`list-terminals --license-id` and `revoke-terminal --client-installation-id
+--reason-code` (Platform write role, audited as `terminal.revoke`) free a seat
+held by a lost, reinstalled or expired terminal.
 
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful

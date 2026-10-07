@@ -456,8 +456,8 @@ class AccessRepository(Protocol):
     ) -> TerminalRefreshSessionRecord: ...
 
     async def revoke_terminal_refresh_family(
-        self, *, tenant_id: UUID, refresh_family_id: UUID,
-        reason: str, revoked_at: datetime
+        self, *, tenant_id: UUID, client_installation_id: UUID,
+        refresh_family_id: UUID, reason: str, revoked_at: datetime
     ) -> None: ...
 
     async def rename_terminal(
@@ -1492,8 +1492,8 @@ class InMemoryAccessRepository:
             return replacement
 
     async def revoke_terminal_refresh_family(
-        self, *, tenant_id: UUID, refresh_family_id: UUID,
-        reason: str, revoked_at: datetime
+        self, *, tenant_id: UUID, client_installation_id: UUID,
+        refresh_family_id: UUID, reason: str, revoked_at: datetime
     ) -> None:
         if reason not in TERMINAL_REVOKE_REASONS:
             raise ValueError("unknown terminal revoke reason")

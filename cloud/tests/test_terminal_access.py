@@ -362,6 +362,42 @@ class TerminalAccessApiTests(_TerminalApiFixture):
         self.assertEqual(events[-1].action, "license.terminal_seats")
         self.assertIn(("previous_seats", "2"), events[-1].details)
 
+    async def test_operations_revoke_frees_a_seat_held_by_a_dead_terminal(self) -> None:
+        from cloud.access_control.platform_service import PlatformAuthorizationDenied
+
+        def operator(role):
+            return PlatformAccessContext(
+                platform_identity_id=uuid4(), roles=frozenset({role}), token_version=1,
+                expires_at=self.now + timedelta(minutes=15),
+            )
+
+        lost = (await self.activate("Lost phone")).json()["data"]
+        await self.activate("Desk")
+        # Refresh family dies after 30 idle days; the terminal still holds its seat.
+        self.now += timedelta(days=31)
+        self.assertEqual(self.error_code(await self.refresh(lost)), "E-TRM-401-REFRESH-EXPIRED")
+        self.assertEqual(self.error_code(await self.activate("New")), "E-TRM-409-SEAT-LIMIT")
+
+        with self.assertRaises(PlatformAuthorizationDenied):
+            await self.platform.revoke_terminal(
+                operator(PlatformRole.SUPPORT), UUID(lost["client_installation_id"]),
+                reason_code="DEVICE_LOST",
+            )
+        listed = await self.platform.list_terminals(
+            operator(PlatformRole.OPERATIONS), self.license_id
+        )
+        revoked = await self.platform.revoke_terminal(
+            operator(PlatformRole.OPERATIONS), UUID(lost["client_installation_id"]),
+            reason_code="DEVICE_LOST",
+        )
+        events = await self.repository.audit_events()
+
+        self.assertEqual({row.terminal_name for row in listed}, {"Lost phone", "Desk"})
+        self.assertEqual(revoked.status, "REVOKED")
+        self.assertEqual(events[-1].action, "terminal.revoke")
+        self.assertIn(("reason_code", "DEVICE_LOST"), events[-1].details)
+        self.assertEqual((await self.activate("New")).status_code, 201)
+
     async def test_terminal_token_is_not_a_tenant_token(self) -> None:
         credentials = (await self.activate()).json()["data"]
         response = await self.client.get("/v1/access/license", headers=self.bearer(credentials))

@@ -1921,8 +1921,8 @@
             "type": "string"
           },
           "schema_version": {
+            "const": "terminal-license/1",
             "default": "terminal-license/1",
-            "pattern": "^[a-z0-9-]+/[1-9][0-9]*$",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3132,6 +3132,12 @@
         "summary": "Terminal List",
         "x-ffp-error-codes": [
           {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
             "action": "CONTACT_ADMINISTRATOR",
             "code": "E-TRM-401-REVOKED",
             "http_status": 401,
@@ -3259,6 +3265,12 @@
         "summary": "Terminal Rename",
         "x-ffp-error-codes": [
           {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
             "action": "CONTACT_ADMINISTRATOR",
             "code": "E-TRM-401-REVOKED",
             "http_status": 401,
@@ -3381,6 +3393,12 @@
         },
         "summary": "Terminal Revoke",
         "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
           {
             "action": "CONTACT_ADMINISTRATOR",
             "code": "E-TRM-401-REVOKED",

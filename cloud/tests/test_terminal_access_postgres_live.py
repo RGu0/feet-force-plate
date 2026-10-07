@@ -39,6 +39,7 @@ def test_migration_is_additive_rls_scoped_and_least_privilege() -> None:
     for directory in ("iam.terminal_directory", "iam.terminal_refresh_directory"):
         assert f"REVOKE ALL ON {directory} FROM PUBLIC;" in sql
     assert "TO ffp_tenant_app" not in sql
+    assert "TO ffp_platform_app" not in sql
     assert "'TERMINAL_ACTIVATION'" in sql
 
 
@@ -50,6 +51,9 @@ def test_deployment_applies_and_backs_up_terminal_migration() -> None:
     )
     assert "iam.terminal_refresh_directory\n     TO ffp_seed_backup" in install
     assert "0011_controlled_identity_recovery,0012_terminal_activation" in backup
+    nginx = (ROOT / "deploy/aliyun/seed/nginx-feetforceplate-seed.conf").read_text(encoding="utf-8")
+    block = nginx[nginx.index("location = /v1/access/terminal-activate {"):]
+    assert block[: block.index("}")].count("limit_req zone=seed_auth") == 1
 
 
 def _terminal(tenant_id, group, *, installation=None) -> TerminalRecord:
@@ -117,7 +121,8 @@ async def _exercise(repository) -> None:
     assert (await repository.terminal(first.client_installation_id)).last_refreshed_at == rotated_at
 
     await repository.revoke_terminal_refresh_family(
-        tenant_id=tenant.tenant_id, refresh_family_id=first.refresh_family_id,
+        tenant_id=tenant.tenant_id, client_installation_id=first.client_installation_id,
+        refresh_family_id=first.refresh_family_id,
         reason="REFRESH_REPLAYED", revoked_at=rotated_at,
     )
     successor = await repository.terminal_refresh_session(
@@ -163,6 +168,97 @@ def test_live_terminal_repository_parity() -> None:
                     tenant_pool=pools[0], activation_pool=pools[1], platform_pool=pools[2]
                 )
             )
+        finally:
+            for pool in pools:
+                await pool.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(_live_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
+def test_live_terminal_writers_share_one_lock_order() -> None:
+    """Review findings on PR 67: no deadlock and no orphaned live successor."""
+
+    async def exercise() -> None:
+        import asyncpg
+
+        tenant_dsn, activation_dsn, platform_dsn = _live_dsns() or ("", "", "")
+        pools = [
+            await asyncpg.create_pool(dsn, min_size=1, max_size=6)
+            for dsn in (tenant_dsn, activation_dsn, platform_dsn)
+        ]
+        repository = PostgresAccessRepository(
+            tenant_pool=pools[0], activation_pool=pools[1], platform_pool=pools[2]
+        )
+        try:
+            tenant = TenantSeed(uuid4(), f"Terminal locks {uuid4()}")
+            group = _group(41, run_nonce=os.urandom(32))
+            await repository.provision_tenant(tenant, group, created_at=NOW)
+            await repository.set_terminal_seats(
+                license_id=group.license_id, seats=50, changed_at=NOW
+            )
+
+            # Rotation racing a terminal revoke never deadlocks: the revoke
+            # always lands and rotation either wins first or sees a race.
+            for _ in range(10):
+                terminal = _terminal(tenant.tenant_id, group)
+                session = _session(terminal)
+                await repository.activate_terminal_atomically(terminal=terminal, session=session)
+                results = await asyncio.gather(
+                    repository.rotate_terminal_refresh(
+                        current_token_hash=session.refresh_token_hash,
+                        replacement=_session(terminal, at=NOW + timedelta(seconds=1)),
+                        rotated_at=NOW + timedelta(seconds=1),
+                    ),
+                    repository.revoke_terminal(
+                        tenant_id=tenant.tenant_id, account_id=group.account_id,
+                        client_installation_id=terminal.client_installation_id,
+                        revoked_at=NOW + timedelta(seconds=1),
+                    ),
+                    return_exceptions=True,
+                )
+                assert isinstance(results[1], TerminalRecord), results
+                assert not isinstance(results[0], Exception) or isinstance(
+                    results[0], TerminalRefreshRace
+                ), results
+
+            # A family revoke waits for an in-flight rotation holding the
+            # terminal lock, then revokes the successor it committed.
+            terminal = _terminal(tenant.tenant_id, group)
+            session = _session(terminal)
+            await repository.activate_terminal_atomically(terminal=terminal, session=session)
+            successor = _session(terminal, at=NOW + timedelta(seconds=1))
+            connection = await asyncpg.connect(activation_dsn)
+            try:
+                transaction = connection.transaction()
+                await transaction.start()
+                await connection.execute(
+                    "SELECT set_config('app.tenant_id', $1, true)", str(tenant.tenant_id)
+                )
+                await connection.execute(
+                    "SELECT 1 FROM iam.access_terminals "
+                    "WHERE client_installation_id=$1 FOR UPDATE",
+                    terminal.client_installation_id,
+                )
+                await repository._insert_terminal_session(connection, successor)
+                revoke = asyncio.create_task(
+                    repository.revoke_terminal_refresh_family(
+                        tenant_id=tenant.tenant_id,
+                        client_installation_id=terminal.client_installation_id,
+                        refresh_family_id=terminal.refresh_family_id,
+                        reason="REFRESH_REPLAYED", revoked_at=NOW + timedelta(seconds=2),
+                    )
+                )
+                await asyncio.sleep(0.3)
+                assert not revoke.done()
+                await transaction.commit()
+                await revoke
+            finally:
+                await connection.close()
+            stored = await repository.terminal_refresh_session(
+                tenant_id=tenant.tenant_id, refresh_session_id=successor.refresh_session_id
+            )
+            assert stored.revoke_reason == "REFRESH_REPLAYED"
         finally:
             for pool in pools:
                 await pool.close()
