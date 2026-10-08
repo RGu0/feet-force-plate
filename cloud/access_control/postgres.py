@@ -33,6 +33,12 @@ from .repository import (
     TenantAccountRecord,
     TenantRecord,
     TenantSeed,
+    TERMINAL_REVOKE_REASONS,
+    TerminalInstallationOwned,
+    TerminalRecord,
+    TerminalRefreshRace,
+    TerminalRefreshSessionRecord,
+    TerminalSeatsExhausted,
 )
 
 
@@ -66,6 +72,7 @@ def _license(row: Any) -> LicenseEntitlementRecord:
         valid_until=row["valid_until"], version=row["license_version"],
         key_id=None if key_id == "pending" else key_id,
         document_json=document, signature=row["signature"],
+        terminal_seats=row.get("terminal_seats", 0),
     )
 
 
@@ -95,6 +102,29 @@ def _refresh(row: Any) -> RefreshSessionRecord:
         last_used_at=row["last_used_at"], idle_expires_at=row["idle_expires_at"],
         absolute_expires_at=row["absolute_expires_at"], rotated_at=row["rotated_at"],
         revoked_at=row["revoked_at"], replaced_by_session_id=row["replaced_by_session_id"],
+    )
+
+
+def _terminal(row: Any) -> TerminalRecord:
+    return TerminalRecord(
+        tenant_id=row["tenant_id"], client_installation_id=row["client_installation_id"],
+        account_id=row["account_id"], license_id=row["license_id"],
+        terminal_name=row["terminal_name"], platform=row["platform"],
+        status=row["status"], refresh_family_id=row["refresh_family_id"],
+        activated_at=row["activated_at"], last_refreshed_at=row["last_refreshed_at"],
+        revoked_at=row["revoked_at"],
+    )
+
+
+def _terminal_refresh(row: Any) -> TerminalRefreshSessionRecord:
+    return TerminalRefreshSessionRecord(
+        refresh_session_id=row["refresh_session_id"], tenant_id=row["tenant_id"],
+        account_id=row["account_id"], client_installation_id=row["client_installation_id"],
+        refresh_family_id=row["refresh_family_id"],
+        refresh_token_hash=bytes(row["refresh_token_hash"]), issued_at=row["issued_at"],
+        idle_expires_at=row["idle_expires_at"], absolute_expires_at=row["absolute_expires_at"],
+        rotated_at=row["rotated_at"], replaced_by_session_id=row["replaced_by_session_id"],
+        revoked_at=row["revoked_at"], revoke_reason=row["revoke_reason"],
     )
 
 
@@ -1329,6 +1359,286 @@ class PostgresAccessRepository:
                 "WHERE sensitive_access_grant_id=$1 RETURNING *", grant_id, used_at,
             )
         return _grant(row)
+
+    async def set_terminal_seats(
+        self, *, license_id: UUID, seats: int, changed_at: datetime
+    ) -> LicenseEntitlementRecord:
+        if seats < 0:
+            raise ValueError("terminal seats must not be negative")
+        tenant_id = await self._tenant_for_resource("LICENSE", license_id)
+        async with tenant_transaction(self._platform_pool, tenant_id) as connection:
+            row = await connection.fetchrow(
+                "UPDATE device.license_entitlements SET terminal_seats=$2,"
+                "updated_at=GREATEST(updated_at,$3) WHERE license_id=$1 RETURNING *",
+                license_id, seats, changed_at,
+            )
+        if row is None:
+            raise AccessRepositoryError("license does not exist")
+        return _license(row)
+
+    async def _insert_terminal_session(
+        self, connection: Any, session: TerminalRefreshSessionRecord
+    ) -> None:
+        await connection.execute(
+            """INSERT INTO iam.terminal_refresh_sessions
+               (refresh_session_id,tenant_id,account_id,client_installation_id,
+                refresh_family_id,refresh_token_hash,issued_at,idle_expires_at,
+                absolute_expires_at,created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$7)""",
+            session.refresh_session_id, session.tenant_id, session.account_id,
+            session.client_installation_id, session.refresh_family_id,
+            session.refresh_token_hash, session.issued_at, session.idle_expires_at,
+            session.absolute_expires_at,
+        )
+        await connection.execute(
+            "INSERT INTO iam.terminal_refresh_directory "
+            "(refresh_token_hash,tenant_id,refresh_session_id,created_at) VALUES ($1,$2,$3,$4)",
+            session.refresh_token_hash, session.tenant_id,
+            session.refresh_session_id, session.issued_at,
+        )
+
+    async def activate_terminal_atomically(
+        self, *, terminal: TerminalRecord, session: TerminalRefreshSessionRecord
+    ) -> TerminalRecord:
+        async with self._plain_transaction(self._activation_pool) as connection:
+            owner = await connection.fetchval(
+                "SELECT tenant_id FROM iam.terminal_directory WHERE client_installation_id=$1",
+                terminal.client_installation_id,
+            )
+        if owner is not None and owner != terminal.tenant_id:
+            raise TerminalInstallationOwned("installation belongs to another account")
+        try:
+            async with tenant_transaction(self._activation_pool, terminal.tenant_id) as connection:
+                # The License row lock serialises concurrent seat consumption.
+                seats = await connection.fetchval(
+                    "SELECT terminal_seats FROM device.license_entitlements "
+                    "WHERE license_id=$1 FOR UPDATE", terminal.license_id,
+                )
+                if seats is None:
+                    raise AccessRepositoryError("license does not exist")
+                existing_row = await connection.fetchrow(
+                    "SELECT * FROM iam.access_terminals "
+                    "WHERE client_installation_id=$1 FOR UPDATE",
+                    terminal.client_installation_id,
+                )
+                existing = None if existing_row is None else _terminal(existing_row)
+                if existing is not None and existing.account_id != terminal.account_id:
+                    raise TerminalInstallationOwned("installation belongs to another account")
+                holds_seat = (
+                    existing is not None
+                    and existing.status == "ACTIVE"
+                    and existing.license_id == terminal.license_id
+                )
+                if not holds_seat:
+                    used = await connection.fetchval(
+                        "SELECT count(*) FROM iam.access_terminals "
+                        "WHERE license_id=$1 AND status='ACTIVE'", terminal.license_id,
+                    )
+                    if used >= seats:
+                        raise TerminalSeatsExhausted("terminal seats are exhausted")
+                if existing is None:
+                    await connection.execute(
+                        "INSERT INTO iam.terminal_directory "
+                        "(client_installation_id,tenant_id,created_at) VALUES ($1,$2,$3)",
+                        terminal.client_installation_id, terminal.tenant_id,
+                        terminal.activated_at,
+                    )
+                    row = await connection.fetchrow(
+                        """INSERT INTO iam.access_terminals
+                           (client_installation_id,tenant_id,account_id,license_id,
+                            terminal_name,platform,status,refresh_family_id,activated_at,
+                            created_at,updated_at)
+                           VALUES ($1,$2,$3,$4,$5,$6,'ACTIVE',$7,$8,$8,$8) RETURNING *""",
+                        terminal.client_installation_id, terminal.tenant_id,
+                        terminal.account_id, terminal.license_id, terminal.terminal_name,
+                        terminal.platform, terminal.refresh_family_id, terminal.activated_at,
+                    )
+                else:
+                    await connection.execute(
+                        """UPDATE iam.terminal_refresh_sessions
+                           SET revoked_at=$2,revoke_reason='SUPERSEDED'
+                           WHERE client_installation_id=$1 AND revoked_at IS NULL""",
+                        terminal.client_installation_id, terminal.activated_at,
+                    )
+                    row = await connection.fetchrow(
+                        """UPDATE iam.access_terminals
+                           SET license_id=$2,terminal_name=$3,platform=$4,status='ACTIVE',
+                               refresh_family_id=$5,activated_at=$6,last_refreshed_at=NULL,
+                               revoked_at=NULL,updated_at=GREATEST(updated_at,$6)
+                           WHERE client_installation_id=$1 RETURNING *""",
+                        terminal.client_installation_id, terminal.license_id,
+                        terminal.terminal_name, terminal.platform,
+                        terminal.refresh_family_id, terminal.activated_at,
+                    )
+                await self._insert_terminal_session(connection, session)
+        except AccessRepositoryError:
+            raise
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) == "23505":
+                raise TerminalInstallationOwned("installation was registered concurrently") from exc
+            raise
+        return _terminal(row)
+
+    async def _terminal_route(self, client_installation_id: UUID) -> UUID | None:
+        async with self._plain_transaction(self._activation_pool) as connection:
+            return await connection.fetchval(
+                "SELECT tenant_id FROM iam.terminal_directory WHERE client_installation_id=$1",
+                client_installation_id,
+            )
+
+    async def terminal(self, client_installation_id: UUID) -> TerminalRecord | None:
+        tenant_id = await self._terminal_route(client_installation_id)
+        if tenant_id is None:
+            return None
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM iam.access_terminals WHERE client_installation_id=$1",
+                client_installation_id,
+            )
+        return None if row is None else _terminal(row)
+
+    async def terminals_for_account(
+        self, *, tenant_id: UUID, account_id: UUID
+    ) -> tuple[TerminalRecord, ...]:
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            rows = await connection.fetch(
+                "SELECT * FROM iam.access_terminals WHERE account_id=$1 "
+                "ORDER BY activated_at, client_installation_id::text", account_id,
+            )
+        return tuple(_terminal(row) for row in rows)
+
+    async def terminal_refresh_by_hash(
+        self, token_hash: bytes
+    ) -> TerminalRefreshSessionRecord | None:
+        async with self._plain_transaction(self._activation_pool) as connection:
+            route = await connection.fetchrow(
+                "SELECT tenant_id,refresh_session_id FROM iam.terminal_refresh_directory "
+                "WHERE refresh_token_hash=$1", token_hash,
+            )
+        if route is None:
+            return None
+        return await self.terminal_refresh_session(
+            tenant_id=route["tenant_id"], refresh_session_id=route["refresh_session_id"]
+        )
+
+    async def terminal_refresh_session(
+        self, *, tenant_id: UUID, refresh_session_id: UUID
+    ) -> TerminalRefreshSessionRecord | None:
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM iam.terminal_refresh_sessions WHERE refresh_session_id=$1",
+                refresh_session_id,
+            )
+        return None if row is None else _terminal_refresh(row)
+
+    async def rotate_terminal_refresh(
+        self, *, current_token_hash: bytes,
+        replacement: TerminalRefreshSessionRecord, rotated_at: datetime
+    ) -> TerminalRefreshSessionRecord:
+        try:
+            async with tenant_transaction(self._activation_pool, replacement.tenant_id) as connection:
+                # Lock order for every terminal writer: terminal row, then its
+                # sessions. Revoke, re-activation and family revoke match it.
+                terminal_status = await connection.fetchval(
+                    "SELECT status FROM iam.access_terminals "
+                    "WHERE client_installation_id=$1 FOR UPDATE",
+                    replacement.client_installation_id,
+                )
+                current_row = await connection.fetchrow(
+                    "SELECT * FROM iam.terminal_refresh_sessions "
+                    "WHERE refresh_token_hash=$1 FOR UPDATE", current_token_hash,
+                )
+                current = None if current_row is None else _terminal_refresh(current_row)
+                if (
+                    current is None
+                    or terminal_status != "ACTIVE"
+                    or current.rotated_at is not None
+                    or current.revoked_at is not None
+                    or replacement.refresh_family_id != current.refresh_family_id
+                    or replacement.client_installation_id != current.client_installation_id
+                ):
+                    raise TerminalRefreshRace("terminal refresh session changed")
+                await self._insert_terminal_session(connection, replacement)
+                await connection.execute(
+                    """UPDATE iam.terminal_refresh_sessions
+                       SET rotated_at=$2,replaced_by_session_id=$3
+                       WHERE refresh_session_id=$1""",
+                    current.refresh_session_id, rotated_at, replacement.refresh_session_id,
+                )
+                await connection.execute(
+                    """UPDATE iam.access_terminals
+                       SET last_refreshed_at=$2,updated_at=GREATEST(updated_at,$2)
+                       WHERE client_installation_id=$1""",
+                    replacement.client_installation_id, rotated_at,
+                )
+        except TerminalRefreshRace:
+            raise
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) in {"23503", "23505", "40001", "40P01"}:
+                raise TerminalRefreshRace("terminal refresh session changed") from exc
+            raise
+        return replacement
+
+    async def revoke_terminal_refresh_family(
+        self, *, tenant_id: UUID, client_installation_id: UUID,
+        refresh_family_id: UUID, reason: str, revoked_at: datetime
+    ) -> None:
+        if reason not in TERMINAL_REVOKE_REASONS:
+            raise ValueError("unknown terminal revoke reason")
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            # Holding the terminal lock waits out any in-flight rotation, so its
+            # successor is committed and visible before the family is revoked.
+            await connection.execute(
+                "SELECT 1 FROM iam.access_terminals WHERE client_installation_id=$1 FOR UPDATE",
+                client_installation_id,
+            )
+            await connection.execute(
+                """UPDATE iam.terminal_refresh_sessions SET revoked_at=$2,revoke_reason=$3
+                   WHERE refresh_family_id=$1 AND revoked_at IS NULL""",
+                refresh_family_id, revoked_at, reason,
+            )
+
+    async def rename_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, terminal_name: str
+    ) -> TerminalRecord:
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            row = await connection.fetchrow(
+                """UPDATE iam.access_terminals SET terminal_name=$3,updated_at=now()
+                   WHERE client_installation_id=$1 AND account_id=$2 RETURNING *""",
+                client_installation_id, account_id, terminal_name,
+            )
+        if row is None:
+            raise AccessRepositoryError("terminal does not exist")
+        return _terminal(row)
+
+    async def revoke_terminal(
+        self, *, tenant_id: UUID, account_id: UUID,
+        client_installation_id: UUID, revoked_at: datetime
+    ) -> TerminalRecord:
+        async with tenant_transaction(self._activation_pool, tenant_id) as connection:
+            row = await connection.fetchrow(
+                "SELECT * FROM iam.access_terminals "
+                "WHERE client_installation_id=$1 AND account_id=$2 FOR UPDATE",
+                client_installation_id, account_id,
+            )
+            if row is None:
+                raise AccessRepositoryError("terminal does not exist")
+            if row["status"] == "REVOKED":
+                return _terminal(row)
+            row = await connection.fetchrow(
+                """UPDATE iam.access_terminals
+                   SET status='REVOKED',revoked_at=$2,updated_at=GREATEST(updated_at,$2)
+                   WHERE client_installation_id=$1 RETURNING *""",
+                client_installation_id, revoked_at,
+            )
+            await connection.execute(
+                """UPDATE iam.terminal_refresh_sessions
+                   SET revoked_at=$2,revoke_reason='TERMINAL_REVOKED'
+                   WHERE client_installation_id=$1 AND revoked_at IS NULL""",
+                client_installation_id, revoked_at,
+            )
+        return _terminal(row)
 
 
 __all__ = ["PostgresAccessRepository"]

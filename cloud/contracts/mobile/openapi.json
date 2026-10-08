@@ -1572,6 +1572,33 @@
         "title": "SignedLicenseV2Envelope",
         "type": "object"
       },
+      "SignedTerminalLicense": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/TerminalLicenseDocument"
+          },
+          "key_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Key Id",
+            "type": "string"
+          },
+          "signature": {
+            "maxLength": 128,
+            "minLength": 80,
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "key_id",
+          "signature"
+        ],
+        "title": "SignedTerminalLicense",
+        "type": "object"
+      },
       "SubjectCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1716,6 +1743,414 @@
           "meta"
         ],
         "title": "SubjectSummaryEnvelope",
+        "type": "object"
+      },
+      "TerminalActivationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account_name": {
+            "maxLength": 64,
+            "minLength": 3,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "title": "Account Name",
+            "type": "string"
+          },
+          "client_installation_id": {
+            "format": "uuid",
+            "title": "Client Installation Id",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/TerminalPlatform"
+          },
+          "terminal_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Terminal Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_name",
+          "password",
+          "terminal_name",
+          "client_installation_id",
+          "platform"
+        ],
+        "title": "TerminalActivationRequest",
+        "type": "object"
+      },
+      "TerminalCredentialResponse": {
+        "additionalProperties": false,
+        "description": "Long-lived terminal credentials returned by activation and refresh.\n\nA refresh replayed inside ``refresh_replay_grace_seconds`` after rotation\nreturns the identical ``refresh_token``; ``access_token`` is freshly issued.",
+        "properties": {
+          "access_token": {
+            "maxLength": 8192,
+            "minLength": 20,
+            "title": "Access Token",
+            "type": "string"
+          },
+          "access_token_expires_at": {
+            "format": "date-time",
+            "title": "Access Token Expires At",
+            "type": "string"
+          },
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/AccessCapabilities"
+          },
+          "client_installation_id": {
+            "format": "uuid",
+            "title": "Client Installation Id",
+            "type": "string"
+          },
+          "license_id": {
+            "format": "uuid",
+            "title": "License Id",
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/TerminalPlatform"
+          },
+          "refresh_absolute_expires_at": {
+            "format": "date-time",
+            "title": "Refresh Absolute Expires At",
+            "type": "string"
+          },
+          "refresh_idle_expires_at": {
+            "format": "date-time",
+            "title": "Refresh Idle Expires At",
+            "type": "string"
+          },
+          "refresh_replay_grace_seconds": {
+            "const": 30,
+            "default": 30,
+            "title": "Refresh Replay Grace Seconds",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "maxLength": 8192,
+            "minLength": 20,
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "signed_license": {
+            "$ref": "#/components/schemas/SignedTerminalLicense"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "terminal_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Terminal Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "account_id",
+          "license_id",
+          "client_installation_id",
+          "terminal_name",
+          "platform",
+          "access_token",
+          "access_token_expires_at",
+          "refresh_token",
+          "refresh_idle_expires_at",
+          "refresh_absolute_expires_at",
+          "signed_license",
+          "capabilities"
+        ],
+        "title": "TerminalCredentialResponse",
+        "type": "object"
+      },
+      "TerminalCredentialResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TerminalCredentialResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "TerminalCredentialResponseEnvelope",
+        "type": "object"
+      },
+      "TerminalLicenseDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "enabled_features": {
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+              "type": "string"
+            },
+            "title": "Enabled Features",
+            "type": "array"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "license_id": {
+            "format": "uuid",
+            "title": "License Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "terminal-license/1",
+            "default": "terminal-license/1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "seats": {
+            "minimum": 0,
+            "title": "Seats",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LicenseState"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "account_id",
+          "license_id",
+          "status",
+          "issued_at",
+          "valid_from",
+          "valid_until",
+          "version",
+          "enabled_features",
+          "seats"
+        ],
+        "title": "TerminalLicenseDocument",
+        "type": "object"
+      },
+      "TerminalListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "license_id": {
+            "format": "uuid",
+            "title": "License Id",
+            "type": "string"
+          },
+          "seats": {
+            "minimum": 0,
+            "title": "Seats",
+            "type": "integer"
+          },
+          "seats_used": {
+            "minimum": 0,
+            "title": "Seats Used",
+            "type": "integer"
+          },
+          "terminals": {
+            "items": {
+              "$ref": "#/components/schemas/TerminalSummary"
+            },
+            "title": "Terminals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "license_id",
+          "seats",
+          "seats_used",
+          "terminals"
+        ],
+        "title": "TerminalListResponse",
+        "type": "object"
+      },
+      "TerminalListResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TerminalListResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "TerminalListResponseEnvelope",
+        "type": "object"
+      },
+      "TerminalPlatform": {
+        "enum": [
+          "ios",
+          "android"
+        ],
+        "title": "TerminalPlatform",
+        "type": "string"
+      },
+      "TerminalRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_installation_id": {
+            "format": "uuid",
+            "title": "Client Installation Id",
+            "type": "string"
+          },
+          "refresh_token": {
+            "maxLength": 8192,
+            "minLength": 20,
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token",
+          "client_installation_id"
+        ],
+        "title": "TerminalRefreshRequest",
+        "type": "object"
+      },
+      "TerminalRenameRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "terminal_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Terminal Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_name"
+        ],
+        "title": "TerminalRenameRequest",
+        "type": "object"
+      },
+      "TerminalState": {
+        "enum": [
+          "ACTIVE",
+          "REVOKED"
+        ],
+        "title": "TerminalState",
+        "type": "string"
+      },
+      "TerminalSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "format": "date-time",
+            "title": "Activated At",
+            "type": "string"
+          },
+          "client_installation_id": {
+            "format": "uuid",
+            "title": "Client Installation Id",
+            "type": "string"
+          },
+          "last_refreshed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Refreshed At"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/TerminalPlatform"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revoked At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TerminalState"
+          },
+          "terminal_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Terminal Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_installation_id",
+          "terminal_name",
+          "platform",
+          "status",
+          "activated_at"
+        ],
+        "title": "TerminalSummary",
+        "type": "object"
+      },
+      "TerminalSummaryEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TerminalSummary"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "TerminalSummaryEnvelope",
         "type": "object"
       },
       "TestProtocol": {
@@ -2348,6 +2783,635 @@
           }
         },
         "summary": "Access Refresh"
+      }
+    },
+    "/v1/access/terminal-activate": {
+      "post": {
+        "operationId": "terminal_activate_v1_access_terminal_activate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalCredentialResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Terminal Activate",
+        "x-ffp-error-codes": [
+          {
+            "action": "VERIFY_CREDENTIALS",
+            "code": "E-TRM-401-CREDENTIALS",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-403-LICENSE-INACTIVE",
+            "http_status": 403,
+            "retryable": false
+          },
+          {
+            "action": "FREE_TERMINAL_SEAT",
+            "code": "E-TRM-409-SEAT-LIMIT",
+            "http_status": 409,
+            "retryable": false
+          },
+          {
+            "action": "REGENERATE_INSTALLATION_ID",
+            "code": "E-TRM-409-INSTALLATION-CONFLICT",
+            "http_status": 409,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/access/terminal-refresh": {
+      "post": {
+        "operationId": "terminal_refresh_v1_access_terminal_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalCredentialResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Terminal Refresh",
+        "x-ffp-error-codes": [
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-EXPIRED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-INVALID",
+            "http_status": 401,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/access/terminals": {
+      "get": {
+        "operationId": "terminal_list_v1_access_terminals_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalListResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Terminal List",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/access/terminals/{client_installation_id}": {
+      "patch": {
+        "operationId": "terminal_rename_v1_access_terminals__client_installation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_installation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Installation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalSummaryEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Terminal Rename",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "VERIFY_REFERENCE",
+            "code": "E-API-404",
+            "http_status": 404,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/access/terminals/{client_installation_id}/revoke": {
+      "post": {
+        "operationId": "terminal_revoke_v1_access_terminals__client_installation_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_installation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Client Installation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalSummaryEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Terminal Revoke",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "VERIFY_REFERENCE",
+            "code": "E-API-404",
+            "http_status": 404,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/consents": {

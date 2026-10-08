@@ -27,6 +27,23 @@ bytes before any transport encoding. `payload_base64` is only a fixture carrier,
 not the HTTP body; PUT the decoded bytes as `application/octet-stream` and send
 `X-Content-SHA256`, `X-Schema-Version`, `X-Segment-Metadata` from the fixture.
 
+RAY-656 adds institutional multi-terminal routes under `/v1/access/terminal-*`
+and `/v1/access/terminals`, plus the `terminal` vector section. Activation takes
+account + password + terminal name + `client_installation_id` + platform, with no
+activation code. Each operation's `x-ffp-error-codes` lists its distinct codes:
+revoked, seat limit, refresh replayed, refresh expired, and so on. Branch on
+`error.code`; never infer revocation from a bare 401. The signed
+`terminal-license/1` document carries `seats` and verifies with the same fixture
+key procedure as `license/2`.
+
+Refresh rotation: a rotated token replayed within `replay_grace_seconds` (30,
+inclusive) returns the identical successor refresh token and a new access token.
+A later replay, or a replay after the successor was used, revokes the whole
+family (`E-TRM-401-REFRESH-REPLAYED`). Persist the newest refresh token before
+using it, and retry a lost refresh response with the previous token inside the
+window. Every `refresh_rotation` and `seats` scenario is replayed against the
+server in `cloud/tests/test_terminal_access.py`.
+
 Dart consumption and iOS/Android real TLS evidence remain separate acceptance
 steps. Current `gait-insole-flutter/packages/cloud_client` is a placeholder and
 has not yet run these fixtures. No mobile pass is implied by Python export tests.
