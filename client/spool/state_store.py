@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 import os
 from pathlib import Path
@@ -13,13 +14,37 @@ from typing import Protocol
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from techflex_cloud_foundation import (
+    OperationConflict,
+    ReliableOperation,
+    SqliteOperationStore,
+)
+
 from shared.contracts.client_sync import FormalUploadEnvelope
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
+
+
+_UPLOAD_OPERATION_KIND = "session.upload"
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
+_SAFE_ERROR_CODE = re.compile(r"E-[A-Z]{3}-[0-9]{3}")
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _datetime_from_ns(value_ns: int) -> datetime:
+    """Floor-convert epoch nanoseconds; never round a deadline into the past."""
+
+    seconds, nanoseconds = divmod(value_ns, 1_000_000_000)
+    return _EPOCH + timedelta(seconds=seconds, microseconds=nanoseconds // 1_000)
+
+
+def _ns_from_datetime(value: datetime) -> int:
+    delta = value.astimezone(UTC) - _EPOCH
+    return ((delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds) * 1_000
 
 
 class KeyProvider(Protocol):
@@ -160,6 +185,7 @@ class SyncHandoff:
     ended_at_ns: int
     manifest_sha256: str
     attempt_count: int
+    operation_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,9 +330,12 @@ class StateStore:
         self._connection.execute("PRAGMA synchronous=FULL")
         self._connection.execute("PRAGMA busy_timeout=5000")
         self._migrate()
+        self._operations = SqliteOperationStore(self.path)
+        self._backfill_pending_uploads()
 
     def close(self) -> None:
         with self._lock:
+            self._operations.close()
             self._connection.close()
 
     @property
@@ -410,6 +439,50 @@ class StateStore:
                         "ALTER TABLE sync_handoffs ADD COLUMN last_error_code TEXT"
                     )
                 self._connection.execute("PRAGMA user_version=9")
+            if version < 10:
+                # Queue scheduling state moved to foundation_operations; that
+                # table is created by SqliteOperationStore and populated from
+                # non-confirmed sync_handoffs rows by self-healing backfill.
+                self._connection.execute("PRAGMA user_version=10")
+
+    def _backfill_pending_uploads(self) -> None:
+        """Enqueue an upload operation for every non-confirmed handoff row.
+
+        Enqueue is idempotent per idempotency key, so repeated starts are
+        harmless; a key reused for different content keeps the queued row.
+        """
+
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT session_id, manifest_sha256 FROM sync_handoffs "
+                "WHERE state != 'CLOUD_CONFIRMED'"
+            ).fetchall()
+        for session_id, manifest_sha256 in rows:
+            digest = str(manifest_sha256)
+            if _SHA256_HEX.fullmatch(digest) is None:
+                continue
+            try:
+                self._operations.enqueue(
+                    ReliableOperation.create(
+                        kind=_UPLOAD_OPERATION_KIND,
+                        payload_ref=str(session_id),
+                        payload_digest=digest,
+                        idempotency_key=f"upload:{session_id}",
+                    )
+                )
+            except OperationConflict:
+                continue
+
+    def _operation_id_for(self, session_id: str) -> UUID:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT operation_id FROM foundation_operations "
+                "WHERE idempotency_key=?",
+                (f"upload:{session_id}",),
+            ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return UUID(str(row[0]))
 
     def record_validation_audit(
         self,
@@ -753,6 +826,17 @@ class StateStore:
                     encrypted_upload_envelope,
                 ),
             )
+        try:
+            self._operations.enqueue(
+                ReliableOperation.create(
+                    kind=_UPLOAD_OPERATION_KIND,
+                    payload_ref=session_id,
+                    payload_digest=manifest_sha256,
+                    idempotency_key=f"upload:{session_id}",
+                )
+            )
+        except OperationConflict:
+            pass
 
     def sync_handoff_state(self, session_id: str) -> str:
         with self._lock:
@@ -831,9 +915,13 @@ class StateStore:
             for row in rows
         ]
 
-    def mark_cloud_confirmed(self, session_id: str, *, confirmed_at_ns: int) -> None:
+    def mark_cloud_confirmed(
+        self, operation_id: UUID, session_id: str, *, confirmed_at_ns: int
+    ) -> None:
         """Record cloud receipt without granting local deletion eligibility."""
 
+        if not self._operations.confirm(operation_id):
+            raise KeyError(session_id)
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE sync_handoffs
@@ -848,39 +936,30 @@ class StateStore:
     def lease_sync_handoff(self, *, now_ns: int) -> SyncHandoff | None:
         """Lease the earliest retryable handoff without depending on process memory."""
 
-        with self._lock, self._connection:
+        operation = self._operations.lease_due(now=_datetime_from_ns(now_ns))
+        if operation is None:
+            return None
+        with self._lock:
             row = self._connection.execute(
-                """SELECT handoff.session_id, session.subject_uuid, session.consent_id,
-                    session.started_at_ns, session.ended_at_ns, handoff.manifest_sha256,
-                    handoff.attempt_count
+                """SELECT session.subject_uuid, session.consent_id,
+                    session.started_at_ns, session.ended_at_ns, handoff.manifest_sha256
                 FROM sync_handoffs AS handoff
                 JOIN sessions AS session USING(session_id)
-                WHERE handoff.state='READY_FOR_NETWORK'
-                   OR (handoff.state='RETRY_WAIT'
-                       AND (handoff.next_attempt_at_ns IS NULL
-                            OR handoff.next_attempt_at_ns <= ?))
-                ORDER BY handoff.created_at_ns, handoff.session_id
-                LIMIT 1""",
-                (now_ns,),
+                WHERE handoff.session_id=?""",
+                (operation.payload_ref,),
             ).fetchone()
-            if row is None:
-                return None
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs
-                SET state='UPLOADING', attempt_count=attempt_count+1, next_attempt_at_ns=NULL
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'RETRY_WAIT')""",
-                (row[0],),
-            ).rowcount
-            if not changed:
-                return None
+        if row is None:
+            return None
+        stored = self._operations.get(operation.operation_id)
         return SyncHandoff(
-            session_id=str(row[0]),
-            subject_uuid=str(row[1]),
-            consent_id=str(row[2]) if row[2] is not None else None,
-            started_at_ns=int(row[3]),
-            ended_at_ns=int(row[4]),
-            manifest_sha256=str(row[5]),
-            attempt_count=int(row[6]) + 1,
+            session_id=operation.payload_ref,
+            subject_uuid=str(row[0]),
+            consent_id=str(row[1]) if row[1] is not None else None,
+            started_at_ns=int(row[2]),
+            ended_at_ns=int(row[3]),
+            manifest_sha256=str(row[4]),
+            attempt_count=stored.attempt_count,
+            operation_id=operation.operation_id,
         )
 
     def sync_handoff_segments(self, session_id: str) -> tuple[SyncHandoffSegment, ...]:
@@ -900,71 +979,47 @@ class StateStore:
 
     def defer_sync_handoff(
         self,
-        session_id: str,
+        operation_id: UUID,
         *,
         error_code: str,
-        next_attempt_at_ns: int,
+        next_attempt_at: datetime,
     ) -> None:
-        if next_attempt_at_ns < 0:
-            raise ValueError("next_attempt_at_ns must be non-negative")
-        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+        if re.fullmatch(_SAFE_ERROR_CODE, error_code) is None:
             raise ValueError("error_code must be a safe diagnostic code")
-        with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='RETRY_WAIT',
-                    next_attempt_at_ns=?, last_error_code=?
-                WHERE session_id=? AND state='UPLOADING'""",
-                (next_attempt_at_ns, error_code, session_id),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+        if not self._operations.defer(
+            operation_id, next_attempt_at=next_attempt_at, error_code=error_code
+        ):
+            raise KeyError(str(operation_id))
 
     def sync_handoff_retry_state(
         self, session_id: str
     ) -> tuple[int, int | None, str | None]:
         """Expose durable scheduling facts without decrypting upload identity."""
 
-        with self._lock:
-            row = self._connection.execute(
-                """SELECT attempt_count, next_attempt_at_ns, last_error_code
-                FROM sync_handoffs WHERE session_id=?""",
-                (session_id,),
-            ).fetchone()
-        if row is None:
-            raise KeyError(session_id)
+        stored = self._operations.get(self._operation_id_for(session_id))
         return (
-            int(row[0]),
-            int(row[1]) if row[1] is not None else None,
-            str(row[2]) if row[2] is not None else None,
+            stored.attempt_count,
+            (
+                _ns_from_datetime(stored.next_attempt_at)
+                if stored.next_attempt_at is not None
+                else None
+            ),
+            stored.error_code,
         )
 
-    def mark_sync_handoff_conflict(self, session_id: str) -> None:
+    def mark_sync_handoff_conflict(self, operation_id: UUID) -> None:
         """Stop automatic retries when a remote immutable digest conflicts."""
 
-        with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='CONFLICT',
-                    next_attempt_at_ns=NULL, last_error_code='E-SYN-409'
-                WHERE session_id=? AND state='UPLOADING'""",
-                (session_id,),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+        if not self._operations.mark_conflict(operation_id, error_code="E-SYN-409"):
+            raise KeyError(str(operation_id))
 
-    def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
+    def mark_sync_handoff_blocked(self, operation_id: UUID, *, error_code: str) -> None:
         """Stop automatic retries after a non-retryable cloud contract rejection."""
 
-        if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
+        if re.fullmatch(_SAFE_ERROR_CODE, error_code) is None:
             raise ValueError("error_code must be a safe diagnostic code")
-        with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='BLOCKED',
-                    next_attempt_at_ns=NULL, last_error_code=?
-                WHERE session_id=? AND state='UPLOADING'""",
-                (error_code, session_id),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+        if not self._operations.block(operation_id, error_code=error_code):
+            raise KeyError(str(operation_id))
 
     def valid_local_storage_snapshot(self) -> ValidLocalStorageSnapshot:
         """Describe retained valid data without treating cloud receipt as deletion."""
@@ -1130,10 +1185,11 @@ class StateStore:
                 WHERE state='UPLOADING'"""
             ).rowcount
             handoffs = self._connection.execute(
-                """UPDATE sync_handoffs
-                SET state='READY_FOR_NETWORK', next_attempt_at_ns=NULL
-                WHERE state='UPLOADING'"""
-            ).rowcount
+                "SELECT COUNT(*) FROM foundation_operations WHERE state='LEASED'"
+            ).fetchone()[0]
+        self._operations.recover_interrupted_leases(
+            now=_datetime_from_ns(recovered_at_ns)
+        )
         return RecoveryResult(sessions, uploads, telemetry, handoffs)
 
     def quarantine_segment_path(self, relative_path: str) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from client.spool.state_store import (
@@ -20,6 +21,15 @@ class _KeyProvider:
 
 def _store(tmp_path: Path) -> StateStore:
     return StateStore(tmp_path / "state.sqlite3", SensitiveBlobCodec(_KeyProvider()))
+
+
+def _operation_state(store: StateStore, session_id: str) -> str:
+    row = store._connection.execute(
+        "SELECT state FROM foundation_operations WHERE idempotency_key=?",
+        (f"upload:{session_id}",),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
 
 
 def _commit_handoff(
@@ -121,7 +131,7 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
         uploading_segment_path, uploading_segment_bytes = handoff_segments[
             uploading_session_id
         ]
-        assert store.sync_handoff_state(uploading_session_id) == "UPLOADING"
+        assert _operation_state(store, uploading_session_id) == "LEASED"
 
         decision_with_50_handoffs = store.evaluate_new_test(
             now_ns=now_ns,
@@ -139,7 +149,11 @@ def test_capacity_gate_has_exact_pending_session_boundary_and_retains_confirmed_
         assert uploading_snapshot.pending_session_count == 50
         pending_bytes_before_confirmation = uploading_snapshot.pending_bytes
 
-        store.mark_cloud_confirmed(uploading_session_id, confirmed_at_ns=now_ns)
+        store.mark_cloud_confirmed(
+            uploading_handoff.operation_id,
+            uploading_session_id,
+            confirmed_at_ns=now_ns,
+        )
 
         confirmed_snapshot = store.offline_snapshot()
         assert confirmed_snapshot.pending_session_count == 49
@@ -192,10 +206,11 @@ def test_capacity_counts_every_nonconfirmed_handoff_state(tmp_path: Path) -> Non
         assert retry_handoff is not None
         assert retry_handoff.session_id == retry_session_id
         store.defer_sync_handoff(
-            retry_handoff.session_id,
-            next_attempt_at_ns=2,
+            retry_handoff.operation_id,
+            next_attempt_at=datetime(1970, 1, 1, 0, 0, 2, tzinfo=UTC),
             error_code="E-SYN-001",
         )
+        assert _operation_state(store, retry_session_id) == "RETRY_WAIT"
 
         conflict_session_id, _ = _commit_handoff(
             store, tmp_path, index=1, byte_count=2
@@ -203,7 +218,8 @@ def test_capacity_counts_every_nonconfirmed_handoff_state(tmp_path: Path) -> Non
         conflict_handoff = store.lease_sync_handoff(now_ns=1)
         assert conflict_handoff is not None
         assert conflict_handoff.session_id == conflict_session_id
-        store.mark_sync_handoff_conflict(conflict_handoff.session_id)
+        store.mark_sync_handoff_conflict(conflict_handoff.operation_id)
+        assert _operation_state(store, conflict_session_id) == "CONFLICT"
 
         blocked_session_id, _ = _commit_handoff(
             store, tmp_path, index=2, byte_count=4
@@ -211,7 +227,10 @@ def test_capacity_counts_every_nonconfirmed_handoff_state(tmp_path: Path) -> Non
         blocked_handoff = store.lease_sync_handoff(now_ns=1)
         assert blocked_handoff is not None
         assert blocked_handoff.session_id == blocked_session_id
-        store.mark_sync_handoff_blocked(blocked_handoff.session_id, error_code="E-SYN-400")
+        store.mark_sync_handoff_blocked(
+            blocked_handoff.operation_id, error_code="E-SYN-400"
+        )
+        assert _operation_state(store, blocked_session_id) == "BLOCKED"
 
         ready_session_id, _ = _commit_handoff(store, tmp_path, index=3, byte_count=8)
         snapshot = store.offline_snapshot()

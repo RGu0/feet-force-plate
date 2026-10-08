@@ -30,33 +30,33 @@ class _LeaseTrackingStore:
 
     def __init__(self, store: StateStore) -> None:
         self._store = store
-        self._leased_session_id: str | None = None
+        self._leased_operation_id: UUID | None = None
         self._lock = threading.Lock()
 
     def begin_cycle(self) -> None:
         with self._lock:
-            self._leased_session_id = None
+            self._leased_operation_id = None
 
     def lease_sync_handoff(self, *, now_ns: int):
         handoff = self._store.lease_sync_handoff(now_ns=now_ns)
         with self._lock:
-            self._leased_session_id = (
-                None if handoff is None else str(handoff.session_id)
+            self._leased_operation_id = (
+                None if handoff is None else handoff.operation_id
             )
         return handoff
 
     def finish_cycle(self) -> None:
         with self._lock:
-            self._leased_session_id = None
+            self._leased_operation_id = None
 
     def block_escaped_lease(self) -> None:
         with self._lock:
-            session_id = self._leased_session_id
-            self._leased_session_id = None
-        if session_id is None:
+            operation_id = self._leased_operation_id
+            self._leased_operation_id = None
+        if operation_id is None:
             return
         self._store.mark_sync_handoff_blocked(
-            session_id,
+            operation_id,
             error_code=_UNEXPECTED_UPLOAD_ERROR_CODE,
         )
 

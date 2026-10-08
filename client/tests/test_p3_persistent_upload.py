@@ -53,6 +53,15 @@ class _Key:
         return b"p" * 32
 
 
+def _operation_state(store: StateStore, session_id: str) -> str:
+    row = store._connection.execute(
+        "SELECT state FROM foundation_operations WHERE idempotency_key=?",
+        (f"upload:{session_id}",),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def _frame(source_index: int, monotonic_ns: int) -> RawFrame:
     values = np.full((48, 64), source_index % 255, dtype=np.uint8)
     values.setflags(write=False)
@@ -443,7 +452,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(remote).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "CONFLICT"
+        )
 
     def test_wrong_segment_list_session_identity_never_progresses_handoff(self) -> None:
         sealed = self._seal(0)
@@ -627,7 +638,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.DEFERRED,
         )
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
         self.assertTrue(sealed.path.exists())
         self.store.close()
         self.store = StateStore(
@@ -643,7 +656,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.IDLE,
         )
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
 
         clock.value = retry_at_ns
         outcome = self._queue(remote, clock=clock).upload_next(_Tokens())
@@ -689,7 +704,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.IDLE,
         )
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
 
         clock.value = 6_000_000_000
         self.assertIs(
@@ -711,7 +728,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.IDLE,
         )
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
 
     def test_first_retry_uses_foundation_delay_without_jitter(self) -> None:
         sealed = self._seal(0)
@@ -817,8 +836,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         sealed = self._seal(0)
         self._commit(sealed)
         clock = _Clock()
-        # Preserve the nanosecond clock remainder when adapting datetime policy.
-        clock.value = 1_700_000_000_123_456_789
+        # Keep the clock microsecond-aligned: the foundation store persists
+        # deadlines as datetimes, whose resolution is one microsecond.
+        clock.value = 1_700_000_000_123_456_000
         for header, delay in (("0", 0), ("1", 1), ("1200", 1200)):
             with self.subTest(retry_after=header):
                 client = HttpIngestionClient(
@@ -951,7 +971,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.keys.get_key = original  # type: ignore[method-assign]
 
         self.assertIs(outcome, UploadCycleOutcome.DEFERRED)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
 
     def test_temporarily_unavailable_segment_key_defers_instead_of_conflicting(self) -> None:
         sealed = self._seal(0)
@@ -973,7 +995,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.keys.get_key = original  # type: ignore[method-assign]
 
         self.assertIs(outcome, UploadCycleOutcome.DEFERRED)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "RETRY_WAIT"
+        )
 
     def test_corrupt_encrypted_envelope_remains_a_conflict(self) -> None:
         sealed = self._seal(0)
@@ -987,7 +1011,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(_IngestionService()).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "CONFLICT"
+        )
 
     def test_local_length_failure_conflicts_without_deleting_data(self) -> None:
         sealed = self._seal(0)
@@ -997,7 +1023,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(_IngestionService()).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "CONFLICT"
+        )
         self.assertTrue(sealed.path.exists())
 
     def test_local_digest_failure_conflicts_without_deleting_data(self) -> None:
@@ -1010,7 +1038,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(_IngestionService()).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "CONFLICT"
+        )
         self.assertTrue(sealed.path.exists())
 
     def test_local_path_failure_conflicts_without_reading_outside_repository(self) -> None:
@@ -1025,7 +1055,9 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(_IngestionService()).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
-        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertEqual(
+            _operation_state(self.store, str(self.session_id)), "CONFLICT"
+        )
         self.assertTrue(sealed.path.exists())
 
 

@@ -111,11 +111,13 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
             assert now_ns > 0
             self.lease_count += 1
             if self.lease_count == 1:
-                return SimpleNamespace(session_id="leased-session")
+                return SimpleNamespace(
+                    session_id="leased-session", operation_id="leased-operation"
+                )
             return None
 
-        def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
-            order.append(f"blocked:{session_id}:{error_code}")
+        def mark_sync_handoff_blocked(self, operation_id, *, error_code: str) -> None:
+            order.append(f"blocked:{operation_id}:{error_code}")
 
     class _HttpClient:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -165,7 +167,7 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
         runtime.close()
 
     assert order.count("recover_interrupted_state") == 1
-    assert order.count("blocked:leased-session:E-SYN-500") == 1
+    assert order.count("blocked:leased-operation:E-SYN-500") == 1
     assert len(scheduler_threads) == 1
     assert delegated_access and all(item is access_runtime for item in delegated_access)
     assert queue_roots == [tmp_path / "spool"]
@@ -173,6 +175,54 @@ def test_factory_scheduler_recovers_escaped_lease_and_keeps_polling(
     assert "E-SYN-500" in caplog.text
     assert "credential-shaped-secret-must-not-be-logged" not in caplog.text
     assert order[-1] == "http.close"
+
+
+def test_escaped_lease_is_blocked_in_the_foundation_store(tmp_path: Path) -> None:
+    """A lease escaping its cycle must park as BLOCKED with the safe code."""
+
+    from client.spool.state_store import (
+        SensitiveBlobCodec,
+        StateStore,
+        ValidSegmentRecord,
+    )
+    from client.sync.runtime import _LeaseTrackingStore
+
+    class _Keys:
+        def get_key(self) -> bytes:
+            return b"k" * 32
+
+    store = StateStore(tmp_path / "state.sqlite3", SensitiveBlobCodec(_Keys()))
+    try:
+        store.put_subject_ref("subject-1", b"opaque")
+        store.commit_valid_session(
+            "session-1",
+            subject_uuid="subject-1",
+            consent_id=None,
+            versions_json=b"{}",
+            started_at_ns=1,
+            ended_at_ns=2,
+            manifest_sha256="a" * 64,
+            segments=(
+                ValidSegmentRecord(
+                    segment_id="segment-1",
+                    relative_path="session-1/segment-1.ffps",
+                    byte_count=10,
+                    sealed_at_ns=2,
+                ),
+            ),
+        )
+        tracking = _LeaseTrackingStore(store)
+        leased = tracking.lease_sync_handoff(now_ns=3)
+        assert leased is not None
+
+        tracking.block_escaped_lease()
+
+        stored = store._operations.get(leased.operation_id)
+        assert stored.state.value == "BLOCKED"
+        assert stored.error_code == "E-SYN-500"
+        assert store.sync_handoff_state("session-1") == "READY_FOR_NETWORK"
+    finally:
+        store.close()
 
 
 def test_factory_closes_http_if_queue_construction_fails(

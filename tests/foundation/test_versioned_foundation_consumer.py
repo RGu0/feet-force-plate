@@ -14,17 +14,17 @@ def test_feetforceplate_uses_a_locked_private_foundation_artifact() -> None:
         (PROJECT_ROOT / "foundation-artifact.lock.json").read_text(encoding="utf-8")
     )
 
-    assert "techflex-cloud-foundation==0.2.0" in project["project"]["dependencies"]
+    assert "techflex-cloud-foundation==0.3.0" in project["project"]["dependencies"]
     assert "workspace" not in project.get("tool", {}).get("uv", {})
     assert project["tool"]["uv"]["sources"] == {
         "techflex-cloud-foundation": {
-            "path": ".foundation-artifacts/techflex_cloud_foundation-0.2.0-py3-none-any.whl"
+            "path": ".foundation-artifacts/techflex_cloud_foundation-0.3.0-py3-none-any.whl"
         }
     }
     assert artifact == {
         "package": "techflex-cloud-foundation",
-        "release": "v0.2.0",
-        "version": "0.2.0",
-        "wheel": "techflex_cloud_foundation-0.2.0-py3-none-any.whl",
-        "sha256": "1dd34fb4902fb7359af346e153123e8db12befc6ae8a9de2105e11f80af74303",
+        "release": "v0.3.0",
+        "version": "0.3.0",
+        "wheel": "techflex_cloud_foundation-0.3.0-py3-none-any.whl",
+        "sha256": "6790d4f770a0ad0756885f6b58555d4da8c7ef3aad3274b6df8f583b6e63e089",
     }

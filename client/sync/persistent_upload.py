@@ -25,6 +25,7 @@ from client.spool.state_store import (
     KeyProviderUnavailable,
     StateStore,
     SyncHandoff,
+    _datetime_from_ns,
 )
 from shared.contracts.client_sync import (
     FormalUploadEnvelope,
@@ -404,7 +405,9 @@ class PersistentUploadQueue:
 
     def _confirm(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         now_ns = self._now_ns()
-        self._store.mark_cloud_confirmed(handoff.session_id, confirmed_at_ns=now_ns)
+        self._store.mark_cloud_confirmed(
+            handoff.operation_id, handoff.session_id, confirmed_at_ns=now_ns
+        )
         self._store.record_successful_online(now_ns)
         return UploadCycleOutcome.CONFIRMED
 
@@ -492,11 +495,11 @@ class PersistentUploadQueue:
         if isinstance(exc, UploadRetryable):
             return self._defer(handoff, exc)
         if isinstance(exc, UploadConflict):
-            self._store.mark_sync_handoff_conflict(handoff.session_id)
+            self._store.mark_sync_handoff_conflict(handoff.operation_id)
             return UploadCycleOutcome.CONFLICT
         if isinstance(exc, UploadBlocked):
             self._store.mark_sync_handoff_blocked(
-                handoff.session_id,
+                handoff.operation_id,
                 error_code=exc.error_code,
             )
             return UploadCycleOutcome.BLOCKED
@@ -505,40 +508,25 @@ class PersistentUploadQueue:
     def _defer(
         self, handoff: SyncHandoff, exc: UploadRetryable
     ) -> UploadCycleOutcome:
-        delay_seconds = self._retry_delay_seconds(
-            handoff.attempt_count,
-            retry_after_seconds=exc.retry_after_seconds,
-        )
-        self._store.defer_sync_handoff(
-            handoff.session_id,
-            error_code=exc.error_code,
-            next_attempt_at_ns=self._now_ns() + int(delay_seconds * 1_000_000_000),
-        )
-        return UploadCycleOutcome.DEFERRED
-
-    def _retry_delay_seconds(
-        self,
-        attempt_count: int,
-        *,
-        retry_after_seconds: float | None,
-    ) -> float:
-        # Use a fixed origin to obtain the policy's delay, then let _defer add it
-        # to the original nanosecond clock without a lossy datetime round trip.
-        origin = datetime(1970, 1, 1, tzinfo=UTC)
-        next_attempt = _UPLOAD_RETRY_POLICY.next_attempt_at(
-            now=origin,
-            attempt_count=attempt_count,
+        next_attempt_at = _UPLOAD_RETRY_POLICY.next_attempt_at(
+            now=_datetime_from_ns(self._now_ns()),
+            attempt_count=handoff.attempt_count,
             retry_after=(
-                timedelta(seconds=retry_after_seconds)
-                if retry_after_seconds is not None
+                timedelta(seconds=exc.retry_after_seconds)
+                if exc.retry_after_seconds is not None
                 else None
             ),
         )
-        return (next_attempt - origin).total_seconds()
+        self._store.defer_sync_handoff(
+            handoff.operation_id,
+            error_code=exc.error_code,
+            next_attempt_at=next_attempt_at,
+        )
+        return UploadCycleOutcome.DEFERRED
 
     def _block_unexpected(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         self._store.mark_sync_handoff_blocked(
-            handoff.session_id,
+            handoff.operation_id,
             error_code="E-SYN-500",
         )
         return UploadCycleOutcome.BLOCKED
