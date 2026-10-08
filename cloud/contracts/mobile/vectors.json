@@ -1,0 +1,409 @@
+{
+  "errors": {
+    "digest_mismatch": {
+      "error": {
+        "action": "RESEAL_SEGMENT",
+        "code": "E-CLD-422",
+        "details": {},
+        "message": "Synthetic contract fixture",
+        "retryable": false
+      },
+      "meta": {
+        "correlation_id": "00000000-0000-0000-0000-000000000002",
+        "request_id": "00000000-0000-0000-0000-000000000001",
+        "server_time": "2026-10-07T00:00:00Z"
+      }
+    },
+    "idempotency_conflict": {
+      "error": {
+        "action": "EXPORT_DIAGNOSTIC",
+        "code": "E-API-409",
+        "details": {},
+        "message": "Synthetic contract fixture",
+        "retryable": false
+      },
+      "meta": {
+        "correlation_id": "00000000-0000-0000-0000-000000000002",
+        "request_id": "00000000-0000-0000-0000-000000000001",
+        "server_time": "2026-10-07T00:00:00Z"
+      }
+    },
+    "schema_unsupported": {
+      "error": {
+        "action": "UPDATE_CLIENT",
+        "code": "E-CLD-422",
+        "details": {},
+        "message": "Synthetic contract fixture",
+        "retryable": false
+      },
+      "meta": {
+        "correlation_id": "00000000-0000-0000-0000-000000000002",
+        "request_id": "00000000-0000-0000-0000-000000000001",
+        "server_time": "2026-10-07T00:00:00Z"
+      }
+    },
+    "unavailable": {
+      "error": {
+        "action": "RETRY_LATER",
+        "code": "E-CLD-503",
+        "details": {},
+        "message": "Synthetic contract fixture",
+        "retryable": true
+      },
+      "meta": {
+        "correlation_id": "00000000-0000-0000-0000-000000000002",
+        "request_id": "00000000-0000-0000-0000-000000000001",
+        "server_time": "2026-10-07T00:00:00Z"
+      }
+    }
+  },
+  "license": {
+    "canonical_hex": "7b226163636f756e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303062222c22656e61626c65645f6665617475726573223a5b22666978747572652e66656174757265225d2c2268617264776172655f6964223a224646502d4450343836342d303030303030222c226973737565645f6174223a22323032362d31302d30375430303a30303a30305a222c226c6963656e73655f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303063222c22736368656d615f76657273696f6e223a226c6963656e73652f32222c22737461747573223a22414354495645222c2274656e616e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303061222c2276616c69645f66726f6d223a22323032362d31302d30375430303a30303a30305a222c2276616c69645f756e74696c223a22323032362d31312d30375430303a30303a30305a222c2276657273696f6e223a317d",
+    "negative_cases": [
+      "modified_document",
+      "modified_signature",
+      "unknown_key_id"
+    ],
+    "public_key_base64": "k072pPlkPib1tnA4CrqjrbCl/pyj4ITFERYOElOGy7A=",
+    "signature_base64": "KE3WlTLgtj2DvpieOUGpeJdF2UMwLx0zPM01qjEkSs0mgXZpDikHYg3YtlBG1sL30XwoHE87Wg0Ar/WvZPeAAw==",
+    "signed_license": {
+      "document": {
+        "account_id": "00000000-0000-0000-0000-00000000000b",
+        "enabled_features": [
+          "fixture.feature"
+        ],
+        "hardware_id": "FFP-DP4864-000000",
+        "issued_at": "2026-10-07T00:00:00Z",
+        "license_id": "00000000-0000-0000-0000-00000000000c",
+        "schema_version": "license/2",
+        "status": "ACTIVE",
+        "tenant_id": "00000000-0000-0000-0000-00000000000a",
+        "valid_from": "2026-10-07T00:00:00Z",
+        "valid_until": "2026-11-07T00:00:00Z",
+        "version": 1
+      },
+      "key_id": "fixture-license/2",
+      "signature": "KE3WlTLgtj2DvpieOUGpeJdF2UMwLx0zPM01qjEkSs0mgXZpDikHYg3YtlBG1sL30XwoHE87Wg0Ar/WvZPeAAw=="
+    }
+  },
+  "product": "feet-force-plate",
+  "schema_version": "mobile-contract-vectors/1",
+  "segment": {
+    "canonical_hex": "7b22636970686572223a226165732d3235362d67636d222c22636f6d7072657373696f6e223a226e6f6e65222c22656e645f6d6f6e6f746f6e69635f6e73223a3230302c226672616d655f636f756e74223a312c227061796c6f61645f736368656d615f76657273696f6e223a227261772d7365676d656e742f31222c227365676d656e745f696e646578223a302c22736861323536223a2261646166373033396661643334663033666535623161313863316332353131313538366139383066373838653532343638366230393964383864653266626463222c2273697a655f6279746573223a32352c2273746172745f6672616d655f696e646578223a302c2273746172745f6d6f6e6f746f6e69635f6e73223a3130307d",
+    "metadata": {
+      "cipher": "aes-256-gcm",
+      "compression": "none",
+      "end_monotonic_ns": 200,
+      "frame_count": 1,
+      "payload_schema_version": "raw-segment/1",
+      "segment_index": 0,
+      "sha256": "adaf7039fad34f03fe5b1a18c1c25111586a980f788e524686b099d88de2fbdc",
+      "size_bytes": 25,
+      "start_frame_index": 0,
+      "start_monotonic_ns": 100
+    },
+    "metadata_header": "eyJjaXBoZXIiOiJhZXMtMjU2LWdjbSIsImNvbXByZXNzaW9uIjoibm9uZSIsImVuZF9tb25vdG9uaWNfbnMiOjIwMCwiZnJhbWVfY291bnQiOjEsInBheWxvYWRfc2NoZW1hX3ZlcnNpb24iOiJyYXctc2VnbWVudC8xIiwic2VnbWVudF9pbmRleCI6MCwic2hhMjU2IjoiYWRhZjcwMzlmYWQzNGYwM2ZlNWIxYTE4YzFjMjUxMTE1ODZhOTgwZjc4OGU1MjQ2ODZiMDk5ZDg4ZGUyZmJkYyIsInNpemVfYnl0ZXMiOjI1LCJzdGFydF9mcmFtZV9pbmRleCI6MCwic3RhcnRfbW9ub3RvbmljX25zIjoxMDB9",
+    "payload_base64": "bW9iaWxlLWNvbnRyYWN0LXNlZ21lbnQA/w==",
+    "sha256": "adaf7039fad34f03fe5b1a18c1c25111586a980f788e524686b099d88de2fbdc"
+  },
+  "session_replay": {
+    "initial_idempotent_replay": false,
+    "initial_status": 201,
+    "replay_idempotent_replay": true,
+    "replay_status": 200,
+    "request_headers": {
+      "Idempotency-Key": "fixture:create:20"
+    },
+    "same_key_different_request_error": "E-API-409"
+  },
+  "success": {
+    "data": {
+      "idempotent_replay": false,
+      "ingest_status": "RECEIVING",
+      "session_id": "00000000-0000-0000-0000-000000000014"
+    },
+    "meta": {
+      "correlation_id": "00000000-0000-0000-0000-000000000002",
+      "request_id": "00000000-0000-0000-0000-000000000001",
+      "server_time": "2026-10-07T00:00:00Z"
+    }
+  },
+  "terminal": {
+    "activation_request": {
+      "account_name": "fixture-clinic",
+      "client_installation_id": "00000000-0000-0000-0000-00000000001e",
+      "password": "fixture-password-0000",
+      "platform": "ios",
+      "terminal_name": "Front desk"
+    },
+    "errors": {
+      "credentials_rejected": {
+        "body": {
+          "error": {
+            "action": "VERIFY_CREDENTIALS",
+            "code": "E-TRM-401-CREDENTIALS",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "installation_conflict": {
+        "body": {
+          "error": {
+            "action": "REGENERATE_INSTALLATION_ID",
+            "code": "E-TRM-409-INSTALLATION-CONFLICT",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "license_inactive": {
+        "body": {
+          "error": {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-403-LICENSE-INACTIVE",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 403
+      },
+      "refresh_expired": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-EXPIRED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "refresh_invalid": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-INVALID",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "refresh_replayed": {
+        "body": {
+          "error": {
+            "action": "REACTIVATE_TERMINAL",
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      },
+      "seat_limit": {
+        "body": {
+          "error": {
+            "action": "FREE_TERMINAL_SEAT",
+            "code": "E-TRM-409-SEAT-LIMIT",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "terminal_revoked": {
+        "body": {
+          "error": {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 401
+      }
+    },
+    "license": {
+      "canonical_hex": "7b226163636f756e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303062222c22656e61626c65645f6665617475726573223a5b22666978747572652e66656174757265225d2c226973737565645f6174223a22323032362d31302d30375430303a30303a30305a222c226c6963656e73655f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303063222c22736368656d615f76657273696f6e223a227465726d696e616c2d6c6963656e73652f31222c227365617473223a322c22737461747573223a22414354495645222c2274656e616e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303061222c2276616c69645f66726f6d223a22323032362d31302d30375430303a30303a30305a222c2276616c69645f756e74696c223a22323032362d31312d30375430303a30303a30305a222c2276657273696f6e223a317d",
+      "public_key_base64": "k072pPlkPib1tnA4CrqjrbCl/pyj4ITFERYOElOGy7A=",
+      "signature_base64": "nS7QXfUquYpjcKdfkMcraZZ4/vKNZzeWn2XhhmhLAZU9GQIdxTYTckYzrhCP45Q18Js72wj211mVV04cFmaUBg==",
+      "signed_license": {
+        "document": {
+          "account_id": "00000000-0000-0000-0000-00000000000b",
+          "enabled_features": [
+            "fixture.feature"
+          ],
+          "issued_at": "2026-10-07T00:00:00Z",
+          "license_id": "00000000-0000-0000-0000-00000000000c",
+          "schema_version": "terminal-license/1",
+          "seats": 2,
+          "status": "ACTIVE",
+          "tenant_id": "00000000-0000-0000-0000-00000000000a",
+          "valid_from": "2026-10-07T00:00:00Z",
+          "valid_until": "2026-11-07T00:00:00Z",
+          "version": 1
+        },
+        "key_id": "fixture-license/2",
+        "signature": "nS7QXfUquYpjcKdfkMcraZZ4/vKNZzeWn2XhhmhLAZU9GQIdxTYTckYzrhCP45Q18Js72wj211mVV04cFmaUBg=="
+      }
+    },
+    "refresh_request": {
+      "client_installation_id": "00000000-0000-0000-0000-00000000001e",
+      "refresh_token": "fixture-refresh-token-not-a-secret-000000"
+    },
+    "refresh_rotation": {
+      "after_grace_replay_revokes": "whole_refresh_family",
+      "grace_boundary": "inclusive",
+      "in_grace_replay_returns": "identical_refresh_token_new_access_token",
+      "replay_grace_seconds": 30,
+      "scenarios": [
+        {
+          "elapsed_seconds": 30,
+          "expect": {
+            "http_status": 200,
+            "refresh_token": "same_as_successor"
+          },
+          "name": "replay_within_grace",
+          "replay": "original",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 31,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "http_status": 401,
+            "successor_code": "E-TRM-401-REFRESH-REPLAYED"
+          },
+          "name": "replay_after_grace",
+          "replay": "original",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-REPLAYED",
+            "http_status": 401
+          },
+          "name": "replay_after_successor_used",
+          "replay": "original",
+          "successor_used": true
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401
+          },
+          "name": "refresh_after_revocation",
+          "replay": "successor",
+          "revoke_first": true,
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 2678400,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-EXPIRED",
+            "http_status": 401
+          },
+          "name": "refresh_after_idle_expiry",
+          "replay": "successor",
+          "successor_used": false
+        },
+        {
+          "elapsed_seconds": 0,
+          "expect": {
+            "code": "E-TRM-401-REFRESH-INVALID",
+            "http_status": 401
+          },
+          "name": "unknown_refresh_token",
+          "replay": "unknown",
+          "successor_used": false
+        }
+      ]
+    },
+    "seats": {
+      "counts": "ACTIVE terminals of the License",
+      "scenarios": [
+        {
+          "active": 2,
+          "expect": {
+            "code": "E-TRM-409-SEAT-LIMIT",
+            "http_status": 409
+          },
+          "name": "new_installation_over_limit",
+          "seats": 2
+        },
+        {
+          "active": 2,
+          "expect": {
+            "http_status": 201
+          },
+          "name": "reactivate_active_installation",
+          "same_installation": true,
+          "seats": 2
+        },
+        {
+          "active": 2,
+          "expect": {
+            "http_status": 201
+          },
+          "name": "after_revocation",
+          "revoke_first": true,
+          "seats": 2
+        }
+      ],
+      "source": "signed_license.document.seats"
+    }
+  }
+}

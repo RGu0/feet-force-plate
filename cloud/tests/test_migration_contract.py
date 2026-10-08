@@ -9,7 +9,7 @@ MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.s
 CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
 HOLD_MIGRATION = Path(__file__).parents[1] / "migrations" / "0009_unverified_session_holds.sql"
 COPY_MIGRATION = Path(__file__).parents[1] / "migrations" / "0010_local_basic_report_copies.sql"
-RECOVERY_PERMIT_MIGRATION = Path(__file__).parents[1] / "migrations" / "0012_recovery_bound_migration_permits.sql"
+RECOVERY_PERMIT_MIGRATION = Path(__file__).parents[1] / "migrations" / "0013_recovery_bound_migration_permits.sql"
 
 
 class MigrationContractTests(unittest.TestCase):

@@ -22,11 +22,14 @@ from cloud.access_control.platform_iam import PlatformIdentityService, Sensitive
 from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
+from cloud.access_control.terminal_service import TerminalAccessService
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     PlatformAccessTokenIssuer,
     RefreshTokenFactory,
     TenantAccessTokenIssuer,
+    TerminalAccessTokenIssuer,
+    TerminalRefreshTokenFactory,
 )
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.postgres import PostgresPlatformRepository
@@ -283,6 +286,21 @@ async def build_seed_app(
         ),
         license_signer=license_signer,
     )
+    # Terminal tokens share the tenant signing secret but carry their own
+    # token type and audience, so neither verifier accepts the other's token.
+    terminal_tokens = TerminalAccessTokenIssuer(
+        secret=_secret(settings.tenant_token_secret, "tenant token secret"),
+        key_id=settings.tenant_token_key_id,
+    )
+    terminal_access = TerminalAccessService(
+        access_repository,
+        login_lookup_hmac_key=_secret(settings.tenant_login_hmac_key, "tenant login key"),
+        terminal_tokens=terminal_tokens,
+        refresh_tokens=TerminalRefreshTokenFactory(
+            digest_key=_secret(settings.tenant_refresh_hmac_key, "tenant refresh key")
+        ),
+        license_signer=license_signer,
+    )
     platform_identities = PlatformIdentityService(
         access_repository,
         login_lookup_hmac_key=_secret(settings.platform_login_hmac_key, "Platform login key"),
@@ -316,6 +334,8 @@ async def build_seed_app(
             heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
+            terminal_access=terminal_access,
+            terminal_tokens=terminal_tokens,
             hardware_leases=HardwareLeaseService(access_repository),
             capture_grants=CaptureGrantService(data_repository),
             platform_identities=platform_identities,

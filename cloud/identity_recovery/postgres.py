@@ -375,13 +375,13 @@ class PostgresRecoveryCaseRepository:
                         hashlib.sha256(authorization.token.get_secret_value().encode()).digest(),
                     )
                     or row["state"] != "ISSUED"
-                    or (authorization.kind == "permit" and (
+                    or (authorization.kind == "migration_permit" and (
                         row["consumed_request_sha256"] != session_digest
                         or row["expected_manifest_sha256"] != authorization.manifest_sha256
                     ))
                 ):
                     raise TenantAccessDenied("capture authorization does not match recovery registration")
-                if authorization.kind == "permit" and (
+                if authorization.kind == "migration_permit" and (
                     row["final_subject_uuid"] != case["cloud_subject_uuid"]
                     or row["consent_record_id"] != request.consent.consent_record_id
                     or row["consent_sha256"] != consent_digest
@@ -491,7 +491,7 @@ class PostgresRecoveryCaseRepository:
                     uuid4(), tenant_id, session.session_id,
                     "GRANT" if authorization.kind == "grant" else "PERMIT",
                     context.account_id,
-                    authorization_row["evidence_reference"] if authorization.kind == "permit" else None,
+                    authorization_row["evidence_reference"] if authorization.kind == "migration_permit" else None,
                 )
             registered_at = datetime.now(UTC)
             await connection.execute(

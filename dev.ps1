@@ -63,6 +63,8 @@ try {
             if ($Command.Count -gt 0) { throw "build accepts no arguments" }
             & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud shared
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $uv.Source run --locked --extra dev python -m cloud.api.contract_export
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if ($env:FEETFORCEPLATE_PORTABLE_OUTPUT_ROOT) {
                 if ($env:FEETFORCEPLATE_PORTABLE_UNSIGNED_DEVELOPMENT -ne "1") {
                     throw "governed portable build requires explicit unsigned development mode"

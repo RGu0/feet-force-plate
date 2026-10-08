@@ -26,6 +26,52 @@ class ActivationCodeInvalid(AuthenticationError):
     action = "REQUEST_ACTIVATION_CODE"
 
 
+# RAY-656 terminal credential failures. Each condition has its own code so a
+# client never infers revocation from a generic 401; network failures carry no
+# envelope at all.
+class TerminalCredentialsRejected(AuthenticationError):
+    code = "E-TRM-401-CREDENTIALS"
+    action = "VERIFY_CREDENTIALS"
+
+
+class TerminalRevoked(AuthenticationError):
+    code = "E-TRM-401-REVOKED"
+    action = "CONTACT_ADMINISTRATOR"
+
+
+class TerminalRefreshReplayed(AuthenticationError):
+    code = "E-TRM-401-REFRESH-REPLAYED"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalRefreshExpired(AuthenticationError):
+    code = "E-TRM-401-REFRESH-EXPIRED"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalRefreshInvalid(AuthenticationError):
+    code = "E-TRM-401-REFRESH-INVALID"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalLicenseInactive(PlatformError):
+    code = "E-TRM-403-LICENSE-INACTIVE"
+    http_status = 403
+    action = "CONTACT_ADMINISTRATOR"
+
+
+class TerminalSeatLimitReached(PlatformError):
+    code = "E-TRM-409-SEAT-LIMIT"
+    http_status = 409
+    action = "FREE_TERMINAL_SEAT"
+
+
+class TerminalInstallationConflict(PlatformError):
+    code = "E-TRM-409-INSTALLATION-CONFLICT"
+    http_status = 409
+    action = "REGENERATE_INSTALLATION_ID"
+
+
 class TenantAccessDenied(PlatformError):
     code = "E-AUT-403"
     http_status = 403

@@ -20,6 +20,8 @@ from cloud.api.access_auth import (
     PlatformAccessTokenIssuer,
     TenantAccessContext,
     TenantAccessTokenIssuer,
+    TerminalAccessContext,
+    TerminalAccessTokenIssuer,
 )
 from cloud.api.operations_auth import OperationsTokenIssuer
 from cloud.api.errors import (
@@ -53,6 +55,11 @@ from shared.contracts.access_control import (
     ProvisionTenantRequest,
     RefreshRequest,
     SensitiveAccessGrantRequest,
+)
+from shared.contracts.terminal_access import (
+    TerminalActivationRequest,
+    TerminalRefreshRequest,
+    TerminalRenameRequest,
 )
 from shared.contracts.cloud import (
     ConsentCreateRequest,
@@ -108,6 +115,8 @@ class ServiceContainer:
     identity_recovery: object | None = None
     session_holds: object | None = None
     report_copies: object | None = None
+    terminal_access: object | None = None
+    terminal_tokens: TerminalAccessTokenIssuer | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -282,6 +291,20 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     TenantAccessDependency = Annotated[TenantAccessContext, Depends(tenant_context)]
 
+    def terminal_access_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ) -> TerminalAccessContext:
+        if container.terminal_tokens is None:
+            raise RepositoryUnavailable("终端身份服务暂不可用")
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            raise AuthenticationError("缺少有效终端 Bearer 凭据")
+        return container.terminal_tokens.verify(token)
+
+    TerminalAccessDependency = Annotated[
+        TerminalAccessContext, Depends(terminal_access_context)
+    ]
+
     def data_context(
         authorization: Annotated[str, Header(alias="Authorization")],
         terminal_header_id: Annotated[
@@ -390,6 +413,49 @@ def create_app(container: ServiceContainer) -> FastAPI:
             context: TenantAccessDependency,
         ):
             result = await container.tenant_access.current_license(context)
+            return _data_response(request, result)
+
+    if container.terminal_access is not None and container.terminal_tokens is not None:
+
+        @app.post("/v1/access/terminal-activate")
+        async def terminal_activate(request: Request, body: TerminalActivationRequest):
+            result = await container.terminal_access.activate(
+                body,
+                source_fingerprint=source_fingerprint(request),
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/access/terminal-refresh")
+        async def terminal_refresh(request: Request, body: TerminalRefreshRequest):
+            result = await container.terminal_access.refresh(body)
+            return _data_response(request, result)
+
+        @app.get("/v1/access/terminals")
+        async def terminal_list(request: Request, context: TerminalAccessDependency):
+            result = await container.terminal_access.list_terminals(context)
+            return _data_response(request, result)
+
+        @app.patch("/v1/access/terminals/{client_installation_id}")
+        async def terminal_rename(
+            request: Request,
+            client_installation_id: UUID,
+            body: TerminalRenameRequest,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.terminal_access.rename_terminal(
+                context, client_installation_id, body
+            )
+            return _data_response(request, result)
+
+        @app.post("/v1/access/terminals/{client_installation_id}/revoke")
+        async def terminal_revoke(
+            request: Request,
+            client_installation_id: UUID,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.terminal_access.revoke_terminal(
+                context, client_installation_id
+            )
             return _data_response(request, result)
 
     if container.validation_telemetry is not None and container.tenant_tokens is not None:
