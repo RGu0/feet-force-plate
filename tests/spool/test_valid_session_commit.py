@@ -168,7 +168,20 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertFalse((final / "registration.json").exists())
 
     def test_recovery_restores_the_same_formal_upload_envelope(self) -> None:
-        session_id = uuid4()
+        from client.tests.test_local_capture_grants import open_store, participant, grant
+        from client.app.institution_store import CaptureGrantExhausted
+        from client.workflow.protocol import default_standard_protocol
+
+        institution_path = self.root / "institution"
+        institution = open_store(institution_path)
+        context = participant(institution)
+        assigned = grant()
+        institution.add_capture_grants("tenant", "installation", (assigned,))
+        session_id = assigned.session_id
+        protocol = default_standard_protocol().snapshot()
+        self.assertEqual(institution.create_session(context, protocol, "tenant", "installation"), str(session_id))
+        credential = institution.capture_credential(str(session_id))
+        institution.close()
         subject_id = uuid4()
         consent_id = uuid4()
         envelope = _formal_upload_envelope(
@@ -190,6 +203,7 @@ class ValidSessionStagerTests(unittest.TestCase):
             versions={"protocol": "observed-compact/1", "quality": "mvp/1"},
             started_at_ns=1_000_000_000,
             upload_envelope=envelope,
+            upload_credential=credential,
         )
         stager.append(_frame(10))
         original = self.store.commit_valid_session
@@ -203,6 +217,19 @@ class ValidSessionStagerTests(unittest.TestCase):
                 stager.commit_valid(ended_at_ns=1_100_000_000)
         finally:
             self.store.commit_valid_session = original  # type: ignore[method-assign]
+
+        # Institution assignment survives loss between its commit and the
+        # separate StateStore handoff; recovery cannot recycle this UUID.
+        institution = open_store(institution_path)
+        try:
+            self.assertEqual(institution.capture_grant_state(str(session_id)), "ASSIGNED")
+            self.assertEqual(institution.capture_credential(str(session_id)), credential)
+            with self.assertRaises(CaptureGrantExhausted):
+                institution.create_session(context, protocol, "tenant", "installation")
+        finally:
+            institution.close()
+        registration = self.root / "data" / "sessions" / str(session_id) / "registration.json"
+        self.assertNotIn(credential.token.get_secret_value().encode(), registration.read_bytes())
 
         order = []
         test_case = self
@@ -233,6 +260,7 @@ class ValidSessionStagerTests(unittest.TestCase):
         self.assertEqual(
             self.store.sync_handoff_envelope(str(session_id)), envelope
         )
+        self.assertEqual(self.store.sync_handoff_credential(str(session_id)), credential)
         self.assertEqual(order, ["scheduler.start"])
         runtime.close()
         self.assertEqual(order, ["scheduler.start", "scheduler.stop", "http.close"])

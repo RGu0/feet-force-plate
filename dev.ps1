@@ -13,6 +13,29 @@ if ($null -eq $Command) {
     $Command = @()
 }
 
+$postgresTestAction = $env:FEETFORCEPLATE_TEST_POSTGRES_ACTION
+if ($postgresTestAction) {
+    $allowedPostgresActions = switch ($Action) {
+        "setup" { @("prepare", "resume", "start", "stop", "status") }
+        "test" { @("live") }
+        default { @() }
+    }
+    if ($allowedPostgresActions -notcontains $postgresTestAction) {
+        throw "FEETFORCEPLATE_TEST_POSTGRES_ACTION is not valid for the governed $Action action"
+    }
+
+    foreach ($override in @(
+        "FEETFORCEPLATE_TEST_POSTGRES_BIND_HOST",
+        "FEETFORCEPLATE_TEST_POSTGRES_PORT",
+        "FEETFORCEPLATE_TEST_POSTGRES_DATABASE",
+        "FEETFORCEPLATE_TEST_POSTGRES_RUNTIME_ROOT"
+    )) {
+        if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($override))) {
+            throw "PostgreSQL test target is fixed to loopback, port 55432, database ffp_ray513_test, and its private runtime root; target overrides are refused"
+        }
+    }
+}
+
 $projectRoot = (Resolve-Path $PSScriptRoot).Path
 $uv = Get-Command ($env:UV_BIN ?? "uv") -ErrorAction SilentlyContinue
 if (-not $uv) {
@@ -48,11 +71,21 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     switch ($Action) {
-        "setup" { if ($Command.Count -gt 0) { throw "setup accepts no arguments" } }
+        "setup" {
+            if ($Command.Count -gt 0) { throw "setup accepts no arguments" }
+            if ($postgresTestAction) {
+                & $uv.Source run --locked --extra dev python scripts/local_postgres_test_environment.py $postgresTestAction
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+        }
         "test" {
             if ($Command.Count -gt 0) { throw "test accepts no arguments" }
             if (-not $env:QT_QPA_PLATFORM) { $env:QT_QPA_PLATFORM = "offscreen" }
-            & $uv.Source run --locked --extra dev python -m pytest
+            if ($postgresTestAction -eq "live") {
+                & $uv.Source run --locked --extra dev python scripts/local_postgres_test_environment.py live-tests
+            } else {
+                & $uv.Source run --locked --extra dev python -m pytest
+            }
         }
         "lint" {
             if ($Command.Count -gt 0) { throw "lint accepts no arguments" }

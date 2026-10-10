@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import asyncio
+import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -16,12 +17,13 @@ from cloud.api.app import ServiceContainer, create_app
 from cloud.api.auth import TerminalTokenIssuer
 from cloud.api.access_auth import PlatformAccessContext
 from cloud.api.subject_service import IdentityProtector
-from cloud.api.repository import InMemoryPlatformRepository
+from cloud.api.repository import CaptureGrantRecord, InMemoryPlatformRepository
 from shared.contracts.cloud import IdentityProfileInput
 from shared.contracts.cloud import (
     ConsentCreateRequest, SessionCreateRequest, SessionVersions, TestProtocol,
 )
 from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.access_control import PlatformRole
 from cloud.ingestion.principal import IngestionPrincipal
 from cloud.identity_recovery.repository import InMemoryRecoveryCaseRepository
@@ -306,6 +308,10 @@ class RecoveryIdentityProtectionTests(unittest.TestCase):
 class RecoveryRegistrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         await RecoveryComparisonTests.asyncSetUp(self)
+        self.principal = replace(
+            self.principal, allow_new_test=True, account_id=uuid4(),
+            license_id=uuid4(), hardware_id="usb-serial-recovery-test",
+        )
         self.data = InMemoryPlatformRepository()
         self.site, self.device = uuid4(), uuid4()
         self.data.add_terminal(self.tenant, self.site, self.terminal)
@@ -342,6 +348,73 @@ class RecoveryRegistrationTests(unittest.IsolatedAsyncioTestCase):
             original_envelope_sha256=self.request.envelope_sha256,
             consent=self.consent, session=self.session,
         )
+
+    async def test_paused_recovery_registration_without_authorization_is_denied(self) -> None:
+        paused = replace(self.principal, allow_new_test=False)
+        with self.assertRaises(TenantAccessDenied):
+            await self.service.register(
+                paused, self.case.case_id, self.registration, "paused-register"
+            )
+        self.assertEqual(len(self.data._consents), 0)
+        self.assertEqual(len(self.data._sessions), 0)
+
+    def _authorization(self, *, kind: str) -> SessionAuthorization:
+        token = f"recovery-{kind}-authorization-token-12345"
+        self.data_row = CaptureGrantRecord(
+            tenant_id=self.tenant,
+            session_id=self.session.session_id,
+            installation_id=self.terminal,
+            account_id=self.principal.account_id,
+            license_id=self.principal.license_id,
+            hardware_id=self.device,
+            token_sha256=hashlib.sha256(token.encode()).digest(),
+            issued_at=datetime.now(UTC),
+            consumed_request_sha256=(
+                canonical_sha256(self.session) if kind == "migration_permit" else None
+            ),
+            expected_manifest_sha256=("a" * 64 if kind == "migration_permit" else None),
+            final_subject_uuid=(self.cloud_subject if kind == "migration_permit" else None),
+            consent_record_id=(self.consent.consent_record_id if kind == "migration_permit" else None),
+            consent_sha256=(canonical_sha256(self.consent) if kind == "migration_permit" else None),
+            reconciliation_case_id=(self.case.case_id if kind == "migration_permit" else None),
+            original_envelope_sha256=(self.request.envelope_sha256 if kind == "migration_permit" else None),
+            original_subject_uuid=(self.request.original_subject_uuid if kind == "migration_permit" else None),
+        )
+        rows = self.data._capture_grants if kind == "grant" else self.data._migration_permits
+        rows[(self.tenant, self.session.session_id)] = self.data_row
+        return SessionAuthorization(
+            session_id=self.session.session_id, kind=kind, token=token,
+            manifest_sha256="a" * 64,
+        )
+
+    async def test_paused_recovery_with_preissued_grant_consumes_grant_atomically(self) -> None:
+        paused = replace(self.principal, allow_new_test=False)
+        authorization = self._authorization(kind="grant")
+        result = await self.service.register(
+            paused, self.case.case_id, self.registration, "paused-grant",
+            authorization,
+        )
+        self.assertEqual(result.session_id, self.session.session_id)
+        stored = self.data._capture_grants[(self.tenant, self.session.session_id)]
+        self.assertEqual(stored.state, "CONSUMED")
+        self.assertEqual(stored.consumed_request_sha256, canonical_sha256(self.session))
+        self.assertEqual(stored.expected_manifest_sha256, authorization.manifest_sha256)
+        self.assertEqual(len(self.data._consents), 1)
+        self.assertEqual(len(self.data._sessions), 1)
+
+    async def test_paused_recovery_with_bound_permit_checks_final_consent_and_case(self) -> None:
+        paused = replace(self.principal, allow_new_test=False)
+        authorization = self._authorization(kind="migration_permit")
+        result = await self.service.register(
+            paused, self.case.case_id, self.registration, "paused-permit",
+            authorization,
+        )
+        self.assertEqual(result.session_id, self.session.session_id)
+        stored = self.data._migration_permits[(self.tenant, self.session.session_id)]
+        self.assertEqual(stored.state, "CONSUMED")
+        self.assertEqual(stored.reconciliation_case_id, self.case.case_id)
+        self.assertEqual(len(self.data._consents), 1)
+        self.assertEqual(len(self.data._sessions), 1)
 
     async def test_atomic_registration_and_lost_response_retry(self) -> None:
         first = await self.service.register(

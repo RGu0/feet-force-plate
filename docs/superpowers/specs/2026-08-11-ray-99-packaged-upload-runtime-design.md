@@ -301,3 +301,16 @@ scheduler 的轮询间隔只决定何时检查到期任务，不代替 SQLite �
 6. 在 `packaged_entry` 组合后台 runtime 和有序关闭；
 7. 执行完整 test/lint/build、提交 scope evidence、创建 Draft PR 并进入 review；
 8. 合并首个 scope 后，执行独立的打包客户端真实断网/慢网/重启验收范围。
+
+## 8. R11 持久身份核对映射说明
+
+RAY-99 R11 的已合并实现通过 `ops.identity_recovery_cases` 和
+`ops.identity_recovery_registrations` 保存受控核对结果。Case 绑定租户、session、
+原 subject、云端 subject 和原 envelope SHA-256；registration 绑定 case、回执、
+session 与新 consent ID。终端注册路径验证这些引用后，才写入新 consent 和原
+session。客户端恢复授权加密保存 case/receipt、原 envelope 摘要和 replacement
+consent；队列先注册并核验 registration 回执，再按映射上传。
+
+这份 R2 设计记录保留其历史决策。R11 映射是 RAY-513 身份冲突人工许可可依赖的
+权威记录；本地声称、附件路径或自由文本编号不构成身份 reconciliation。RAY-513
+scope 尚须在其分支包含该依赖后，验证许可签发/消费与上述记录的精确绑定。
