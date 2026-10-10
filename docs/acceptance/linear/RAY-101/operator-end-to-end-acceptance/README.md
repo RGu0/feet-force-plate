@@ -23,9 +23,9 @@ The user provided `C:\FeetForcePlate\ray119-pr61-b03ad4d-repair\dist\FeetForcePl
 | ZIP | `FeetForcePlate-0.1.0-windows-x86_64.zip` |
 | Source commit | `b03ad4d05013ad6a77675a99cf89704c3fa4faa8` |
 | ZIP SHA-256 | `7a1ca6d0ee5651fd2ccc23579b12a748a5e4ac2dc95e047d3727aa98f1adf297` |
-| Signing status | `unsigned-development`; controlled signing/approval evidence not established |
+| Signing status | `unsigned-development`; user reports controlled and internal acceptance approvals are in place, reference not yet provided |
 
-The release manifest, SHA-256 sidecar, and locally computed ZIP hash agree. The user-provided executable's SHA-256 also matches the `FeetForcePlate/FeetForcePlate.exe` entry inside that ZIP. This verifies the local package contents; the field-use statement remains a user report.
+The release manifest, SHA-256 sidecar, and locally computed ZIP hash agree. The user-provided executable's SHA-256 also matches the `FeetForcePlate/FeetForcePlate.exe` entry inside that ZIP. This verifies the local package contents; the field-use statement and existence of approvals remain user reports pending a redacted reference.
 
 ## Windows package prepared on 2026-09-30 (field-use identity unconfirmed)
 
@@ -55,13 +55,15 @@ As checked on 2026-09-30:
 - No independent non-technical account readiness evidence is available.
 - The current controlled configuration evidence targets `db04c072f8611007ddb5be9d9326024ab3fbce5a`, not the package source commit `94d0610d920e377d036061177519541bbe30c71e`. Configuration/package compatibility is unproven; an authorized configuration lead must revalidate it.
 - No login, activation, acquisition, upload, PDF export, or physical print was performed.
-- The P-07 heel-stripe appearance remains a field observation item. RAY-119 PR #61 merged on 2026-09-30 and wired the frozen dynamic defect-mask snapshot into formal live capture; it did not add real-time display mask application. The reported field run has no specific stripe observation recorded.
+- The user reports that the P-07 heel stripe still appears. Its relationship to load changes and its effect on acquisition, analysis, or reporting are not yet recorded. RAY-119 PR #61 wired the frozen dynamic defect-mask snapshot into formal live capture; real-time display mask application was outside its scope.
 
 ## User-reported field result (2026-10-10)
 
 The user confirmed that acceptance was completed and that the full process was performed independently without encountering problems. A redacted user-report record is stored at `.project-context/evidence/ray-101/operator-end-to-end-acceptance/acceptance/2026-10-10-user-reported-operator-acceptance.md`. It records P-01–P-11 as user-reported PASS and preserves unknowns instead of inferring them.
 
-Remaining evidence gaps: controlled approval for the `unsigned-development` package; confirmation of the non-technical operator/account and target-site equipment conditions; the specific P-07 heel-stripe observation; second-person review; and a recovery action. Since no problem occurred, no recovery action was triggered; this is recorded as `NOT TRIGGERED`, not as a recovery pass. The requirement owner must decide whether an approved controlled recovery scenario is required.
+The user additionally reports that required package approvals are in place, the primary recovery validation was performed, and the second-person review passed. These remain user-reported until the redacted approval reference, recovery action/result, and review conclusion are recorded. The recovery result is not yet marked pass or fail.
+
+Remaining evidence gaps: confirmation of the non-technical operator/account and target-site equipment conditions; a redacted approval reference for the `unsigned-development` package; the effect of the P-07 heel stripe on acquisition, analysis, or reporting; the recovery action and result; and a review record. The recovery action was reportedly executed, but its outcome has not been provided.
 
 Before real acquisition or any cloud/print effect, obtain explicit action-time confirmation from the site owner. Do not store names, account identifiers, raw measurements, unique equipment identifiers, activation credentials, cloud parameters, PDFs or print images here.
 
