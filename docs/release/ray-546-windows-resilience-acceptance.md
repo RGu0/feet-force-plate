@@ -4,7 +4,7 @@
 
 - Linear issue: [RAY-546](https://linear.app/ruiguo/issue/RAY-546/windows-打包客户端断网慢网与容量边界验收)
 - Delivery scope: `windows-resilience-acceptance`
-- Requirement revision: `R1`
+- Requirement revision: `R2`
 - Branch: `linear/ray-546/windows-resilience-acceptance`
 - Synthetic data only; no four-stage human collection is part of this scope.
 
@@ -32,12 +32,22 @@ The following have not been accepted against the packaged EXE:
 - Controlled slow-network acquisition and local basic-report timing.
 - The 24-hour, 50-pending-session, and 2 GiB combination through the packaged client's SQLite, startup gate, and background worker.
 
-The Linear description does not state numeric latency limits for slow-network acquisition or local report generation. Record observed timings in the controlled run and confirm the pass limits with the requirement owner before calling that criterion passed.
+RAY-546 R2 acceptance criteria:
+
+- Run one hour of normal packaged-client use with 5–10 synthetic sessions and naturally generated payload sizes; do not manufacture gigabytes for this daily-use case.
+- Repeat the controlled slow-network scenario five times. Acquisition must complete normally, the UI must remain usable, no data may be lost, and background upload must not block local work. Record the actual network profile and measurement method; R2 adds no numeric network-latency, throughput, UI-response, relative-regression, or percentile threshold.
+- In each run, the local basic report must be viewable within 20 seconds from the end of the final captured segment.
+- Exercise at least one controlled network disconnect and one packaged-client restart. After recovery, persistent data must be complete and business records must not be duplicated.
+- Verify the 24-hour, 50 pending-session, and 2 GiB gates as separate controlled boundary cases. They block new tests only; existing-session safe finish, history viewing, and upload remain available. Do not treat them as daily-use load targets.
+
+All R1 evidence remains historical. Source tests and the 2026-09-30 build record do not satisfy R2 packaged-client acceptance.
+
+The 20-second ceiling is specific to this internal RAY-546 acceptance. The product-wide PRD G-07 target remains 10 seconds; a RAY-546 result above 10 seconds must also be recorded as a product-goal gap and is not a PRD revision.
 
 ## Required controlled environment
 
 - An isolated nonproduction API/tenant seeded only with synthetic records, plus test-only account/license inputs, the API base URL, CA bundle, and public license key. Do not use participant data or production credentials.
-- The local controlled fault lab enabled with its isolated PostgreSQL admin, tenant, and platform DSNs. The Windows suite reported that this lab and the isolated live PostgreSQL DSNs were not configured on this machine.
+- PostgreSQL 16 client/server tools exist under `C:\Program Files\PostgreSQL\16\bin`; `psql.exe` is not on PATH. No completed isolated cluster or RAY-546 DSN evidence is available yet. Do not start or reuse another scope's in-progress cluster.
 - An approved interactive Windows session or automation path to launch the unsigned package with an isolated application-data directory and to control the client restart. The current automatic review rejected that process action.
 - A synthetic serial source/virtual COM pair for the slow-network collection case; no physical device or human collection is required.
 
