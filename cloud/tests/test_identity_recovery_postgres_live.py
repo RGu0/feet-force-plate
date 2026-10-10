@@ -183,7 +183,11 @@ def test_live_recovery_registration_consumes_authorization_atomically_and_replay
             activation_expires_at=now + timedelta(days=7),
         )
         tenant = TenantSeed(tenant_id, f"Recovery registration {uuid4()}")
-        access = PostgresAccessRepository(tenant_pool, activation_pool, platform_pool)
+        access = PostgresAccessRepository(
+            tenant_pool=tenant_pool,
+            activation_pool=activation_pool,
+            platform_pool=platform_pool,
+        )
         try:
             await access.provision_tenant(tenant, group, created_at=now)
             await access.activate_account_atomically(
