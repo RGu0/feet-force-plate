@@ -1,11 +1,110 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 from scripts import local_postgres_test_environment as postgres_test
+
+
+class RuntimePathValidationTests(unittest.TestCase):
+    @staticmethod
+    def _create_reparse_directory(link: Path, target: Path) -> None:
+        target.mkdir(parents=True)
+        if os.name == "nt":
+            powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
+            if powershell is None:
+                raise unittest.SkipTest("PowerShell is unavailable for Windows junction creation")
+            environment = os.environ.copy()
+            environment["RAY513_JUNCTION_PATH"] = str(link)
+            environment["RAY513_JUNCTION_TARGET"] = str(target)
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "New-Item -ItemType Junction -Path $env:RAY513_JUNCTION_PATH "
+                    "-Target $env:RAY513_JUNCTION_TARGET | Out-Null",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = (result.stdout + result.stderr).strip()
+                raise unittest.SkipTest(
+                    "Windows directory junction creation is unavailable: "
+                    + detail[:200]
+                )
+        else:
+            link.symlink_to(target, target_is_directory=True)
+
+    def test_fixed_runtime_path_without_reparse_components_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ray513-runtime-safe-") as directory:
+            runtime_root = Path(directory) / "runtime"
+            with patch.object(postgres_test, "RUNTIME_ROOT", runtime_root):
+                postgres_test.validate_target(
+                    postgres_test.HOST,
+                    postgres_test.PORT,
+                    postgres_test.DATABASE,
+                    runtime_root,
+                )
+            self.assertFalse(runtime_root.exists())
+
+    def test_ancestor_junction_is_rejected_before_private_runtime_writes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ray513-runtime-ancestor-junction-") as directory:
+            fixture_root = Path(directory)
+            redirected_root = fixture_root / "redirected-local-target"
+            junction = fixture_root / "ancestor-junction"
+            self._create_reparse_directory(junction, redirected_root)
+            runtime_root = junction / "local-labs" / "ray513-test"
+
+            with (
+                patch.object(postgres_test, "RUNTIME_ROOT", runtime_root),
+                patch.object(postgres_test, "DATA_ROOT", runtime_root / "data"),
+                patch.object(postgres_test, "PRIVATE_ROOT", runtime_root / "private"),
+                patch.object(postgres_test, "LOG_ROOT", runtime_root / "logs"),
+                patch.object(postgres_test.os, "name", "nt"),
+                patch.object(postgres_test, "_verify_acl") as verify_acl,
+                patch.object(postgres_test, "_verify_acls") as verify_acls,
+            ):
+                with self.assertRaisesRegex(ValueError, "reparse point"):
+                    postgres_test._ensure_private_root()
+
+            verify_acl.assert_not_called()
+            verify_acls.assert_not_called()
+            self.assertFalse((redirected_root / "local-labs").exists())
+
+    def test_runtime_leaf_reparse_point_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ray513-runtime-leaf-junction-") as directory:
+            fixture_root = Path(directory)
+            target = fixture_root / "target"
+            target.mkdir()
+            runtime_root = fixture_root / "runtime-junction"
+            if os.name == "nt":
+                # The shared helper owns the temporary target as well as the
+                # junction creation details; both remain inside this fixture.
+                runtime_root.unlink(missing_ok=True)
+                target.rmdir()
+                self._create_reparse_directory(runtime_root, target)
+            else:
+                runtime_root.symlink_to(target, target_is_directory=True)
+
+            with patch.object(postgres_test, "RUNTIME_ROOT", runtime_root):
+                with self.assertRaisesRegex(ValueError, "reparse point"):
+                    postgres_test.validate_target(
+                        postgres_test.HOST,
+                        postgres_test.PORT,
+                        postgres_test.DATABASE,
+                        runtime_root,
+                    )
 
 
 class RunFailureTests(unittest.TestCase):

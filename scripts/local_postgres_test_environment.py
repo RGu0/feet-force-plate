@@ -67,13 +67,24 @@ def validate_target(host: str, port: int, database: str, runtime_root: Path) -> 
         raise ValueError("PostgreSQL test database must be ffp_ray513_test")
     if _canonical(runtime_root) != _canonical(RUNTIME_ROOT):
         raise ValueError("PostgreSQL test runtime root is fixed to its private local directory")
-    if "onedrive" in {part.casefold() for part in runtime_root.parts}:
+    lexical_root = Path(os.path.abspath(runtime_root))
+    _reject_reparse_components(lexical_root)
+    if "onedrive" in {part.casefold() for part in lexical_root.parts}:
         raise ValueError("PostgreSQL test runtime root must not be in OneDrive")
-    canonical_root = runtime_root.resolve(strict=False)
+    canonical_root = lexical_root.resolve(strict=False)
+    _reject_reparse_components(canonical_root)
+    if "onedrive" in {part.casefold() for part in canonical_root.parts}:
+        raise ValueError("PostgreSQL test runtime root must not be in OneDrive")
     canonical_repo = REPOSITORY_ROOT.resolve()
     if canonical_root == canonical_repo or canonical_repo in canonical_root.parents:
         raise ValueError("PostgreSQL test runtime root must stay outside the repository")
-    for candidate in (canonical_root, *canonical_root.parents):
+
+
+def _reject_reparse_components(path: Path) -> None:
+    """Reject a reparse point before resolving away its lexical component."""
+
+    absolute_path = Path(os.path.abspath(path))
+    for candidate in (absolute_path, *absolute_path.parents):
         if _is_reparse_point(candidate):
             raise ValueError("PostgreSQL test path must not traverse a reparse point")
 
