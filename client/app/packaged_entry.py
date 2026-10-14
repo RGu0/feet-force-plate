@@ -76,7 +76,7 @@ from .live_institution_runtime import build_live_institution_runtime
 from .windows_credential_integrity import require_standard_user_process
 
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 
 class ValidationAuditPort(Protocol):
