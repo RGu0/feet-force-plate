@@ -6,8 +6,10 @@ from pathlib import Path
 
 
 MIGRATION = Path(__file__).parents[1] / "migrations" / "0001_p3_cloud_platform.sql"
+CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
 HOLD_MIGRATION = Path(__file__).parents[1] / "migrations" / "0009_unverified_session_holds.sql"
 COPY_MIGRATION = Path(__file__).parents[1] / "migrations" / "0010_local_basic_report_copies.sql"
+RECOVERY_PERMIT_MIGRATION = Path(__file__).parents[1] / "migrations" / "0013_recovery_bound_migration_permits.sql"
 
 
 class MigrationContractTests(unittest.TestCase):
@@ -76,6 +78,20 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("CREATE TABLE ops.audit_logs", self.sql)
         self.assertNotIn("external_id_plaintext", self.sql)
 
+    def test_capture_grants_do_not_store_reusable_credential_or_raw_data(self) -> None:
+        sql = CAPTURE_GRANTS.read_text(encoding="utf-8")
+        self.assertIn("token_sha256 bytea", sql)
+        for forbidden in ("token_plaintext", "license_document_json", "raw_segment", "consent_details"):
+            self.assertNotIn(forbidden, sql)
+        for required in (
+            "account_id uuid NOT NULL", "license_id uuid NOT NULL",
+            "hardware_id uuid NOT NULL", "installation_id uuid NOT NULL",
+            "consumed_request_sha256 text", "expected_manifest_sha256 text",
+            "approver_id uuid NOT NULL", "approval_reason text NOT NULL",
+            "evidence_reference text NOT NULL",
+        ):
+            self.assertIn(required, sql)
+
     def test_hold_tables_are_tenant_scoped_and_append_only(self) -> None:
         sql = HOLD_MIGRATION.read_text(encoding="utf-8")
         for table in ("ops.session_holds", "ops.session_hold_events", "ops.session_hold_idempotency"):
@@ -104,7 +120,6 @@ class MigrationContractTests(unittest.TestCase):
         self.assertNotIn("ALTER TABLE screening.sessions", sql)
 
 
-
 if __name__ == "__main__":
     unittest.main()
 
@@ -127,3 +142,12 @@ class IdentityRecoveryMigrationContractTests(unittest.TestCase):
         self.assertIn("ALTER TABLE ops.identity_recovery_registrations FORCE ROW LEVEL SECURITY", sql)
         self.assertNotIn("display_name text", sql)
         self.assertNotIn("contact text", sql)
+
+    def test_migration_permit_binds_reconciliation_and_final_consent(self) -> None:
+        sql = RECOVERY_PERMIT_MIGRATION.read_text(encoding="utf-8")
+        for column in (
+            "original_envelope_sha256", "original_subject_uuid", "final_subject_uuid",
+            "consent_record_id", "consent_sha256", "reconciliation_case_id",
+        ):
+            self.assertIn(column, sql)
+        self.assertIn("REFERENCES ops.identity_recovery_cases(tenant_id, case_id)", sql)

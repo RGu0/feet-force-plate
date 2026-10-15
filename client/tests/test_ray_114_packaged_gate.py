@@ -131,5 +131,6 @@ def test_workbench_creation_failure_shows_retryable_internal_error(qtbot) -> Non
         lambda: gate.window.presentation.state is StartupValidationState.INTERNAL_ERROR,
         timeout=2_000,
     )
+    qtbot.waitUntil(lambda: gate.window._primary_action.isEnabled(), timeout=2_000)
     assert gate.window.isVisible()
     assert gate.workbench is None

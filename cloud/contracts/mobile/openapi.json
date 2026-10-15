@@ -3715,6 +3715,38 @@
           },
           {
             "in": "header",
+            "name": "X-Capture-Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Capture-Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Expected-Manifest-SHA256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Expected-Manifest-Sha256"
+            }
+          },
+          {
+            "in": "header",
             "name": "Authorization",
             "required": true,
             "schema": {

@@ -299,7 +299,7 @@ def test_institution_store_keeps_subject_consent_session_and_report_out_of_repla
             data_categories=("SCREENING",), evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    session_id = store.create_session(
+    session_id = store.create_engineering_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
     )
@@ -310,6 +310,7 @@ def test_institution_store_keeps_subject_consent_session_and_report_out_of_repla
         "institution_consents", "institution_reports", "institution_report_copy_handoffs",
         "institution_screening_records", "institution_sessions",
         "institution_stage_completions", "institution_subject_audit", "institution_subjects",
+        "institution_capture_grants",
     }
     assert store.session_status(session_id) == "CLOSED"
 
@@ -462,7 +463,7 @@ def test_completed_report_is_listed_only_for_its_tenant_after_restart(tmp_path) 
                 evidence_type="OPERATOR_CONFIRMED",
             )
         )
-        session_id = store.create_session(
+        session_id = store.create_engineering_session(
             ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
             default_standard_protocol().snapshot(),
         )
@@ -543,7 +544,7 @@ def test_completed_session_record_candidates_are_tenant_scoped_and_idempotent(
                 evidence_type="OPERATOR_CONFIRMED",
             )
         )
-        session_id = store.create_session(
+        session_id = store.create_engineering_session(
             ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
             default_standard_protocol().snapshot(),
         )

@@ -165,7 +165,11 @@ def build_live_institution_runtime(
         payload_schema=payload_schema,
         calibration_profile=calibration.profile_version,
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = InstitutionLiveSessions(
+        institution, tenant_id=session.tenant_id,
+        installation_id=client_installation_id,
+        replenish=lambda: access_runtime.replenish_capture_grants(institution, session),
+    )
 
     def load_selected_device_dynamic_mask() -> DynamicDefectMask:
         selected_device_id = EngineeringDeviceBindingStore(

@@ -19,6 +19,7 @@ from client.hardware_standardization.public_export import (
 )
 from client.workflow.protocol import default_standard_protocol
 from shared.contracts.client_sync import FormalUploadEnvelope
+from shared.contracts.capture_grants import CaptureCredential
 
 from .derived_artifact import (
     DerivedArtifact,
@@ -116,6 +117,7 @@ class ValidSessionStager:
         versions: dict[str, str],
         started_at_ns: int,
         upload_envelope: FormalUploadEnvelope | None = None,
+        upload_credential: CaptureCredential | None = None,
         segment_duration_seconds: float = 5.0,
         expected_stage_ids: tuple[str, ...] | None = None,
     ) -> None:
@@ -132,6 +134,7 @@ class ValidSessionStager:
         self._versions = dict(versions)
         self._started_at_ns = started_at_ns
         self._upload_envelope = upload_envelope
+        self._upload_credential = upload_credential
         self._expected_stage_ids = (
             expected_stage_ids
             if expected_stage_ids is not None
@@ -398,6 +401,7 @@ class ValidSessionStager:
             "ended_at_ns": ended_at_ns,
             "manifest_sha256": str(manifest["manifest_sha256"]),
             "upload_envelope": self._encoded_recovery_envelope(),
+            "upload_credential": self._encoded_recovery_credential(),
             "segments": [
                 {
                     "segment_id": record.segment_id,
@@ -440,6 +444,7 @@ class ValidSessionStager:
                 segments=records,
                 artifacts=artifact_records,
                 upload_envelope=self._upload_envelope,
+                upload_credential=self._upload_credential,
             )
         except Exception:
             os.replace(final, staging)
@@ -455,6 +460,19 @@ class ValidSessionStager:
             manifest_sha256=str(manifest["manifest_sha256"]),
             session_directory=final,
         )
+
+    def _encoded_recovery_credential(self) -> str | None:
+        credential = self._upload_credential
+        if credential is None:
+            return None
+        encrypted = SensitiveBlobCodec(self._key_provider).encrypt(
+            json.dumps({
+                **credential.model_dump(mode="json"),
+                "token": credential.token.get_secret_value(),
+            }).encode(),
+            context=f"capture_authorization:{self._session_id}",
+        )
+        return base64.b64encode(encrypted).decode("ascii")
 
     def _encoded_recovery_envelope(self) -> str | None:
         if self._upload_envelope is None:
@@ -559,6 +577,16 @@ class ValidSessionStager:
                         raise ValueError(
                             "invalid formal upload recovery envelope"
                         ) from exc
+                credential = None
+                if payload.get("upload_credential") is not None:
+                    plaintext_credential = SensitiveBlobCodec(key_provider).decrypt(
+                        base64.b64decode(payload["upload_credential"], validate=True),
+                        context=f"capture_authorization:{session_id}",
+                    )
+                    try:
+                        credential = CaptureCredential.model_validate_json(plaintext_credential)
+                    except ValueError:
+                        raise ValueError("invalid encrypted recovery authorization") from None
                 store.commit_valid_session(
                     session_id,
                     subject_uuid=str(payload["subject_uuid"]),
@@ -570,6 +598,7 @@ class ValidSessionStager:
                     segments=segments,
                     artifacts=artifacts,
                     upload_envelope=upload_envelope,
+                    upload_credential=credential,
                 )
                 recovered += 1
             registration_path.unlink()

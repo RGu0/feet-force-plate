@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -14,6 +15,7 @@ from cloud.api.postgres import tenant_transaction
 from cloud.ingestion.principal import IngestionPrincipal
 from cloud.api.subject_service import IdentityProtector
 from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryComparisonResult,
     RecoveryRegistrationRequest, RecoveryRegistrationResult,
@@ -287,10 +289,15 @@ class PostgresRecoveryCaseRepository:
         self, context: IngestionPrincipal, case_id: UUID,
         request: RecoveryRegistrationRequest, idempotency_key: str,
         request_sha256: str, *, replay_only: bool,
+        authorization: SessionAuthorization | None = None,
     ) -> RecoveryRegistrationResult:
         tenant_id = context.tenant_id
         key_sha256 = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
         async with tenant_transaction(self._tenant_pool, tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                tenant_id, request.session.session_id,
+            )
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended('recovery-register:' || $1::uuid::text || ':' || $2::text, 0))",
                 tenant_id, key_sha256,
@@ -346,6 +353,43 @@ class PostgresRecoveryCaseRepository:
                 or request.consent.consent_record_id != request.session.consent_record_id
             ):
                 raise IdempotencyConflict("recovery receipt or binding invalid")
+            session_digest = canonical_sha256(request.session)
+            consent_digest = canonical_sha256(request.consent)
+            authorization_row = None
+            if authorization is None:
+                context.ensure_can_start_new()
+            else:
+                table = "capture_grants" if authorization.kind == "grant" else "upload_migration_permits"
+                authorization_row = await connection.fetchrow(
+                    f"SELECT * FROM screening.{table} WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE",
+                    tenant_id, request.session.session_id,
+                )
+                row = authorization_row
+                if (
+                    row is None or row["installation_id"] != context.terminal_id
+                    or row["installation_id"] != request.session.client_installation_id
+                    or row["account_id"] != context.account_id
+                    or row["hardware_id"] != request.session.device_id
+                    or not hmac.compare_digest(
+                        row["token_sha256"],
+                        hashlib.sha256(authorization.token.get_secret_value().encode()).digest(),
+                    )
+                    or row["state"] != "ISSUED"
+                    or (authorization.kind == "migration_permit" and (
+                        row["consumed_request_sha256"] != session_digest
+                        or row["expected_manifest_sha256"] != authorization.manifest_sha256
+                    ))
+                ):
+                    raise TenantAccessDenied("capture authorization does not match recovery registration")
+                if authorization.kind == "migration_permit" and (
+                    row["final_subject_uuid"] != case["cloud_subject_uuid"]
+                    or row["consent_record_id"] != request.consent.consent_record_id
+                    or row["consent_sha256"] != consent_digest
+                    or row["reconciliation_case_id"] != case_id
+                    or row["original_envelope_sha256"] != case["envelope_sha256"]
+                    or row["original_subject_uuid"] != case["original_subject_uuid"]
+                ):
+                    raise TenantAccessDenied("migration permit consent or reconciliation binding mismatch")
             if (
                 request.consent.evidence_type not in {"SUBJECT_CONFIRMED", "REPRESENTATIVE_CONFIRMED"}
                 or not any(purpose != "ALGORITHM_RESEARCH" for purpose in request.consent.purpose_codes)
@@ -416,9 +460,10 @@ class PostgresRecoveryCaseRepository:
                     subject_uuid, consent_record_id, test_protocol_id,
                     test_protocol_version, validity_status, ingest_status,
                     started_at, app_version, protocol_profile_version,
-                    payload_schema_version, calibration_version, config_snapshot)
+                    payload_schema_version, calibration_version, config_snapshot,
+                    expected_manifest_sha256)
                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'UNKNOWN','RECEIVING',
-                           $10,$11,$12,$13,$14,$15::jsonb)""",
+                           $10,$11,$12,$13,$14,$15::jsonb,$16)""",
                 session.session_id, tenant_id, session.site_id, context.terminal_id,
                 session.device_id, session.subject_uuid, session.consent_record_id,
                 session.test_protocol.id, session.test_protocol.version,
@@ -426,7 +471,28 @@ class PostgresRecoveryCaseRepository:
                 session.versions.protocol_profile, session.versions.payload_schema,
                 session.versions.calibration,
                 json.dumps(session.config_snapshot, separators=(",", ":")),
+                authorization.manifest_sha256 if authorization is not None else None,
             )
+            if authorization_row is not None:
+                table = "capture_grants" if authorization.kind == "grant" else "upload_migration_permits"
+                await connection.execute(
+                    f"UPDATE screening.{table} SET state='CONSUMED'"
+                    + (",consumed_request_sha256=$3,expected_manifest_sha256=$4" if authorization.kind == "grant" else "")
+                    + " WHERE tenant_id=$1 AND session_id=$2 AND state='ISSUED'",
+                    *(
+                        (tenant_id, session.session_id, session_digest, authorization.manifest_sha256)
+                        if authorization.kind == "grant" else (tenant_id, session.session_id)
+                    ),
+                )
+                await connection.execute(
+                    """INSERT INTO ops.capture_authorization_audit
+                       (event_id,tenant_id,session_id,authorization_kind,event_kind,actor_id,evidence_reference,decision_code)
+                       VALUES ($1,$2,$3,$4,'CONSUMED',$5,$6,'AUTHORIZED_RECOVERY_REGISTRATION')""",
+                    uuid4(), tenant_id, session.session_id,
+                    "GRANT" if authorization.kind == "grant" else "PERMIT",
+                    context.account_id,
+                    authorization_row["evidence_reference"] if authorization.kind == "migration_permit" else None,
+                )
             registered_at = datetime.now(UTC)
             await connection.execute(
                 """UPDATE ops.identity_recovery_receipts SET consumed_at=$3
