@@ -29,7 +29,6 @@ from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
 from shared.contracts.capture_grants import CaptureGrant
-from client.tests.credential_vault_support import requires_system_credential_vault
 
 
 class _Key:
@@ -37,7 +36,6 @@ class _Key:
         return b"l" * 32
 
 
-@requires_system_credential_vault
 def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
     tmp_path,
 ) -> None:
@@ -191,7 +189,6 @@ def test_capture_initialization_error_uses_a_safe_missing_record_category() -> N
     assert error.marker == "formal-envelope/missing-local-record"
 
 
-@requires_system_credential_vault
 def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator_attestations(tmp_path) -> None:
     key = _Key()
     institution = InstitutionLocalStore.open(
@@ -229,7 +226,6 @@ def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator
     assert outcome.report is None
 
 
-@requires_system_credential_vault
 def test_live_physical_processor_requires_captured_windows_with_attestations(tmp_path) -> None:
     key = _Key()
     institution = InstitutionLocalStore.open(
@@ -272,7 +268,6 @@ def test_live_physical_processor_requires_captured_windows_with_attestations(tmp
     assert outcome.report is None
 
 
-@requires_system_credential_vault
 def test_live_physical_processor_returns_retry_for_degraded_local_quality(
     tmp_path, monkeypatch
 ) -> None:

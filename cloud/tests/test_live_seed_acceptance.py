@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,12 +17,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bash_is_usable() -> bool:
-    # On Windows, PATH may resolve bash to the WSL launcher with no distribution.
-    bash = shutil.which("bash")
-    if bash is None:
+    if shutil.which("bash") is None:
         return False
+    if os.name != "nt":
+        return True
+    # Windows resolves a bare "bash" through System32 first, which can be the
+    # WSL launcher with no distribution; probe it exactly as the tests call it.
     try:
-        return subprocess.run([bash, "-c", "true"], capture_output=True, timeout=30).returncode == 0
+        return subprocess.run(["bash", "-c", "true"], capture_output=True, timeout=30).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
 

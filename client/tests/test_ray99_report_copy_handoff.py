@@ -18,7 +18,6 @@ from client.sync.persistent_upload import HttpIngestionClient
 from client.sync.persistent_upload import UploadRetryable
 from client.reporting.pdf import BasicReportPdfRenderer
 from client.spool.state_store import StateStore
-from client.tests.credential_vault_support import requires_system_credential_vault
 
 
 class _Key:
@@ -79,7 +78,6 @@ def _report() -> BasicReportDocument:
     )
 
 
-@requires_system_credential_vault
 def test_report_save_atomically_queues_an_encrypted_copy(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -93,7 +91,6 @@ def test_report_save_atomically_queues_an_encrypted_copy(tmp_path) -> None:
     assert report.report_id not in local.path.read_text(errors="ignore")
 
 
-@requires_system_credential_vault
 def test_processing_retry_recovers_the_same_saved_report_after_restart(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -107,7 +104,6 @@ def test_processing_retry_recovers_the_same_saved_report_after_restart(tmp_path)
     assert outcome.report == report
 
 
-@requires_system_credential_vault
 def test_copy_waits_for_cloud_ingested_then_survives_lost_response_and_restart(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -131,7 +127,6 @@ def test_copy_waits_for_cloud_ingested_then_survives_lost_response_and_restart(t
     restarted.close()
 
 
-@requires_system_credential_vault
 def test_copy_retry_after_overrides_local_backoff_and_plain_retry_uses_foundation_policy(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -171,7 +166,6 @@ def test_copy_retry_after_overrides_local_backoff_and_plain_retry_uses_foundatio
         uploader.close()
 
 
-@requires_system_credential_vault
 def test_changed_cloud_receipt_blocks_copy_without_erasing_local_report(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -246,7 +240,6 @@ def test_cloud_copy_uses_recovery_consent_only_after_raw_confirmation() -> None:
     assert store.report_copy_consent_id("session") == str(original)
 
 
-@requires_system_credential_vault
 def test_held_upload_is_retryable_after_platform_release(tmp_path) -> None:
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)
     report = _report()
@@ -273,7 +266,6 @@ def test_held_upload_is_retryable_after_platform_release(tmp_path) -> None:
     resumed.close()
 
 
-@requires_system_credential_vault
 def test_real_pdf_renderer_uses_memory_without_plaintext_temp_file(qtbot, tmp_path) -> None:
     _ = qtbot
     local = InstitutionLocalStore.open(tmp_path, key_provider=_Key(), query_index_key=b"q" * 32)

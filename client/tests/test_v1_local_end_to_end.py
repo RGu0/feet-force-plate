@@ -23,7 +23,6 @@ from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapt
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.state_machine import ScreeningStep
-from client.tests.credential_vault_support import requires_system_credential_vault
 
 
 class _MemoryKeyring:
@@ -40,7 +39,6 @@ class _MemoryKeyring:
         self.values.pop(key, None)
 
 
-@requires_system_credential_vault
 def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qtbot, tmp_path: Path) -> None:
     replay_speed = float(os.environ.get("FEETFORCEPLATE_REPLAY_SPEED", "500"))
     source = FixtureReplaySource.from_repository()

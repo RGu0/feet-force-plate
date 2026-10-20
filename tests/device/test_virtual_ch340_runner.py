@@ -132,7 +132,7 @@ def test_runner_passes_production_startup_validation_with_development_switch(
                 app_version="test",
             )
         )
-        assert run.outcome is ValidationOutcome.PASS
+        assert run.outcome is ValidationOutcome.PASS, (run.reason, run.statistics)
     finally:
         runner.send_signal(signal.SIGTERM)
         runner.wait(timeout=5.0)
