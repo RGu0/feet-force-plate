@@ -313,4 +313,6 @@ consent；队列先注册并核验 registration 回执，再按映射上传。
 
 这份 R2 设计记录保留其历史决策。R11 映射是 RAY-513 身份冲突人工许可可依赖的
 权威记录；本地声称、附件路径或自由文本编号不构成身份 reconciliation。RAY-513
-scope 尚须在其分支包含该依赖后，验证许可签发/消费与上述记录的精确绑定。
+`suspended-valid-session-resume` scope 于 2026-10-20 经 PR #63（merge `42a54c1`）合并，
+其 PostgreSQL live 用例验证了许可签发/消费与上述记录的精确绑定；
+截至 2026-10-20，RAY-513 的 Aliyun seed 验收（R5 第 6 条）尚未完成。

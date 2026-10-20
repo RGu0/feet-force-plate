@@ -75,7 +75,7 @@ POST /v1/telemetry/batches                批量上传日志和设备指标
 
 会话的 subject/consent 引用若发生身份冲突，队列必须先完成 RAY-99 受控核对：服务端匹配回执与持久 case/registration 映射必须对应原 session 和原 envelope 摘要，且注册请求必须携带针对云端 subject 的新必要 consent。成功注册后，队列使用映射后的 subject 和 consent 上传；原 envelope、原 consent 与原始分段保持不可变。缺少服务端映射、回执过期/拒绝或新 consent 不匹配时，队列保持阻断并保留本地材料。
 
-没有预签发 grant 的历史 `VALID` 会话只可通过 RAY-513 单会话人工许可恢复。许可绑定最终 `SessionCreateRequest` 摘要、最终 manifest 摘要、final consent canonical 摘要和受控身份 reconciliation reference；身份冲突场景必须引用 RAY-99 已持久化的 reconciliation case，不能用操作员自由文本代替。该许可不证明会话采集时间，且不绕过 `allow_upload=false`。许可缺失或任一绑定不一致时不创建云端会话。
+没有预签发 grant 的历史 `VALID` 会话只可通过 RAY-513 单会话人工许可恢复。许可绑定最终 `SessionCreateRequest` 摘要、最终 manifest 摘要、final consent canonical 摘要和受控身份 reconciliation reference；身份冲突场景必须引用 RAY-99 已持久化的 reconciliation case，不能用操作员自由文本代替。该许可不证明会话采集时间，且不绕过 `allow_upload=false`。许可缺失或任一绑定不一致时不创建云端会话。R5 起许可请求的 `reason` 只接受固定代码 `LEGACY_VALID_SESSION_REVIEWED`，`evidence_reference` 只接受不透明的 `evidence/...` 相对引用；自由文本理由、受试者信息和原始证据不进入请求、授权表或审计（接口契约见 `docs/通信接口设计文档.md` §7.1.1）。
 
 RAY-99 的 `register_recovery` 是首次云 session 创建入口之一，必须应用与普通 session 注册相同的 RAY-513 authorization。已持久的 MATCHED case/receipt 完成身份核对，但暂停后的无 grant legacy `VALID` 仍需 owner permit；grant/permit 消费与 consent、session、registration 的首次写入同一事务。active principal 保留现行恢复路径，不强制 legacy permit。所有路径继续受 `allow_upload` 约束。
 
