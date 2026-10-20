@@ -26,10 +26,94 @@ class ActivationCodeInvalid(AuthenticationError):
     action = "REQUEST_ACTIVATION_CODE"
 
 
+# RAY-656 terminal credential failures. Each condition has its own code so a
+# client never infers revocation from a generic 401; network failures carry no
+# envelope at all.
+class TerminalCredentialsRejected(AuthenticationError):
+    code = "E-TRM-401-CREDENTIALS"
+    action = "VERIFY_CREDENTIALS"
+
+
+class TerminalRevoked(AuthenticationError):
+    code = "E-TRM-401-REVOKED"
+    action = "CONTACT_ADMINISTRATOR"
+
+
+class TerminalRefreshReplayed(AuthenticationError):
+    code = "E-TRM-401-REFRESH-REPLAYED"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalRefreshExpired(AuthenticationError):
+    code = "E-TRM-401-REFRESH-EXPIRED"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalRefreshInvalid(AuthenticationError):
+    code = "E-TRM-401-REFRESH-INVALID"
+    action = "REACTIVATE_TERMINAL"
+
+
+class TerminalLicenseInactive(PlatformError):
+    code = "E-TRM-403-LICENSE-INACTIVE"
+    http_status = 403
+    action = "CONTACT_ADMINISTRATOR"
+
+
+class TerminalSeatLimitReached(PlatformError):
+    code = "E-TRM-409-SEAT-LIMIT"
+    http_status = 409
+    action = "FREE_TERMINAL_SEAT"
+
+
+class TerminalInstallationConflict(PlatformError):
+    code = "E-TRM-409-INSTALLATION-CONFLICT"
+    http_status = 409
+    action = "REGENERATE_INSTALLATION_ID"
+
+
+# RAY-778 institutional insole inventory. The two registration conflicts
+# carry the existing pair in ``details.existing`` so the client can show it.
+class InsoleIdentityRegistered(PlatformError):
+    code = "E-INV-409-IDENTITY-REGISTERED"
+    http_status = 409
+    action = "SHOW_EXISTING_INSOLE"
+
+
+class InsoleNumberTaken(PlatformError):
+    code = "E-INV-409-NUMBER-TAKEN"
+    http_status = 409
+    action = "SHOW_EXISTING_INSOLE"
+
+
+class InsoleRetired(PlatformError):
+    code = "E-INV-409-RETIRED"
+    http_status = 409
+    action = "REFRESH_INVENTORY"
+
+
+class InsoleReadingInFuture(PlatformError):
+    code = "E-INV-422-READING-IN-FUTURE"
+    http_status = 422
+    action = "CHECK_TERMINAL_CLOCK"
+
+
+class InsoleCursorInvalid(PlatformError):
+    code = "E-INV-400-CURSOR-INVALID"
+    http_status = 400
+    action = "RESTART_FULL_SYNC"
+
+
 class TenantAccessDenied(PlatformError):
     code = "E-AUT-403"
     http_status = 403
     action = "CONTACT_ADMINISTRATOR"
+
+
+class SessionHeldForReportCopy(PlatformError):
+    code = "E-RPT-423"
+    http_status = 423
+    action = "RETRY_AFTER_HOLD_RELEASE"
 
 
 class ResourceNotFound(PlatformError):

@@ -1,0 +1,31 @@
+name: Publish mobile contracts
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux Qt runtime
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - name: Check versioned exports
+        run: |
+          uv sync --locked --extra dev
+          uv run --locked --extra dev python -m pytest cloud/tests/test_mobile_contract_export.py
+      - name: Attach public contract files to tagged version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" cloud/contracts/mobile/openapi.json cloud/contracts/mobile/vectors.json

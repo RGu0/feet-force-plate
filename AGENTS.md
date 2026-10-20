@@ -8,12 +8,11 @@ project-specific runtime contract.
   `pwsh -File dev.ps1 {setup|test|lint|build}` on Windows. For an explicit
   project command, use `./dev run <command...>` or `dev.ps1 run <command...>`.
 - Do not call system Python, pip, pytest, or a shared Conda environment.
-- The private `techflex-cloud-foundation` wheel is pinned by version and
-  SHA-256 in `foundation-artifact.lock.json`. Every entrypoint action runs
-  `scripts/prepare_foundation_artifact.py` before syncing; `setup` downloads it
-  from the private `RGu0/techflex-cloud-foundation` release, so `gh` must be
-  authenticated (CI uses `TECHFLEX_FOUNDATION_RELEASE_TOKEN`). Never install an
-  unverified wheel or add a `[tool.uv.sources]` fallback that bypasses the lock.
+- `techflex-cloud-foundation` is pinned by version and public GitHub Release
+  URL in `pyproject.toml`; `uv.lock` pins its wheel SHA-256. Entrypoints use
+  locked uv sync, which downloads and verifies the wheel without a worktree-local
+  artifact or release credential. Never install an unverified wheel or bypass
+  the committed lock.
 - Sensitive outbound communication goes through the foundation's public API
   (`SecureTransport`, `AuthorizedTransport`, `CredentialVault`,
   `TrustBundleVerifier`). Do not re-implement transport, authorization,

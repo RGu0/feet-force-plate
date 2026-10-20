@@ -29,6 +29,8 @@ class LatestHardwareFramePort(Protocol):
 
     def read(self) -> DecodedHardwareFrame | None: ...
 
+    def clear(self) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class HardwareDisplayGeometry:

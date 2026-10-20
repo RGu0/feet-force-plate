@@ -1,13 +1,18 @@
+import base64
+import binascii
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+
+from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization, UploadMigrationPermitRequest
 
 from cloud.api.auth import TerminalContext, TerminalTokenIssuer
 from cloud.api.access_auth import (
@@ -15,6 +20,8 @@ from cloud.api.access_auth import (
     PlatformAccessTokenIssuer,
     TenantAccessContext,
     TenantAccessTokenIssuer,
+    TerminalAccessContext,
+    TerminalAccessTokenIssuer,
 )
 from cloud.api.operations_auth import OperationsTokenIssuer
 from cloud.api.errors import (
@@ -31,6 +38,11 @@ from cloud.ingestion.principal import (
     legacy_terminal_principal,
     tenant_ingestion_principal,
 )
+from cloud.session_hold.models import (
+    HoldApplyBody, HoldApplyRequest, HoldDispositionBody,
+    HoldDispositionRequest, HoldReleaseBody, HoldReleaseRequest,
+)
+from cloud.report_copy.models import LocalBasicCopyRequest
 from shared.contracts.client_sync import decode_segment_metadata
 from shared.contracts.access_control import (
     ActivateAccountRequest,
@@ -43,6 +55,16 @@ from shared.contracts.access_control import (
     ProvisionTenantRequest,
     RefreshRequest,
     SensitiveAccessGrantRequest,
+)
+from shared.contracts.insole_inventory import (
+    INSOLE_PAGE_MAX_LIMIT,
+    InsoleRegistrationRequest,
+    InsoleReportRequest,
+)
+from shared.contracts.terminal_access import (
+    TerminalActivationRequest,
+    TerminalRefreshRequest,
+    TerminalRenameRequest,
 )
 from shared.contracts.cloud import (
     ConsentCreateRequest,
@@ -69,6 +91,10 @@ from shared.contracts.operations import (
 from shared.contracts.validation_telemetry import (
     DeviceValidationTelemetryBatchRequest,
 )
+from shared.contracts.identity_recovery import (
+    RecoveryCaseCreateRequest, RecoveryComparisonRequest,
+    RecoveryRegistrationRequest,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +109,7 @@ class ServiceContainer:
     tenant_access: object | None = None
     tenant_tokens: TenantAccessTokenIssuer | None = None
     hardware_leases: object | None = None
+    capture_grants: object | None = None
     platform_identities: object | None = None
     platform_access: object | None = None
     platform_tokens: PlatformAccessTokenIssuer | None = None
@@ -90,6 +117,12 @@ class ServiceContainer:
     platform_reports: object | None = None
     platform_subjects: object | None = None
     validation_telemetry: object | None = None
+    identity_recovery: object | None = None
+    session_holds: object | None = None
+    report_copies: object | None = None
+    terminal_access: object | None = None
+    terminal_tokens: TerminalAccessTokenIssuer | None = None
+    insole_inventory: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -140,6 +173,9 @@ def create_app(container: ServiceContainer) -> FastAPI:
             )
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = str(request.state.correlation_id)
+        if request.url.path.startswith("/v1/reports") or request.url.path.endswith("/basic-report-copy"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     @app.exception_handler(PlatformError)
@@ -160,6 +196,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
             "subject_uuid",
             "validity_status",
             "object_key",
+            "existing",
         }
         details = {key: value for key, value in exc.details.items() if key in allowed_details}
         return JSONResponse(
@@ -261,6 +298,20 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     TenantAccessDependency = Annotated[TenantAccessContext, Depends(tenant_context)]
 
+    def terminal_access_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ) -> TerminalAccessContext:
+        if container.terminal_tokens is None:
+            raise RepositoryUnavailable("终端身份服务暂不可用")
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            raise AuthenticationError("缺少有效终端 Bearer 凭据")
+        return container.terminal_tokens.verify(token)
+
+    TerminalAccessDependency = Annotated[
+        TerminalAccessContext, Depends(terminal_access_context)
+    ]
+
     def data_context(
         authorization: Annotated[str, Header(alias="Authorization")],
         terminal_header_id: Annotated[
@@ -301,6 +352,16 @@ def create_app(container: ServiceContainer) -> FastAPI:
         return await container.platform_identities.verify_access_token(token)
 
     PlatformAccessDependency = Annotated[PlatformAccessContext, Depends(platform_context)]
+
+    async def migration_platform_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+    ) -> PlatformAccessContext:
+        try:
+            return await platform_context(authorization)
+        except AuthenticationError:
+            raise TenantAccessDenied("platform owner approval required") from None
+
+    MigrationPlatformDependency = Annotated[PlatformAccessContext, Depends(migration_platform_context)]
 
     def source_fingerprint(request: Request) -> bytes:
         host = request.client.host if request.client is not None else "unknown"
@@ -359,6 +420,97 @@ def create_app(container: ServiceContainer) -> FastAPI:
             context: TenantAccessDependency,
         ):
             result = await container.tenant_access.current_license(context)
+            return _data_response(request, result)
+
+    if container.terminal_access is not None and container.terminal_tokens is not None:
+
+        @app.post("/v1/access/terminal-activate")
+        async def terminal_activate(request: Request, body: TerminalActivationRequest):
+            result = await container.terminal_access.activate(
+                body,
+                source_fingerprint=source_fingerprint(request),
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/access/terminal-refresh")
+        async def terminal_refresh(request: Request, body: TerminalRefreshRequest):
+            result = await container.terminal_access.refresh(body)
+            return _data_response(request, result)
+
+        @app.get("/v1/access/terminals")
+        async def terminal_list(request: Request, context: TerminalAccessDependency):
+            result = await container.terminal_access.list_terminals(context)
+            return _data_response(request, result)
+
+        @app.patch("/v1/access/terminals/{client_installation_id}")
+        async def terminal_rename(
+            request: Request,
+            client_installation_id: UUID,
+            body: TerminalRenameRequest,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.terminal_access.rename_terminal(
+                context, client_installation_id, body
+            )
+            return _data_response(request, result)
+
+        @app.post("/v1/access/terminals/{client_installation_id}/revoke")
+        async def terminal_revoke(
+            request: Request,
+            client_installation_id: UUID,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.terminal_access.revoke_terminal(
+                context, client_installation_id
+            )
+            return _data_response(request, result)
+
+    if container.insole_inventory is not None and container.terminal_tokens is not None:
+
+        # RAY-778: institutional insole inventory, terminal credentials only.
+        @app.post("/v1/inventory/insoles")
+        async def insole_register(
+            request: Request,
+            body: InsoleRegistrationRequest,
+            context: TerminalAccessDependency,
+            idempotency_key: Annotated[
+                str, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+            ],
+        ):
+            result, created = await container.insole_inventory.register(
+                context, body, idempotency_key
+            )
+            return _data_response(request, result, 201 if created else 200)
+
+        @app.get("/v1/inventory/insoles")
+        async def insole_changes(
+            request: Request,
+            context: TerminalAccessDependency,
+            cursor: Annotated[str | None, Query(max_length=128)] = None,
+            limit: Annotated[int | None, Query(ge=1, le=INSOLE_PAGE_MAX_LIMIT)] = None,
+        ):
+            result = await container.insole_inventory.changes(
+                context, cursor=cursor, limit=limit
+            )
+            return _data_response(request, result)
+
+        @app.post("/v1/inventory/insoles/{insole_id}/reports")
+        async def insole_report(
+            request: Request,
+            insole_id: UUID,
+            body: InsoleReportRequest,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.insole_inventory.report(context, insole_id, body)
+            return _data_response(request, result)
+
+        @app.post("/v1/inventory/insoles/{insole_id}/retire")
+        async def insole_retire(
+            request: Request,
+            insole_id: UUID,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.insole_inventory.retire(context, insole_id)
             return _data_response(request, result)
 
     if container.validation_telemetry is not None and container.tenant_tokens is not None:
@@ -480,9 +632,97 @@ def create_app(container: ServiceContainer) -> FastAPI:
             tenant_id: UUID,
             context: PlatformAccessDependency,
         ):
+            if container.session_holds is None:
+                raise RepositoryUnavailable("report hold check unavailable")
+            binding = getattr(container.platform_reports, "session_for_report", None)
+            if binding is None:
+                raise RepositoryUnavailable("report session binding unavailable")
             result = await container.platform_reports.list_masked_reports(
                 context,
                 tenant_id,
+            )
+            visible = []
+            for row in result:
+                if getattr(row, "tenant_id", None) != tenant_id:
+                    raise RepositoryUnavailable("report tenant binding unavailable")
+                session_id = await binding(context, tenant_id, row.report_id)
+                if not isinstance(session_id, UUID):
+                    raise RepositoryUnavailable("report session binding unavailable")
+                hold = await container.session_holds.status(context, tenant_id, session_id)
+                if not hold.held:
+                    visible.append(row)
+            return _data_response(request, visible)
+
+    if container.session_holds is not None and container.platform_tokens is not None:
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_apply_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldApplyBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.apply(
+                context,
+                HoldApplyRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    ticket_reference=body.ticket_reference,
+                    reason_code=body.reason_code,
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.get("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold")
+        async def platform_session_hold_status(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            context: PlatformAccessDependency,
+        ):
+            result = await container.session_holds.status(context, tenant_id, session_id)
+            return _data_response(request, result)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/disposition")
+        async def platform_dispose_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldDispositionBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.dispose(
+                context,
+                HoldDispositionRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
+            )
+            return _data_response(request, result, 201)
+
+        @app.post("/v1/platform/tenants/{tenant_id}/sessions/{session_id}/hold/release")
+        async def platform_release_session_hold(
+            request: Request,
+            tenant_id: UUID,
+            session_id: UUID,
+            body: HoldReleaseBody,
+            context: PlatformAccessDependency,
+            idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        ):
+            result = await container.session_holds.release(
+                context,
+                HoldReleaseRequest(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    **body.model_dump(),
+                ),
+                idempotency_key,
             )
             return _data_response(request, result)
 
@@ -677,15 +917,122 @@ def create_app(container: ServiceContainer) -> FastAPI:
         )
         return _data_response(request, result)
 
+    @app.post("/v1/platform/upload-migration-permits")
+    async def approve_upload_migration_permit(
+        request: Request, body: UploadMigrationPermitRequest, context: MigrationPlatformDependency,
+    ):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("迁移核准服务暂不可用")
+        result = await container.capture_grants.approve_migration(context, body)
+        # Only this issuance response reveals the secret, once. Neither the
+        # ordinary model serializer nor persistent records expose it.
+        response = _data_response(request, {
+            "session_id": str(result.session_id), "token": result.token.get_secret_value(),
+        }, 201)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/v1/access/capture-grants")
+    async def issue_capture_grants(request: Request, body: CaptureGrantBatchRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        result = await container.capture_grants.issue(context, body.count)
+        # This is the only transport boundary that reveals newly issued secrets.
+        return _data_response(request, {"grants": [
+            {"session_id": str(grant.session_id), "token": grant.token.get_secret_value()}
+            for grant in result.grants
+        ]}, 201)
+
+    @app.post("/v1/access/capture-grants/retire")
+    async def retire_capture_grant(request: Request, body: RetireCaptureGrantRequest, context: DataDependency):
+        if container.capture_grants is None:
+            raise RepositoryUnavailable("采集额度服务暂不可用")
+        await container.capture_grants.retire(context, body.session_id, body.reason)
+        return _data_response(request, {"session_id": str(body.session_id), "state": "RETIRED"})
+
     @app.post("/v1/sessions")
     async def create_session(
         request: Request,
         body: SessionCreateRequest,
         context: DataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
+        capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
+        expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
     ):
-        result = await container.ingestion.create_session(context, body, idempotency_key)
+        authorization = None
+        if capture_authorization is not None or expected_manifest is not None:
+            try:
+                kind, token = (capture_authorization or "").split(" ", 1)
+                if any(character.isspace() for character in token):
+                    raise ValueError("invalid opaque token")
+                authorization = SessionAuthorization(
+                    session_id=body.session_id, kind=kind, token=token,
+                    manifest_sha256=expected_manifest,
+                )
+            except ValueError:
+                # Never include credential values or Pydantic input in errors.
+                raise RequestValidationError([{"loc": ("header", "X-Capture-Authorization"), "type": "value_error", "msg": "invalid authorization headers"}]) from None
+        result = await container.ingestion.create_session(context, body, idempotency_key, authorization)
         return _data_response(request, result, 200 if result.idempotent_replay else 201)
+
+    @app.post("/v1/identity-recovery/cases")
+    async def create_recovery_case(
+        request: Request,
+        body: RecoveryCaseCreateRequest,
+        context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.create_case(context, body, idempotency_key)
+        return _data_response(request, result, 201)
+
+    @app.get("/v1/identity-recovery/cases/{case_id}")
+    async def get_recovery_case(request: Request, case_id: UUID, context: DataDependency):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.get_case(context, case_id)
+        return _data_response(request, result)
+
+    @app.post("/v1/platform/identity-recovery/cases/{case_id}/compare")
+    async def compare_recovery_case(
+        request: Request, case_id: UUID, body: RecoveryComparisonRequest,
+        context: PlatformAccessDependency,
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        result = await container.identity_recovery.compare(
+            context, case_id, body.grant_id, body.original_name, body.original_contact,
+            tenant_id=body.tenant_id, ticket_reference=body.ticket_reference,
+        )
+        return _data_response(request, result)
+
+    @app.post("/v1/identity-recovery/cases/{case_id}/register")
+    async def register_recovery_case(
+        request: Request, case_id: UUID, body: RecoveryRegistrationRequest,
+        context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+        capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
+        expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
+    ):
+        if container.identity_recovery is None:
+            raise RepositoryUnavailable("identity recovery is unavailable")
+        authorization = None
+        if capture_authorization is not None or expected_manifest is not None:
+            try:
+                kind, token = (capture_authorization or "").split(" ", 1)
+                if any(character.isspace() for character in token):
+                    raise ValueError("invalid opaque token")
+                authorization = SessionAuthorization(
+                    session_id=body.session.session_id, kind=kind, token=token,
+                    manifest_sha256=expected_manifest,
+                )
+            except ValueError:
+                raise RequestValidationError([{"loc": ("header", "X-Capture-Authorization"), "type": "value_error", "msg": "invalid authorization headers"}]) from None
+        result = await container.identity_recovery.register(
+            context, case_id, body, idempotency_key, authorization,
+        )
+        return _data_response(request, result, 201)
 
     @app.post("/v1/subjects/resolve")
     async def resolve_subject(
@@ -784,5 +1131,69 @@ def create_app(container: ServiceContainer) -> FastAPI:
     ):
         result = await container.ingestion.get_status(context, session_id)
         return _data_response(request, result)
+
+    def report_copy_service():
+        if container.report_copies is None:
+            raise RepositoryUnavailable("basic report copy service unavailable")
+        return container.report_copies
+
+    @app.post("/v1/sessions/{session_id}/basic-report-copy")
+    async def upload_local_basic_copy(
+        request: Request, session_id: UUID, context: DataDependency,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+    ):
+        payload = bytearray()
+        async for chunk in request.stream():
+            if len(payload) + len(chunk) > 12 * 1024 * 1024:
+                raise RequestContractError("report copy request exceeds size limit")
+            payload.extend(chunk)
+        try:
+            body = json.loads(payload)
+            if not isinstance(body, dict):
+                raise ValueError("body must be object")
+            pdf = base64.b64decode(body["pdf_base64"], validate=True)
+            copy = LocalBasicCopyRequest(
+                session_id=session_id, report_id=body["report_id"],
+                version=body["version"], source=body["source"],
+                document_json=body["document_json"], pdf_bytes=pdf,
+                document_sha256=body["document_sha256"],
+                pdf_sha256=body["pdf_sha256"],
+                consent_record_id=UUID(body["consent_record_id"]),
+            )
+        except (KeyError, ValueError, TypeError, binascii.Error) as exc:
+            raise RequestContractError("invalid report copy request") from exc
+        result = await report_copy_service().accept(context, copy, idempotency_key)
+        return _data_response(request, result, 201)
+
+    @app.get("/v1/reports")
+    async def list_local_basic_copies(request: Request, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        rows = await report_copy_service().list_for_tenant(context.tenant_id, context.account_id)
+        return _data_response(request, [
+            {"report_id": row.report_id, "version": row.version, "source": row.source,
+             "session_id": row.session_id, "status": "BASIC_READY"}
+            for row in rows
+        ])
+
+    @app.get("/v1/reports/{report_id}/versions/1")
+    async def get_local_basic_copy(request: Request, report_id: str, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        row = await report_copy_service().get(context.tenant_id, context.account_id, report_id)
+        return _data_response(request, {
+            "report_id": row.report_id, "version": row.version, "source": row.source,
+            "document": json.loads(row.document_json),
+        })
+
+    @app.get("/v1/reports/{report_id}/versions/1/pdf")
+    async def export_local_basic_copy(request: Request, report_id: str, context: TenantAccessDependency):
+        if not context.capabilities.allow_report_view:
+            raise TenantAccessDenied("report view is disabled")
+        payload = await report_copy_service().export_pdf(context.tenant_id, context.account_id, report_id)
+        return Response(
+            content=payload, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{report_id}.pdf"'},
+        )
 
     return app

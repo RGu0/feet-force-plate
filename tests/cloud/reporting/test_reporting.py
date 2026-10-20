@@ -21,6 +21,15 @@ from cloud.reporting.service import (
     InMemoryReportEventPublisher,
     InMemoryReportRepository,
 )
+from cloud.session_hold.service import SessionHeld
+
+
+class MutableHolds:
+    def __init__(self) -> None:
+        self.held: set[tuple[str, str]] = set()
+
+    def is_held(self, tenant_id: str, session_id: str) -> bool:
+        return (tenant_id, session_id) in self.held
 
 
 def feature_set() -> FeatureSet:
@@ -102,7 +111,7 @@ def report_context() -> ReportContext:
     )
 
 
-def service() -> tuple[
+def service(holds: MutableHolds | None = None) -> tuple[
     CloudReportService,
     InMemoryReportRepository,
     InMemoryArtifactStore,
@@ -124,11 +133,27 @@ def service() -> tuple[
         builder=CloudReportBuilder(),
         renderer=MinimalPdfRenderer(),
         publisher=events,
+        holds=holds if holds is not None else MutableHolds(),
     )
     return report_service, repository, artifacts, events
 
 
 class CloudReportingTests(unittest.TestCase):
+    def test_hold_blocks_new_version_but_preserves_existing_pdf(self) -> None:
+        holds = MutableHolds()
+        report_service, repository, artifacts, events = service(holds)
+        existing = report_service.publish(analysis_run(), report_context())
+        previous_bytes = artifacts.get(existing.artifact.object_key)
+        holds.held.add(("tenant-a", "session-a"))
+        updated_run = replace(analysis_run(), analysis_run_id="run-2")
+
+        with self.assertRaises(SessionHeld):
+            report_service.publish(updated_run, report_context())
+        self.assertEqual(artifacts.get(existing.artifact.object_key), previous_bytes)
+        self.assertEqual(artifacts.count(), 1)
+        self.assertEqual(repository.get_for_session("tenant-a", "session-a").latest_version, 2)
+        self.assertEqual(len(events.events), 1)
+
     def test_cloud_version_reuses_basic_report_id_and_appends_version_two(self) -> None:
         report_service, repository, artifacts, events = service()
 

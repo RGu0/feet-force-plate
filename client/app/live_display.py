@@ -36,7 +36,10 @@ class LiveDisplayProjection:
         return self._last_source_index
 
     def reset(self) -> None:
-        """Forget per-session UI history before a new source-index sequence."""
+        """Forget a capture stage before a reconnected parser restarts indexing."""
+
+        self._source.clear()
+        self._destination.reset()
         self._last_source_index = -1
         self._cop_trail = ()
         self._total_trend = ()

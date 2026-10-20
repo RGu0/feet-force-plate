@@ -16,16 +16,22 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from cloud.access_control.capture_grants import CaptureGrantService
 from cloud.access_control.lease_service import HardwareLeaseService
 from cloud.access_control.platform_iam import PlatformIdentityService, SensitiveAccessService
 from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
+from cloud.access_control.terminal_service import TerminalAccessService
+from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
+from cloud.insole_inventory.service import InsoleInventoryService
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     PlatformAccessTokenIssuer,
     RefreshTokenFactory,
     TenantAccessTokenIssuer,
+    TerminalAccessTokenIssuer,
+    TerminalRefreshTokenFactory,
 )
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.postgres import PostgresPlatformRepository
@@ -33,6 +39,10 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.identity_recovery.postgres import (
+    PostgresRecoveryCaseRepository, PostgresRecoveryIdentityReader,
+)
+from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
@@ -237,7 +247,15 @@ async def build_seed_app(
     access_repository = PostgresAccessRepository(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
-    data_repository = PostgresPlatformRepository(tenant_pool)
+    data_repository = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
+    from cloud.session_hold.postgres import PostgresSessionHoldRepository
+    from cloud.session_hold.service import SessionHoldService
+    from cloud.report_copy.object_store import LocalBasicPdfStore
+    from cloud.report_copy.postgres import PostgresLocalBasicCopyRepository
+    from cloud.report_copy.service import LocalBasicCopyService
+
+    hold_repository = PostgresSessionHoldRepository(platform_pool)
+    session_holds = SessionHoldService(hold_repository)
     if object_store_factory is not None:
         objects = object_store_factory(settings)
     elif settings.object_backend == "aliyun-oss":
@@ -270,6 +288,21 @@ async def build_seed_app(
         ),
         license_signer=license_signer,
     )
+    # Terminal tokens share the tenant signing secret but carry their own
+    # token type and audience, so neither verifier accepts the other's token.
+    terminal_tokens = TerminalAccessTokenIssuer(
+        secret=_secret(settings.tenant_token_secret, "tenant token secret"),
+        key_id=settings.tenant_token_key_id,
+    )
+    terminal_access = TerminalAccessService(
+        access_repository,
+        login_lookup_hmac_key=_secret(settings.tenant_login_hmac_key, "tenant login key"),
+        terminal_tokens=terminal_tokens,
+        refresh_tokens=TerminalRefreshTokenFactory(
+            digest_key=_secret(settings.tenant_refresh_hmac_key, "tenant refresh key")
+        ),
+        license_signer=license_signer,
+    )
     platform_identities = PlatformIdentityService(
         access_repository,
         login_lookup_hmac_key=_secret(settings.platform_login_hmac_key, "Platform login key"),
@@ -292,6 +325,7 @@ async def build_seed_app(
         key_version=settings.identity_key_version,
     )
     subjects = SubjectConsentService(data_repository, identity)
+    sensitive = SensitiveAccessService(access_repository)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -303,16 +337,32 @@ async def build_seed_app(
             heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
+            terminal_access=terminal_access,
+            terminal_tokens=terminal_tokens,
+            insole_inventory=InsoleInventoryService(
+                PostgresInsoleInventoryRepository(activation_pool), access_repository
+            ),
             hardware_leases=HardwareLeaseService(access_repository),
+            capture_grants=CaptureGrantService(data_repository),
             platform_identities=platform_identities,
             platform_access=platform_access,
             platform_tokens=platform_tokens,
-            platform_sensitive=SensitiveAccessService(access_repository),
+            platform_sensitive=sensitive,
             platform_subjects=subjects,
+            session_holds=session_holds,
+            report_copies=LocalBasicCopyService(
+                PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
+                hold_repository,
+            ),
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)
                 )
+            ),
+            identity_recovery=IdentityRecoveryService(
+                PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
+                sensitive=sensitive,
+                identity_reader=PostgresRecoveryIdentityReader(tenant_pool, identity),
             ),
         )
     )

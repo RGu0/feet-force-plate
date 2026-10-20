@@ -61,6 +61,11 @@ class SessionStateMachine:
             raise InvalidTransition(f"cannot retry current stage from {self._step}")
         self._step = ScreeningStep.POSITION_GUIDANCE
 
+    def cancel_position_guidance(self) -> None:
+        if self._step is not ScreeningStep.POSITION_GUIDANCE:
+            raise InvalidTransition(f"cannot cancel position guidance from {self._step}")
+        self._step = ScreeningStep.PREFLIGHT
+
     def retry(self) -> None:
         if self._step not in {ScreeningStep.INCOMPLETE, ScreeningStep.RETRY_REQUIRED}:
             raise InvalidTransition(f"cannot retry from {self._step}")

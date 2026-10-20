@@ -186,8 +186,34 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "0005_sales_inventory_activation.sql" in text
     assert "0006_inventory_activation_pairing.sql" in text
     assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
+    assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
+    assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
+    assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
+    assert text.index("0011_controlled_identity_recovery.sql") > text.index("0010_local_basic_report_copies.sql")
+    assert text.index("0012_terminal_activation.sql") > text.index("0011_controlled_identity_recovery.sql")
+    assert text.index("0013_insole_inventory.sql") > text.index("0012_terminal_activation.sql")
+    assert text.index("0014_recovery_bound_migration_permits.sql") > text.index("0013_insole_inventory.sql")
+    # 0014 only alters an existing table, so its idempotence marker must be a
+    # column; a constraint name is not a relation and to_regclass never sees it.
+    assert (
+        "apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "
+        '"$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"'
+    ) in text
+    assert "upload_migration_permits_recovery_binding \"" not in text
+    assert text.index("to_regclass('ops.session_holds')") < text.index("0011_controlled_identity_recovery.sql")
+    assert text.index("GRANT SELECT ON ops.identity_recovery_cases") > text.index(
+        "0011_controlled_identity_recovery.sql"
+    )
+    assert text.index("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup") > text.index(
+        "0010_local_basic_report_copies.sql"
+    )
     assert "install_tls_file" in text
     assert "readlink -f" in text
+    assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
+    assert "verify_foundation_release_lock.py" in text
+    assert "curl --fail --location" in text
+    assert "--retry-all-errors --retry 5" in text
+    assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
 
@@ -238,14 +264,12 @@ def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
     assert "/bin/bash -s" not in text
 
 
-def test_remote_release_deploy_bundles_the_verified_foundation_artifact() -> None:
+def test_remote_release_deploy_ships_only_the_git_archive() -> None:
     text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
-    assert 'scripts/prepare_foundation_artifact.py' in text
-    assert 'git -C "$repo_root" archive --format=tar "$release_sha" | tar -x -C "$release_root"' in text
-    assert 'mkdir -p "$release_root/.foundation-artifacts"' in text
-    assert 'install -m 0644 "$foundation_artifact"' in text
-    assert 'install -D -m 0644 "$foundation_artifact"' not in text
-    assert 'tar -C "$release_root" -czf "$archive" .' in text
+    assert 'git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha"' in text
+    # RAY-511: the host downloads the locked public foundation wheel itself.
+    assert "prepare_foundation_artifact" not in text
+    assert ".foundation-artifacts" not in text
 
 
 def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -> None:

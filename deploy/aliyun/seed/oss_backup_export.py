@@ -29,7 +29,7 @@ from cloud.ingestion.aliyun_oss import build_aliyun_oss_sdk  # noqa: E402
 _CHUNK = 1024 * 1024
 
 
-async def referenced_object_keys(backup_dsn: str) -> list[str]:
+async def referenced_object_keys(backup_dsn: str) -> tuple[list[str], frozenset[str]]:
     import asyncpg
 
     connection = await asyncpg.connect(backup_dsn)
@@ -41,9 +41,13 @@ async def referenced_object_keys(backup_dsn: str) -> list[str]:
             SELECT object_key FROM screening.session_manifests
             """
         )
+        report_rows = await connection.fetch(
+            "SELECT pdf_object_key FROM reporting.local_basic_report_copies"
+        )
     finally:
         await connection.close()
-    return sorted({row["object_key"] for row in rows})
+    required_report_keys = frozenset(row["pdf_object_key"] for row in report_rows)
+    return sorted({row["object_key"] for row in rows} | required_report_keys), required_report_keys
 
 
 def _read_chunks(stream: object) -> Iterable[bytes]:
@@ -62,7 +66,8 @@ def _read_chunks(stream: object) -> Iterable[bytes]:
 
 
 def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterable[str],
-                          output_dir: Path, manifest_path: Path) -> int:
+                          output_dir: Path, manifest_path: Path,
+                          required_oss_keys: frozenset[str] = frozenset()) -> int:
     count = 0
     with manifest_path.open("a", encoding="utf-8") as manifest:
         for key in keys:
@@ -78,6 +83,8 @@ def export_bucket_objects(client: object, sdk: object, bucket: str, keys: Iterab
                 result = client.get_object(sdk.GetObjectRequest(bucket=bucket, key=key))
             except Exception as exc:  # noqa: BLE001 - classified below
                 if "NoSuchKey" in str(exc):
+                    if key in required_oss_keys:
+                        raise RuntimeError("referenced report PDF is absent from OSS") from exc
                     # Pre-OSS-era objects live in the legacy local tree, which
                     # the backup already includes; keys absent from OSS are
                     # simply not fetched from here.
@@ -102,10 +109,11 @@ def export_objects(output_dir: Path, manifest_path: Path) -> int:
     if settings.object_backend != "aliyun-oss":
         raise RuntimeError("oss backup export requires the aliyun-oss backend")
     backup_dsn = os.environ["FEETFORCEPLATE_BACKUP_DSN"]
-    keys = asyncio.run(referenced_object_keys(backup_dsn))
+    keys, required_report_keys = asyncio.run(referenced_object_keys(backup_dsn))
     client, sdk = build_aliyun_oss_sdk(settings)
     return export_bucket_objects(client, sdk, settings.oss_bucket, keys,
-                                 output_dir, manifest_path)
+                                 output_dir, manifest_path,
+                                 required_oss_keys=required_report_keys)
 
 
 def main() -> int:

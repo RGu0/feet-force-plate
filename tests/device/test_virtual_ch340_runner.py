@@ -10,6 +10,7 @@ import sys
 import time
 
 import numpy as np
+import pytest
 
 from client.device.development_simulator import (
     VIRTUAL_CH340_ENVIRONMENT_VARIABLE,
@@ -32,6 +33,7 @@ def test_runner_uses_fixed_endpoint_aliases_and_nominal_rate() -> None:
     assert FRAME_INTERVAL_SECONDS == 1 / 20.7
 
 
+@pytest.mark.skipif(os.name == "nt", reason="PTY runner requires POSIX O_NOCTTY")
 def test_runner_reschedules_after_a_delayed_write(monkeypatch) -> None:
     clock = [0.0]
     sleeps: list[float] = []
@@ -51,6 +53,7 @@ def test_runner_reschedules_after_a_delayed_write(monkeypatch) -> None:
     assert sleeps == [FRAME_INTERVAL_SECONDS]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="PTY runner requires POSIX socat")
 def test_runner_stream_decodes_as_controlled_empty_48_by_64_frame(monkeypatch) -> None:
     monkeypatch.setenv(VIRTUAL_CH340_ENVIRONMENT_VARIABLE, "1")
     runner = subprocess.Popen(
@@ -88,6 +91,7 @@ def test_runner_stream_decodes_as_controlled_empty_48_by_64_frame(monkeypatch) -
         runner.wait(timeout=5.0)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="PTY runner requires POSIX socat")
 def test_runner_passes_production_startup_validation_with_development_switch(
     monkeypatch,
 ) -> None:

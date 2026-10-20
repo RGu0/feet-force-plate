@@ -18,15 +18,18 @@ from client.security.key_envelope import (
 )
 
 
-class _MemoryKeyring:
+class _MemoryVault:
     def __init__(self) -> None:
-        self.values: dict[tuple[str, str], str] = {}
+        self.values: dict[str, str] = {}
 
-    def get_password(self, service: str, account: str) -> str | None:
-        return self.values.get((service, account))
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
 
-    def set_password(self, service: str, account: str, value: str) -> None:
-        self.values[(service, account)] = value
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
 
 
 def test_dual_envelope_allows_server_and_terminal_to_recover_one_payload() -> None:
@@ -66,11 +69,11 @@ def test_terminal_private_key_cannot_recover_server_only_envelope() -> None:
 
 
 def test_keyring_terminal_handle_persists_only_the_terminal_private_key() -> None:
-    keyring = _MemoryKeyring()
+    vault = _MemoryVault()
     handle = KeyringTerminalKeyHandle(
         service_name="FeetForcePlate.test",
         account_name="terminal-42",
-        keyring_backend=keyring,
+        credential_vault=vault,
     )
     server = generate_test_keypair()
     artifact = encrypt_for_dual_recovery(
@@ -84,20 +87,71 @@ def test_keyring_terminal_handle_persists_only_the_terminal_private_key() -> Non
     reopened = KeyringTerminalKeyHandle(
         service_name="FeetForcePlate.test",
         account_name="terminal-42",
-        keyring_backend=keyring,
+        credential_vault=vault,
     )
 
     assert reopened.key_id == handle.key_id
     assert decrypt_for_terminal_handle(artifact, reopened) == b"persistent local record"
-    assert len(keyring.values) == 1
+    assert set(vault.values) == {"FeetForcePlate.test/terminal-42"}
+
+
+def test_terminal_handle_refuses_decryption_after_vault_access_is_denied() -> None:
+    class RevocableVault(_MemoryVault):
+        denied = False
+
+        def get(self, key: str) -> str | None:
+            if self.denied:
+                raise OSError("Keychain access denied")
+            return super().get(key)
+
+    vault = RevocableVault()
+    handle = KeyringTerminalKeyHandle(
+        service_name="FeetForcePlate.test",
+        account_name="terminal-locked",
+        credential_vault=vault,
+    )
+    server = generate_test_keypair()
+    artifact = encrypt_for_dual_recovery(
+        b"locked local record",
+        context="record:locked",
+        server_keyset=ServerKeyset("server-v1", server.public_key_pem),
+        terminal_key_id=handle.key_id,
+        terminal_public_key_pem=handle.public_key_pem,
+    )
+
+    vault.denied = True
+    with pytest.raises(OSError, match="Keychain access denied"):
+        decrypt_for_terminal_handle(artifact, handle)
+
+
+def test_terminal_decryption_does_not_replace_a_missing_vault_key() -> None:
+    vault = _MemoryVault()
+    handle = KeyringTerminalKeyHandle(
+        service_name="FeetForcePlate.test",
+        account_name="terminal-missing",
+        credential_vault=vault,
+    )
+    server = generate_test_keypair()
+    artifact = encrypt_for_dual_recovery(
+        b"sealed local record",
+        context="record:missing",
+        server_keyset=ServerKeyset("server-v1", server.public_key_pem),
+        terminal_key_id=handle.key_id,
+        terminal_public_key_pem=handle.public_key_pem,
+    )
+    vault.delete("FeetForcePlate.test/terminal-missing")
+
+    with pytest.raises(RuntimeError, match="terminal credential is missing"):
+        decrypt_for_terminal_handle(artifact, handle)
+    assert vault.values == {}
 
 
 def test_dual_envelope_blob_codec_keeps_plaintext_out_of_sqlite_value() -> None:
-    keyring = _MemoryKeyring()
+    vault = _MemoryVault()
     terminal = KeyringTerminalKeyHandle(
         service_name="FeetForcePlate.test",
         account_name="terminal-42",
-        keyring_backend=keyring,
+        credential_vault=vault,
     )
     server = generate_test_keypair()
     codec = DualEnvelopeBlobCodec(
@@ -113,7 +167,7 @@ def test_dual_envelope_blob_codec_keeps_plaintext_out_of_sqlite_value() -> None:
         terminal_key=KeyringTerminalKeyHandle(
             service_name="FeetForcePlate.test",
             account_name="terminal-42",
-            keyring_backend=keyring,
+            credential_vault=vault,
         ),
     )
     assert reopened.decrypt(stored, context="subject:42") == b"subject external-id: 123456"

@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from client.app.heatmap import PhysicalGridOverlay
+from client.app.institution_read_models import InstitutionUiReadModels
+from client.app.report_index_recovery import recover_missing_screening_records
+from client.app.engineering_maintenance import EngineeringDeviceBindingStore
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
+from client.hardware_integration.live_hardware_demo import (
+    LIVE_STATIC_BALANCE_PROTOCOL_ID,
+    LIVE_STATIC_BALANCE_PROTOCOL_VERSION,
+)
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
+)
+from client.hardware_standardization.dynamic_defect_mask import (
+    DynamicDefectMask,
+    DynamicDefectMaskStore,
 )
 from client.app.preflight import HardwareLeasePreflight, build_production_preflight
 from client.app.ui_integration import build_connected_ui
@@ -22,14 +35,77 @@ from client.hardware_standardization.runtime import active_hardware_runtime
 from client.local_analysis.display import DisplayRefreshController, LatestDisplayFrameMailbox
 from client.reporting.delivery import ReportDeliveryService
 from client.reporting.pdf import BasicReportPdfRenderer
+from client.support import SafeClientEventName, SafeClientEventOutcome
 from client.workflow.consent import ConsentPolicy, ConsentWorkflow
 from client.workflow.participant import ParticipantWorkflow
 from client.workflow.protocol import default_standard_protocol
 
 
 class _Telemetry:
-    def record_error(self, **_event) -> None:
-        pass
+    """Record only allow-listed live-capture failure metadata."""
+
+    _LIVE_CAPTURE_CODES = frozenset({"E-ACQ-001", "E-ACQ-004", "E-DEV-002"})
+
+    def __init__(self, recorder=None) -> None:
+        self._recorder = recorder
+
+    def record_error(self, *, code: str, **_event) -> None:
+        if self._recorder is None:
+            return
+        if code == "E-RPT-001":
+            self._recorder.record(
+                SafeClientEventName.REPORT_GENERATION_FAILED,
+                SafeClientEventOutcome.FAILED,
+                error_code=code,
+            )
+            return
+        if code not in self._LIVE_CAPTURE_CODES:
+            return
+        technical_detail = str(_event.get("technical_detail", ""))
+        event_name = SafeClientEventName.LIVE_CAPTURE_FAILED
+        if code == "E-ACQ-004":
+            if "capture connection failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_CONNECTION_FAILED
+            elif "capture initialization failed: metadata" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_METADATA_FAILED
+            elif "capture initialization failed: local-identity" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_LOCAL_IDENTITY_FAILED
+            elif "capture initialization failed: formal-envelope/missing-local-record" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_LOCAL_RECORD_MISSING
+            elif "capture initialization failed: formal-envelope/invalid-contract-value" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_VALUE_INVALID
+            elif "capture initialization failed: formal-envelope/invalid-contract-type" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_CONTRACT_TYPE_INVALID
+            elif "capture initialization failed: formal-envelope/unexpected" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_UNEXPECTED
+            elif "capture initialization failed: formal-envelope" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_FORMAL_ENVELOPE_FAILED
+            elif "capture initialization failed: session-stager" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SESSION_STAGER_FAILED
+            elif "capture initialization failed:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_INITIALIZATION_FAILED
+            elif "transport disconnected:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_TRANSPORT_DISCONNECTED
+            elif "no valid decoded signal" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_SIGNAL_TIMEOUT
+            elif "stage capture failed at DECODE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DECODE_FAILED
+            elif "stage capture failed at GATE:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_GATE_FAILED
+            elif "stage capture failed at DISPLAY:" in technical_detail:
+                event_name = SafeClientEventName.LIVE_CAPTURE_DISPLAY_HANDOFF_FAILED
+            elif (
+                "storage handoff failed:" in technical_detail
+                or "stage capture failed at STAGE_" in technical_detail
+            ):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STAGE_STORAGE_FAILED
+            elif technical_detail.startswith("RetryableStageCaptureError:"):
+                event_name = SafeClientEventName.LIVE_CAPTURE_STREAM_FAILED
+        self._recorder.record(
+            event_name,
+            SafeClientEventOutcome.FAILED,
+            error_code=code,
+        )
 
 
 class _Print:
@@ -68,6 +144,8 @@ def build_live_institution_runtime(
     export_destination,
     app_version: str,
     payload_schema: str,
+    event_recorder=None,
+    engineering_login: Callable[[str, str], object] | None = None,
 ):
     """Build the P-01–P-10 UI after P-00 authentication and startup pass."""
 
@@ -87,7 +165,22 @@ def build_live_institution_runtime(
         payload_schema=payload_schema,
         calibration_profile=calibration.profile_version,
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = InstitutionLiveSessions(
+        institution, tenant_id=session.tenant_id,
+        installation_id=client_installation_id,
+        replenish=lambda: access_runtime.replenish_capture_grants(institution, session),
+    )
+
+    def load_selected_device_dynamic_mask() -> DynamicDefectMask:
+        selected_device_id = EngineeringDeviceBindingStore(
+            data_root
+        ).selected_device_id
+        if selected_device_id is None or not selected_device_id.strip():
+            raise ValueError("engineer-selected device ID is required")
+        return DynamicDefectMaskStore(
+            data_root, selected_device_id, shape=(48, 64)
+        ).load_for_session()
+
     baseline = LiveBaselinePreflight(hardware)
     lease = HardwareLeasePreflight(access_runtime.hardware_lease_lifecycle(session))
     preflight = build_production_preflight(
@@ -109,14 +202,23 @@ def build_live_institution_runtime(
         spool_root=data_root / "spool",
         latest_frames=raw_mailbox,
         formal_upload=formal_upload,
+        dynamic_defect_mask_loader=load_selected_device_dynamic_mask,
     )
-    acquisition = QtLiveHardwareAcquisition(capture.capture)
+    acquisition = QtLiveHardwareAcquisition(
+        capture.capture,
+        prepare_session=capture.prepare_session,
+    )
     processor = LivePhysicalProcessor(
         sessions=sessions,
         physical_store=physical_store,
         key_provider=key_provider,
         spool_root=data_root / "spool",
         reports=institution,
+    )
+    recover_missing_screening_records(
+        institution=institution,
+        physical_store=physical_store,
+        tenant_id=session.tenant_id,
     )
     participant = ParticipantWorkflow(
         tenant_id=session.tenant_id,
@@ -136,7 +238,7 @@ def build_live_institution_runtime(
         processor=processor,
         delivery=ReportDeliveryService(BasicReportPdfRenderer()),
         spooler=_Print(),
-        telemetry=_Telemetry(),
+        telemetry=_Telemetry(event_recorder),
         display_refresh=DisplayRefreshController(
             display_mailbox,
             maximum_refresh_hz=hardware.display_geometry.maximum_refresh_hz,
@@ -147,16 +249,27 @@ def build_live_institution_runtime(
             standardizer=_DeferredBaselineStandardizer(hardware, baseline),
         ),
         export_destination=export_destination,
-        protocol=default_standard_protocol(),
+        protocol=replace(
+            default_standard_protocol(),
+            protocol_id=LIVE_STATIC_BALANCE_PROTOCOL_ID,
+            version=LIVE_STATIC_BALANCE_PROTOCOL_VERSION,
+        ),
         persisted_reports=institution,
         data_source_mode="LIVE",
         controller_options={
             "participant": participant,
             "consent": consent,
+            "read_models": InstitutionUiReadModels(
+                institution=institution,
+                tenant_id=session.tenant_id,
+                physical_store=physical_store,
+                app_version=app_version,
+            ),
             "consent_policy": ConsentPolicy("institution-screening/1", ("SCREENING",), ("SCREENING",)),
             "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
                 hardware.display_geometry, specification_id=hardware.specification_id
             ),
+            "engineering_login": engineering_login,
         },
     )
     acquisition.set_callbacks(

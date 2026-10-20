@@ -43,6 +43,8 @@ class _CoordinatorPort(Protocol):
 
     def start_new_screening(self) -> None: ...
 
+    def return_to_workbench(self) -> None: ...
+
     def confirm_subject(self) -> None: ...
 
     def bind_participant(self, *, subject_uuid: str, consent_record_id: str) -> None: ...
@@ -108,7 +110,10 @@ class ApplicationController:
         read_models: UiReadModelPort | None = None,
         device_support: _DeviceSupportPort | None = None,
         engineering_maintenance: EngineeringMaintenanceService | None = None,
+        engineering_login: Callable[[str, str], EngineeringMaintenanceService | None]
+        | None = None,
         session_deletion: CompletedSessionDeletionService | None = None,
+        subject_recovery=None,
         physical_grid: PhysicalGridOverlay | None = None,
     ) -> None:
         self._coordinator = coordinator
@@ -121,7 +126,9 @@ class ApplicationController:
         self._read_models = read_models
         self._device_support = device_support
         self._engineering_maintenance = engineering_maintenance
+        self._engineering_login = engineering_login
         self._session_deletion = session_deletion
+        self._subject_recovery = subject_recovery
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -134,9 +141,10 @@ class ApplicationController:
             physical_grid=physical_grid,
         )
         self.window.set_engineering_maintenance_available(
-            engineering_maintenance is not None
+            engineering_maintenance is not None or engineering_login is not None
         )
         self.window.set_session_deletion_available(session_deletion is not None)
+        self.window.set_subject_recovery_available(subject_recovery is not None)
         self._live_display_timer = QTimer(self.window)
         refresh_interval_ms = (
             16
@@ -147,7 +155,14 @@ class ApplicationController:
         self._live_display_timer.timeout.connect(self._on_live_display_timer)
         self.refresh()
 
+    def attach_subject_recovery(self, service) -> None:
+        self._subject_recovery = service
+        self.window.set_subject_recovery_available(True)
+
     def dispatch(self, action: str) -> None:
+        if action == "RETURN_TO_WORKBENCH":
+            self._return_to_workbench()
+            return
         if self._participant is not None and action in {
             "LOOKUP_SUBJECT",
             "CONFIRM_SUBJECT",
@@ -183,7 +198,9 @@ class ApplicationController:
             self._dispatch_device_support(action)
             return
         if action == "OPEN_ENGINEERING_MAINTENANCE":
-            if self._engineering_maintenance is None:
+            if self._engineering_login is not None:
+                self.window.show_engineering_login(self._engineering_login)
+            elif self._engineering_maintenance is None:
                 self.window.show_form_error("工程检修功能尚未接入当前运行环境")
             else:
                 self.window.show_engineering_maintenance(self._engineering_maintenance)
@@ -193,6 +210,12 @@ class ApplicationController:
                 self.window.show_form_error("本地会话清理功能尚未接入当前运行环境")
             else:
                 self.window.show_session_deletion(self._session_deletion)
+            return
+        if action == "OPEN_SUBJECT_RECOVERY":
+            if self._subject_recovery is None:
+                self.window.show_form_error("待传档案核对尚未接入当前运行环境")
+            else:
+                self.window.show_subject_recovery(self._subject_recovery)
             return
         if action == "CONFIRM_CONSENT":
             self._coordinator.confirm_consent()
@@ -211,7 +234,10 @@ class ApplicationController:
             "SKIP_PROFILE": self._coordinator.complete_profile,
             "RECHECK": self._coordinator.run_preflight,
             "ENTER_POSITION": self._coordinator.enter_position_guidance,
-            "START_ACQUISITION": self._coordinator.start_acquisition,
+            "CANCEL_POSITION_GUIDANCE": (
+                lambda: self._coordinator.cancel_position_guidance()
+            ),
+            "START_ACQUISITION": self._start_acquisition,
             "STOP_SCREENING": self._coordinator.stop_acquisition,
             "START_NEXT_SCREENING": self._start_next_screening,
         }
@@ -366,6 +392,21 @@ class ApplicationController:
         self._live_display.poll()
         self.on_display_tick(time.monotonic())
 
+    def _start_acquisition(self) -> bool:
+        """Start an accepted stage with an empty, stage-local display pipeline."""
+
+        started = self._coordinator.start_acquisition()
+        if started:
+            self._reset_live_display_for_stage()
+        return started
+
+    def _reset_live_display_for_stage(self) -> None:
+        if self._live_display is not None:
+            self._live_display.reset()
+        if self._display_refresh is not None:
+            self._display_refresh.reset()
+        self.window.clear_display_frame()
+
     def _run_preflight(self) -> None:
         self._coordinator.run_preflight()
         self.refresh()
@@ -431,15 +472,23 @@ class ApplicationController:
             ExternalIdType(id_type),
             external_id,
         )
-        summaries = {
-            SubjectResolutionStatus.FOUND: "已找到唯一档案，请确认后继续",
-            SubjectResolutionStatus.NOT_FOUND: "未找到档案；确认后将按此机构编号建档",
-            SubjectResolutionStatus.CONFLICT: "找到多个可能档案，无法自动选择，请核对编号",
-        }
         if resolution.status is SubjectResolutionStatus.CONFLICT:
             self.window.show_subject_conflict()
+        elif resolution.status is SubjectResolutionStatus.FOUND:
+            self.window.show_subject_found(
+                resolution.candidates[0].masked_external_id or external_id
+            )
         else:
-            self.window.set_subject_match_summary(summaries[resolution.status])
+            self.window.show_subject_not_found(external_id.strip())
+
+    def _return_to_workbench(self) -> None:
+        if self._participant is not None:
+            self._participant.reset()
+        if self._consent is not None:
+            self._consent.reset()
+        self.window.clear_subject_resolution()
+        self._coordinator.return_to_workbench()
+        self.refresh()
 
     def _confirm_selected_subject(self) -> None:
         participant_state = self._participant.state
@@ -469,7 +518,7 @@ class ApplicationController:
     def _profile_from_form(self) -> AnalysisProfile:
         form = self.window.profile_form_values()
         return AnalysisProfile(
-            age_band=self._optional_text(*form["ageBand"], label="年龄段"),
+            age_band=self._optional_age(*form["ageBand"]),
             sex=self._optional_text(*form["sex"], label="性别"),
             height_cm=self._optional_number(*form["height"], label="身高"),
             weight_kg=self._optional_number(*form["weight"], label="体重"),
@@ -491,6 +540,22 @@ class ApplicationController:
         if not normalized:
             raise ValueError(f"{label}标记为已填写时必须选择或输入内容")
         return OptionalField(state, normalized)
+
+    @staticmethod
+    def _optional_age(
+        state_value: str,
+        value: str,
+    ) -> OptionalField[str]:
+        state = FieldState(state_value)
+        if state is not FieldState.PROVIDED:
+            return OptionalField(state)
+        normalized = value.strip()
+        if not normalized.isdecimal():
+            raise ValueError("年龄需填写 1–120 范围内的整数")
+        age = int(normalized)
+        if not 1 <= age <= 120:
+            raise ValueError("年龄需填写 1–120 范围内的整数")
+        return OptionalField(state, str(age))
 
     @staticmethod
     def _optional_number(

@@ -81,6 +81,22 @@ def test_guidance_binds_each_manual_stage_and_keeps_start_available(qtbot) -> No
     assert page.findChild(QLabel, "positionGuideSubtitle").text() == "按当前动作站位"
 
 
+def test_position_guidance_cancel_dispatches_the_safe_exit_action(qtbot) -> None:
+    actions: list[str] = []
+    window = ScreeningWindow(on_action=actions.append)
+    qtbot.addWidget(window)
+    window.present_state(WorkflowState(step=ScreeningStep.POSITION_GUIDANCE))
+
+    cancel = window.page_widget(PageId.POSITION_GUIDANCE).findChild(
+        QPushButton, "CANCEL_POSITION_GUIDANCE"
+    )
+
+    assert cancel is not None
+    qtbot.mouseClick(cancel, Qt.MouseButton.LeftButton)
+
+    assert actions == ["CANCEL_POSITION_GUIDANCE"]
+
+
 def test_preflight_shows_four_checks_and_waits_for_operator_entry(qtbot) -> None:
     actions: list[str] = []
     window = ScreeningWindow(on_action=actions.append)

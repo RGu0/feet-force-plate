@@ -39,6 +39,8 @@ from cloud.analysis.risk_rules import (
     evaluate_screening_risk,
     questionnaire_snapshot_sha256,
 )
+from cloud.session_hold.repository import SessionHoldReader
+from cloud.session_hold.service import SessionHeld
 
 
 class QuestionnaireIdentityError(ValueError):
@@ -140,12 +142,14 @@ class PhysicalAnalysisOrchestrator:
         parameters: FeatureParameters,
         release_descriptor: PhysicalMetricDescriptor,
         questionnaire_loader: QuestionnaireLoader,
+        holds: SessionHoldReader,
     ) -> None:
         self.loader = loader
         self.repository = repository
         self.parameters = parameters
         self.release_descriptor = release_descriptor
         self.questionnaire_loader = questionnaire_loader
+        self.holds = holds
 
     def _capability_context(
         self,
@@ -216,6 +220,8 @@ class PhysicalAnalysisOrchestrator:
     def handle(self, event: CompleteSessionEvent) -> PhysicalAnalysisRun:
         if event.event_type != "INGESTED_COMPLETE":
             raise ValueError("analysis only accepts INGESTED_COMPLETE")
+        if self.holds.is_held(event.tenant_id, event.session_id):
+            raise SessionHeld("session is under administrative hold")
         key = PhysicalAnalysisRunKey(
             tenant_id=event.tenant_id,
             session_id=event.session_id,

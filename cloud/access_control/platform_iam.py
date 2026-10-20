@@ -381,6 +381,7 @@ class SensitiveAccessService:
             tuple[str | None, str | None]
             | Awaitable[tuple[str | None, str | None]],
         ],
+        grant_observer: Callable[[SensitiveAccessGrantRecord], None] | None = None,
     ) -> SensitiveIdentityResponse:
         if context.expires_at <= self._now() or not context.roles:
             await self._append_denial(
@@ -417,6 +418,8 @@ class SensitiveAccessService:
                 details=(("grant_id", str(grant_id)),),
             )
             raise PlatformPermissionDenied("sensitive access grant is invalid") from exc
+        if grant_observer is not None:
+            grant_observer(grant)
         try:
             identity = identity_loader()
             if inspect.isawaitable(identity):

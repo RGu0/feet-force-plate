@@ -280,6 +280,15 @@ class FileSystemObjectStore:
     async def read(self, object_key: str) -> bytes:
         return self._path(object_key).read_bytes()
 
+    async def put_report_pdf(self, object_key: str, payload: bytes) -> StoredObject:
+        async def chunks():
+            yield payload
+
+        return await self._write_stream(
+            object_key, chunks(), expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload), kind="basic report PDF",
+        )
+
 
 class S3ObjectStore:
     """S3-compatible immutable object adapter with KMS server-side encryption."""

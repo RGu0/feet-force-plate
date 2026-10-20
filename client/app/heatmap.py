@@ -124,6 +124,13 @@ class HeatmapWidget(QWidget):
         self._rendered_heatmap = self._refiner.refine(frame.relative_heatmap)
         self.update()
 
+    def clear_display_frame(self) -> None:
+        """Remove the previous stage's heatmap until a current frame arrives."""
+
+        self._display_frame = None
+        self._rendered_heatmap = None
+        self.update()
+
     def paintEvent(self, event) -> None:
         _ = event
         painter = QPainter(self)

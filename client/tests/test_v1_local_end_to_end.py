@@ -27,13 +27,16 @@ from client.workflow.state_machine import ScreeningStep
 
 class _MemoryKeyring:
     def __init__(self) -> None:
-        self.values: dict[tuple[str, str], str] = {}
+        self.values: dict[str, str] = {}
 
-    def get_password(self, service: str, account: str) -> str | None:
-        return self.values.get((service, account))
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
 
-    def set_password(self, service: str, account: str, value: str) -> None:
-        self.values[(service, account)] = value
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def delete(self, key: str) -> None:
+        self.values.pop(key, None)
 
 
 def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qtbot, tmp_path: Path) -> None:
@@ -50,7 +53,7 @@ def test_local_v1_replay_runs_from_subject_entry_to_persisted_pdf_and_history(qt
             terminal_key=KeyringTerminalKeyHandle(
                 service_name="FeetForcePlate.test",
                 account_name="terminal-e2e",
-                keyring_backend=_MemoryKeyring(),
+                credential_vault=_MemoryKeyring(),
             ),
         ),
     )

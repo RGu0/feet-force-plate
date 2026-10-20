@@ -44,6 +44,8 @@ class OSSGateway(Protocol):
 
     def head(self, key: str) -> OSSHead: ...
 
+    def get(self, key: str) -> bytes: ...
+
     def delete(self, key: str) -> None: ...
 
     def check_ready(self) -> None: ...
@@ -113,6 +115,15 @@ class AliyunOSSSDKGateway:
         self._client.delete_object(
             self._sdk.DeleteObjectRequest(bucket=self._bucket, key=key)
         )
+
+    def get(self, key: str) -> bytes:
+        result = self._client.get_object(
+            self._sdk.GetObjectRequest(bucket=self._bucket, key=key)
+        )
+        try:
+            return result.body.read()
+        finally:
+            result.body.close()
 
     def check_ready(self) -> None:
         self._client.get_bucket_info(
@@ -239,6 +250,23 @@ class AliyunOSSObjectStore:
     async def delete(self, object_key: str) -> None:
         await asyncio.to_thread(self._gateway.delete, object_key)
 
+    async def put_report_pdf(self, object_key: str, payload: bytes) -> StoredObject:
+        digest = hashlib.sha256(payload).hexdigest()
+        await self._put_immutable(
+            object_key, payload, content_type="application/pdf",
+            metadata={"sha256": digest, "schema-version": "local-basic-copy/1"},
+        )
+        return StoredObject(object_key, digest, len(payload))
+
+    async def read(self, object_key: str) -> bytes:
+        head = await asyncio.to_thread(self._gateway.head, object_key)
+        if head.size_bytes > 8 * 1024 * 1024 or head.server_side_encryption != self._server_side_encryption:
+            raise DigestMismatch("basic report PDF security attributes invalid")
+        payload = await asyncio.to_thread(self._gateway.get, object_key)
+        if len(payload) != head.size_bytes or hashlib.sha256(payload).hexdigest() != head.metadata.get("sha256"):
+            raise DigestMismatch("basic report PDF digest mismatch")
+        return payload
+
     async def check_ready(self) -> None:
         await asyncio.to_thread(self._gateway.check_ready)
 
@@ -259,6 +287,7 @@ def build_aliyun_oss_object_store(
     bindings = SimpleNamespace(
         PutObjectRequest=oss.PutObjectRequest,
         HeadObjectRequest=oss.HeadObjectRequest,
+        GetObjectRequest=oss.GetObjectRequest,
         DeleteObjectRequest=oss.DeleteObjectRequest,
         GetBucketInfoRequest=oss.GetBucketInfoRequest,
         OperationError=oss.exceptions.OperationError,

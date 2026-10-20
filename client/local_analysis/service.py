@@ -184,7 +184,7 @@ class ProcessingOutcome:
 @dataclass(frozen=True, slots=True)
 class PhysicalLocalProcessingOutcome:
     result: LocalAnalysisResult
-    report: BasicReportDocument
+    report: BasicReportDocument | None
     snapshot: LocalAnalysisUploadSnapshot
 
 
@@ -320,22 +320,26 @@ def process_committed_physical_session(
         protocol_context=protocol_context,
         parameters=parameters,
     )
-    report = build_basic_report_document(
-        result,
-        report_id=report_id,
-        version=report_version,
-        session_id=session_id,
-        analysis_result_id=analysis_result_id,
-        subject_display_id=subject_display_id,
-        captured_at=captured_at,
-        generated_at=generated_at,
-    )
     snapshot = queue_supporting_local_analysis(
         store,
         session_id=session_id,
         analysis_result_id=analysis_result_id,
         version=report_version,
         result=result,
+    )
+    report = (
+        build_basic_report_document(
+            result,
+            report_id=report_id,
+            version=report_version,
+            session_id=session_id,
+            analysis_result_id=analysis_result_id,
+            subject_display_id=subject_display_id,
+            captured_at=captured_at,
+            generated_at=generated_at,
+        )
+        if result.quality_status is LocalQualityStatus.VALID
+        else None
     )
     return PhysicalLocalProcessingOutcome(
         result=result,

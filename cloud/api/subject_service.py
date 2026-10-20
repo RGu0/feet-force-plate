@@ -97,6 +97,16 @@ class IdentityProtector:
         )
         return ProtectedIdentityProfile(ciphertext, nonce, self.key_version)
 
+    def unprotect_identity_profile(
+        self, ciphertext: bytes, nonce: bytes, key_version: str,
+        *, tenant_id: str, subject_uuid: str,
+    ) -> IdentityProfileInput:
+        if key_version != self.key_version:
+            raise ValueError("unsupported identity key version")
+        associated_data = f"{tenant_id}\x1f{subject_uuid}\x1fidentity-profile".encode("utf-8")
+        plaintext = self._cipher.decrypt(nonce, ciphertext, associated_data)
+        return IdentityProfileInput.model_validate(json.loads(plaintext))
+
     def reveal_identity_profile(
         self,
         protected: ProtectedIdentityProfile,
@@ -104,19 +114,12 @@ class IdentityProtector:
         tenant_id: str,
         subject_uuid: str,
     ) -> tuple[str | None, str | None]:
-        if protected.key_version != self.key_version:
-            raise ValueError("identity profile key version is unavailable")
-        associated_data = f"{tenant_id}\x1f{subject_uuid}\x1fidentity-profile".encode(
-            "utf-8"
-        )
-        profile = IdentityProfileInput.model_validate(
-            json.loads(
-                self._cipher.decrypt(
-                    protected.nonce,
-                    protected.ciphertext,
-                    associated_data,
-                )
-            )
+        profile = self.unprotect_identity_profile(
+            protected.ciphertext,
+            protected.nonce,
+            protected.key_version,
+            tenant_id=tenant_id,
+            subject_uuid=subject_uuid,
         )
         return profile.display_name, profile.contact
 

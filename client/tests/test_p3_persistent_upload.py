@@ -14,7 +14,7 @@ import httpx
 import numpy as np
 
 from client.device.protocol import RawFrame
-from client.spool.segments import ImmutableSegmentWriter, SealedSegment
+from client.spool.segments import ImmutableSegmentWriter, SealedSegment, write_session_manifest
 from client.spool.state_store import SensitiveBlobCodec, StateStore, ValidSegmentRecord
 from client.sync.persistent_upload import (
     HttpIngestionClient,
@@ -25,10 +25,16 @@ from client.sync.persistent_upload import (
     UploadCycleOutcome,
     UploadRetryable,
 )
-from shared.contracts.client_sync import FormalUploadEnvelope, canonical_sha256
+from shared.contracts.client_sync import (
+    FormalUploadEnvelope,
+    SubjectRecoveryAuthorization,
+    canonical_sha256,
+)
+from shared.contracts.capture_grants import CaptureCredential, SessionAuthorization
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
+    ExternalIdentifierInput,
     IngestStatus,
     ManifestCompletionResponse,
     ManifestSegment,
@@ -42,10 +48,12 @@ from shared.contracts.cloud import (
     SessionStatusResponse,
     SessionVersions,
     SubjectCreateRequest,
+    SubjectResolveRequest,
     SubjectSummary,
     TestProtocol as CloudTestProtocol,
     ValidityStatus,
 )
+from shared.contracts.identity_recovery import RecoveryRegistrationResult
 
 
 class _Key:
@@ -78,11 +86,13 @@ class _IngestionService:
         self.subject_keys: list[str] = []
         self.consent_keys: list[str] = []
         self.session_keys: list[str] = []
+        self.authorizations: list[SessionAuthorization | None] = []
         self.session_requests: list[SessionCreateRequest] = []
         self.put_calls: list[int] = []
         self.complete_keys: list[str] = []
         self.failures: dict[str, list[Exception]] = {}
         self.lose_complete_response_once = False
+        self.lose_session_response_once = False
         self.list_response: SegmentListResponse | None = None
         self.acknowledgement: SegmentAcknowledgement | None = None
         self.completion_response: ManifestCompletionResponse | None = None
@@ -90,6 +100,33 @@ class _IngestionService:
             Callable[[UUID, SessionManifest], ManifestCompletionResponse] | None
         ) = None
         self.completion_status: SessionStatusResponse | None = None
+        self.subject_response: SubjectSummary | None = None
+        self.recovery_keys: list[str] = []
+        self.recovery_authorizations: list[SessionAuthorization | None] = []
+        self.lose_recovery_response_once = False
+
+    def register_recovery(
+        self, access_token, case_id, request, idempotency_key, authorization=None,
+    ):
+        self.calls.append("recovery-register")
+        self.recovery_keys.append(idempotency_key)
+        self.recovery_authorizations.append(authorization)
+        self._fail_if_requested("recovery-register")
+        self.session_requests.append(request.session)
+        self.status = SessionStatusResponse(
+            session_id=request.session.session_id,
+            validity_status=ValidityStatus.UNKNOWN,
+            ingest_status=IngestStatus.RECEIVING,
+        )
+        if self.lose_recovery_response_once:
+            self.lose_recovery_response_once = False
+            raise UploadRetryable("recovery registration response lost")
+        return RecoveryRegistrationResult(
+            case_id=case_id, receipt_id=request.receipt_id,
+            consent_record_id=request.consent.consent_record_id,
+            session_id=request.session.session_id,
+            registered_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
 
     def _fail_if_requested(self, operation: str) -> None:
         failures = self.failures.get(operation, [])
@@ -112,10 +149,15 @@ class _IngestionService:
         self.calls.append("subject")
         self.subject_keys.append(idempotency_key)
         self._fail_if_requested("subject")
-        return SubjectSummary(
+        return self.subject_response or SubjectSummary(
             subject_uuid=request.subject_uuid,
             analysis_profile=request.analysis_profile,
         )
+
+    def resolve_subject(self, _access_token, request):
+        self.calls.append("resolve-subject")
+        self._fail_if_requested("resolve-subject")
+        return self.subject_response
 
     def create_consent(
         self,
@@ -138,7 +180,9 @@ class _IngestionService:
         _access_token: str,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
+        self.authorizations.append(authorization)
         self.calls.append("session")
         self.session_keys.append(idempotency_key)
         self.session_requests.append(request)
@@ -148,6 +192,9 @@ class _IngestionService:
             validity_status=ValidityStatus.UNKNOWN,
             ingest_status=IngestStatus.RECEIVING,
         )
+        if self.lose_session_response_once:
+            self.lose_session_response_once = False
+            raise UploadRetryable("registration response lost")
         return SessionCreateResponse(
             session_id=request.session_id,
             ingest_status=IngestStatus.RECEIVING,
@@ -322,16 +369,25 @@ class PersistentUploadQueueTests(unittest.TestCase):
         assert sealed is not None
         return sealed
 
-    def _commit(self, *sealed: SealedSegment) -> None:
+    def _commit(
+        self, *sealed: SealedSegment, credential=None,
+        stored_session_id: str | None = None,
+    ) -> None:
+        manifest = write_session_manifest(
+            self.root / "sessions", session_id=str(self.session_id),
+            segment_paths=[item.path for item in sealed], key_provider=self.keys,
+            local_quality_outcome="VALID",
+        )
         self.store.commit_valid_session(
-            str(self.session_id),
+            stored_session_id or str(self.session_id),
             subject_uuid=str(self.subject_id),
             consent_id=str(self.consent_id),
             versions_json=b"{}",
             started_at_ns=0,
             ended_at_ns=20_000_000_000,
-            manifest_sha256="b" * 64,
+            manifest_sha256=manifest["manifest_sha256"],
             upload_envelope=self.envelope,
+            upload_credential=credential,
             segments=tuple(
                 ValidSegmentRecord(
                     segment_id=item.segment_id,
@@ -348,7 +404,6 @@ class PersistentUploadQueueTests(unittest.TestCase):
         remote: _IngestionService,
         *,
         clock: _Clock | None = None,
-        random_fraction=lambda: 0.0,
     ) -> PersistentUploadQueue:
         return PersistentUploadQueue(
             self.store,
@@ -356,8 +411,143 @@ class PersistentUploadQueueTests(unittest.TestCase):
             self.keys,
             remote,
             now_ns=clock or _Clock(),
-            random_fraction=random_fraction,
         )
+
+    def test_capture_authorization_survives_reopen_and_registration_response_loss(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=self.session_id, kind="grant", token="secret-capture-grant-token")
+        self._commit(sealed, credential=credential)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.assertEqual(self.store.sync_handoff_credential(str(self.session_id)), credential)
+        remote = _IngestionService()
+        remote.lose_session_response_once = True
+        clock = _Clock()
+        self.assertEqual(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        clock.value += 1_000_000_000_000
+        self.assertEqual(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(remote.authorizations[0], remote.authorizations[1])
+        self.assertEqual(remote.session_keys[0], remote.session_keys[1])
+        self.assertEqual(remote.authorizations[0].manifest_sha256, canonical_sha256(remote.manifests[0]))
+        promoted = json.loads((sealed.path.parent / "manifest.json").read_bytes())
+        self.assertNotEqual(remote.authorizations[0].manifest_sha256, promoted["manifest_sha256"])
+        self.assertNotIn(b"secret-capture-grant-token", (self.root / "state.sqlite3").read_bytes())
+        for path in self.root.glob("state.sqlite3*"):
+            self.assertNotIn(b"secret-capture-grant-token", path.read_bytes())
+
+    def test_capture_authorization_rejects_other_uuid_atomically(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=uuid4(), kind="grant", token="secret-capture-grant-token")
+        with self.assertRaisesRegex(ValueError, "session mismatch"):
+            self._commit(sealed, credential=credential)
+        with self.assertRaises(KeyError):
+            self.store.sync_handoff_state(str(self.session_id))
+
+    def test_capture_authorization_corrupt_segment_prevents_registration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        payload = sealed.path.read_bytes()
+        sealed.path.write_bytes(payload[:-1] + bytes([payload[-1] ^ 1]))
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_expected_digest_is_immutable(self):
+        self._commit(self._seal(0))
+        self.store.record_expected_cloud_manifest_sha256(str(self.session_id), "a" * 64)
+        self.store.record_expected_cloud_manifest_sha256(str(self.session_id), "a" * 64)
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_modified_promoted_manifest_blocks_registration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        path = sealed.path.parent / "manifest.json"
+        manifest = json.loads(path.read_bytes())
+        manifest["segments"][0]["ciphertext_sha256"] = "a" * 64
+        path.write_text(json.dumps(manifest))
+        remote = _IngestionService()
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        self.assertNotIn("session", remote.calls)
+
+    def test_capture_authorization_rollback_does_not_expose_secret_or_partial_rows(self):
+        sealed = self._seal(0)
+        credential = CaptureCredential(session_id=self.session_id, kind="grant", token="rollback-secret-token-123456")
+        self.store._connection.execute("CREATE TRIGGER reject_handoff BEFORE INSERT ON sync_handoffs BEGIN SELECT RAISE(ABORT, 'injected handoff failure'); END")
+        with self.assertRaises(Exception) as caught:
+            self._commit(sealed, credential=credential)
+        self.assertNotIn(credential.token.get_secret_value(), str(caught.exception))
+        with self.assertRaises(KeyError):
+            self.store.session_status(str(self.session_id))
+        self.assertEqual(self.store._connection.execute("SELECT COUNT(*) FROM segments").fetchone()[0], 0)
+        self.assertEqual(self.store._connection.execute("SELECT COUNT(*) FROM sync_handoffs").fetchone()[0], 0)
+
+    def test_capture_authorization_invalid_encrypted_value_has_safe_error(self):
+        import traceback
+        self._commit(self._seal(0))
+        secret = "private-value-that-must-not-appear"
+        malformed = json.dumps({"session_id": "bad-uuid", "kind": "invalid", "token": secret}).encode()
+        encrypted = SensitiveBlobCodec(self.keys).encrypt(malformed, context=f"capture_authorization:{self.session_id}")
+        with self.store._connection:
+            self.store._connection.execute("UPDATE sync_handoffs SET upload_credential=?", (encrypted,))
+        with self.assertRaises(ValueError) as caught:
+            self.store.sync_handoff_credential(str(self.session_id))
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
+
+    def test_schema_nine_handoff_upgrade_preserves_legacy_nullable_authorization(self):
+        import sqlite3
+        self._commit(self._seal(0))
+        self.store.close()
+        connection = sqlite3.connect(self.root / "state.sqlite3")
+        with connection:
+            connection.execute("ALTER TABLE sync_handoffs DROP COLUMN upload_credential")
+            connection.execute("ALTER TABLE sync_handoffs DROP COLUMN expected_cloud_manifest_sha256")
+            connection.execute("PRAGMA user_version=9")
+        connection.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.assertEqual(self.store.schema_version, 12)
+        self.assertIsNone(self.store.sync_handoff_credential(str(self.session_id)))
+        self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), self.envelope)
+        self.assertEqual(self._queue(_IngestionService()).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+
+    def test_legacy_suspended_first_registration_needs_manual_migration(self):
+        sealed = self._seal(0)
+        self._commit(sealed)
+        original = sealed.path.read_bytes()
+        remote = _IngestionService()
+        remote.failures["session"] = [UploadBlocked("suspended", error_code="E-AUT-403")]
+        self.assertEqual(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.BLOCKED)
+        self.assertEqual(sealed.path.read_bytes(), original)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "BLOCKED")
+        self.assertEqual(self.store.sync_handoff_retry_state(str(self.session_id))[2], "E-SYN-428")
+
+    def test_capture_authorization_http_422_never_changes_body_or_headers(self):
+        seen = []
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(422, json={"error": {"code": "E-API-422", "message": "contract mismatch", "retryable": False, "action": "FIX_REQUEST", "details": {}}})
+        client = HttpIngestionClient("https://cloud.test", terminal_id=self.envelope.client_installation_id,
+                                     transport=httpx.MockTransport(handler))
+        authorization = SessionAuthorization(session_id=self.session_id, kind="grant", token="http-grant-secret-123456789", manifest_sha256="a" * 64)
+        request = self.envelope.session_request()
+        original_digest = canonical_sha256(request)
+        try:
+            for _ in range(2):
+                with self.assertRaises(UploadBlocked):
+                    client.create_session("access-token", request, "stable-key", authorization)
+        finally:
+            client.close()
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0].content, seen[1].content)
+        self.assertEqual(canonical_sha256(request), original_digest)
+        for item in seen:
+            self.assertEqual(item.headers["X-Capture-Authorization"], "grant http-grant-secret-123456789")
+            self.assertEqual(item.headers["X-Expected-Manifest-SHA256"], "a" * 64)
+            self.assertEqual(item.headers["Idempotency-Key"], "stable-key")
+            self.assertIn("client_installation_id", json.loads(item.content))
 
     def test_restart_resumes_only_missing_segments_and_retains_acknowledged_files(
         self,
@@ -445,6 +635,179 @@ class PersistentUploadQueueTests(unittest.TestCase):
         outcome = self._queue(remote).upload_next(_Tokens())
 
         self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+
+    def test_existing_cloud_subject_with_different_uuid_stops_before_consent(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(
+            subject_uuid=uuid4(),
+            conflict=True,
+        )
+
+        outcome = self._queue(remote).upload_next(_Tokens())
+
+        self.assertIs(outcome, UploadCycleOutcome.CONFLICT)
+        self.assertEqual(remote.calls, ["status:first-access-token", "subject"])
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
+        self.assertTrue(sealed.path.exists())
+
+    def test_server_matched_recovery_uploads_original_raw_session_after_restart(self) -> None:
+        self.envelope = self.envelope.model_copy(update={
+            "subject": SubjectCreateRequest(
+                subject_uuid=self.subject_id,
+                external_identifier=ExternalIdentifierInput(
+                    issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER",
+                    external_id="test-2781",
+                ),
+            ),
+        })
+        sealed = self._seal(0)
+        self._commit(sealed, stored_session_id=self.session_id.hex)
+        cloud_subject = uuid4()
+        new_consent = uuid4()
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        original_envelope = self.store.sync_handoff_envelope(str(self.session_id))
+        authorization = SubjectRecoveryAuthorization(
+            schema_version="subject-recovery/2",
+            session_id=self.session_id,
+            original_envelope_sha256=canonical_sha256(original_envelope),
+            original_subject_uuid=self.subject_id,
+            cloud_subject_uuid=cloud_subject,
+            replacement_consent=ConsentCreateRequest(
+                consent_record_id=new_consent,
+                subject_uuid=cloud_subject,
+                policy_version=self.envelope.consent.policy_version,
+                purpose_codes=self.envelope.consent.purpose_codes,
+                data_categories=self.envelope.consent.data_categories,
+                granted_at=datetime.fromtimestamp(2, UTC),
+                evidence_type="SUBJECT_CONFIRMED",
+                terminal_signature="new-signed-evidence",
+            ),
+            operator_account_id=uuid4(),
+            confirmed_at=datetime.fromtimestamp(1, UTC),
+            cloud_external_id_masked="***2781",
+            case_id=uuid4(), receipt_id=uuid4(),
+            receipt_expires_at=datetime.fromtimestamp(30, UTC),
+            platform_ticket_sha256="a" * 64,
+        )
+        self.store.authorize_subject_recovery(authorization)
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+
+        self.assertEqual(
+            self.store.subject_recovery_authorization(str(self.session_id)),
+            authorization,
+        )
+        remote.lose_recovery_response_once = True
+        clock = _Clock()
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        _, retry_at_ns, _ = self.store.sync_handoff_retry_state(self.session_id.hex)
+        assert retry_at_ns is not None
+        clock.value = retry_at_ns
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED")
+        self.assertEqual(remote.session_requests[0].subject_uuid, cloud_subject)
+        self.assertEqual(remote.session_requests[0].consent_record_id, new_consent)
+        self.assertEqual(remote.session_requests[0].session_id, self.session_id)
+        self.assertEqual(len(remote.recovery_keys), 2)
+        self.assertEqual(remote.recovery_keys[0], remote.recovery_keys[1])
+        self.assertEqual(remote.consent_keys, [])
+        self.assertEqual(remote.session_keys, [])
+        self.assertEqual(remote.put_calls, [0])
+        self.assertTrue(sealed.path.exists())
+        self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), original_envelope)
+
+    def test_rejected_receipt_blocks_and_preserves_old_authorization_for_renewal(self) -> None:
+        self.envelope = self.envelope.model_copy(update={
+            "subject": SubjectCreateRequest(
+                subject_uuid=self.subject_id,
+                external_identifier=ExternalIdentifierInput(
+                    issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER",
+                    external_id="test-2781",
+                ),
+            ),
+        })
+        sealed = self._seal(0)
+        self._commit(sealed)
+        cloud_subject = uuid4()
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        envelope = self.store.sync_handoff_envelope(str(self.session_id))
+        consent = self.envelope.consent.model_copy(update={
+            "consent_record_id": uuid4(), "subject_uuid": cloud_subject,
+            "granted_at": datetime.fromtimestamp(2, UTC),
+            "evidence_type": "SUBJECT_CONFIRMED",
+        })
+        authorization = SubjectRecoveryAuthorization(
+            schema_version="subject-recovery/2", session_id=self.session_id,
+            original_envelope_sha256=canonical_sha256(envelope),
+            original_subject_uuid=self.subject_id, cloud_subject_uuid=cloud_subject,
+            replacement_consent=consent, operator_account_id=uuid4(),
+            confirmed_at=datetime.fromtimestamp(1, UTC),
+            case_id=uuid4(), receipt_id=uuid4(),
+            receipt_expires_at=datetime.fromtimestamp(30, UTC),
+            platform_ticket_sha256="a" * 64,
+        )
+        self.store.authorize_subject_recovery(authorization)
+        remote.failures["recovery-register"] = [UploadConflict("expired receipt")]
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.BLOCKED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "BLOCKED")
+        self.assertEqual(self.store.subject_recovery_candidates(), (str(self.session_id),))
+        renewed = authorization.model_copy(update={
+            "receipt_id": uuid4(), "receipt_expires_at": datetime.fromtimestamp(60, UTC),
+            "confirmed_at": datetime.fromtimestamp(3, UTC),
+            "replacement_consent": consent.model_copy(update={
+                "consent_record_id": uuid4(), "granted_at": datetime.fromtimestamp(4, UTC),
+            }),
+        })
+        self.store.authorize_subject_recovery(renewed)
+        self.assertEqual(self.store.subject_recovery_authorization(str(self.session_id)), renewed)
+        history = self.store._connection.execute(
+            "SELECT encrypted_payload FROM subject_recovery_authorization_history WHERE session_id=?",
+            (str(self.session_id),),
+        ).fetchone()
+        assert history is not None
+        assert str(authorization.receipt_id).encode() not in history[0]
+        self.assertEqual(
+            SubjectRecoveryAuthorization.model_validate_json(self.store._codec.decrypt(
+                history[0], context=f"subject_recovery:{self.session_id}",
+            )), authorization,
+        )
+        self.assertTrue(sealed.path.exists())
+
+    def test_subject_recovery_rejects_wrong_original_digest_without_releasing_handoff(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        cloud_subject = uuid4()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        authorization = SubjectRecoveryAuthorization(
+            session_id=self.session_id,
+            original_envelope_sha256="0" * 64,
+            original_subject_uuid=self.subject_id,
+            cloud_subject_uuid=cloud_subject,
+            replacement_consent=ConsentCreateRequest(
+                consent_record_id=uuid4(), subject_uuid=cloud_subject,
+                policy_version=self.envelope.consent.policy_version,
+                purpose_codes=self.envelope.consent.purpose_codes,
+                data_categories=self.envelope.consent.data_categories,
+                granted_at=datetime.fromtimestamp(2, UTC),
+                evidence_type="OPERATOR_CONFIRMED",
+                terminal_signature="new-signed-evidence",
+            ),
+            operator_account_id=uuid4(), confirmed_at=datetime.fromtimestamp(1, UTC),
+        )
+        with self.assertRaises(ValueError):
+            self.store.authorize_subject_recovery(authorization)
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
 
     def test_wrong_segment_list_session_identity_never_progresses_handoff(self) -> None:
@@ -658,7 +1021,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(len(remote.complete_keys), 1)
         self.assertTrue(sealed.path.exists())
 
-    def test_restart_preserves_equal_jitter_and_retry_after_deadlines(self) -> None:
+    def test_restart_preserves_foundation_backoff_and_retry_after_deadlines(self) -> None:
         """A restart must not lease durable backoff work before its due time."""
 
         sealed = self._seal(0)
@@ -671,14 +1034,14 @@ class PersistentUploadQueueTests(unittest.TestCase):
         clock = _Clock()
 
         self.assertIs(
-            self._queue(remote, clock=clock, random_fraction=lambda: 0.0).upload_next(
+            self._queue(remote, clock=clock).upload_next(
                 _Tokens()
             ),
             UploadCycleOutcome.DEFERRED,
         )
         self.assertEqual(
             self.store.sync_handoff_retry_state(str(self.session_id)),
-            (1, 3_500_000_000, "E-SYN-001"),
+            (1, 6_000_000_000, "E-SYN-001"),
         )
 
         self.store.close()
@@ -693,14 +1056,14 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
 
-        clock.value = 3_500_000_000
+        clock.value = 6_000_000_000
         self.assertIs(
             self._queue(remote, clock=clock).upload_next(_Tokens()),
             UploadCycleOutcome.DEFERRED,
         )
         self.assertEqual(
             self.store.sync_handoff_retry_state(str(self.session_id)),
-            (2, 63_500_000_000, "E-SYN-001"),
+            (2, 66_000_000_000, "E-SYN-001"),
         )
 
         self.store.close()
@@ -715,7 +1078,24 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "RETRY_WAIT")
 
-    def test_retry_delay_uses_durable_attempt_count_and_equal_jitter_bounds(
+    def test_first_retry_uses_foundation_delay_without_jitter(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.failures["status"] = [UploadRetryable("temporary")]
+        clock = _Clock()
+
+        self.assertIs(
+            self._queue(remote, clock=clock).upload_next(_Tokens()),
+            UploadCycleOutcome.DEFERRED,
+        )
+
+        self.assertEqual(
+            self.store.sync_handoff_retry_state(str(self.session_id)),
+            (1, 6_000_000_000, "E-SYN-001"),
+        )
+
+    def test_retry_delay_uses_durable_attempt_count_without_jitter(
         self,
     ) -> None:
         sealed = self._seal(0)
@@ -725,19 +1105,17 @@ class PersistentUploadQueueTests(unittest.TestCase):
             UploadRetryable("temporary"),
             UploadRetryable("temporary"),
         ]
-        fractions = iter((0.0, 1.0))
         clock = _Clock()
         queue = self._queue(
             remote,
             clock=clock,
-            random_fraction=lambda: next(fractions),
         )
 
         self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
         attempt, due_ns, error_code = self.store.sync_handoff_retry_state(
             str(self.session_id)
         )
-        self.assertEqual((attempt, due_ns, error_code), (1, 3_500_000_000, "E-SYN-001"))
+        self.assertEqual((attempt, due_ns, error_code), (1, 6_000_000_000, "E-SYN-001"))
 
         assert due_ns is not None
         clock.value = due_ns
@@ -747,7 +1125,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
         )
         self.assertEqual(
             (attempt, due_ns, error_code),
-            (2, 13_500_000_000, "E-SYN-001"),
+            (2, 16_000_000_000, "E-SYN-001"),
         )
 
     def test_retry_delay_caps_and_larger_retry_after_wins(self) -> None:
@@ -756,16 +1134,16 @@ class PersistentUploadQueueTests(unittest.TestCase):
         remote = _IngestionService()
         remote.failures["status"] = [UploadRetryable("temporary")] * 12
         clock = _Clock()
-        queue = self._queue(remote, clock=clock, random_fraction=lambda: 1.0)
+        queue = self._queue(remote, clock=clock)
 
-        for _ in range(12):
+        for expected_delay in (5, 10, 20, 40, 80, 160, 320, 640, 900, 900, 900, 900):
             before = clock.value
             self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
             _attempt, due_ns, _error_code = self.store.sync_handoff_retry_state(
                 str(self.session_id)
             )
             assert due_ns is not None
-            self.assertLessEqual(due_ns - before, 900_000_000_000)
+            self.assertEqual(due_ns - before, expected_delay * 1_000_000_000)
             clock.value = due_ns
         self.assertEqual(due_ns - before, 900_000_000_000)
 
@@ -778,6 +1156,135 @@ class PersistentUploadQueueTests(unittest.TestCase):
             str(self.session_id)
         )
         self.assertEqual(due_ns, before + 1_200_000_000_000)
+
+    def test_extended_offline_retry_count_stays_capped_then_recovers(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        remote = _IngestionService()
+        remote.failures["status"] = [UploadRetryable("offline")] * 100
+        clock = _Clock()
+        for attempt in range(1, 101):
+            before = clock.value
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+            count, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
+            self.assertEqual(count, attempt)
+            if attempt >= 9:
+                self.assertEqual(due_ns, before + 900_000_000_000)
+            clock.value = due_ns
+        self.store.close()
+        self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+        self.store.recover_interrupted_state(recovered_at_ns=clock.value)
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(remote.put_calls, [0])
+        self.assertEqual(remote.received[0][1], sealed.path.read_bytes())
+
+    def test_http_retry_after_unconditionally_sets_the_durable_deadline(self) -> None:
+        sealed = self._seal(0)
+        self._commit(sealed)
+        clock = _Clock()
+        # Preserve the nanosecond clock remainder when adapting datetime policy.
+        clock.value = 1_700_000_000_123_456_789
+        for header, delay in (("0", 0), ("1", 1), ("1200", 1200)):
+            with self.subTest(retry_after=header):
+                client = HttpIngestionClient(
+                    "https://cloud.test",
+                    terminal_id=uuid4(),
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(429, headers={"Retry-After": header})
+                    ),
+                )
+                try:
+                    queue = PersistentUploadQueue(
+                        self.store, self.root, self.keys, client, now_ns=clock
+                    )
+                    self.assertIs(queue.upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+                finally:
+                    client.close()
+                _, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
+                self.assertEqual(due_ns, clock.value + delay * 1_000_000_000)
+                clock.value = due_ns
+        self.assertIs(self._queue(_IngestionService(), clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+
+    def test_fault_sequence_reconciles_immutable_upload_after_restart(self) -> None:
+        """Virtual slow network, disconnect, reordered receipts and replayed completion."""
+        sealed = tuple(self._seal(index) for index in range(3))
+        self._commit(*sealed)
+        clock = _Clock()
+
+        class FaultyService(_IngestionService):
+            lose_put_response = True
+            replay_completion = None
+            receipt_orders = []
+
+            def _fail_if_requested(self, operation):
+                clock.value += 2_000_000_000  # elapsed response time, without wall-clock sleeps
+                super()._fail_if_requested(operation)
+
+            def put_segment(self, *args):
+                response = super().put_segment(*args)
+                if response.index == 1 and self.lose_put_response:
+                    self.lose_put_response = False
+                    raise UploadRetryable("slow response lost after server persisted segment")
+                return response
+
+            def list_segments(self, *args):
+                response = super().list_segments(*args)
+                received = tuple(reversed(response.received))
+                self.receipt_orders.append(tuple(item.index for item in received))
+                return response.model_copy(update={"received": received})
+
+            def complete_session(self, *args):
+                if self.replay_completion is not None:
+                    self.complete_keys.append(args[-1])
+                    self.status = SessionStatusResponse(
+                        session_id=args[1], validity_status=ValidityStatus.VALID,
+                        ingest_status=IngestStatus.INGESTED,
+                    )
+                    return self.replay_completion
+                self.replay_completion = super().complete_session(*args)
+                # The completion receipt is accepted, but the status read is stale.
+                self.status = SessionStatusResponse(
+                    session_id=args[1], validity_status=ValidityStatus.UNKNOWN,
+                    ingest_status=IngestStatus.RECEIVING, retry_after_seconds=1,
+                )
+                return self.replay_completion
+
+        remote = FaultyService()
+        remote.failures["status"] = [UploadRetryable("disconnected")]
+        for attempt, delay in enumerate((5, 10, 1), start=1):
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.DEFERRED)
+            self.assertEqual(
+                self.store.sync_handoff_retry_state(str(self.session_id)),
+                (attempt, clock.value + delay * 1_000_000_000, "E-SYN-001"),
+            )
+            due_ns = clock.value + delay * 1_000_000_000
+            self.store.close()
+            self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
+            self.store.recover_interrupted_state(recovered_at_ns=clock.value)
+            calls_before = list(remote.calls)
+            clock.value = due_ns - 1
+            self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.IDLE)
+            self.assertEqual(remote.calls, calls_before)
+            clock.value = due_ns
+
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CLOUD_CONFIRMED")
+        self.assertEqual(remote.put_calls, [0, 1, 2])
+        self.assertIn((1, 0), remote.receipt_orders)
+        self.assertIn((2, 1, 0), remote.receipt_orders)
+        self.assertEqual(len(remote.manifests), 1)
+        self.assertEqual(len(remote.complete_keys), 2)
+        self.assertEqual(len(set(remote.complete_keys)), 1)
+        for keys in (remote.subject_keys, remote.consent_keys, remote.session_keys):
+            self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(tuple(item.index for item in remote.manifests[0].segments), (0, 1, 2))
+        for index, segment in enumerate(sealed):
+            payload = segment.path.read_bytes()
+            self.assertEqual(remote.received[index][1], payload)
+            self.assertEqual(remote.received[index][0].sha256, hashlib.sha256(payload).hexdigest())
+        calls_before = list(remote.calls)
+        self.assertIs(self._queue(remote, clock=clock).upload_next(_Tokens()), UploadCycleOutcome.IDLE)
+        self.assertEqual(remote.calls, calls_before)
 
     def test_authentication_refreshes_once_and_restarts_with_the_new_token(self) -> None:
         sealed = self._seal(0)
@@ -888,6 +1395,29 @@ class PersistentUploadQueueTests(unittest.TestCase):
 
 
 class HttpIngestionClientTests(unittest.TestCase):
+    def test_subject_resolution_uses_read_only_lookup_without_idempotency_key(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(404, json={"error": {"code": "E-SUB-404"}})
+
+        client = HttpIngestionClient(
+            "https://cloud.test", terminal_id=uuid4(),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            result = client.resolve_subject(
+                "access-token",
+                SubjectResolveRequest(issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER", external_id="test-123"),
+            )
+        finally:
+            client.close()
+
+        self.assertIsNone(result)
+        self.assertEqual(seen[0].url.path, "/v1/subjects/resolve")
+        self.assertNotIn("idempotency-key", seen[0].headers)
+
     def test_http_client_ignores_environment_proxy_and_certificate_overrides(self) -> None:
         terminal_id = uuid4()
         with patch("client.sync.persistent_upload.httpx.Client") as constructor:

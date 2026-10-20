@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -86,10 +87,20 @@ class HardwareRuntime:
         *,
         enumerate_ports: Callable[..., Sequence[SerialPortCandidate]] = enumerate_ch340_ports,
         transport_open: Callable[..., ByteTransport] = SerialByteTransport.open,
+        connection_open_attempts: int = 3,
+        retry_delay_seconds: float = 0.15,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if connection_open_attempts <= 0:
+            raise ValueError("connection open attempts must be positive")
+        if retry_delay_seconds < 0:
+            raise ValueError("connection retry delay must not be negative")
         self._adapter = adapter or DoP4864StandardizationAdapter.observed_compact_8bit()
         self._enumerate_ports = enumerate_ports
         self._transport_open = transport_open
+        self._connection_open_attempts = connection_open_attempts
+        self._retry_delay_seconds = retry_delay_seconds
+        self._sleep = sleep
 
     @property
     def display_geometry(self) -> HardwareDisplayGeometry:
@@ -105,6 +116,10 @@ class HardwareRuntime:
     @property
     def specification_id(self) -> str:
         return self._adapter.specification.specification_id
+
+    @property
+    def capture_profile_version(self) -> str:
+        return self._adapter.specification.source_schema_version
 
     @property
     def startup_metadata(self) -> HardwareStartupMetadata:
@@ -181,6 +196,30 @@ class HardwareRuntime:
     def connect_startup(
         self, *, expected_hardware_identity: str | None = None
     ) -> HardwareStartupConnection:
+        return self._connect(
+            expected_hardware_identity=expected_hardware_identity,
+            probe_availability=True,
+        )
+
+    def connect_capture(self) -> HardwareStartupConnection:
+        """Open the selected board once for a live capture after preflight.
+
+        P-05 already proved this hardware can be opened.  Re-probing a CH340
+        here would open and close the same Windows COM device immediately
+        before the capture worker opens it, which can race driver release.
+        """
+
+        return self._connect(
+            expected_hardware_identity=None,
+            probe_availability=False,
+        )
+
+    def _connect(
+        self,
+        *,
+        expected_hardware_identity: str | None,
+        probe_availability: bool,
+    ) -> HardwareStartupConnection:
         specification = self._adapter.specification
         serial_options = {
             "baud_rate": specification.serial_baud_rate,
@@ -189,13 +228,21 @@ class HardwareRuntime:
             "stop_bits": specification.serial_stop_bits,
         }
         try:
-            candidates = tuple(self._enumerate_ports(**serial_options))
+            candidates = tuple(
+                self._enumerate_ports(
+                    **serial_options, probe_availability=probe_availability
+                )
+            )
         except Exception as error:
             raise HardwareConnectionUnavailable("NOT_FOUND", "device discovery failed") from error
         available = tuple(
             candidate
             for candidate in candidates
             if candidate.availability is PortAvailability.AVAILABLE
+            or (
+                not probe_availability
+                and candidate.availability is PortAvailability.UNKNOWN
+            )
         )
         if not available:
             code = "BUSY" if candidates else "NOT_FOUND"
@@ -213,10 +260,20 @@ class HardwareRuntime:
                     "connected pressure device does not match the active License",
                 )
             candidate = matching[0]
-        try:
-            transport = self._transport_open(candidate.device, **serial_options)
-        except Exception as error:
-            raise HardwareConnectionUnavailable("BUSY", "supported pressure device could not be opened") from error
+        transport = None
+        last_error: Exception | None = None
+        for attempt in range(self._connection_open_attempts):
+            try:
+                transport = self._transport_open(candidate.device, **serial_options)
+                break
+            except Exception as error:
+                last_error = error
+                if attempt + 1 < self._connection_open_attempts:
+                    self._sleep(self._retry_delay_seconds)
+        if transport is None:
+            raise HardwareConnectionUnavailable(
+                "BUSY", "supported pressure device could not be opened"
+            ) from last_error
         profile = ProtocolProfile.observed_compact_8bit(
             version=self._adapter.specification.source_schema_version
         )

@@ -30,6 +30,38 @@ def _stage(stage_id: str):
     return SimpleNamespace(stage_id=stage_id, duration_seconds=20)
 
 
+def test_bridge_prepares_session_on_caller_thread_before_starting_worker(qtbot) -> None:
+    caller_thread = threading.get_ident()
+    prepared_threads: list[int] = []
+    capture_threads: list[int] = []
+    failed: list[str] = []
+
+    def _prepare(_session_id: str) -> None:
+        prepared_threads.append(threading.get_ident())
+
+    def _capture(_session_id: str, _gate):
+        capture_threads.append(threading.get_ident())
+        raise RuntimeError("expected test stop")
+
+    acquisition = QtLiveHardwareAcquisition(
+        _capture,
+        prepare_session=_prepare,
+        expected_stage_ids=("one",),
+    )
+    acquisition.set_callbacks(
+        on_progress=lambda _elapsed: None,
+        on_complete=lambda _result: None,
+        on_failure=failed.append,
+    )
+
+    acquisition.start_stage("session-1", _stage("one"))
+    qtbot.waitUntil(lambda: bool(failed))
+
+    assert prepared_threads == [caller_thread]
+    assert len(capture_threads) == 1
+    assert capture_threads[0] != caller_thread
+
+
 def test_bridge_opens_each_stage_manually_without_restarting_capture(qtbot) -> None:
     completed: list[object] = []
     failed: list[str] = []

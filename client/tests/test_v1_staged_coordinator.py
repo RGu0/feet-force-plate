@@ -1,6 +1,9 @@
 from dataclasses import replace
 
-from client.workflow.coordinator import ScreeningCoordinator
+from client.workflow.coordinator import (
+    ScreeningCoordinator,
+    _stage_failure_diagnostic_code,
+)
 from client.workflow.models import (
     ClientAction,
     ClientError,
@@ -136,7 +139,10 @@ def test_retryable_second_stage_failure_preserves_first_stage_and_session() -> N
     assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
     assert coordinator.state.stage_index == 2
     assert coordinator.state.session_id == session_id
-    assert coordinator.state.notice == "本段采集中断，请重新连接设备并重测本段"
+    assert coordinator.state.notice == (
+        "本段采集中断，请重新连接设备并重测本段"
+        "（诊断代码：E-ACQ-004-UNKNOWN）"
+    )
     assert sessions.completed_stages == [
         ("replay-session-1", "BILATERAL_EYES_OPEN")
     ]
@@ -151,6 +157,18 @@ def test_retryable_second_stage_failure_preserves_first_stage_and_session() -> N
     ]
     assert coordinator.start_acquisition()
     assert acquisition.stages[-1][1] == "BILATERAL_EYES_CLOSED"
+
+
+def test_stage_failure_diagnostic_exposes_only_operation_and_windows_code() -> None:
+    detail = (
+        "RetryableStageCaptureError: stage capture failed at STAGE_APPEND: "
+        "FileNotFoundError: [WinError 3] C:\\private\\participant-path"
+    )
+
+    diagnostic = _stage_failure_diagnostic_code(detail)
+
+    assert diagnostic == "E-ACQ-004-STAGE_APPEND-WINERROR-3"
+    assert "private" not in diagnostic
 
 
 def test_blocked_manual_start_asks_operator_to_confirm_position_and_safety() -> None:

@@ -24,6 +24,10 @@ from cloud.analysis.protocol_context import (
 )
 
 
+LIVE_STATIC_BALANCE_PROTOCOL_ID = "standard-static-balance"
+LIVE_STATIC_BALANCE_PROTOCOL_VERSION = "static-balance/live-hardware-demo/1"
+
+
 @dataclass(frozen=True, slots=True)
 class OperatorStageAttestation:
     """The supervisor's observation for one timed, real-hardware stage."""
@@ -139,7 +143,7 @@ def build_operator_attested_protocol(
     )
     return StaticBalanceProtocolContext(
         session_id=session_id,
-        protocol_version="static-balance/live-hardware-demo/1",
+        protocol_version=LIVE_STATIC_BALANCE_PROTOCOL_VERSION,
         stages=stages,
     )
 

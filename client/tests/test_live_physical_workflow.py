@@ -1,24 +1,34 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from client.app.institution_store import InstitutionLocalStore
-from client.device.stage_windows import StageRecordingGate
+from client.device.stage_windows import CapturedStageWindow, StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
+from client.hardware_standardization.dynamic_defect_mask import (
+    DynamicDefectEntry,
+    DynamicDefectMask,
+    DynamicDefectStatus,
+)
+from client.hardware_integration import live_physical_workflow
 from client.hardware_integration.live_physical_workflow import (
     FormalCaptureUpload,
+    EngineeringLiveSessions,
     InstitutionLiveSessions,
     LivePhysicalCapture,
     LivePhysicalProcessor,
 )
-from client.local_analysis.service import ProcessingStatus
+from client.local_analysis.models import LocalQualityStatus
+from client.local_analysis.service import PhysicalLocalProcessingOutcome, ProcessingStatus
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
+from shared.contracts.capture_grants import CaptureGrant
 
 
 class _Key:
@@ -57,16 +67,22 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             )
         )
         protocol = default_standard_protocol().snapshot()
-        sessions = InstitutionLiveSessions(institution)
+        grant = CaptureGrant(session_id=uuid4(), token="formal-live-grant-token-1234567890")
+        institution.add_capture_grants("tenant-1", str(installation_id), (grant,))
+        sessions = InstitutionLiveSessions(
+            institution, tenant_id="tenant-1", installation_id=str(installation_id)
+        )
         session_id = sessions.create_session(
             ScreeningParticipantContext(
                 subject.subject_uuid, consent.consent_record_id
             ),
             protocol,
         )
+        assert UUID(session_id) == grant.session_id
+        assert sessions.capture_credential(session_id).token == grant.token
         metadata = sessions.metadata(session_id)
         capture = LivePhysicalCapture(
-            hardware=None,
+            hardware=SimpleNamespace(capture_profile_version="do-p4864/1"),
             sessions=sessions,
             baseline=None,
             physical_store=physical_store,
@@ -80,6 +96,9 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
                 app_version="9.8.7-authoritative",
                 payload_schema="raw-segment/7",
                 calibration_profile="calibration-authoritative/42",
+            ),
+            dynamic_defect_mask_loader=lambda: (
+                mask_loads.append("loaded") or frozen_mask
             ),
             wall_time_ns=lambda: 1_786_406_400_000_000_000,
         )
@@ -95,16 +114,52 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
             source_digest="a" * 64,
         )
 
-        state = capture._state_for_connection(
-            session_id,
-            gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
-            parser=SimpleNamespace(
-                profile=SimpleNamespace(version="do-p4864/1")
+        frozen_mask = DynamicDefectMask(
+            device_id="FFP-001",
+            mask_version=4,
+            policy_version="dynamic-defect-mask/generic-grid/2",
+            shape=(48, 64),
+            entries=(
+                DynamicDefectEntry(
+                    source_index=100,
+                    status=DynamicDefectStatus.REPAIRABLE,
+                    confirmed_observations=2,
+                    last_observed_session_id="prior-session",
+                ),
             ),
-            reference=reference,
         )
+        mask_loads = []
+
+        capture.prepare_session(session_id)
+        capture.prepare_session(session_id)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            state = executor.submit(
+                capture._state_for_connection,
+                session_id,
+                gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
+                parser=SimpleNamespace(
+                    profile=SimpleNamespace(version="do-p4864/1")
+                ),
+                reference=reference,
+            ).result()
+            reconnected_state = executor.submit(
+                capture._state_for_connection,
+                session_id,
+                gate=StageRecordingGate(expected_stage_ids=protocol.stage_ids),
+                parser=SimpleNamespace(
+                    profile=SimpleNamespace(version="do-p4864/1")
+                ),
+                reference=reference,
+            ).result()
 
         assert state.stager.subject_uuid == metadata.subject_uuid
+        assert mask_loads == ["loaded"]
+        assert reconnected_state is state
+        assert state.quality_gate._dynamic_defect_mask is frozen_mask
+        assert state.attempt_versions["dynamic_defect_mask_version"] == "4"
+        assert state.attempt_versions["dynamic_defect_mask_policy"] == (
+            "dynamic-defect-mask/generic-grid/2"
+        )
         assert state.stager.subject_uuid != session_id
         assert state.stager.upload_envelope.subject.subject_uuid == UUID(
             metadata.subject_uuid
@@ -126,6 +181,14 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
         institution.close()
 
 
+def test_capture_initialization_error_uses_a_safe_missing_record_category() -> None:
+    error = live_physical_workflow._CaptureInitializationError(
+        "formal-envelope", KeyError("private record")
+    )
+
+    assert error.marker == "formal-envelope/missing-local-record"
+
+
 def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator_attestations(tmp_path) -> None:
     key = _Key()
     institution = InstitutionLocalStore.open(
@@ -144,7 +207,7 @@ def test_live_physical_processor_refuses_to_issue_a_report_without_four_operator
             data_categories=("SCREENING",), evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = EngineeringLiveSessions(institution)
     session_id = sessions.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
@@ -180,7 +243,7 @@ def test_live_physical_processor_requires_captured_windows_with_attestations(tmp
             data_categories=("SCREENING",), evidence_type="OPERATOR_CONFIRMED",
         )
     )
-    sessions = InstitutionLiveSessions(institution)
+    sessions = EngineeringLiveSessions(institution)
     session_id = sessions.create_session(
         ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
         default_standard_protocol().snapshot(),
@@ -200,6 +263,79 @@ def test_live_physical_processor_requires_captured_windows_with_attestations(tmp
     )
 
     outcome = processor.process(session_id)
+
+    assert outcome.status is ProcessingStatus.RETRY_REQUIRED
+    assert outcome.report is None
+
+
+def test_live_physical_processor_returns_retry_for_degraded_local_quality(
+    tmp_path, monkeypatch
+) -> None:
+    key = _Key()
+    institution = InstitutionLocalStore.open(
+        tmp_path / "institution", key_provider=key, query_index_key=b"q" * 32
+    )
+    subject = institution.create(
+        CreateSubjectRequest(
+            tenant_id="tenant-1", analysis_profile=AnalysisProfile.unknown()
+        )
+    )
+    consent = institution.create_consent(
+        ConsentRequest(
+            tenant_id="tenant-1",
+            terminal_id="terminal-1",
+            subject_uuid=subject.subject_uuid,
+            policy_version="consent/1",
+            purpose_codes=("SCREENING",),
+            data_categories=("SCREENING",),
+            evidence_type="OPERATOR_CONFIRMED",
+        )
+    )
+    sessions = EngineeringLiveSessions(institution)
+    session_id = sessions.create_session(
+        ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+        default_standard_protocol().snapshot(),
+    )
+    physical_store = StateStore(
+        tmp_path / "physical.sqlite3", SensitiveBlobCodec(key)
+    )
+    processor = LivePhysicalProcessor(
+        sessions=sessions,
+        physical_store=physical_store,
+        key_provider=key,
+        spool_root=tmp_path / "spool",
+        reports=institution,
+    )
+    plan = default_standard_protocol().stages
+    processor.record_attestations(
+        session_id,
+        (True, True, True, True),
+        captured_windows=tuple(
+            CapturedStageWindow(
+                stage_id=stage.stage_id,
+                start_s=index * 20.0,
+                end_s=(index + 1) * 20.0,
+                frame_count=400,
+            )
+            for index, stage in enumerate(plan)
+        ),
+    )
+    degraded = SimpleNamespace(quality_status=LocalQualityStatus.DEGRADED)
+    monkeypatch.setattr(
+        live_physical_workflow,
+        "process_committed_physical_session",
+        lambda *_args, **_kwargs: PhysicalLocalProcessingOutcome(
+            result=degraded,
+            report=None,
+            snapshot=SimpleNamespace(),
+        ),
+    )
+
+    try:
+        outcome = processor.process(session_id)
+    finally:
+        physical_store.close()
+        institution.close()
 
     assert outcome.status is ProcessingStatus.RETRY_REQUIRED
     assert outcome.report is None

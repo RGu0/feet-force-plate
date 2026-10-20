@@ -19,8 +19,11 @@ from platformdirs import user_data_path
 from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
 
 from client.spool.state_store import SensitiveBlobCodec, StateStore
-from client.app.institution_store import InstitutionLocalStore, KeyringAesKeyProvider
+from client.app.institution_store import (
+    InstitutionLocalStore, KeyringAesKeyProvider, KeyringConsentEvidenceSigner,
+)
 from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
+from client.sync.subject_recovery import SubjectRecoveryService
 from shared.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
 from client.support import (
     PlatformFamily,
@@ -38,7 +41,7 @@ from client.cloud.runtime import (
     ClientAccessRuntime,
     build_client_access_runtime,
 )
-from client.cloud.access_client import CloudAccessError
+from client.cloud.access_client import CloudAccessClient, CloudAccessError
 from client.hardware_standardization.dynamic_defect_mask import DynamicDefectMaskStore
 from client.startup_validation.persistence import ValidationAuditTrail
 from client.startup_validation.recovery import FailureEscalationPolicy
@@ -70,9 +73,10 @@ from .app_icon import application_icon
 from .institution_access import InstitutionAccessWindow
 from .startup_validation import MandatoryStartupGate
 from .live_institution_runtime import build_live_institution_runtime
+from .windows_credential_integrity import require_standard_user_process
 
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 
 class ValidationAuditPort(Protocol):
@@ -937,7 +941,30 @@ def compose_authenticated_session(
                 export_destination=_choose_diagnostic_destination,
                 app_version=APP_VERSION,
                 payload_schema=RAW_SEGMENT_PAYLOAD_SCHEMA,
+                event_recorder=composition.recorder,
+                engineering_login=(
+                    None
+                    if settings is None
+                    else build_packaged_engineering_login(
+                        data_root=data_root,
+                        client_factory=lambda: CloudAccessClient(
+                            settings.base_url, verify=settings.verify
+                        ),
+                    )
+                ),
             )
+            if isinstance(upload_runtime, PackagedUploadRuntime):
+                live_runtime.controller.attach_subject_recovery(
+                    SubjectRecoveryService(
+                        store=physical_store,
+                        client=upload_runtime.recovery_client,
+                        tokens=runtime,
+                        signer=KeyringConsentEvidenceSigner(),
+                        tenant_id=session.tenant_id,
+                        terminal_id=session.client_installation_id,
+                        operator_account_id=session.account_id,
+                    )
+                )
             references["live_runtime"] = live_runtime
             return live_runtime.controller.window
 
@@ -979,6 +1006,7 @@ def compose_authenticated_session(
 def main() -> int:
     """Start the package at P-00 institution access."""
 
+    require_standard_user_process()
     app = QApplication(sys.argv)
     app.setWindowIcon(application_icon())
     settings = AccessRuntimeSettings.from_environment()
