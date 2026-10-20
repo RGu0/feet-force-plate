@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -45,7 +45,10 @@ def _iso(moment: datetime) -> str:
 
 class _InsoleApiFixture(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.now = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
+        # Tokens are issued with this clock but verified against the real one,
+        # so it must track the wall clock; readings sit an hour before it.
+        self.now = datetime.now(UTC).replace(microsecond=0)
+        self.reading_base = self.now - timedelta(hours=1)
         self.repository = InMemoryAccessRepository()
         private_key = Ed25519PrivateKey.generate()
         signer = LicenseDocumentSigner(
@@ -343,7 +346,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
         return {group: {"millivolts": 3000 + value, "percent": value, "read_at": _iso(moment)}}
 
     async def test_merge_vectors_for_every_group(self) -> None:
-        base = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+        base = self.reading_base
         for group in VECTORS["merge"]["granularity"]:
             for scenario in VECTORS["merge"]["scenarios"]:
                 with self.subTest(group=group, scenario=scenario["name"]):
@@ -371,7 +374,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_late_stale_offline_report_never_overwrites_newer_one(self) -> None:
         insole = await self.registered()
-        newer = datetime(2026, 10, 20, 8, 30, tzinfo=UTC)
+        newer = self.reading_base + timedelta(minutes=30)
         older = newer - timedelta(minutes=20)
         fresh = await self.report(self.terminal_a, insole["insole_id"], {
             "state": {"state": "in_use", "observed_at": _iso(newer)},
@@ -395,7 +398,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_concurrent_reports_converge_on_the_newest_reading(self) -> None:
         insole = await self.registered()
-        base = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+        base = self.reading_base
         offsets = list(range(40))
         random.Random(778).shuffle(offsets)
         terminals = (self.terminal_a, self.terminal_b)
@@ -413,7 +416,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_holder_is_set_only_while_in_use(self) -> None:
         insole = await self.registered()
-        base = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+        base = self.reading_base
         taken = await self.report(self.terminal_b, insole["insole_id"],
                                   {"state": {"state": "in_use", "observed_at": _iso(base)}})
         self.assertEqual(taken.json()["data"]["insole"]["holder"]["terminal_name"], "Gait lab")
@@ -425,7 +428,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_not_applied_report_keeps_the_revision(self) -> None:
         insole = await self.registered()
-        moment = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+        moment = self.reading_base
         body = {"left": {"millivolts": 3900, "percent": 75, "read_at": _iso(moment)}}
         first = (await self.report(self.terminal_a, insole["insole_id"], body)).json()["data"]
         again = (await self.report(self.terminal_a, insole["insole_id"], body)).json()["data"]
@@ -434,12 +437,13 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_offsets_are_compared_as_instants_and_returned_in_utc(self) -> None:
         insole = await self.registered()
+        offset = self.reading_base.astimezone(timezone(timedelta(hours=8))).isoformat()
         first = await self.report(self.terminal_a, insole["insole_id"], {
-            "left": {"millivolts": 3900, "percent": 75, "read_at": "2026-10-20T16:00:00+08:00"}})
+            "left": {"millivolts": 3900, "percent": 75, "read_at": offset}})
         self.assertEqual(first.json()["data"]["insole"]["left"]["battery"]["read_at"],
-                         "2026-10-20T08:00:00Z")
+                         _iso(self.reading_base))
         same = await self.report(self.terminal_b, insole["insole_id"], {
-            "left": {"millivolts": 3000, "percent": 10, "read_at": "2026-10-20T08:00:00Z"}})
+            "left": {"millivolts": 3000, "percent": 10, "read_at": _iso(self.reading_base)}})
         self.assertFalse(same.json()["data"]["applied"]["left"])
 
     async def test_reading_too_far_in_the_future_is_rejected(self) -> None:
@@ -457,7 +461,7 @@ class InsoleReportMergeTests(_InsoleApiFixture):
 
     async def test_report_contract_validation(self) -> None:
         insole = await self.registered()
-        moment = _iso(datetime(2026, 10, 20, 8, 0, tzinfo=UTC))
+        moment = _iso(self.reading_base)
         for body in (
             {},
             {"state": {"state": "retired", "observed_at": moment}},
