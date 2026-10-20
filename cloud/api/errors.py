@@ -72,6 +72,38 @@ class TerminalInstallationConflict(PlatformError):
     action = "REGENERATE_INSTALLATION_ID"
 
 
+# RAY-778 institutional insole inventory. The two registration conflicts
+# carry the existing pair in ``details.existing`` so the client can show it.
+class InsoleIdentityRegistered(PlatformError):
+    code = "E-INV-409-IDENTITY-REGISTERED"
+    http_status = 409
+    action = "SHOW_EXISTING_INSOLE"
+
+
+class InsoleNumberTaken(PlatformError):
+    code = "E-INV-409-NUMBER-TAKEN"
+    http_status = 409
+    action = "SHOW_EXISTING_INSOLE"
+
+
+class InsoleRetired(PlatformError):
+    code = "E-INV-409-RETIRED"
+    http_status = 409
+    action = "REFRESH_INVENTORY"
+
+
+class InsoleReadingInFuture(PlatformError):
+    code = "E-INV-422-READING-IN-FUTURE"
+    http_status = 422
+    action = "CHECK_TERMINAL_CLOCK"
+
+
+class InsoleCursorInvalid(PlatformError):
+    code = "E-INV-400-CURSOR-INVALID"
+    http_status = 400
+    action = "RESTART_FULL_SYNC"
+
+
 class TenantAccessDenied(PlatformError):
     code = "E-AUT-403"
     http_status = 403

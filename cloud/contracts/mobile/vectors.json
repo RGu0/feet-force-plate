@@ -57,6 +57,534 @@
       }
     }
   },
+  "insole_inventory": {
+    "authentication": {
+      "credential": "terminal access token (POST /v1/access/terminal-activate)",
+      "other_tenant_insole": {
+        "code": "E-API-404",
+        "http_status": 404
+      },
+      "revoked_terminal": {
+        "code": "E-TRM-401-REVOKED",
+        "http_status": 401
+      },
+      "scope": "tenant of the terminal; any ACTIVE terminal of the tenant may register, report and retire"
+    },
+    "download": {
+      "clock_source": "server-assigned per-tenant revision sequence, never wall clock",
+      "cursor": "opaque; omit or empty for a full download from the beginning",
+      "default_limit": 100,
+      "deletion": "none; retired pairs are delivered with state retired",
+      "invalid_cursor_error": "E-INV-400-CURSOR-INVALID",
+      "invalid_cursor_example": "bm90LWEtY3Vyc29y",
+      "max_limit": 500,
+      "next_cursor": "always returned; unchanged when the page is empty",
+      "order": "revision ascending; each pair appears once, at its latest revision",
+      "out_of_range_cursor_example": "aW5zb2xlLWN1cnNvci8xOjk5OTk5OTk5OTk5OTk5OTk5OTk5",
+      "route": "GET /v1/inventory/insoles?cursor=&limit="
+    },
+    "errors": {
+      "cursor_invalid": {
+        "body": {
+          "error": {
+            "action": "RESTART_FULL_SYNC",
+            "code": "E-INV-400-CURSOR-INVALID",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 400
+      },
+      "identity_registered": {
+        "body": {
+          "error": {
+            "action": "SHOW_EXISTING_INSOLE",
+            "code": "E-INV-409-IDENTITY-REGISTERED",
+            "details": {
+              "existing": {
+                "holder": {
+                  "client_installation_id": "00000000-0000-0000-0000-000000000028",
+                  "terminal_name": "Front desk"
+                },
+                "insole_id": "00000000-0000-0000-0000-000000000032",
+                "institution_number": "A-001",
+                "left": {
+                  "battery": {
+                    "millivolts": 3987,
+                    "percent": 82,
+                    "read_at": "2026-10-20T08:00:00Z",
+                    "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+                  },
+                  "firmware_version": "1.4.2",
+                  "identity": {
+                    "kind": "mac",
+                    "provenance": "ble_advertisement",
+                    "value": "C0:FF:EE:00:00:01"
+                  }
+                },
+                "registered_at": "2026-10-20T08:00:00Z",
+                "registered_by_client_installation_id": "00000000-0000-0000-0000-000000000028",
+                "retired_at": null,
+                "retired_by_client_installation_id": null,
+                "revision": 3,
+                "right": {
+                  "battery": {
+                    "millivolts": 3712,
+                    "percent": 55,
+                    "read_at": "2026-10-20T08:00:00Z",
+                    "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+                  },
+                  "firmware_version": "1.4.2",
+                  "identity": {
+                    "kind": "mac",
+                    "provenance": "ble_advertisement",
+                    "value": "C0:FF:EE:00:00:02"
+                  }
+                },
+                "size": 38,
+                "state": "in_use",
+                "state_observed_at": "2026-10-20T08:00:00Z",
+                "updated_at": "2026-10-20T08:00:00Z"
+              }
+            },
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "number_taken": {
+        "body": {
+          "error": {
+            "action": "SHOW_EXISTING_INSOLE",
+            "code": "E-INV-409-NUMBER-TAKEN",
+            "details": {
+              "existing": {
+                "holder": {
+                  "client_installation_id": "00000000-0000-0000-0000-000000000028",
+                  "terminal_name": "Front desk"
+                },
+                "insole_id": "00000000-0000-0000-0000-000000000032",
+                "institution_number": "A-001",
+                "left": {
+                  "battery": {
+                    "millivolts": 3987,
+                    "percent": 82,
+                    "read_at": "2026-10-20T08:00:00Z",
+                    "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+                  },
+                  "firmware_version": "1.4.2",
+                  "identity": {
+                    "kind": "mac",
+                    "provenance": "ble_advertisement",
+                    "value": "C0:FF:EE:00:00:01"
+                  }
+                },
+                "registered_at": "2026-10-20T08:00:00Z",
+                "registered_by_client_installation_id": "00000000-0000-0000-0000-000000000028",
+                "retired_at": null,
+                "retired_by_client_installation_id": null,
+                "revision": 3,
+                "right": {
+                  "battery": {
+                    "millivolts": 3712,
+                    "percent": 55,
+                    "read_at": "2026-10-20T08:00:00Z",
+                    "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+                  },
+                  "firmware_version": "1.4.2",
+                  "identity": {
+                    "kind": "mac",
+                    "provenance": "ble_advertisement",
+                    "value": "C0:FF:EE:00:00:02"
+                  }
+                },
+                "size": 38,
+                "state": "in_use",
+                "state_observed_at": "2026-10-20T08:00:00Z",
+                "updated_at": "2026-10-20T08:00:00Z"
+              }
+            },
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      },
+      "reading_in_future": {
+        "body": {
+          "error": {
+            "action": "CHECK_TERMINAL_CLOCK",
+            "code": "E-INV-422-READING-IN-FUTURE",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 422
+      },
+      "retired": {
+        "body": {
+          "error": {
+            "action": "REFRESH_INVENTORY",
+            "code": "E-INV-409-RETIRED",
+            "details": {},
+            "message": "Synthetic contract fixture",
+            "retryable": false
+          },
+          "meta": {
+            "correlation_id": "00000000-0000-0000-0000-000000000002",
+            "request_id": "00000000-0000-0000-0000-000000000001",
+            "server_time": "2026-10-07T00:00:00Z"
+          }
+        },
+        "http_status": 409
+      }
+    },
+    "merge": {
+      "device_time_fields": {
+        "left": "read_at",
+        "right": "read_at",
+        "state": "observed_at"
+      },
+      "equal_time": "not applied; the stored reading stands",
+      "granularity": [
+        "state",
+        "left",
+        "right"
+      ],
+      "holder": "reporting terminal while state is in_use, otherwise null",
+      "max_future_skew_seconds": 300,
+      "reportable_states": [
+        "available",
+        "in_use",
+        "unreturned_data"
+      ],
+      "retired_reports_error": "E-INV-409-RETIRED",
+      "rule": "newer device-side time wins",
+      "scenarios": [
+        {
+          "expect_applied": true,
+          "incoming_offset_seconds": 60,
+          "name": "newer_reading_applies",
+          "stored_offset_seconds": 0
+        },
+        {
+          "expect_applied": false,
+          "incoming_offset_seconds": 0,
+          "name": "late_stale_reading_ignored",
+          "stored_offset_seconds": 60
+        },
+        {
+          "expect_applied": false,
+          "incoming_offset_seconds": 60,
+          "name": "equal_time_not_applied",
+          "stored_offset_seconds": 60
+        },
+        {
+          "expect_applied": true,
+          "incoming_offset_seconds": 0,
+          "name": "first_reading_applies",
+          "stored_offset_seconds": null
+        }
+      ]
+    },
+    "record": {
+      "holder": {
+        "client_installation_id": "00000000-0000-0000-0000-000000000028",
+        "terminal_name": "Front desk"
+      },
+      "insole_id": "00000000-0000-0000-0000-000000000032",
+      "institution_number": "A-001",
+      "left": {
+        "battery": {
+          "millivolts": 3987,
+          "percent": 82,
+          "read_at": "2026-10-20T08:00:00Z",
+          "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+        },
+        "firmware_version": "1.4.2",
+        "identity": {
+          "kind": "mac",
+          "provenance": "ble_advertisement",
+          "value": "C0:FF:EE:00:00:01"
+        }
+      },
+      "registered_at": "2026-10-20T08:00:00Z",
+      "registered_by_client_installation_id": "00000000-0000-0000-0000-000000000028",
+      "retired_at": null,
+      "retired_by_client_installation_id": null,
+      "revision": 3,
+      "right": {
+        "battery": {
+          "millivolts": 3712,
+          "percent": 55,
+          "read_at": "2026-10-20T08:00:00Z",
+          "reported_by_client_installation_id": "00000000-0000-0000-0000-000000000028"
+        },
+        "firmware_version": "1.4.2",
+        "identity": {
+          "kind": "mac",
+          "provenance": "ble_advertisement",
+          "value": "C0:FF:EE:00:00:02"
+        }
+      },
+      "size": 38,
+      "state": "in_use",
+      "state_observed_at": "2026-10-20T08:00:00Z",
+      "updated_at": "2026-10-20T08:00:00Z"
+    },
+    "registration": {
+      "idempotency_key_scope": "registering client_installation_id",
+      "identity_compare": "kind + value, exact; provenance is not compared",
+      "initial_idempotent_replay": false,
+      "initial_status": 201,
+      "mac_pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+      "non_canonical_mac_examples": [
+        "c0:ff:ee:00:00:01",
+        "C0-FF-EE-00-00-01",
+        "C0FFEE000001"
+      ],
+      "non_canonical_mac_status": 422,
+      "precedence": [
+        "identity owned by another number (left, then right)",
+        "number owned by other identities"
+      ],
+      "replay_idempotent_replay": true,
+      "replay_returns": "same insole_id at its current revision",
+      "replay_status": 200,
+      "request_headers": {
+        "Idempotency-Key": "fixture:insole:A-001"
+      },
+      "same_key_different_request_error": "E-API-409",
+      "scenarios": [
+        {
+          "attempt": {
+            "institution_number": "A-001",
+            "left": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:01"
+              }
+            },
+            "right": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:02"
+              }
+            },
+            "size": 38
+          },
+          "expect": {
+            "http_status": 200,
+            "idempotent_replay": true,
+            "same_insole_id": true
+          },
+          "name": "same_pair_other_terminal"
+        },
+        {
+          "attempt": {
+            "institution_number": "A-002",
+            "left": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:01"
+              }
+            },
+            "right": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:02"
+              }
+            },
+            "size": 38
+          },
+          "expect": {
+            "code": "E-INV-409-IDENTITY-REGISTERED",
+            "existing_institution_number": "A-001",
+            "http_status": 409
+          },
+          "name": "same_mac_other_number"
+        },
+        {
+          "attempt": {
+            "institution_number": "A-003",
+            "left": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:02"
+              }
+            },
+            "right": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:09"
+              }
+            },
+            "size": 38
+          },
+          "expect": {
+            "code": "E-INV-409-IDENTITY-REGISTERED",
+            "existing_institution_number": "A-001",
+            "http_status": 409
+          },
+          "name": "same_right_mac_on_left_other_number"
+        },
+        {
+          "attempt": {
+            "institution_number": "A-001",
+            "left": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:03"
+              }
+            },
+            "right": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:04"
+              }
+            },
+            "size": 38
+          },
+          "expect": {
+            "code": "E-INV-409-NUMBER-TAKEN",
+            "existing_institution_number": "A-001",
+            "http_status": 409
+          },
+          "name": "same_number_other_mac"
+        },
+        {
+          "attempt": {
+            "institution_number": "A-001",
+            "left": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:01"
+              }
+            },
+            "right": {
+              "firmware_version": "1.4.2",
+              "identity": {
+                "kind": "mac",
+                "provenance": "ble_advertisement",
+                "value": "C0:FF:EE:00:00:05"
+              }
+            },
+            "size": 38
+          },
+          "expect": {
+            "code": "E-INV-409-NUMBER-TAKEN",
+            "existing_institution_number": "A-001",
+            "http_status": 409
+          },
+          "name": "same_number_one_side_changed"
+        },
+        {
+          "attempt": {
+            "institution_number": "A-004",
+            "left": {
+              "firmware_version": null,
+              "identity": {
+                "kind": "serial",
+                "provenance": "ble_advertisement",
+                "value": "SN-0001"
+              }
+            },
+            "right": {
+              "firmware_version": null,
+              "identity": {
+                "kind": "serial",
+                "provenance": "ble_advertisement",
+                "value": "SN-0002"
+              }
+            },
+            "size": 40
+          },
+          "expect": {
+            "http_status": 201,
+            "idempotent_replay": false
+          },
+          "name": "serial_identity_new_pair"
+        }
+      ]
+    },
+    "registration_request": {
+      "institution_number": "A-001",
+      "left": {
+        "firmware_version": "1.4.2",
+        "identity": {
+          "kind": "mac",
+          "provenance": "ble_advertisement",
+          "value": "C0:FF:EE:00:00:01"
+        }
+      },
+      "right": {
+        "firmware_version": "1.4.2",
+        "identity": {
+          "kind": "mac",
+          "provenance": "ble_advertisement",
+          "value": "C0:FF:EE:00:00:02"
+        }
+      },
+      "size": 38
+    },
+    "report_request": {
+      "left": {
+        "millivolts": 3987,
+        "percent": 82,
+        "read_at": "2026-10-20T08:00:00Z"
+      },
+      "right": {
+        "millivolts": 3712,
+        "percent": 55,
+        "read_at": "2026-10-20T08:00:00Z"
+      },
+      "state": {
+        "observed_at": "2026-10-20T08:00:00Z",
+        "state": "in_use"
+      }
+    }
+  },
   "license": {
     "canonical_hex": "7b226163636f756e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303062222c22656e61626c65645f6665617475726573223a5b22666978747572652e66656174757265225d2c2268617264776172655f6964223a224646502d4450343836342d303030303030222c226973737565645f6174223a22323032362d31302d30375430303a30303a30305a222c226c6963656e73655f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303063222c22736368656d615f76657273696f6e223a226c6963656e73652f32222c22737461747573223a22414354495645222c2274656e616e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303061222c2276616c69645f66726f6d223a22323032362d31302d30375430303a30303a30305a222c2276616c69645f756e74696c223a22323032362d31312d30375430303a30303a30305a222c2276657273696f6e223a317d",
     "negative_cases": [

@@ -22,6 +22,7 @@ from cloud.api import errors
 from shared.contracts import access_control as access
 from shared.contracts import cloud
 from shared.contracts.client_sync import canonical_json_bytes, encode_segment_metadata
+from shared.contracts import insole_inventory as insole
 from shared.contracts import terminal_access as terminal
 
 
@@ -53,6 +54,10 @@ _RESPONSE_TYPES = {
     ('/v1/access/terminals', 'get'): (terminal.TerminalListResponse, (200,)),
     ('/v1/access/terminals/{client_installation_id}', 'patch'): (terminal.TerminalSummary, (200,)),
     ('/v1/access/terminals/{client_installation_id}/revoke', 'post'): (terminal.TerminalSummary, (200,)),
+    ('/v1/inventory/insoles', 'post'): (insole.InsoleRegistrationResponse, (200, 201)),
+    ('/v1/inventory/insoles', 'get'): (insole.InsoleChangesResponse, (200,)),
+    ('/v1/inventory/insoles/{insole_id}/reports', 'post'): (insole.InsoleReportResponse, (200,)),
+    ('/v1/inventory/insoles/{insole_id}/retire', 'post'): (insole.InsoleRetireResponse, (200,)),
     ('/v1/subjects/resolve', 'post'): (cloud.SubjectSummary, (200,)),
     ('/v1/subjects', 'post'): (cloud.SubjectSummary, (200, 201)),
     ('/v1/consents', 'post'): (cloud.ConsentResponse, (201,)),
@@ -91,6 +96,27 @@ _TERMINAL_OPERATION_ERRORS = {
         errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
 }
 
+# RAY-778: insole inventory operations. Every one authenticates with a
+# terminal bearer token, so a revoked terminal gets E-TRM-401-REVOKED.
+_INSOLE_ERRORS = (
+    ('identity_registered', errors.InsoleIdentityRegistered),
+    ('number_taken', errors.InsoleNumberTaken),
+    ('retired', errors.InsoleRetired),
+    ('reading_in_future', errors.InsoleReadingInFuture),
+    ('cursor_invalid', errors.InsoleCursorInvalid),
+)
+_TERMINAL_OPERATION_ERRORS.update({
+    ('/v1/inventory/insoles', 'post'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.InsoleIdentityRegistered,
+        errors.InsoleNumberTaken, errors.IdempotencyConflict),
+    ('/v1/inventory/insoles', 'get'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.InsoleCursorInvalid),
+    ('/v1/inventory/insoles/{insole_id}/reports', 'post'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound,
+        errors.InsoleRetired, errors.InsoleReadingInFuture),
+    ('/v1/inventory/insoles/{insole_id}/retire', 'post'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
+})
 
 def _install_schema(model, schemas):
     schema = model.model_json_schema(ref_template='#/components/schemas/{model}')
@@ -211,7 +237,8 @@ def build_vectors():
             'public_key_base64': base64.b64encode(public).decode('ascii'),
             'canonical_hex': canonical.hex(), 'signature_base64': signed.signature,
             'negative_cases': ['modified_document', 'modified_signature', 'unknown_key_id']},
-        'terminal': terminal_vectors}
+        'terminal': terminal_vectors,
+        'insole_inventory': _insole_vectors(meta)}
 
 
 def _terminal_vectors(meta):
@@ -271,6 +298,135 @@ def _terminal_vectors(meta):
             ]},
     }
 
+
+
+def _insole_vectors(meta):
+    """Declarative RAY-778 vectors; cloud tests replay every scenario."""
+    left_mac, right_mac = 'C0:FF:EE:00:00:01', 'C0:FF:EE:00:00:02'
+
+    def node(value, *, kind='mac', firmware='1.4.2'):
+        return {'identity': {'kind': kind, 'value': value, 'provenance': 'ble_advertisement'},
+                'firmware_version': firmware}
+
+    registration = {'institution_number': 'A-001', 'size': 38,
+                    'left': node(left_mac), 'right': node(right_mac)}
+    at = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+    record = insole.InsoleRecord(
+        insole_id=UUID(int=50), institution_number='A-001', size=38,
+        left=insole.InsoleNode(**node(left_mac), battery=insole.StoredBatteryReading(
+            millivolts=3987, percent=82, read_at=at,
+            reported_by_client_installation_id=UUID(int=40))),
+        right=insole.InsoleNode(**node(right_mac), battery=insole.StoredBatteryReading(
+            millivolts=3712, percent=55, read_at=at,
+            reported_by_client_installation_id=UUID(int=40))),
+        state=insole.InsoleState.IN_USE, state_observed_at=at,
+        holder=insole.InsoleHolder(client_installation_id=UUID(int=40),
+                                   terminal_name='Front desk'),
+        registered_at=at, registered_by_client_installation_id=UUID(int=40),
+        revision=3, updated_at=at).model_dump(mode='json')
+    envelopes = {}
+    for name, error_type in _INSOLE_ERRORS:
+        details = ({'existing': record} if error_type in (
+            errors.InsoleIdentityRegistered, errors.InsoleNumberTaken) else {})
+        envelopes[name] = {'http_status': error_type.http_status, 'body': {'error': {
+            'code': error_type.code, 'message': 'Synthetic contract fixture',
+            'retryable': error_type.retryable, 'action': error_type.action,
+            'details': details}, 'meta': meta}}
+
+    def merge(name, stored, incoming, applied):
+        return {'name': name, 'stored_offset_seconds': stored,
+                'incoming_offset_seconds': incoming, 'expect_applied': applied}
+
+    return {
+        'errors': envelopes,
+        'authentication': {
+            'credential': 'terminal access token (POST /v1/access/terminal-activate)',
+            'scope': 'tenant of the terminal; any ACTIVE terminal of the tenant may '
+                     'register, report and retire',
+            'other_tenant_insole': {'http_status': 404, 'code': errors.ResourceNotFound.code},
+            'revoked_terminal': {'http_status': 401, 'code': errors.TerminalRevoked.code}},
+        'registration_request': registration,
+        'record': record,
+        'registration': {
+            'request_headers': {'Idempotency-Key': 'fixture:insole:A-001'},
+            'idempotency_key_scope': 'registering client_installation_id',
+            'initial_status': 201, 'replay_status': 200,
+            'initial_idempotent_replay': False, 'replay_idempotent_replay': True,
+            'replay_returns': 'same insole_id at its current revision',
+            'same_key_different_request_error': errors.IdempotencyConflict.code,
+            'identity_compare': 'kind + value, exact; provenance is not compared',
+            'mac_pattern': insole.INSOLE_MAC_PATTERN,
+            'non_canonical_mac_examples': ['c0:ff:ee:00:00:01', 'C0-FF-EE-00-00-01',
+                                           'C0FFEE000001'],
+            'non_canonical_mac_status': 422,
+            # Steps: register registration_request, then register `attempt` with a new key.
+            'scenarios': [
+                {'name': 'same_pair_other_terminal', 'attempt': registration,
+                 'expect': {'http_status': 200, 'idempotent_replay': True,
+                            'same_insole_id': True}},
+                {'name': 'same_mac_other_number',
+                 'attempt': {**registration, 'institution_number': 'A-002'},
+                 'expect': {'http_status': 409,
+                            'code': errors.InsoleIdentityRegistered.code,
+                            'existing_institution_number': 'A-001'}},
+                {'name': 'same_right_mac_on_left_other_number',
+                 'attempt': {**registration, 'institution_number': 'A-003',
+                             'left': node(right_mac), 'right': node('C0:FF:EE:00:00:09')},
+                 'expect': {'http_status': 409,
+                            'code': errors.InsoleIdentityRegistered.code,
+                            'existing_institution_number': 'A-001'}},
+                {'name': 'same_number_other_mac',
+                 'attempt': {**registration, 'left': node('C0:FF:EE:00:00:03'),
+                             'right': node('C0:FF:EE:00:00:04')},
+                 'expect': {'http_status': 409, 'code': errors.InsoleNumberTaken.code,
+                            'existing_institution_number': 'A-001'}},
+                {'name': 'same_number_one_side_changed',
+                 'attempt': {**registration, 'right': node('C0:FF:EE:00:00:05')},
+                 'expect': {'http_status': 409, 'code': errors.InsoleNumberTaken.code,
+                            'existing_institution_number': 'A-001'}},
+                {'name': 'serial_identity_new_pair',
+                 'attempt': {'institution_number': 'A-004', 'size': 40,
+                             'left': node('SN-0001', kind='serial', firmware=None),
+                             'right': node('SN-0002', kind='serial', firmware=None)},
+                 'expect': {'http_status': 201, 'idempotent_replay': False}},
+            ],
+            'precedence': ['identity owned by another number (left, then right)',
+                           'number owned by other identities']},
+        'report_request': {
+            'state': {'state': 'in_use', 'observed_at': '2026-10-20T08:00:00Z'},
+            'left': {'millivolts': 3987, 'percent': 82, 'read_at': '2026-10-20T08:00:00Z'},
+            'right': {'millivolts': 3712, 'percent': 55, 'read_at': '2026-10-20T08:00:00Z'}},
+        'merge': {
+            'rule': 'newer device-side time wins',
+            'granularity': ['state', 'left', 'right'],
+            'equal_time': 'not applied; the stored reading stands',
+            'device_time_fields': {'state': 'observed_at', 'left': 'read_at',
+                                   'right': 'read_at'},
+            'max_future_skew_seconds': insole.INSOLE_READING_MAX_FUTURE_SKEW_SECONDS,
+            'holder': 'reporting terminal while state is in_use, otherwise null',
+            'reportable_states': [state.value for state in insole.ReportedInsoleState],
+            'retired_reports_error': errors.InsoleRetired.code,
+            # Offsets are seconds relative to a common base time.
+            'scenarios': [
+                merge('newer_reading_applies', 0, 60, True),
+                merge('late_stale_reading_ignored', 60, 0, False),
+                merge('equal_time_not_applied', 60, 60, False),
+                merge('first_reading_applies', None, 0, True),
+            ]},
+        'download': {
+            'route': 'GET /v1/inventory/insoles?cursor=&limit=',
+            'cursor': 'opaque; omit or empty for a full download from the beginning',
+            'order': 'revision ascending; each pair appears once, at its latest revision',
+            'clock_source': 'server-assigned per-tenant revision sequence, never wall clock',
+            'deletion': 'none; retired pairs are delivered with state retired',
+            'next_cursor': 'always returned; unchanged when the page is empty',
+            'default_limit': insole.INSOLE_PAGE_DEFAULT_LIMIT,
+            'max_limit': insole.INSOLE_PAGE_MAX_LIMIT,
+            'invalid_cursor_error': errors.InsoleCursorInvalid.code,
+            'invalid_cursor_example': 'bm90LWEtY3Vyc29y',
+            'out_of_range_cursor_example': base64.urlsafe_b64encode(
+                b'insole-cursor/1:99999999999999999999').rstrip(b'=').decode('ascii')},
+    }
 
 def main():
     root = Path(__file__).resolve().parents[1] / 'contracts' / 'mobile'

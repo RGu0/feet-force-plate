@@ -212,7 +212,12 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON iam.access_terminals, iam.terminal_refresh_sessions,
      iam.terminal_directory, iam.terminal_refresh_directory
      TO ffp_seed_backup;"
-apply_migration screening.upload_migration_permits_recovery_binding "$release_source/cloud/migrations/0013_recovery_bound_migration_permits.sql"
+apply_migration device.insole_pairs "$release_source/cloud/migrations/0013_insole_inventory.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON device.insole_revision_counters, device.insole_pairs,
+     device.insole_identities, device.insole_registration_keys
+     TO ffp_seed_backup;"
+apply_migration screening.upload_migration_permits_recovery_binding "$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
      ops.identity_recovery_comparisons, ops.identity_recovery_registrations

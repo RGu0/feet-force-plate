@@ -23,6 +23,8 @@ from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
 from cloud.access_control.terminal_service import TerminalAccessService
+from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
+from cloud.insole_inventory.service import InsoleInventoryService
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     PlatformAccessTokenIssuer,
@@ -336,6 +338,9 @@ async def build_seed_app(
             tenant_tokens=tenant_tokens,
             terminal_access=terminal_access,
             terminal_tokens=terminal_tokens,
+            insole_inventory=InsoleInventoryService(
+                PostgresInsoleInventoryRepository(activation_pool), access_repository
+            ),
             hardware_leases=HardwareLeaseService(access_repository),
             capture_grants=CaptureGrantService(data_repository),
             platform_identities=platform_identities,
