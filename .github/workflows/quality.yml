@@ -17,9 +17,12 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux Qt runtime
+      - name: Install Linux Qt and PTY runtime
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libegl1
+        run: sudo apt-get update && sudo apt-get install --yes libegl1 socat
+      - name: Install macOS PTY runtime
+        if: runner.os == 'macOS'
+        run: brew install socat
       - uses: astral-sh/setup-uv@v6
         with:
           version: "latest"

@@ -13,9 +13,22 @@ from scripts.verify_seed_live import AcceptanceState, Api, _after
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _bash_is_usable() -> bool:
+    # On Windows, PATH may resolve bash to the WSL launcher with no distribution.
+    bash = shutil.which("bash")
+    if bash is None:
+        return False
+    try:
+        return subprocess.run([bash, "-c", "true"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 requires_bash = pytest.mark.skipif(
-    shutil.which("bash") is None,
-    reason="live seed acceptance shell helpers require bash",
+    not _bash_is_usable(),
+    reason="live seed acceptance shell helpers require a working bash",
 )
 
 

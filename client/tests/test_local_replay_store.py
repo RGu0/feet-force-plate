@@ -29,6 +29,7 @@ from client.workflow.participant import (
 from client.workflow.participant import SubjectLookupRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import default_standard_protocol
+from client.tests.credential_vault_support import requires_system_credential_vault
 
 
 class _MemoryKeyring:
@@ -64,6 +65,7 @@ class _Report:
         return '{"subject":"secret-1234","kind":"V1_REPLAY_DEBUG"}'
 
 
+@requires_system_credential_vault
 def test_local_replay_store_writes_encrypted_versioned_local_analysis_result(
     tmp_path: Path,
 ) -> None:
@@ -125,6 +127,7 @@ def test_local_replay_store_writes_encrypted_versioned_local_analysis_result(
     )
 
 
+@requires_system_credential_vault
 def test_local_replay_report_is_dual_encrypted_and_readable_after_reopen(tmp_path: Path) -> None:
     keyring = _MemoryKeyring()
     server = generate_test_keypair()
@@ -147,6 +150,7 @@ def test_local_replay_report_is_dual_encrypted_and_readable_after_reopen(tmp_pat
     assert "secret-1234" in reopened.load_report("report-42", 1)
 
 
+@requires_system_credential_vault
 def test_local_replay_store_records_each_completed_stage(tmp_path: Path) -> None:
     keyring = _MemoryKeyring()
     server = generate_test_keypair()
@@ -173,6 +177,7 @@ def test_local_replay_store_records_each_completed_stage(tmp_path: Path) -> None
     ]
 
 
+@requires_system_credential_vault
 def test_local_replay_store_encrypts_updated_profile_fields(tmp_path: Path) -> None:
     keyring = _MemoryKeyring()
     server = generate_test_keypair()
@@ -201,6 +206,7 @@ def test_local_replay_store_encrypts_updated_profile_fields(tmp_path: Path) -> N
     assert b'"age_band":{"state":"PROVIDED","value":"60-69"}' in restored
 
 
+@requires_system_credential_vault
 def test_local_identifier_index_is_hmac_and_isolated_by_tenant_issuer_and_type(tmp_path: Path) -> None:
     store = LocalReplayStore(tmp_path, query_index_key=b"q" * 32)
     number = "REC-1001"
@@ -227,6 +233,7 @@ def test_local_identifier_index_is_hmac_and_isolated_by_tenant_issuer_and_type(t
     assert stored != __import__("hashlib").sha256(number.encode()).digest()
 
 
+@requires_system_credential_vault
 def test_duplicate_local_identifier_is_not_auto_merged_or_partially_created(
     tmp_path: Path,
 ) -> None:
@@ -372,6 +379,7 @@ def test_local_consent_reconfirmation_preserves_prior_receipt(
     assert store.db.execute("SELECT COUNT(*) FROM consents").fetchone()[0] == 2
 
 
+@requires_system_credential_vault
 def test_local_consent_cannot_be_created_for_a_subject_in_another_tenant(
     tmp_path: Path,
 ) -> None:
@@ -466,6 +474,7 @@ def test_legacy_single_consent_is_migrated_without_losing_reuse(
     } == {"consent_id", "tenant", "subject_id", "payload"}
 
 
+@requires_system_credential_vault
 def test_unreadable_legacy_consent_is_retained_for_controlled_recovery(
     tmp_path: Path,
 ) -> None:
@@ -567,6 +576,7 @@ def test_local_subject_access_and_export_append_encrypted_audit_events(
     ]
 
 
+@requires_system_credential_vault
 def test_local_subject_audit_rejects_cross_tenant_writes(tmp_path: Path) -> None:
     store = LocalReplayStore(tmp_path, query_index_key=b"a" * 32)
     subject = store.create(
@@ -592,6 +602,7 @@ def test_local_subject_audit_rejects_cross_tenant_writes(tmp_path: Path) -> None
     ).fetchone()[0] == 0
 
 
+@requires_system_credential_vault
 def test_local_replay_session_keeps_encrypted_protocol_and_fixture_provenance(tmp_path: Path) -> None:
     keyring = _MemoryKeyring()
     server = generate_test_keypair()

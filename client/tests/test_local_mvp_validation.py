@@ -5,8 +5,10 @@ from pathlib import Path
 
 from client.app import local_entry
 from client.app import local_mvp_validation
+from client.tests.credential_vault_support import requires_system_credential_vault
 
 
+@requires_system_credential_vault
 def test_local_mvp_validation_exports_the_complete_offline_evidence_bundle(
     qapp, tmp_path: Path
 ) -> None:
@@ -52,6 +54,7 @@ def test_local_mvp_validation_exports_the_complete_offline_evidence_bundle(
     } == {path.name for path in output_dir.glob("*.png")}
 
 
+@requires_system_credential_vault
 def test_fixture_failure_writes_an_offline_failure_summary_without_a_report(
     monkeypatch, qapp, tmp_path: Path
 ) -> None:

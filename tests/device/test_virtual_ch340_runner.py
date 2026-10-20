@@ -25,6 +25,20 @@ from scripts import run_dop4864_virtual_ch340 as runner_module
 from scripts.run_dop4864_virtual_ch340 import FRAME_INTERVAL_SECONDS, socat_command
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _run_runner_from_repository(monkeypatch) -> None:
+    """Let the runner script import ``client`` however pytest was launched."""
+
+    inherited = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join([str(PROJECT_ROOT), *([inherited] if inherited else [])]),
+    )
+    monkeypatch.chdir(PROJECT_ROOT)
+
+
 def test_runner_uses_fixed_endpoint_aliases_and_nominal_rate() -> None:
     command = socat_command()
 
@@ -56,6 +70,7 @@ def test_runner_reschedules_after_a_delayed_write(monkeypatch) -> None:
 @pytest.mark.skipif(os.name == "nt", reason="PTY runner requires POSIX socat")
 def test_runner_stream_decodes_as_controlled_empty_48_by_64_frame(monkeypatch) -> None:
     monkeypatch.setenv(VIRTUAL_CH340_ENVIRONMENT_VARIABLE, "1")
+    _run_runner_from_repository(monkeypatch)
     runner = subprocess.Popen(
         [sys.executable, "scripts/run_dop4864_virtual_ch340.py"],
         env=os.environ.copy(),
@@ -96,6 +111,7 @@ def test_runner_passes_production_startup_validation_with_development_switch(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(VIRTUAL_CH340_ENVIRONMENT_VARIABLE, "1")
+    _run_runner_from_repository(monkeypatch)
     runner = subprocess.Popen(
         [sys.executable, "scripts/run_dop4864_virtual_ch340.py"],
         env=os.environ.copy(),
