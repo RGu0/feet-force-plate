@@ -48,7 +48,7 @@ class RuntimePathValidationTests(unittest.TestCase):
 
     def test_fixed_runtime_path_without_reparse_components_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ray513-runtime-safe-") as directory:
-            runtime_root = Path(directory) / "runtime"
+            runtime_root = Path(directory).resolve() / "runtime"
             with patch.object(postgres_test, "RUNTIME_ROOT", runtime_root):
                 postgres_test.validate_target(
                     postgres_test.HOST,
@@ -60,7 +60,7 @@ class RuntimePathValidationTests(unittest.TestCase):
 
     def test_ancestor_junction_is_rejected_before_private_runtime_writes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ray513-runtime-ancestor-junction-") as directory:
-            fixture_root = Path(directory)
+            fixture_root = Path(directory).resolve()
             redirected_root = fixture_root / "redirected-local-target"
             junction = fixture_root / "ancestor-junction"
             self._create_reparse_directory(junction, redirected_root)
@@ -71,7 +71,6 @@ class RuntimePathValidationTests(unittest.TestCase):
                 patch.object(postgres_test, "DATA_ROOT", runtime_root / "data"),
                 patch.object(postgres_test, "PRIVATE_ROOT", runtime_root / "private"),
                 patch.object(postgres_test, "LOG_ROOT", runtime_root / "logs"),
-                patch.object(postgres_test.os, "name", "nt"),
                 patch.object(postgres_test, "_verify_acl") as verify_acl,
                 patch.object(postgres_test, "_verify_acls") as verify_acls,
             ):
@@ -84,7 +83,7 @@ class RuntimePathValidationTests(unittest.TestCase):
 
     def test_runtime_leaf_reparse_point_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ray513-runtime-leaf-junction-") as directory:
-            fixture_root = Path(directory)
+            fixture_root = Path(directory).resolve()
             target = fixture_root / "target"
             target.mkdir()
             runtime_root = fixture_root / "runtime-junction"
@@ -142,7 +141,10 @@ class RunFailureTests(unittest.TestCase):
 
     def test_acl_verification_batches_paths_into_one_process(self) -> None:
         paths = [Path(r"C:\private\data"), Path(r"C:\private\credentials.json")]
-        with patch.object(postgres_test, "_run") as run:
+        with (
+            patch.object(postgres_test.shutil, "which", return_value="pwsh"),
+            patch.object(postgres_test, "_run") as run,
+        ):
             postgres_test._verify_acls(paths)
         arguments = run.call_args.args[0]
         self.assertEqual(arguments[-3:], ["-Action", "verify", "-Path", ";".join(map(str, paths))][-3:])
