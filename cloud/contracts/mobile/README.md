@@ -44,6 +44,8 @@ using it, and retry a lost refresh response with the previous token inside the
 window. Every `refresh_rotation` and `seats` scenario is replayed against the
 server in `cloud/tests/test_terminal_access.py`.
 
-Dart consumption and iOS/Android real TLS evidence remain separate acceptance
-steps. Current `gait-insole-flutter/packages/cloud_client` is a placeholder and
-has not yet run these fixtures. No mobile pass is implied by Python export tests.
+Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart
+consumption of these fixtures in gait-insole-flutter (PR 7). That evidence
+predates the RAY-656 `terminal` section; client alignment for it is tracked by
+RAY-657. iOS/Android real TLS evidence remains a separate acceptance step, and
+no mobile pass is implied by Python export tests.
