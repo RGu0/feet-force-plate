@@ -6,8 +6,8 @@ Generate through the governed `build` action; the test gate detects drift.
 Consume the JSON files at a pinned Git commit/tag and retain their SHA-256 with
 the client build. Versioned source distributions include these tracked files;
 CI also archives them with commit identity. This export does not claim that
-gait-insole routes, hardware registration or institutional access rules have
-been deployed.
+any route, including the insole inventory routes, hardware registration or
+institutional access rules, has been deployed.
 
 The server wraps success in `data` + `meta`; failures use `error` + `meta`.
 Foundation's top-level `ErrorEnvelope` is a different mechanism. Follow both
@@ -43,6 +43,27 @@ family (`E-TRM-401-REFRESH-REPLAYED`). Persist the newest refresh token before
 using it, and retry a lost refresh response with the previous token inside the
 window. Every `refresh_rotation` and `seats` scenario is replayed against the
 server in `cloud/tests/test_terminal_access.py`.
+
+RAY-778 adds institutional insole inventory routes under `/v1/inventory/insoles`
+(register, cursor download, report, retire), all authenticated with the terminal
+bearer token, plus the `insole_inventory` vector section. These routes are not
+part of the `v0.2.0` release assets; pin a commit or a later release.
+- Register with an `Idempotency-Key` (scoped to the registering terminal): 201 new,
+  200 replay of the same pair at its current revision, `E-API-409` for a changed
+  request under the same key. `E-INV-409-IDENTITY-REGISTERED` (same MAC/serial,
+  other number) and `E-INV-409-NUMBER-TAKEN` (same number, other identities)
+  carry the existing pair in `error.details.existing`.
+- Reports merge `state`, `left` and `right` independently: the newer device-side
+  time wins, and an equal time keeps the stored value. Battery carries both raw
+  `millivolts` and the client's `percent`; recompute percent from mV when the
+  discharge curve changes. `applied` says which groups took effect.
+- Download: start without `cursor`, store `next_cursor` from every page, and
+  continue while `has_more`. Items are ordered by server `revision`; pairs are
+  never deleted and arrive as `retired` instead. On `E-INV-400-CURSOR-INVALID`,
+  clear the cursor and download again from the start.
+Every `insole_inventory` scenario is replayed against the server in
+`cloud/tests/test_insole_inventory_api.py`; client alignment is tracked by
+RAY-607.
 
 Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart
 consumption of these fixtures in gait-insole-flutter (PR 7). That evidence

@@ -7,7 +7,7 @@ import hashlib
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -53,6 +53,11 @@ from shared.contracts.access_control import (
     ProvisionTenantRequest,
     RefreshRequest,
     SensitiveAccessGrantRequest,
+)
+from shared.contracts.insole_inventory import (
+    INSOLE_PAGE_MAX_LIMIT,
+    InsoleRegistrationRequest,
+    InsoleReportRequest,
 )
 from shared.contracts.terminal_access import (
     TerminalActivationRequest,
@@ -114,6 +119,7 @@ class ServiceContainer:
     report_copies: object | None = None
     terminal_access: object | None = None
     terminal_tokens: TerminalAccessTokenIssuer | None = None
+    insole_inventory: object | None = None
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -187,6 +193,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
             "subject_uuid",
             "validity_status",
             "object_key",
+            "existing",
         }
         details = {key: value for key, value in exc.details.items() if key in allowed_details}
         return JSONResponse(
@@ -443,6 +450,54 @@ def create_app(container: ServiceContainer) -> FastAPI:
             result = await container.terminal_access.revoke_terminal(
                 context, client_installation_id
             )
+            return _data_response(request, result)
+
+    if container.insole_inventory is not None and container.terminal_tokens is not None:
+
+        # RAY-778: institutional insole inventory, terminal credentials only.
+        @app.post("/v1/inventory/insoles")
+        async def insole_register(
+            request: Request,
+            body: InsoleRegistrationRequest,
+            context: TerminalAccessDependency,
+            idempotency_key: Annotated[
+                str, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+            ],
+        ):
+            result, created = await container.insole_inventory.register(
+                context, body, idempotency_key
+            )
+            return _data_response(request, result, 201 if created else 200)
+
+        @app.get("/v1/inventory/insoles")
+        async def insole_changes(
+            request: Request,
+            context: TerminalAccessDependency,
+            cursor: Annotated[str | None, Query(max_length=128)] = None,
+            limit: Annotated[int | None, Query(ge=1, le=INSOLE_PAGE_MAX_LIMIT)] = None,
+        ):
+            result = await container.insole_inventory.changes(
+                context, cursor=cursor, limit=limit
+            )
+            return _data_response(request, result)
+
+        @app.post("/v1/inventory/insoles/{insole_id}/reports")
+        async def insole_report(
+            request: Request,
+            insole_id: UUID,
+            body: InsoleReportRequest,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.insole_inventory.report(context, insole_id, body)
+            return _data_response(request, result)
+
+        @app.post("/v1/inventory/insoles/{insole_id}/retire")
+        async def insole_retire(
+            request: Request,
+            insole_id: UUID,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.insole_inventory.retire(context, insole_id)
             return _data_response(request, result)
 
     if container.validation_telemetry is not None and container.tenant_tokens is not None:

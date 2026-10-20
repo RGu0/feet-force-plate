@@ -60,6 +60,14 @@ Lowering it blocks new activations only; active terminals keep their seats.
 --reason-code` (Platform write role, audited as `terminal.revoke`) free a seat
 held by a lost, reinstalled or expired terminal.
 
+Institutional insole inventory (RAY-778) is served under `/v1/inventory/insoles`
+to terminal bearer tokens only; any ACTIVE terminal of the tenant registers,
+reports and retires. Seed composition wires `InsoleInventoryService` to
+`PostgresInsoleInventoryRepository` on the activation pool, so migration
+`0013_insole_inventory.sql` must be applied before the seed release starts
+(`install-seed-release.sh` does this and grants the backup role SELECT). Pairs
+are retire-only; there is no delete route or grant.
+
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful
 provision response, and inspection never prints hashes, DSNs, private keys, or
