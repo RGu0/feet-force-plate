@@ -190,6 +190,16 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
     assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
     assert text.index("0011_controlled_identity_recovery.sql") > text.index("0010_local_basic_report_copies.sql")
+    assert text.index("0012_terminal_activation.sql") > text.index("0011_controlled_identity_recovery.sql")
+    assert text.index("0013_insole_inventory.sql") > text.index("0012_terminal_activation.sql")
+    assert text.index("0014_recovery_bound_migration_permits.sql") > text.index("0013_insole_inventory.sql")
+    # 0014 only alters an existing table, so its idempotence marker must be a
+    # column; a constraint name is not a relation and to_regclass never sees it.
+    assert (
+        "apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "
+        '"$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"'
+    ) in text
+    assert "upload_migration_permits_recovery_binding \"" not in text
     assert text.index("to_regclass('ops.session_holds')") < text.index("0011_controlled_identity_recovery.sql")
     assert text.index("GRANT SELECT ON ops.identity_recovery_cases") > text.index(
         "0011_controlled_identity_recovery.sql"

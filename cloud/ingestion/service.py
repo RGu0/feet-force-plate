@@ -13,6 +13,7 @@ from cloud.api.errors import (
     SegmentDigestConflict,
 )
 from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.cloud import (
     ManifestCompletionResponse,
     ReceivedSegment,
@@ -58,15 +59,16 @@ class IngestionService:
         context: IngestionPrincipal | TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
         context = coerce_ingestion_principal(context)
-        context.ensure_can_start_new()
+        context.ensure_can_upload()
         if request.versions.payload_schema not in self._payload_schemas:
             raise SchemaUnsupported(
                 "客户端原始分段模式不受支持",
                 schema_version=request.versions.payload_schema,
             )
-        return await self._repository.create_session(context, request, idempotency_key)
+        return await self._repository.create_session(context, request, idempotency_key, authorization)
 
     async def put_segment(
         self,
@@ -142,6 +144,7 @@ class IngestionService:
         self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SegmentListResponse:
         context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
         accepted = await self._repository.list_segments(context, session_id)
         indices = [record.metadata.segment_index for record in accepted]
         expected_count = await self._repository.expected_segment_count(context, session_id)
@@ -213,4 +216,5 @@ class IngestionService:
         self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
         context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
         return await self._repository.status(context, session_id)

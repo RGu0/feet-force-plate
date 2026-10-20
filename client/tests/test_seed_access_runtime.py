@@ -181,6 +181,37 @@ class ClientAccessRuntimeTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
+    def test_capture_replenishment_is_new_test_only_and_offline_preserves_pool(self):
+        from types import SimpleNamespace
+        from client.cloud.access_client import AccessServiceUnavailable, AccessDenied
+        from shared.contracts.capture_grants import CaptureGrant, CaptureGrantBatchResponse
+
+        session = self.runtime.login("seed-clinic", "correct-horse-battery-staple")
+        calls = []
+        saved = []
+        institution = SimpleNamespace(
+            available_capture_grants=lambda tenant, installation: 48,
+            add_capture_grants=lambda *args: saved.append(args),
+        )
+        item = CaptureGrant(session_id=uuid4(), token="replenished-private-token-123456")
+        def issue(token, count):
+            calls.append((token, count))
+            return CaptureGrantBatchResponse(grants=(item,))
+        self.client.issue_capture_grants = issue
+        self.runtime.replenish_capture_grants(institution, session)
+        assert calls == [(session.access_token, 2)]
+        assert saved == [(session.tenant_id, session.client_installation_id, (item,))]
+        for error in (AccessServiceUnavailable("offline"), AccessDenied("suspended")):
+            def unavailable(*_args):
+                raise error
+            self.client.issue_capture_grants = unavailable
+            self.runtime.replenish_capture_grants(institution, session)
+        assert len(saved) == 1
+        from dataclasses import replace
+        self.runtime._session = replace(session, tenant_id=str(uuid4()))
+        with self.assertRaisesRegex(ValueError, "binding changed"):
+            self.runtime.replenish_capture_grants(institution, session)
+
     def test_activation_persists_metadata_and_keyring_refresh_only(self) -> None:
         session = self.runtime.activate_inventory(
             "Seed Clinic",

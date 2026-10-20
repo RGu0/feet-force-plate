@@ -173,6 +173,8 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
 apply_migration_if_column_missing sales inventory_batches activation_binding_mode "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
 apply_migration_if_column_missing screening session_manifests eligibility_reason "$release_source/cloud/migrations/0007_completion_receipt_fields.sql"
+apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"
+apply_migration_if_column_missing screening sessions expected_manifest_sha256 "$release_source/cloud/migrations/0010_session_expected_manifest.sql"
 
 role_wrapper="$install_root/roles.sql"
 {
@@ -205,10 +207,6 @@ if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT to_regcla
     exit 1
 fi
 apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0011_controlled_identity_recovery.sql"
-runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
-    "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
-     ops.identity_recovery_comparisons, ops.identity_recovery_registrations
-     TO ffp_seed_backup;"
 apply_migration iam.access_terminals "$release_source/cloud/migrations/0012_terminal_activation.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON iam.access_terminals, iam.terminal_refresh_sessions,
@@ -218,6 +216,11 @@ apply_migration device.insole_pairs "$release_source/cloud/migrations/0013_insol
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON device.insole_revision_counters, device.insole_pairs,
      device.insole_identities, device.insole_registration_keys
+     TO ffp_seed_backup;"
+apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
+     ops.identity_recovery_comparisons, ops.identity_recovery_registrations
      TO ffp_seed_backup;"
 
 release_target="/opt/feetforceplate/releases/$release_sha"

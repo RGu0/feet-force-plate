@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
 import hashlib
+import json
 from pathlib import Path
 import re
 import time
@@ -32,6 +33,7 @@ from shared.contracts.client_sync import (
     canonical_sha256,
     encode_segment_metadata,
 )
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
@@ -155,6 +157,7 @@ class IngestionClient(Protocol):
     def register_recovery(
         self, access_token: str, case_id: UUID,
         request: RecoveryRegistrationRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> RecoveryRegistrationResult: ...
 
     def get_status(
@@ -180,7 +183,8 @@ class IngestionClient(Protocol):
     ) -> ConsentResponse: ...
 
     def create_session(
-        self, access_token: str, request: SessionCreateRequest, idempotency_key: str
+        self, access_token: str, request: SessionCreateRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse: ...
 
     def list_segments(
@@ -338,6 +342,7 @@ class PersistentUploadQueue:
         try:
             envelope = self._store.sync_handoff_envelope(handoff.session_id)
             recovery = self._store.subject_recovery_authorization(handoff.session_id)
+            migration_binding = self._store.legacy_migration_binding(handoff.session_id)
         except KeyProviderUnavailable as exc:
             raise UploadRetryable(
                 "local upload key is temporarily unavailable",
@@ -346,6 +351,22 @@ class PersistentUploadQueue:
         except Exception as exc:
             raise UploadConflict("formal upload envelope is unavailable") from exc
 
+        try:
+            credential = self._store.sync_handoff_credential(handoff.session_id)
+            local = self._local_segments(
+                handoff, envelope, require_manifest=credential is not None
+            )
+        except KeyProviderUnavailable as exc:
+            raise UploadRetryable(
+                "local upload key is temporarily unavailable", error_code="E-SYN-503"
+            ) from exc
+        manifest = self._manifest_for(handoff, local)
+        digest = canonical_sha256(manifest)
+        try:
+            self._store.record_expected_cloud_manifest_sha256(handoff.session_id, digest)
+        except ValueError as exc:
+            raise UploadConflict("immutable cloud manifest changed") from exc
+        session_request = envelope.session_request()
         if recovery is not None:
             if (
                 recovery.schema_version != "subject-recovery/2"
@@ -356,10 +377,30 @@ class PersistentUploadQueue:
             ):
                 raise UploadBlocked("recovery lacks a server-issued match receipt")
             consent = recovery.replacement_consent
-            session_request = envelope.session_request().model_copy(update={
+            session_request = session_request.model_copy(update={
                 "subject_uuid": recovery.cloud_subject_uuid,
                 "consent_record_id": consent.consent_record_id,
             })
+        if migration_binding is not None:
+            expected_consent = recovery.replacement_consent if recovery is not None else envelope.consent
+            if (
+                migration_binding.session_id != envelope.session_id
+                or migration_binding.original_envelope_sha256 != canonical_sha256(envelope)
+                or migration_binding.reconciliation_case_id != (recovery.case_id if recovery else None)
+                or migration_binding.original_subject_uuid != envelope.subject.subject_uuid
+                or migration_binding.final_subject_uuid != session_request.subject_uuid
+                or migration_binding.final_consent_id != session_request.consent_record_id
+                or migration_binding.final_consent_sha256 != canonical_sha256(expected_consent)
+                or migration_binding.request_sha256 != canonical_sha256(session_request)
+                or migration_binding.manifest_sha256 != digest
+            ):
+                raise UploadBlocked("legacy migration approval no longer matches this handoff", error_code="E-SYN-428")
+            credential = migration_binding.permit
+        authorization = (
+            SessionAuthorization(**credential.model_dump(), manifest_sha256=digest)
+            if credential is not None else None
+        )
+        if recovery is not None:
             try:
                 registration = self._client.register_recovery(
                     access_token, recovery.case_id,
@@ -370,6 +411,7 @@ class PersistentUploadQueue:
                         consent=consent, session=session_request,
                     ),
                     f"recovery:{recovery.case_id}:{recovery.original_envelope_sha256}",
+                    authorization=authorization,
                 )
             except UploadConflict as exc:
                 # The server first checks idempotent replay. A 409 here means
@@ -379,6 +421,13 @@ class PersistentUploadQueue:
                     "recovery receipt was rejected; new verification is required",
                     error_code="E-AUT-403",
                 ) from exc
+            except UploadBlocked as exc:
+                if authorization is None and exc.error_code == "E-AUT-403":
+                    raise UploadBlocked(
+                        "legacy session requires manual migration approval",
+                        error_code="E-SYN-428",
+                    ) from exc
+                raise
             if (
                 registration.case_id != recovery.case_id
                 or registration.receipt_id != recovery.receipt_id
@@ -405,7 +454,6 @@ class PersistentUploadQueue:
                     error_code="E-SUB-409",
                 )
             consent = envelope.consent
-            session_request = envelope.session_request()
             consent_response = self._client.create_consent(
                 access_token, consent, f"consent:{canonical_sha256(consent)}",
             )
@@ -416,16 +464,19 @@ class PersistentUploadQueue:
                 or consent_response.revoked_at is not None
             ):
                 raise UploadConflict("cloud consent does not match upload authorization")
-            self._client.create_session(
-                access_token, session_request, f"session:{canonical_sha256(session_request)}",
-            )
-        try:
-            local = self._local_segments(handoff, envelope)
-        except KeyProviderUnavailable as exc:
-            raise UploadRetryable(
-                "local upload key is temporarily unavailable",
-                error_code="E-SYN-503",
-            ) from exc
+            try:
+                self._client.create_session(
+                    access_token, session_request,
+                    f"session:{canonical_sha256(session_request)}",
+                    **({"authorization": authorization} if authorization is not None else {}),
+                )
+            except UploadBlocked as exc:
+                if status is None and credential is None and exc.error_code == "E-AUT-403":
+                    raise UploadBlocked(
+                        "legacy session requires manual migration approval",
+                        error_code="E-SYN-428",
+                    ) from exc
+                raise
         remote = self._client.list_segments(access_token, envelope.session_id)
         self._require_segment_list(remote, envelope.session_id, local)
         remote_by_index = {item.index: item.sha256 for item in remote.received}
@@ -451,24 +502,6 @@ class PersistentUploadQueue:
                 segment=segment.metadata,
             )
 
-        manifest = SessionManifest(
-            segment_count=len(local),
-            total_frames=sum(item.metadata.frame_count for item in local.values()),
-            total_bytes=sum(item.metadata.size_bytes for item in local.values()),
-            segments=tuple(
-                ManifestSegment(
-                    index=index,
-                    sha256=item.metadata.sha256,
-                    size_bytes=item.metadata.size_bytes,
-                    frame_count=item.metadata.frame_count,
-                )
-                for index, item in sorted(local.items())
-            ),
-            ended_at=datetime.fromtimestamp(
-                handoff.ended_at_ns / 1_000_000_000, UTC
-            ),
-            local_quality_outcome=ValidityStatus.VALID,
-        )
         completion = self._client.complete_session(
             access_token,
             envelope.session_id,
@@ -492,6 +525,22 @@ class PersistentUploadQueue:
             )
         self._require_valid(final_status)
         return self._confirm(handoff)
+
+    @staticmethod
+    def _manifest_for(handoff: SyncHandoff, local: dict[int, _LocalSegment]) -> SessionManifest:
+        return SessionManifest(
+            segment_count=len(local),
+            total_frames=sum(item.metadata.frame_count for item in local.values()),
+            total_bytes=sum(item.metadata.size_bytes for item in local.values()),
+            segments=tuple(
+                ManifestSegment(index=index, sha256=item.metadata.sha256,
+                                size_bytes=item.metadata.size_bytes,
+                                frame_count=item.metadata.frame_count)
+                for index, item in sorted(local.items())
+            ),
+            ended_at=datetime.fromtimestamp(handoff.ended_at_ns / 1_000_000_000, UTC),
+            local_quality_outcome=ValidityStatus.VALID,
+        )
 
     def _confirm(self, handoff: SyncHandoff) -> UploadCycleOutcome:
         now_ns = self._now_ns()
@@ -630,8 +679,26 @@ class PersistentUploadQueue:
         self,
         handoff: SyncHandoff,
         envelope: FormalUploadEnvelope,
+        *,
+        require_manifest: bool = False,
     ) -> dict[int, _LocalSegment]:
         local: dict[int, _LocalSegment] = {}
+        # The promoted-file manifest binds original ciphertext before the first
+        # cloud digest is frozen. Its digest is distinct from the cloud manifest.
+        promoted_segments = None
+        manifest_path = self._root / "sessions" / handoff.session_id / "manifest.json"
+        if require_manifest and not manifest_path.is_file():
+            raise UploadConflict("promoted manifest is unavailable")
+        if manifest_path.exists():
+            try:
+                promoted = json.loads(manifest_path.read_bytes())
+                recorded_digest = promoted.pop("manifest_sha256")
+                digest = hashlib.sha256(json.dumps(promoted, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if recorded_digest != handoff.manifest_sha256 or digest != recorded_digest:
+                    raise ValueError("promoted manifest digest mismatch")
+                promoted_segments = {item["segment_id"]: item["ciphertext_sha256"] for item in promoted["segments"]}
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise UploadConflict("promoted manifest integrity verification failed") from exc
         try:
             records = self._store.sync_handoff_segments(handoff.session_id)
         except KeyError as exc:
@@ -658,6 +725,11 @@ class PersistentUploadQueue:
                 raise UploadConflict(
                     "sealed segments do not form one unambiguous session"
                 )
+            if restored.segment_id != record.segment_id or (
+                promoted_segments is not None
+                and promoted_segments.get(record.segment_id) != restored.ciphertext_sha256
+            ):
+                raise UploadConflict("sealed segment differs from promoted manifest")
             if (
                 restored.versions.get("payload_schema")
                 != envelope.versions.payload_schema
@@ -680,6 +752,8 @@ class PersistentUploadQueue:
             local[metadata.segment_index] = _LocalSegment(metadata, payload)
         if sorted(local) != list(range(len(local))):
             raise UploadConflict("local segments are not contiguous from index zero")
+        if promoted_segments is not None and len(promoted_segments) != len(local):
+            raise UploadConflict("promoted manifest segment count differs")
         return local
 
 
@@ -738,11 +812,17 @@ class HttpIngestionClient:
     def register_recovery(
         self, access_token: str, case_id: UUID,
         request: RecoveryRegistrationRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> RecoveryRegistrationResult:
+        headers = {"Idempotency-Key": idempotency_key}
+        if authorization is not None:
+            if authorization.session_id != request.session.session_id:
+                raise UploadBlocked("capture authorization session mismatch")
+            headers.update(authorization.headers())
         return self._model_request(
             "POST", f"/v1/identity-recovery/cases/{case_id}/register",
             RecoveryRegistrationResult, access_token,
-            headers={"Idempotency-Key": idempotency_key},
+            headers=headers,
             json=request.model_dump(mode="json"),
         )
 
@@ -785,20 +865,26 @@ class HttpIngestionClient:
         )
 
     def create_session(
-        self, access_token: str, request: SessionCreateRequest, idempotency_key: str
+        self, access_token: str, request: SessionCreateRequest, idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
         payload = request.model_dump(mode="json")
+        headers = {"Idempotency-Key": idempotency_key}
+        if authorization is not None:
+            if authorization.session_id != request.session_id:
+                raise UploadBlocked("capture authorization session mismatch")
+            headers.update(authorization.headers())
         try:
             return self._model_request(
                 "POST",
                 "/v1/sessions",
                 SessionCreateResponse,
                 access_token,
-                headers={"Idempotency-Key": idempotency_key},
+                headers=headers,
                 json=payload,
             )
         except UploadBlocked as exc:
-            if exc.error_code != "E-API-422":
+            if exc.error_code != "E-API-422" or authorization is not None:
                 raise
             legacy_payload = dict(payload)
             legacy_payload.pop("client_installation_id", None)
@@ -807,7 +893,7 @@ class HttpIngestionClient:
                 "/v1/sessions",
                 SessionCreateResponse,
                 access_token,
-                headers={"Idempotency-Key": idempotency_key},
+                headers=headers,
                 json=legacy_payload,
             )
 

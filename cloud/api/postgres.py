@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator
 from uuid import UUID, uuid4
 
 from cloud.api.auth import TerminalContext
+from shared.contracts.capture_grants import CaptureGrantBatchResponse, SessionAuthorization
+from cloud.ingestion.principal import coerce_ingestion_principal
 from cloud.api.errors import (
     ActivationCodeInvalid,
     IdempotencyConflict,
@@ -103,6 +107,7 @@ def _session_record(row: Any) -> SessionRecord:
         manifest_sha256=row["manifest_sha256"],
         manifest_object_key=row.get("manifest_object_key") if hasattr(row, "get") else None,
         aggregate_version=row["aggregate_version"],
+        expected_manifest_sha256=row.get("expected_manifest_sha256"),
     )
 
 
@@ -114,11 +119,219 @@ class PostgresPlatformRepository:
         pool,
         *,
         enrollment_pool=None,
+        platform_pool=None,
         idempotency_ttl: timedelta = timedelta(days=7),
     ) -> None:
         self._pool = pool
         self._enrollment_pool = enrollment_pool
+        self._platform_pool = platform_pool
         self._idempotency_ttl = idempotency_ttl
+
+    async def audit_migration_denial(self, context, request, decision):
+        if self._platform_pool is None:
+            raise RepositoryUnavailable("migration approval unavailable")
+        # The requested tenant may not exist. The global platform audit allows
+        # a null tenant while retaining the attempted IDs as non-sensitive UUIDs.
+        async with pool_transaction(self._platform_pool) as connection:
+            await connection.execute(
+                """INSERT INTO ops.access_audit_events
+                   (access_audit_event_id, actor_id, action, resource_id, occurred_at, details)
+                   VALUES ($1,$2,'UPLOAD_MIGRATION_PERMIT_REJECTED',$3,clock_timestamp(),$4::jsonb)""",
+                uuid4(), context.platform_identity_id, request.session_id,
+                json.dumps(dict(tenant_id=str(request.tenant_id), decision_code=decision,
+                                reason=request.reason, evidence_reference=request.evidence_reference)),
+            )
+
+    async def validate_migration_reconciliation(self, request) -> bool:
+        if self._platform_pool is None or request.reconciliation_reference is None:
+            return False
+        async with tenant_transaction(self._platform_pool, request.tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                request.tenant_id, request.session_id,
+            )
+            return bool(await connection.fetchval(
+                """SELECT EXISTS(
+                   SELECT 1 FROM ops.identity_recovery_cases c
+                   JOIN ops.identity_recovery_receipts r
+                     ON r.tenant_id=c.tenant_id AND r.case_id=c.case_id
+                   WHERE c.tenant_id=$1 AND c.case_id=$2 AND c.session_id=$3
+                     AND c.terminal_id=$4 AND c.status='MATCHED'
+                     AND c.original_subject_uuid=$5 AND c.cloud_subject_uuid=$6
+                     AND c.envelope_sha256=$7 AND r.receipt_id IS NOT NULL
+                     AND r.expires_at > clock_timestamp() AND r.consumed_at IS NULL
+                     AND r.terminal_id=c.terminal_id AND r.session_id=c.session_id
+                     AND r.original_subject_uuid=c.original_subject_uuid
+                     AND r.cloud_subject_uuid=c.cloud_subject_uuid
+                     AND r.envelope_sha256=c.envelope_sha256)""",
+                request.tenant_id, request.reconciliation_reference, request.session_id,
+                request.installation_id, request.original_subject_uuid,
+                request.final_subject_uuid, request.original_envelope_sha256,
+            ))
+
+    async def insert_migration_permit(self, context, request, token_sha256):
+        from shared.contracts.access_control import PlatformRole
+
+        if self._platform_pool is None:
+            raise RepositoryUnavailable("migration approval unavailable")
+        if PlatformRole.OWNER not in context.roles or context.expires_at <= datetime.now(UTC):
+            raise TenantAccessDenied("migration owner required")
+        async with tenant_transaction(self._platform_pool, request.tenant_id) as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
+                request.tenant_id, request.session_id,
+            )
+            owner = await connection.fetchval(
+                """SELECT i.platform_identity_id FROM iam.platform_identities i
+                   JOIN iam.platform_identity_role_bindings b USING (platform_identity_id)
+                   JOIN iam.platform_roles r USING (platform_role_id)
+                   WHERE i.platform_identity_id=$1 AND i.status='ACTIVE' AND i.token_version=$2
+                     AND $3::timestamptz > clock_timestamp()
+                     AND r.role_name='PLATFORM_OWNER' AND b.valid_from <= clock_timestamp()
+                     AND (b.valid_to IS NULL OR clock_timestamp() < b.valid_to)
+                   FOR SHARE OF i,b,r""", context.platform_identity_id, context.token_version, context.expires_at,
+            )
+            if owner is None:
+                raise TenantAccessDenied("migration owner required")
+            if request.identity_conflict:
+                matched = await connection.fetchval(
+                    """SELECT EXISTS(
+                       SELECT 1 FROM ops.identity_recovery_cases c
+                       JOIN ops.identity_recovery_receipts r
+                         ON r.tenant_id=c.tenant_id AND r.case_id=c.case_id
+                       WHERE c.tenant_id=$1 AND c.case_id=$2 AND c.session_id=$3
+                         AND c.terminal_id=$4 AND c.status='MATCHED'
+                         AND c.original_subject_uuid=$5 AND c.cloud_subject_uuid=$6
+                         AND c.envelope_sha256=$7 AND r.expires_at > clock_timestamp()
+                         AND r.consumed_at IS NULL AND r.terminal_id=c.terminal_id
+                         AND r.session_id=c.session_id AND r.original_subject_uuid=c.original_subject_uuid
+                         AND r.cloud_subject_uuid=c.cloud_subject_uuid
+                         AND r.envelope_sha256=c.envelope_sha256)""",
+                    request.tenant_id, request.reconciliation_reference, request.session_id,
+                    request.installation_id, request.original_subject_uuid,
+                    request.final_subject_uuid, request.original_envelope_sha256,
+                )
+                if not matched:
+                    raise TenantAccessDenied("migration reconciliation is not a persisted MATCHED case")
+            hardware_id = await connection.fetchval(
+                """SELECT h.hardware_id FROM device.client_installations i
+                   JOIN device.license_assignments la ON la.tenant_id=i.tenant_id AND la.account_id=i.account_id
+                   JOIN device.hardware_bindings hb ON hb.tenant_id=la.tenant_id AND hb.license_id=la.license_id
+                   JOIN device.hardware_assets h ON h.tenant_id=hb.tenant_id AND h.hardware_id=hb.hardware_id
+                   WHERE i.tenant_id=$1 AND i.client_installation_id=$2 AND i.account_id=$3
+                     AND la.license_id=$4 AND h.stable_identity=$5
+                     AND greatest(la.assigned_at,hb.bound_at,i.first_seen_at) <
+                         least(coalesce(la.unassigned_at,'infinity'::timestamptz),
+                               coalesce(hb.unbound_at,'infinity'::timestamptz))
+                   FOR SHARE OF i,la,hb,h""",
+                request.tenant_id, request.installation_id, request.account_id,
+                request.license_id, request.hardware_id,
+            )
+            if hardware_id is None:
+                raise TenantAccessDenied("migration historical binding rejected")
+            inserted = await connection.fetchval(
+                """INSERT INTO screening.upload_migration_permits
+                   (tenant_id,session_id,installation_id,account_id,license_id,hardware_id,token_sha256,
+                    consumed_request_sha256,expected_manifest_sha256,approver_id,approval_reason,evidence_reference,
+                    original_envelope_sha256,original_subject_uuid,final_subject_uuid,consent_record_id,
+                    consent_sha256,reconciliation_case_id)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                   ON CONFLICT (tenant_id,session_id) DO NOTHING RETURNING session_id""",
+                request.tenant_id, request.session_id, request.installation_id, request.account_id,
+                request.license_id, hardware_id, token_sha256, request.request_sha256, request.manifest_sha256,
+                context.platform_identity_id, request.reason, request.evidence_reference,
+                request.original_envelope_sha256, request.original_subject_uuid,
+                request.final_subject_uuid, request.consent_record_id, request.consent_sha256,
+                request.reconciliation_reference,
+            )
+            if inserted is None:
+                raise TenantAccessDenied("migration permit already issued")
+            await connection.execute(
+                """INSERT INTO ops.capture_authorization_audit
+                   (event_id,tenant_id,session_id,authorization_kind,event_kind,actor_id,evidence_reference,decision_code)
+                   VALUES ($1,$2,$3,'PERMIT','APPROVED',$4,$5,$6)""",
+                uuid4(), request.tenant_id, request.session_id, context.platform_identity_id,
+                request.evidence_reference, request.reason,
+            )
+
+    async def _capture_entitlement(self, connection, context):
+        context.ensure_can_start_new()
+        # Serialize issuance against the actual installation, including an empty
+        # grant set. Locking existing grants cannot protect the first issuance.
+        installation = await connection.fetchval(
+            """SELECT client_installation_id FROM device.client_installations
+               WHERE tenant_id=$1 AND client_installation_id=$2
+                 AND account_id=$3 AND status='ACTIVE' FOR UPDATE""",
+            context.tenant_id, context.terminal_id, context.account_id,
+        )
+        if installation is None:
+            raise TenantAccessDenied("采集额度授权不匹配")
+        hardware_id = await connection.fetchval(
+            """SELECT h.hardware_id
+               FROM iam.tenant_accounts a
+               JOIN device.license_assignments la
+                 ON la.tenant_id=a.tenant_id AND la.account_id=a.account_id AND la.unassigned_at IS NULL
+               JOIN device.license_entitlements l
+                 ON l.tenant_id=la.tenant_id AND l.license_id=la.license_id
+               JOIN device.hardware_bindings hb
+                 ON hb.tenant_id=l.tenant_id AND hb.license_id=l.license_id AND hb.unbound_at IS NULL
+               JOIN device.hardware_assets h
+                 ON h.tenant_id=hb.tenant_id AND h.hardware_id=hb.hardware_id
+               WHERE a.tenant_id=$1 AND a.account_id=$2 AND l.license_id=$3
+                 AND h.stable_identity=$4 AND a.status='ACTIVE'
+                 AND l.status='ACTIVE' AND h.status='ACTIVE'
+                 AND l.valid_from <= clock_timestamp() AND clock_timestamp() < l.valid_until
+               FOR SHARE OF a, la, l, hb, h""",
+            context.tenant_id, context.account_id, context.license_id, context.hardware_id,
+        )
+        if hardware_id is None:
+            raise TenantAccessDenied("采集额度授权不匹配")
+        return hardware_id
+
+    async def _capture_audit(self, connection, context, session_id, event, decision):
+        await connection.execute(
+            """INSERT INTO ops.capture_authorization_audit
+               (event_id, tenant_id, session_id, authorization_kind, event_kind, actor_id, decision_code)
+               VALUES ($1,$2,$3,'GRANT',$4,$5,$6)""",
+            uuid4(), context.tenant_id, session_id, event, context.account_id, decision,
+        )
+
+    async def issue_capture_grants(self, context, grants):
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            hardware_id = await self._capture_entitlement(connection, context)
+            outstanding = await connection.fetchval(
+                """SELECT count(*) FROM screening.capture_grants
+                   WHERE tenant_id=$1 AND installation_id=$2 AND state='ISSUED'""",
+                context.tenant_id, context.terminal_id,
+            )
+            if outstanding >= 50:
+                raise TenantAccessDenied("采集额度已用尽")
+            issued = grants[:50 - outstanding]
+            for grant in issued:
+                await connection.execute(
+                    """INSERT INTO screening.capture_grants
+                       (tenant_id, session_id, installation_id, account_id, license_id, hardware_id, token_sha256)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+                    context.tenant_id, grant.session_id, context.terminal_id, context.account_id,
+                    context.license_id, hardware_id, hashlib.sha256(grant.token.get_secret_value().encode()).digest(),
+                )
+                await self._capture_audit(connection, context, grant.session_id, "ISSUED", "ACTIVE_ENTITLEMENT")
+            return CaptureGrantBatchResponse(grants=issued)
+
+    async def retire_capture_grant(self, context, session_id, reason):
+        if not reason.strip():
+            raise TenantAccessDenied("采集额度不可注销")
+        async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            await self._capture_entitlement(connection, context)
+            retired = await connection.fetchval(
+                """UPDATE screening.capture_grants SET state='RETIRED'
+                   WHERE tenant_id=$1 AND session_id=$2 AND installation_id=$3
+                     AND account_id=$4 AND state='ISSUED' RETURNING session_id""",
+                context.tenant_id, session_id, context.terminal_id, context.account_id,
+            )
+            if retired is None:
+                raise TenantAccessDenied("采集额度不可注销")
+            await self._capture_audit(connection, context, session_id, "RETIRED", "CLIENT_RETIRED")
 
     async def _require_active_terminal(
         self, connection, context: TerminalContext
@@ -448,14 +661,27 @@ class PostgresPlatformRepository:
         context: TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
-        context.ensure_active()
+        context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
         digest = canonical_sha256(request)
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
+            # This lock is shared with RAY-99 recovery-case creation and
+            # registration, preventing a generic create from racing past the
+            # durable identity-recovery guard.
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended('recovery-session:' || $1::uuid::text || ':' || $2::uuid::text, 0))",
                 context.tenant_id, request.session_id,
             )
+            # Lock order: idempotency key, tenant/session (including absent row),
+            # session row, authorization row. Recovery registration acquires
+            # the same recovery-session lock before its own idempotency/case
+            # locks, then locks its session/authorization row in this order.
+            for key in (f"session.create:{context.tenant_id}:{idempotency_key}", f"session:{context.tenant_id}:{request.session_id}"):
+                lock_id = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
+                await connection.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock_id)
+            await self._require_active_terminal(connection, context)
             protected = await connection.fetchval(
                 """SELECT EXISTS(SELECT 1 FROM ops.identity_recovery_cases
                    WHERE tenant_id=$1 AND session_id=$2)""",
@@ -466,10 +692,59 @@ class PostgresPlatformRepository:
             replay = await self._idempotency(
                 connection, context.tenant_id, "session.create", idempotency_key, digest
             )
-            if replay is not None:
-                return SessionCreateResponse.model_validate(replay).model_copy(
-                    update={"idempotent_replay": True}
+            existing = await connection.fetchrow(
+                "SELECT * FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE",
+                context.tenant_id, request.session_id,
+            )
+            if existing is not None:
+                record = _session_record(existing)
+                if record.request_sha256 != digest:
+                    raise IdempotencyConflict("同一会话 ID 对应不同请求")
+                if record.expected_manifest_sha256 is not None and (
+                    authorization is None or authorization.manifest_sha256 != record.expected_manifest_sha256
+                ):
+                    raise IdempotencyConflict("同一会话对应不同最终清单")
+            elif authorization is None:
+                context.ensure_can_start_new()
+            authorization_row = None
+            if authorization is not None:
+                table = "capture_grants" if authorization.kind == "grant" else "upload_migration_permits"
+                authorization_row = await connection.fetchrow(
+                    f"SELECT * FROM screening.{table} WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE",
+                    context.tenant_id, request.session_id,
                 )
+                row = authorization_row
+                if (
+                    row is None or row["tenant_id"] != context.tenant_id
+                    or row["session_id"] != request.session_id or authorization.session_id != request.session_id
+                    or row["installation_id"] != context.terminal_id or row["installation_id"] != request.client_installation_id
+                    or row["account_id"] != context.account_id or row["hardware_id"] != request.device_id
+                    or not hmac.compare_digest(row["token_sha256"], hashlib.sha256(authorization.token.get_secret_value().encode()).digest())
+                    or row["state"] != ("CONSUMED" if existing is not None else "ISSUED")
+                    or (row["consumed_request_sha256"] is not None and row["consumed_request_sha256"] != digest)
+                    or (row["expected_manifest_sha256"] is not None and row["expected_manifest_sha256"] != authorization.manifest_sha256)
+                ):
+                    raise TenantAccessDenied("采集授权不匹配")
+                if authorization.kind == "migration_permit":
+                    consent_sha256 = await connection.fetchval(
+                        "SELECT evidence_hash FROM subject.consents WHERE tenant_id=$1 AND consent_record_id=$2 AND subject_uuid=$3 AND revoked_at IS NULL",
+                        context.tenant_id, request.consent_record_id, request.subject_uuid,
+                    )
+                    if (
+                        row["final_subject_uuid"] != request.subject_uuid
+                        or row["consent_record_id"] != request.consent_record_id
+                        or row["consent_sha256"] != consent_sha256
+                    ):
+                        raise TenantAccessDenied("migration permit consent binding mismatch")
+            if existing is not None:
+                response = SessionCreateResponse(session_id=request.session_id, ingest_status=record.ingest_status, idempotent_replay=True)
+                if replay is None:
+                    await self._store_idempotency(
+                        connection, context.tenant_id, "session.create", idempotency_key, digest,
+                        201, response.model_copy(update={"idempotent_replay": False}).model_dump(mode="json"),
+                        "screening_session", request.session_id,
+                    )
+                return response
             validation = await connection.fetchrow(
                 """
                 SELECT
@@ -508,51 +783,61 @@ class PostgresPlatformRepository:
             )
             if not all(validation.values()):
                 raise TenantAccessDenied("会话引用与认证租户、采集身份或授权不一致")
-            existing = await connection.fetchrow(
-                "SELECT * FROM screening.sessions WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE",
-                context.tenant_id,
+            inserted = await connection.fetchval(
+                """
+                INSERT INTO screening.sessions (
+                    session_id, tenant_id, site_id, terminal_id, device_id,
+                    subject_uuid, consent_record_id, test_protocol_id,
+                    test_protocol_version, validity_status, ingest_status,
+                    started_at, app_version, protocol_profile_version,
+                    payload_schema_version, calibration_version, config_snapshot,
+                    expected_manifest_sha256
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'UNKNOWN','RECEIVING',$10,$11,$12,$13,$14,$15::jsonb,$16)
+                ON CONFLICT (session_id) DO NOTHING RETURNING session_id
+                """,
                 request.session_id,
+                context.tenant_id,
+                request.site_id,
+                request.client_installation_id,
+                request.device_id,
+                request.subject_uuid,
+                request.consent_record_id,
+                request.test_protocol.id,
+                request.test_protocol.version,
+                request.started_at,
+                request.versions.app,
+                request.versions.protocol_profile,
+                request.versions.payload_schema,
+                request.versions.calibration,
+                json.dumps(request.config_snapshot, separators=(",", ":")),
+                authorization.manifest_sha256 if authorization else None,
             )
-            if existing is not None:
-                record = _session_record(existing)
-                if record.request_sha256 != digest:
-                    raise IdempotencyConflict("同一会话 ID 对应不同请求")
-                response = SessionCreateResponse(
-                    session_id=request.session_id,
-                    ingest_status=record.ingest_status,
-                    idempotent_replay=True,
-                )
-            else:
+            if inserted is None:
+                raise TenantAccessDenied("采集授权不匹配")
+            if authorization_row is not None:
+                if authorization.kind == "grant":
+                    await connection.execute(
+                        """UPDATE screening.capture_grants SET state='CONSUMED',
+                           consumed_request_sha256=$3,expected_manifest_sha256=$4
+                           WHERE tenant_id=$1 AND session_id=$2""",
+                        context.tenant_id, request.session_id, digest, authorization.manifest_sha256,
+                    )
+                else:
+                    await connection.execute(
+                        "UPDATE screening.upload_migration_permits SET state='CONSUMED' WHERE tenant_id=$1 AND session_id=$2",
+                        context.tenant_id, request.session_id,
+                    )
                 await connection.execute(
-                    """
-                    INSERT INTO screening.sessions (
-                        session_id, tenant_id, site_id, terminal_id, device_id,
-                        subject_uuid, consent_record_id, test_protocol_id,
-                        test_protocol_version, validity_status, ingest_status,
-                        started_at, app_version, protocol_profile_version,
-                        payload_schema_version, calibration_version, config_snapshot
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'UNKNOWN','RECEIVING',$10,$11,$12,$13,$14,$15::jsonb)
-                    """,
-                    request.session_id,
-                    context.tenant_id,
-                    request.site_id,
-                    request.client_installation_id,
-                    request.device_id,
-                    request.subject_uuid,
-                    request.consent_record_id,
-                    request.test_protocol.id,
-                    request.test_protocol.version,
-                    request.started_at,
-                    request.versions.app,
-                    request.versions.protocol_profile,
-                    request.versions.payload_schema,
-                    request.versions.calibration,
-                    json.dumps(request.config_snapshot, separators=(",", ":")),
+                    """INSERT INTO ops.capture_authorization_audit
+                       (event_id,tenant_id,session_id,authorization_kind,event_kind,actor_id,decision_code)
+                       VALUES ($1,$2,$3,$4,'CONSUMED',$5,'AUTHORIZED_REGISTRATION')""",
+                    uuid4(), context.tenant_id, request.session_id,
+                    "GRANT" if authorization.kind == "grant" else "PERMIT", context.account_id,
                 )
-                response = SessionCreateResponse(
-                    session_id=request.session_id,
-                    ingest_status=IngestStatus.RECEIVING,
-                )
+            response = SessionCreateResponse(
+                session_id=request.session_id,
+                ingest_status=IngestStatus.RECEIVING,
+            )
             await self._store_idempotency(
                 connection,
                 context.tenant_id,
@@ -1110,10 +1395,6 @@ class PostgresPlatformRepository:
                 idempotency_key,
                 manifest_sha256,
             )
-            if replay is not None:
-                return ManifestCompletionResponse.model_validate(replay).model_copy(
-                    update={"idempotent_replay": True}
-                )
             session = await connection.fetchrow(
                 """
                 SELECT * FROM screening.sessions
@@ -1124,6 +1405,12 @@ class PostgresPlatformRepository:
             )
             if session is None:
                 raise ResourceNotFound("会话不存在", session_id=str(session_id))
+            if session["expected_manifest_sha256"] is not None and canonical_sha256(manifest) != session["expected_manifest_sha256"]:
+                raise ManifestConflict("最终清单与登记授权不一致", session_id=str(session_id))
+            if replay is not None:
+                return ManifestCompletionResponse.model_validate(replay).model_copy(
+                    update={"idempotent_replay": True}
+                )
             existing = await connection.fetchrow(
                 """
                 SELECT * FROM screening.session_manifests
