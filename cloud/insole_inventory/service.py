@@ -52,6 +52,10 @@ from shared.contracts.terminal_access import TerminalState
 from .repository import InsoleInventoryRepository, RegistrationKeyRecord
 
 
+# Revisions are PostgreSQL bigint.
+_MAX_REVISION = 2**63 - 1
+
+
 def encode_cursor(revision: int) -> str:
     raw = f"{INSOLE_CURSOR_SCHEMA}:{revision}".encode("ascii")
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -65,7 +69,13 @@ def decode_cursor(cursor: str | None) -> int:
     except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
         raise InsoleCursorInvalid("cursor is not a valid insole cursor") from exc
     schema, separator, value = raw.partition(":")
-    if schema != INSOLE_CURSOR_SCHEMA or not separator or not value.isdigit():
+    if (
+        schema != INSOLE_CURSOR_SCHEMA
+        or not separator
+        or not value.isascii()
+        or not value.isdigit()
+        or int(value) > _MAX_REVISION
+    ):
         raise InsoleCursorInvalid("cursor is not a valid insole cursor")
     return int(value)
 

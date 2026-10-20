@@ -313,6 +313,20 @@ class InsoleRegistrationTests(_InsoleApiFixture):
         response = await self.register(self.terminal_a, {**body, "right": body["left"]})
         self.assertEqual(response.status_code, 422, response.text)
 
+    async def test_mac_must_be_canonical(self) -> None:
+        vector = VECTORS["registration"]
+        body = VECTORS["registration_request"]
+        for value in vector["non_canonical_mac_examples"]:
+            with self.subTest(value=value):
+                attempt = {**body, "institution_number": "A-100", "left": {
+                    **body["left"], "identity": {**body["left"]["identity"], "value": value}}}
+                response = await self.register(self.terminal_a, attempt)
+                self.assertEqual(response.status_code, vector["non_canonical_mac_status"],
+                                 response.text)
+        serial = {**body, "left": {**body["left"], "identity": {
+            "kind": "serial", "value": "sn-lower-ok", "provenance": "unknown"}}}
+        self.assertEqual((await self.register(self.terminal_a, serial)).status_code, 201)
+
     async def test_idempotency_key_is_required(self) -> None:
         response = await self.client.post(
             "/v1/inventory/insoles", json=VECTORS["registration_request"],
@@ -504,9 +518,9 @@ class InsoleRetireAndDownloadTests(_InsoleApiFixture):
         for index in range(5):
             pair = await self.registered(body={
                 **body, "institution_number": f"B-{index}",
-                "left": {**body["left"], "identity": {**body["left"]["identity"],
+                "left": {**body["left"], "identity": {**body["left"]["identity"], "kind": "serial",
                                                       "value": f"L-{index}"}},
-                "right": {**body["right"], "identity": {**body["right"]["identity"],
+                "right": {**body["right"], "identity": {**body["right"]["identity"], "kind": "serial",
                                                         "value": f"R-{index}"}}})
             ids.append(pair["insole_id"])
         first = (await self.download(self.terminal_b, limit=2)).json()["data"]
@@ -525,6 +539,9 @@ class InsoleRetireAndDownloadTests(_InsoleApiFixture):
         invalid = await self.download(self.terminal_a, vector["invalid_cursor_example"])
         self.assertEqual(invalid.status_code, 400, invalid.text)
         self.assertEqual(self.code(invalid), vector["invalid_cursor_error"])
+        overflow = await self.download(self.terminal_a, vector["out_of_range_cursor_example"])
+        self.assertEqual(overflow.status_code, 400, overflow.text)
+        self.assertEqual(self.code(overflow), vector["invalid_cursor_error"])
         for limit in (0, vector["max_limit"] + 1):
             response = await self.download(self.terminal_a, limit=limit)
             self.assertEqual(response.status_code, 422, response.text)
@@ -537,9 +554,9 @@ class InsoleRetireAndDownloadTests(_InsoleApiFixture):
         for index in range(VECTORS["download"]["default_limit"] + 1):
             await self.registered(body={
                 **body, "institution_number": f"C-{index}",
-                "left": {**body["left"], "identity": {**body["left"]["identity"],
+                "left": {**body["left"], "identity": {**body["left"]["identity"], "kind": "serial",
                                                       "value": f"L-{index}"}},
-                "right": {**body["right"], "identity": {**body["right"]["identity"],
+                "right": {**body["right"], "identity": {**body["right"]["identity"], "kind": "serial",
                                                         "value": f"R-{index}"}}})
         page = (await self.download(self.terminal_a)).json()["data"]
         self.assertEqual(len(page["items"]), VECTORS["download"]["default_limit"])

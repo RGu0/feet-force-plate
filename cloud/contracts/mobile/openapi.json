@@ -582,7 +582,7 @@
       },
       "InsoleIdentity": {
         "additionalProperties": false,
-        "description": "A node identity; it identifies the device and never authenticates it.\n\n``kind`` + ``value`` name the device and are compared exactly as sent;\n``provenance`` records how the value was derived and is not compared.",
+        "description": "A node identity; it identifies the device and never authenticates it.\n\n``kind`` + ``value`` name the device and are compared exactly as sent;\n``provenance`` records how the value was derived and is not compared. A\n``mac`` value must be uppercase hex octets joined by colons.",
         "properties": {
           "kind": {
             "$ref": "#/components/schemas/InsoleIdentityKind"

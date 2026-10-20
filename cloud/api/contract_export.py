@@ -355,6 +355,10 @@ def _insole_vectors(meta):
             'replay_returns': 'same insole_id at its current revision',
             'same_key_different_request_error': errors.IdempotencyConflict.code,
             'identity_compare': 'kind + value, exact; provenance is not compared',
+            'mac_pattern': insole.INSOLE_MAC_PATTERN,
+            'non_canonical_mac_examples': ['c0:ff:ee:00:00:01', 'C0-FF-EE-00-00-01',
+                                           'C0FFEE000001'],
+            'non_canonical_mac_status': 422,
             # Steps: register registration_request, then register `attempt` with a new key.
             'scenarios': [
                 {'name': 'same_pair_other_terminal', 'attempt': registration,
@@ -419,7 +423,9 @@ def _insole_vectors(meta):
             'default_limit': insole.INSOLE_PAGE_DEFAULT_LIMIT,
             'max_limit': insole.INSOLE_PAGE_MAX_LIMIT,
             'invalid_cursor_error': errors.InsoleCursorInvalid.code,
-            'invalid_cursor_example': 'bm90LWEtY3Vyc29y'},
+            'invalid_cursor_example': 'bm90LWEtY3Vyc29y',
+            'out_of_range_cursor_example': base64.urlsafe_b64encode(
+                b'insole-cursor/1:99999999999999999999').rstrip(b'=').decode('ascii')},
     }
 
 def main():

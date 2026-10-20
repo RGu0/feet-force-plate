@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+import re
 from typing import Annotated, Final
 from uuid import UUID
 
@@ -34,6 +35,9 @@ INSOLE_PAGE_MAX_LIMIT: Final = 500
 # A device-side time later than server time plus this skew is rejected, so a
 # terminal with a fast clock cannot pin a reading that no later one can beat.
 INSOLE_READING_MAX_FUTURE_SKEW_SECONDS: Final = 300
+# A MAC identity must be in this one canonical form, so the same device can
+# never be registered twice under spellings that compare unequal.
+INSOLE_MAC_PATTERN: Final = r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$"
 
 InstitutionNumber = Annotated[
     str,
@@ -80,12 +84,21 @@ class InsoleIdentity(ContractModel):
     """A node identity; it identifies the device and never authenticates it.
 
     ``kind`` + ``value`` name the device and are compared exactly as sent;
-    ``provenance`` records how the value was derived and is not compared.
+    ``provenance`` records how the value was derived and is not compared. A
+    ``mac`` value must be uppercase hex octets joined by colons.
     """
 
     kind: InsoleIdentityKind
     value: IdentityValue
     provenance: IdentityProvenance
+
+    @model_validator(mode="after")
+    def canonical_mac(self) -> InsoleIdentity:
+        if self.kind is InsoleIdentityKind.MAC and not re.fullmatch(
+            INSOLE_MAC_PATTERN, self.value
+        ):
+            raise ValueError("mac value must look like AA:BB:CC:DD:EE:FF")
+        return self
 
 
 class InsoleNodeRegistration(ContractModel):
@@ -217,6 +230,7 @@ class InsoleChangesResponse(ContractModel):
 __all__ = [
     "BatteryReading",
     "INSOLE_CURSOR_SCHEMA",
+    "INSOLE_MAC_PATTERN",
     "INSOLE_PAGE_DEFAULT_LIMIT",
     "INSOLE_PAGE_MAX_LIMIT",
     "INSOLE_READING_MAX_FUTURE_SKEW_SECONDS",

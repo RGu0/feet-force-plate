@@ -52,7 +52,8 @@ part of the `v0.2.0` release assets; pin a commit or a later release.
   200 replay of the same pair at its current revision, `E-API-409` for a changed
   request under the same key. `E-INV-409-IDENTITY-REGISTERED` (same MAC/serial,
   other number) and `E-INV-409-NUMBER-TAKEN` (same number, other identities)
-  carry the existing pair in `error.details.existing`.
+  carry the existing pair in `error.details.existing`. A `mac` identity value must be
+  canonical uppercase colon form (`registration.mac_pattern`); other spellings are 422.
 - Reports merge `state`, `left` and `right` independently: the newer device-side
   time wins, and an equal time keeps the stored value. Battery carries both raw
   `millivolts` and the client's `percent`; recompute percent from mV when the

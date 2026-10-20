@@ -80,6 +80,7 @@
       "max_limit": 500,
       "next_cursor": "always returned; unchanged when the page is empty",
       "order": "revision ascending; each pair appears once, at its latest revision",
+      "out_of_range_cursor_example": "aW5zb2xlLWN1cnNvci8xOjk5OTk5OTk5OTk5OTk5OTk5OTk5",
       "route": "GET /v1/inventory/insoles?cursor=&limit="
     },
     "errors": {
@@ -359,6 +360,13 @@
       "identity_compare": "kind + value, exact; provenance is not compared",
       "initial_idempotent_replay": false,
       "initial_status": 201,
+      "mac_pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+      "non_canonical_mac_examples": [
+        "c0:ff:ee:00:00:01",
+        "C0-FF-EE-00-00-01",
+        "C0FFEE000001"
+      ],
+      "non_canonical_mac_status": 422,
       "precedence": [
         "identity owned by another number (left, then right)",
         "number owned by other identities"

@@ -15,7 +15,7 @@ from cloud.access_control.repository import TenantSeed, TerminalRecord
 from cloud.api.access_auth import TerminalAccessContext
 from cloud.api.contract_export import build_vectors
 from cloud.api.errors import (
-    IdempotencyConflict, InsoleIdentityRegistered, InsoleNumberTaken, InsoleRetired,
+    IdempotencyConflict, InsoleCursorInvalid, InsoleIdentityRegistered, InsoleNumberTaken, InsoleRetired,
     ResourceNotFound,
 )
 from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
@@ -70,7 +70,7 @@ def test_deployment_applies_and_backs_up_insole_migration() -> None:
 def _record(insole_id, *, number, left, right, revision, now) -> InsoleRecord:
     def node(value):
         return InsoleNode(identity=InsoleIdentity(
-            kind=InsoleIdentityKind.MAC, value=value, provenance="ble_advertisement"))
+            kind=InsoleIdentityKind.SERIAL, value=value, provenance="ble_advertisement"))
 
     return InsoleRecord(
         insole_id=insole_id, institution_number=number, size=38,
@@ -87,7 +87,8 @@ async def _exercise(repository, tenant_id, other_tenant_id) -> None:
                          revision=await tx.next_revision(), now=NOW)
         await tx.insert(record)
     async with repository.writer(tenant_id) as tx:
-        assert (await tx.by_identity(InsoleIdentityKind.MAC, "R1")).insole_id == insole_id
+        assert (await tx.by_identity(InsoleIdentityKind.SERIAL, "R1")).insole_id == insole_id
+        assert await tx.by_identity(InsoleIdentityKind.MAC, "R1") is None
         assert (await tx.by_number("A-001")).insole_id == insole_id
         current = await tx.get_for_update(insole_id)
         reading = StoredBatteryReading(
@@ -181,6 +182,9 @@ async def _exercise_service(repository, tenant_id, other_tenant_id) -> None:
     assert page.items[0].left.battery.read_at == report.left.read_at
     assert (await service.changes(b, cursor=page.next_cursor, limit=None)).items == ()
     assert (await service.changes(foreign, cursor=None, limit=None)).items == ()
+    with pytest.raises(InsoleCursorInvalid):
+        await service.changes(
+            b, cursor=vectors["download"]["out_of_range_cursor_example"], limit=None)
     theirs, theirs_new = await service.register(foreign, request, "key-1")
     assert theirs_new and theirs.insole.revision == 1
 
