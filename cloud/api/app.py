@@ -939,10 +939,12 @@ def create_app(container: ServiceContainer) -> FastAPI:
             raise RepositoryUnavailable("采集额度服务暂不可用")
         result = await container.capture_grants.issue(context, body.count)
         # This is the only transport boundary that reveals newly issued secrets.
-        return _data_response(request, {"grants": [
+        response = _data_response(request, {"grants": [
             {"session_id": str(grant.session_id), "token": grant.token.get_secret_value()}
             for grant in result.grants
         ]}, 201)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.post("/v1/access/capture-grants/retire")
     async def retire_capture_grant(request: Request, body: RetireCaptureGrantRequest, context: DataDependency):

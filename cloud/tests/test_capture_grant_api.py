@@ -138,6 +138,7 @@ class CaptureGrantApiTests(TenantAccessIngestionTests):
     async def test_issue_cap_retire_and_secret_storage(self):
         response = await self.issue(50)
         self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
         grants = response.json()["data"]["grants"]
         self.assertEqual(len({g["session_id"] for g in grants}), 50)
         self.assertEqual(len({g["token"] for g in grants}), 50)
