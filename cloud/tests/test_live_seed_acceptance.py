@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,9 +14,24 @@ from scripts.verify_seed_live import AcceptanceState, Api, _after
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _bash_is_usable() -> bool:
+    if shutil.which("bash") is None:
+        return False
+    if os.name != "nt":
+        return True
+    # Windows resolves a bare "bash" through System32 first, which can be the
+    # WSL launcher with no distribution; probe it exactly as the tests call it.
+    try:
+        return subprocess.run(["bash", "-c", "true"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 requires_bash = pytest.mark.skipif(
-    shutil.which("bash") is None,
-    reason="live seed acceptance shell helpers require bash",
+    not _bash_is_usable(),
+    reason="live seed acceptance shell helpers require a working bash",
 )
 
 

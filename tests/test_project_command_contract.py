@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -264,6 +265,21 @@ class ProjectCommandContractTests(unittest.TestCase):
         self.assertIn("uv sync --extra dev --locked", workflow)
         self.assertNotIn("TECHFLEX_FOUNDATION_RELEASE_TOKEN", workflow)
         self.assertNotIn("GH_TOKEN:", workflow)
+
+    def test_ci_runs_the_full_governed_suite_without_a_file_list(self) -> None:
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "quality.yml").read_text(
+            encoding="utf-8"
+        )
+
+        # A curated file list silently left new test files out of CI (RAY-786).
+        self.assertIn(
+            "uv run --extra dev python -m pytest --junitxml=pytest-results.xml",
+            workflow,
+        )
+        self.assertEqual(
+            set(re.findall(r"[\w/]+/test_\w+\.py", workflow)),
+            {"cloud/tests/test_integration_public_bundle.py"},
+        )
 
 
 if __name__ == "__main__":
