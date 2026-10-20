@@ -217,7 +217,7 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON device.insole_revision_counters, device.insole_pairs,
      device.insole_identities, device.insole_registration_keys
      TO ffp_seed_backup;"
-apply_migration screening.upload_migration_permits_recovery_binding "$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"
+apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
      ops.identity_recovery_comparisons, ops.identity_recovery_registrations
