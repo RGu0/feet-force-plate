@@ -97,3 +97,54 @@ def test_terminal_vectors_cover_each_error_and_verify_signed_seats():
     public = Ed25519PublicKey.from_public_bytes(base64.b64decode(fixture['public_key_base64']))
     public.verify(base64.b64decode(fixture['signature_base64']), bytes.fromhex(fixture['canonical_hex']))
     assert json.loads(bytes.fromhex(fixture['canonical_hex']))['seats'] == 2
+
+
+def test_insole_inventory_routes_and_error_codes_are_published():
+    document = build_openapi()
+    paths = document['paths']
+    register = paths['/v1/inventory/insoles']['post']
+    download = paths['/v1/inventory/insoles']['get']
+    report = paths['/v1/inventory/insoles/{insole_id}/reports']['post']
+    retire = paths['/v1/inventory/insoles/{insole_id}/retire']['post']
+    assert {'200', '201', '409'}.issubset(register['responses'])
+    assert register['responses']['201']['content']['application/json']['schema']['$ref'].endswith(
+        'InsoleRegistrationResponseEnvelope')
+    assert {'name': 'Idempotency-Key', 'in': 'header'}.items() <= next(
+        parameter for parameter in register['parameters']
+        if parameter['name'] == 'Idempotency-Key').items()
+    assert {parameter['name'] for parameter in download['parameters']} >= {'cursor', 'limit'}
+
+    def codes(operation):
+        return {entry['code'] for entry in operation['x-ffp-error-codes']}
+
+    assert {'E-INV-409-IDENTITY-REGISTERED', 'E-INV-409-NUMBER-TAKEN', 'E-API-409',
+            'E-TRM-401-REVOKED'} <= codes(register)
+    assert {'E-INV-409-RETIRED', 'E-INV-422-READING-IN-FUTURE', 'E-API-404'} <= codes(report)
+    assert 'E-INV-400-CURSOR-INVALID' in codes(download)
+    assert 'E-API-404' in codes(retire)
+    schemas = document['components']['schemas']
+    assert set(schemas['InsoleRecord']['properties']['state']['$ref'].split('/')[-1:]) == {
+        'InsoleState'}
+    assert schemas['InsoleState']['enum'] == ['available', 'in_use', 'unreturned_data', 'retired']
+    assert 'retired' not in schemas['ReportedInsoleState']['enum']
+    assert set(schemas['BatteryReading']['required']) == {'millivolts', 'percent', 'read_at'}
+    assert schemas['InsoleIdentityKind']['enum'] == ['mac', 'serial']
+
+
+def test_insole_inventory_vectors_are_self_consistent():
+    from shared.contracts.insole_inventory import (
+        InsoleRecord, InsoleRegistrationRequest, InsoleReportRequest)
+    vectors = build_vectors()['insole_inventory']
+    codes = [entry['body']['error']['code'] for entry in vectors['errors'].values()]
+    assert len(codes) == len(set(codes))
+    for name in ('identity_registered', 'number_taken'):
+        InsoleRecord.model_validate(vectors['errors'][name]['body']['error']['details']['existing'])
+    InsoleRecord.model_validate(vectors['record'])
+    InsoleRegistrationRequest.model_validate(vectors['registration_request'])
+    InsoleReportRequest.model_validate(vectors['report_request'])
+    for scenario in vectors['registration']['scenarios']:
+        InsoleRegistrationRequest.model_validate(scenario['attempt'])
+    assert vectors['merge']['granularity'] == ['state', 'left', 'right']
+    assert {scenario['name'] for scenario in vectors['merge']['scenarios']} >= {
+        'late_stale_reading_ignored', 'equal_time_not_applied'}
+    assert vectors['download']['deletion'].startswith('none')

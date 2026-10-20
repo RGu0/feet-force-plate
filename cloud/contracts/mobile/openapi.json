@@ -205,6 +205,36 @@
         "title": "AnalysisStatus",
         "type": "string"
       },
+      "BatteryReading": {
+        "additionalProperties": false,
+        "description": "One side's battery reading; ``read_at`` is the device-side reading time.\n\n``millivolts`` is the raw value so a later discharge curve can recompute\n``percent``; the percent is the reporting client's conversion.",
+        "properties": {
+          "millivolts": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Millivolts",
+            "type": "integer"
+          },
+          "percent": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Percent",
+            "type": "integer"
+          },
+          "read_at": {
+            "format": "date-time",
+            "title": "Read At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "millivolts",
+          "percent",
+          "read_at"
+        ],
+        "title": "BatteryReading",
+        "type": "object"
+      },
       "BusinessErrorEnvelope": {
         "properties": {
           "error": {
@@ -482,6 +512,511 @@
         ],
         "title": "IngestStatus",
         "type": "string"
+      },
+      "InsoleChangesResponse": {
+        "additionalProperties": false,
+        "description": "One page of changes ordered by ``revision``.\n\nPass ``next_cursor`` back as ``cursor``; it is returned on every page, also\nthe last one, and is opaque. ``has_more`` says whether to fetch again now.",
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InsoleRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "title": "InsoleChangesResponse",
+        "type": "object"
+      },
+      "InsoleChangesResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InsoleChangesResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "InsoleChangesResponseEnvelope",
+        "type": "object"
+      },
+      "InsoleHolder": {
+        "additionalProperties": false,
+        "description": "The terminal using the pair; present exactly while ``state`` is ``in_use``.\n\n``terminal_name`` is the holder's name when it reported ``in_use``.",
+        "properties": {
+          "client_installation_id": {
+            "format": "uuid",
+            "title": "Client Installation Id",
+            "type": "string"
+          },
+          "terminal_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Terminal Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_installation_id",
+          "terminal_name"
+        ],
+        "title": "InsoleHolder",
+        "type": "object"
+      },
+      "InsoleIdentity": {
+        "additionalProperties": false,
+        "description": "A node identity; it identifies the device and never authenticates it.\n\n``kind`` + ``value`` name the device and are compared exactly as sent;\n``provenance`` records how the value was derived and is not compared. A\n``mac`` value must be uppercase hex octets joined by colons.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/InsoleIdentityKind"
+          },
+          "provenance": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Provenance",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "provenance"
+        ],
+        "title": "InsoleIdentity",
+        "type": "object"
+      },
+      "InsoleIdentityKind": {
+        "enum": [
+          "mac",
+          "serial"
+        ],
+        "title": "InsoleIdentityKind",
+        "type": "string"
+      },
+      "InsoleNode": {
+        "additionalProperties": false,
+        "properties": {
+          "battery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StoredBatteryReading"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "firmware_version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Firmware Version"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/InsoleIdentity"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "title": "InsoleNode",
+        "type": "object"
+      },
+      "InsoleNodeRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "firmware_version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Version"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/InsoleIdentity"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "title": "InsoleNodeRegistration",
+        "type": "object"
+      },
+      "InsoleRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "holder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InsoleHolder"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "insole_id": {
+            "format": "uuid",
+            "title": "Insole Id",
+            "type": "string"
+          },
+          "institution_number": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Institution Number",
+            "type": "string"
+          },
+          "left": {
+            "$ref": "#/components/schemas/InsoleNode"
+          },
+          "registered_at": {
+            "format": "date-time",
+            "title": "Registered At",
+            "type": "string"
+          },
+          "registered_by_client_installation_id": {
+            "format": "uuid",
+            "title": "Registered By Client Installation Id",
+            "type": "string"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retired At"
+          },
+          "retired_by_client_installation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retired By Client Installation Id"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "right": {
+            "$ref": "#/components/schemas/InsoleNode"
+          },
+          "size": {
+            "maximum": 99,
+            "minimum": 1,
+            "title": "Size",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InsoleState"
+          },
+          "state_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "State Observed At"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "insole_id",
+          "institution_number",
+          "size",
+          "left",
+          "right",
+          "state",
+          "registered_at",
+          "registered_by_client_installation_id",
+          "revision",
+          "updated_at"
+        ],
+        "title": "InsoleRecord",
+        "type": "object"
+      },
+      "InsoleRegistrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "institution_number": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Institution Number",
+            "type": "string"
+          },
+          "left": {
+            "$ref": "#/components/schemas/InsoleNodeRegistration"
+          },
+          "right": {
+            "$ref": "#/components/schemas/InsoleNodeRegistration"
+          },
+          "size": {
+            "maximum": 99.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "institution_number",
+          "size",
+          "left",
+          "right"
+        ],
+        "title": "InsoleRegistrationRequest",
+        "type": "object"
+      },
+      "InsoleRegistrationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotent_replay": {
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          },
+          "insole": {
+            "$ref": "#/components/schemas/InsoleRecord"
+          }
+        },
+        "required": [
+          "insole",
+          "idempotent_replay"
+        ],
+        "title": "InsoleRegistrationResponse",
+        "type": "object"
+      },
+      "InsoleRegistrationResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InsoleRegistrationResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "InsoleRegistrationResponseEnvelope",
+        "type": "object"
+      },
+      "InsoleReportApplied": {
+        "additionalProperties": false,
+        "properties": {
+          "left": {
+            "title": "Left",
+            "type": "boolean"
+          },
+          "right": {
+            "title": "Right",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "left",
+          "right"
+        ],
+        "title": "InsoleReportApplied",
+        "type": "object"
+      },
+      "InsoleReportRequest": {
+        "additionalProperties": false,
+        "description": "Any non-empty subset of the three independently merged groups.",
+        "properties": {
+          "left": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatteryReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "right": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatteryReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InsoleStateReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "InsoleReportRequest",
+        "type": "object"
+      },
+      "InsoleReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "applied": {
+            "$ref": "#/components/schemas/InsoleReportApplied"
+          },
+          "insole": {
+            "$ref": "#/components/schemas/InsoleRecord"
+          }
+        },
+        "required": [
+          "insole",
+          "applied"
+        ],
+        "title": "InsoleReportResponse",
+        "type": "object"
+      },
+      "InsoleReportResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InsoleReportResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "InsoleReportResponseEnvelope",
+        "type": "object"
+      },
+      "InsoleRetireResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotent_replay": {
+            "title": "Idempotent Replay",
+            "type": "boolean"
+          },
+          "insole": {
+            "$ref": "#/components/schemas/InsoleRecord"
+          }
+        },
+        "required": [
+          "insole",
+          "idempotent_replay"
+        ],
+        "title": "InsoleRetireResponse",
+        "type": "object"
+      },
+      "InsoleRetireResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InsoleRetireResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "InsoleRetireResponseEnvelope",
+        "type": "object"
+      },
+      "InsoleState": {
+        "enum": [
+          "available",
+          "in_use",
+          "unreturned_data",
+          "retired"
+        ],
+        "title": "InsoleState",
+        "type": "string"
+      },
+      "InsoleStateReport": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportedInsoleState"
+          }
+        },
+        "required": [
+          "state",
+          "observed_at"
+        ],
+        "title": "InsoleStateReport",
+        "type": "object"
       },
       "InventoryActivationRequest": {
         "additionalProperties": false,
@@ -1114,6 +1649,16 @@
         "title": "ReportStatus",
         "type": "string"
       },
+      "ReportedInsoleState": {
+        "description": "States a report may set; ``retired`` is reached only by the retire route.",
+        "enum": [
+          "available",
+          "in_use",
+          "unreturned_data"
+        ],
+        "title": "ReportedInsoleState",
+        "type": "string"
+      },
       "ResponseMeta": {
         "properties": {
           "correlation_id": {
@@ -1597,6 +2142,41 @@
           "signature"
         ],
         "title": "SignedTerminalLicense",
+        "type": "object"
+      },
+      "StoredBatteryReading": {
+        "additionalProperties": false,
+        "properties": {
+          "millivolts": {
+            "maximum": 10000,
+            "minimum": 0,
+            "title": "Millivolts",
+            "type": "integer"
+          },
+          "percent": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Percent",
+            "type": "integer"
+          },
+          "read_at": {
+            "format": "date-time",
+            "title": "Read At",
+            "type": "string"
+          },
+          "reported_by_client_installation_id": {
+            "format": "uuid",
+            "title": "Reported By Client Installation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "millivolts",
+          "percent",
+          "read_at",
+          "reported_by_client_installation_id"
+        ],
+        "title": "StoredBatteryReading",
         "type": "object"
       },
       "SubjectCreateRequest": {
@@ -3696,6 +4276,600 @@
           }
         },
         "summary": "Revoke Consent"
+      }
+    },
+    "/v1/inventory/insoles": {
+      "get": {
+        "operationId": "insole_changes_v1_inventory_insoles_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsoleChangesResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Insole Changes",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "RESTART_FULL_SYNC",
+            "code": "E-INV-400-CURSOR-INVALID",
+            "http_status": 400,
+            "retryable": false
+          }
+        ]
+      },
+      "post": {
+        "operationId": "insole_register_v1_inventory_insoles_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsoleRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsoleRegistrationResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsoleRegistrationResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Insole Register",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "SHOW_EXISTING_INSOLE",
+            "code": "E-INV-409-IDENTITY-REGISTERED",
+            "http_status": 409,
+            "retryable": false
+          },
+          {
+            "action": "SHOW_EXISTING_INSOLE",
+            "code": "E-INV-409-NUMBER-TAKEN",
+            "http_status": 409,
+            "retryable": false
+          },
+          {
+            "action": "EXPORT_DIAGNOSTIC",
+            "code": "E-API-409",
+            "http_status": 409,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/inventory/insoles/{insole_id}/reports": {
+      "post": {
+        "operationId": "insole_report_v1_inventory_insoles__insole_id__reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insole_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Insole Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsoleReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsoleReportResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Insole Report",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "VERIFY_REFERENCE",
+            "code": "E-API-404",
+            "http_status": 404,
+            "retryable": false
+          },
+          {
+            "action": "REFRESH_INVENTORY",
+            "code": "E-INV-409-RETIRED",
+            "http_status": 409,
+            "retryable": false
+          },
+          {
+            "action": "CHECK_TERMINAL_CLOCK",
+            "code": "E-INV-422-READING-IN-FUTURE",
+            "http_status": 422,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/inventory/insoles/{insole_id}/retire": {
+      "post": {
+        "operationId": "insole_retire_v1_inventory_insoles__insole_id__retire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insole_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Insole Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsoleRetireResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Insole Retire",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "VERIFY_REFERENCE",
+            "code": "E-API-404",
+            "http_status": 404,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/sessions": {

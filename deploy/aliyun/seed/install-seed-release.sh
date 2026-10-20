@@ -214,6 +214,11 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON iam.access_terminals, iam.terminal_refresh_sessions,
      iam.terminal_directory, iam.terminal_refresh_directory
      TO ffp_seed_backup;"
+apply_migration device.insole_pairs "$release_source/cloud/migrations/0013_insole_inventory.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON device.insole_revision_counters, device.insole_pairs,
+     device.insole_identities, device.insole_registration_keys
+     TO ffp_seed_backup;"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then
