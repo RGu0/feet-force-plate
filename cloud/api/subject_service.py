@@ -18,10 +18,10 @@ from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
-    IdentityProfileInput,
     SubjectCreateRequest,
     SubjectResolveRequest,
     SubjectSummary,
+    IdentityProfileInput,
 )
 
 
@@ -107,40 +107,11 @@ class IdentityProtector:
         plaintext = self._cipher.decrypt(nonce, ciphertext, associated_data)
         return IdentityProfileInput.model_validate(json.loads(plaintext))
 
-    def reveal_identity_profile(
-        self,
-        protected: ProtectedIdentityProfile,
-        *,
-        tenant_id: str,
-        subject_uuid: str,
-    ) -> tuple[str | None, str | None]:
-        profile = self.unprotect_identity_profile(
-            protected.ciphertext,
-            protected.nonce,
-            protected.key_version,
-            tenant_id=tenant_id,
-            subject_uuid=subject_uuid,
-        )
-        return profile.display_name, profile.contact
-
 
 class SubjectConsentService:
     def __init__(self, repository, identity_protector: IdentityProtector) -> None:
         self._repository = repository
         self._identity = identity_protector
-
-    async def read_identity(
-        self, tenant_id, subject_uuid
-    ) -> tuple[str | None, str | None]:
-        protected = await self._repository.read_identity_profile(tenant_id, subject_uuid)
-        if protected is None:
-            return (None, None)
-        ciphertext, nonce, key_version = protected
-        return self._identity.reveal_identity_profile(
-            ProtectedIdentityProfile(ciphertext, nonce, key_version),
-            tenant_id=str(tenant_id),
-            subject_uuid=str(subject_uuid),
-        )
 
     async def resolve(
         self, context: IngestionPrincipal | TerminalContext, request: SubjectResolveRequest

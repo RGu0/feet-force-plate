@@ -127,26 +127,6 @@ class PostgresPlatformRepository:
         self._platform_pool = platform_pool
         self._idempotency_ttl = idempotency_ttl
 
-    async def read_identity_profile(
-        self, tenant_id: UUID, subject_uuid: UUID
-    ) -> tuple[bytes, bytes, str] | None:
-        async with tenant_transaction(self._pool, tenant_id) as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT identity_ciphertext, encryption_nonce, key_version
-                FROM subject.identity_profiles
-                WHERE tenant_id=$1 AND subject_uuid=$2
-                """,
-                tenant_id,
-                subject_uuid,
-            )
-        if row is None:
-            return None
-        return (
-            bytes(row["identity_ciphertext"]),
-            bytes(row["encryption_nonce"]),
-            row["key_version"],
-        )
     async def audit_migration_denial(self, context, request, decision):
         if self._platform_pool is None:
             raise RepositoryUnavailable("migration approval unavailable")

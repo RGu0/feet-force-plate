@@ -515,13 +515,18 @@ def _before(
     api.request(
         "POST",
         "/v1/sessions",
-        # The data plane permits creating the server-side record while a
-        # suspended License retains upload continuity.  The client-side
-        # capability blocks beginning a new measurement.
-        expected=201,
+        # RAY-513: a suspended License cannot register a new session without a
+        # pre-issued capture grant or migration permit, and nothing is persisted.
+        expected=403,
         token=str(suspended["access_token"]),
         headers={"Idempotency-Key": f"suspended-{unique}"},
         json_body=denied_session.model_dump(mode="json"),
+    )
+    api.request(
+        "GET",
+        f"/v1/sessions/{denied_session.session_id}/status",
+        expected=404,
+        token=str(suspended["access_token"]),
     )
     api.request(
         "PATCH",

@@ -293,3 +293,15 @@ def test_after_restart_resume_does_not_reacquire_a_hardware_lease(
     evidence = json.loads(evidence_path.read_text())
     assert evidence["restart_persistence_verified"] is True
     assert evidence["replacement_projection_after_restart"] is True
+
+
+def test_seed_probe_expects_suspended_bare_session_denial_without_persistence() -> None:
+    # RAY-513 R5: after suspension a bare POST /v1/sessions is 403 and creates
+    # nothing; the 2026-09 probe still expected 201 (the defect RAY-120 found).
+    source = (Path(__file__).parents[2] / "scripts" / "verify_seed_live.py").read_text()
+    denied = source[source.index('denied_session = session.model_copy'):]
+    denied = denied[: denied.index('"action": "RESTORE"')]
+    assert "expected=403" in denied
+    assert "expected=201" not in denied
+    assert '/v1/sessions/{denied_session.session_id}/status' in denied
+    assert "expected=404" in denied

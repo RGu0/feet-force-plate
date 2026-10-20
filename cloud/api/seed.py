@@ -326,6 +326,9 @@ async def build_seed_app(
     )
     subjects = SubjectConsentService(data_repository, identity)
     sensitive = SensitiveAccessService(access_repository)
+    # D10 and identity recovery share one reader: ACTIVE subjects only, decrypt
+    # failures masked, and called only after the sensitive grant is used.
+    identity_reader = PostgresRecoveryIdentityReader(tenant_pool, identity)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -348,7 +351,7 @@ async def build_seed_app(
             platform_access=platform_access,
             platform_tokens=platform_tokens,
             platform_sensitive=sensitive,
-            platform_subjects=subjects,
+            platform_subjects=identity_reader,
             session_holds=session_holds,
             report_copies=LocalBasicCopyService(
                 PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
@@ -362,7 +365,7 @@ async def build_seed_app(
             identity_recovery=IdentityRecoveryService(
                 PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
                 sensitive=sensitive,
-                identity_reader=PostgresRecoveryIdentityReader(tenant_pool, identity),
+                identity_reader=identity_reader,
             ),
         )
     )
