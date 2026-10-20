@@ -107,6 +107,13 @@ def test_runner_stream_decodes_as_controlled_empty_48_by_64_frame(monkeypatch) -
 
 
 @pytest.mark.skipif(os.name == "nt", reason="PTY runner requires POSIX socat")
+@pytest.mark.skipif(
+    sys.platform == "darwin" and os.environ.get("GITHUB_ACTIONS") == "true",
+    reason=(
+        "GitHub-hosted macOS VMs oversleep the 20.7 Hz cadence (about 8 Hz observed), "
+        "so the production rate check cannot pass there; Linux CI and real Macs cover it"
+    ),
+)
 def test_runner_passes_production_startup_validation_with_development_switch(
     monkeypatch,
 ) -> None:
