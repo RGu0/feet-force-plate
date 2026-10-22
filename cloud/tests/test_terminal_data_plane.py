@@ -385,6 +385,15 @@ class TerminalDataPlaneTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 401, response.text)
         self.assertEqual(self.error_code(response), "E-AUT-401")
+        basic = await self.client.post(
+            "/v1/sessions",
+            headers={
+                "Authorization": f"Basic {self.terminal['access_token']}",
+                "Idempotency-Key": str(uuid4()),
+            },
+            json=self.session_request(),
+        )
+        self.assertEqual(basic.status_code, 401, basic.text)
 
     async def test_session_must_name_the_calling_terminal(self) -> None:
         await self.create_subject_and_consent(self.terminal)

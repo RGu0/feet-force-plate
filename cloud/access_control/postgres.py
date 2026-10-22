@@ -158,24 +158,44 @@ def _grant(row: Any) -> SensitiveAccessGrantRecord:
     )
 
 
+_TERMINAL_PROJECTION_MARKER = "terminal-access-v1"
+
+
 async def _project_access_terminal(
-    connection: Any, tenant_id: UUID, client_installation_id: UUID,
-    *, status: str, at: datetime,
+    connection: Any, tenant_id: UUID, client_installation_id: UUID, *, at: datetime,
 ) -> None:
     """RAY-728 D3: mirror an activated terminal into device.terminals.
 
     Session and consent rows reference device.terminals; the projection keeps
-    those foreign keys intact without widening them. It carries no site.
+    those foreign keys intact without widening them. It carries no site. A
+    hardware or legacy row under the same id is never taken over: activation
+    fails as an installation conflict instead.
     """
-    await connection.execute(
+    projected = await connection.fetchval(
         """INSERT INTO device.terminals
            (terminal_id,tenant_id,site_id,installation_id,client_public_key,status,
             created_at,updated_at)
-           VALUES ($1,$2,NULL,$1,'terminal-access-v1',$3,$4,$4)
+           VALUES ($1,$2,NULL,$1,$3,'ACTIVE',$4,$4)
            ON CONFLICT (terminal_id) DO UPDATE
-           SET status=EXCLUDED.status,
-               updated_at=GREATEST(device.terminals.updated_at,EXCLUDED.updated_at)""",
-        client_installation_id, tenant_id, status, at,
+           SET status='ACTIVE',
+               updated_at=GREATEST(device.terminals.updated_at,EXCLUDED.updated_at)
+           WHERE device.terminals.client_public_key=$3
+             AND device.terminals.tenant_id=EXCLUDED.tenant_id
+           RETURNING terminal_id""",
+        client_installation_id, tenant_id, _TERMINAL_PROJECTION_MARKER, at,
+    )
+    if projected is None:
+        raise TerminalInstallationOwned("installation id is used by another terminal")
+
+
+async def _revoke_access_terminal_projection(
+    connection: Any, client_installation_id: UUID, *, at: datetime,
+) -> None:
+    await connection.execute(
+        """UPDATE device.terminals
+           SET status='REVOKED',updated_at=GREATEST(updated_at,$2)
+           WHERE terminal_id=$1 AND client_public_key=$3""",
+        client_installation_id, at, _TERMINAL_PROJECTION_MARKER,
     )
 
 
@@ -1494,13 +1514,16 @@ class PostgresAccessRepository:
                 await self._insert_terminal_session(connection, session)
                 await _project_access_terminal(
                     connection, row["tenant_id"], row["client_installation_id"],
-                    status="ACTIVE", at=terminal.activated_at,
+                    at=terminal.activated_at,
                 )
         except AccessRepositoryError:
             raise
         except Exception as exc:
             if getattr(exc, "sqlstate", None) == "23505":
                 raise TerminalInstallationOwned("installation was registered concurrently") from exc
+            if getattr(exc, "sqlstate", None) == "42501":
+                # The device.terminals projection id belongs to another tenant (RLS).
+                raise TerminalInstallationOwned("installation id is used by another tenant") from exc
             raise
         return _terminal(row)
 
@@ -1663,9 +1686,8 @@ class PostgresAccessRepository:
                    WHERE client_installation_id=$1 AND revoked_at IS NULL""",
                 client_installation_id, revoked_at,
             )
-            await _project_access_terminal(
-                connection, tenant_id, client_installation_id,
-                status="REVOKED", at=revoked_at,
+            await _revoke_access_terminal_projection(
+                connection, client_installation_id, at=revoked_at,
             )
         return _terminal(row)
 

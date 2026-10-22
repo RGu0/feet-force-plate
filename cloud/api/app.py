@@ -353,7 +353,9 @@ def create_app(container: ServiceContainer) -> FastAPI:
         except (AuthenticationError, RepositoryUnavailable) as rejected:
             if container.terminal_access is None or container.terminal_tokens is None:
                 raise
-            _, _, token = authorization.partition(" ")
+            scheme, separator, token = authorization.partition(" ")
+            if separator != " " or scheme.lower() != "bearer" or not token:
+                raise
             try:
                 terminal = container.terminal_tokens.verify(token)
             except AuthenticationError:

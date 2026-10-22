@@ -22,6 +22,7 @@ from httpx import ASGITransport, AsyncClient
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.repository import (
     TenantSeed,
+    TerminalInstallationOwned,
     TerminalRecord,
     TerminalRefreshSessionRecord,
 )
@@ -58,6 +59,10 @@ def test_projection_migration_converges_without_widening_foreign_keys() -> None:
     for forbidden in ("DROP ", "ALTER TABLE", "GRANT ", "CREATE "):
         assert forbidden not in sql
     assert sql.count("ON CONFLICT") == 2
+    # Backfill never takes over hardware/legacy rows or another tenant's rows.
+    assert "WHERE device.terminals.client_public_key = 'terminal-access-v1'" in sql
+    assert "WHERE device.devices.model = 'insole-pair'" in sql
+    assert sql.count("tenant_id = EXCLUDED.tenant_id") == 2
     assert "'terminal-access-v1'" in sql and "'insole-pair'" in sql
     assert "sha256(convert_to('insole-pair:', 'UTF8') || uuid_send(p.insole_id))" in sql
 
@@ -298,6 +303,62 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
                 assert retired.status_code == 200, retired.text
                 assert (await create(session_body())).status_code == 403
                 assert (await create(session_body(device_id=uuid4()))).status_code == 403
+        finally:
+            for pool in pools:
+                await pool.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(_live_dsns() is None, reason="three PostgreSQL role DSNs are not configured")
+def test_terminal_projection_never_takes_over_a_hardware_installation() -> None:
+    import asyncpg
+
+    tenant_dsn, activation_dsn, platform_dsn = _live_dsns() or ("", "", "")
+
+    async def exercise() -> None:
+        pools = [
+            await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+            for dsn in (tenant_dsn, activation_dsn, platform_dsn)
+        ]
+        tenant_pool, activation_pool, platform_pool = pools
+        try:
+            access = PostgresAccessRepository(
+                tenant_pool=tenant_pool, activation_pool=activation_pool,
+                platform_pool=platform_pool,
+            )
+            nonce = os.urandom(32)
+            seeded = []
+            for index in (72, 73):
+                tenant = TenantSeed(uuid4(), f"RAY-728 collision {uuid4()}")
+                group = _group(index, run_nonce=nonce)
+                await access.provision_tenant(tenant, group, created_at=group.license_valid_from)
+                hardware_installation = uuid4()
+                await access.activate_account_atomically(
+                    login_name_hmac=group.login_name_hmac,
+                    activation_code_hash=group.activation_code_hash,
+                    hardware_identity=group.hardware_identity,
+                    password_hash="$ffp-scrypt$good", installation_id=hardware_installation,
+                    activated_at=group.license_valid_from + timedelta(minutes=1),
+                    license_key_id="license/2-test",
+                    license_document_json='{"schema_version":"license/2"}',
+                    license_signature="s" * 86,
+                )
+                await access.set_terminal_seats(
+                    license_id=group.license_id, seats=2, changed_at=datetime.now(UTC)
+                )
+                seeded.append((tenant, group, hardware_installation))
+            (tenant, group, own_hardware), (_, _, foreign_hardware) = seeded
+            # Same tenant (hardware projection row) and another tenant (RLS-hidden row).
+            for taken in (own_hardware, foreign_hardware):
+                with pytest.raises(TerminalInstallationOwned):
+                    await _activate(access, tenant.tenant_id, group, taken)
+                assert await access.terminal(taken) is None
+            async with tenant_transaction(activation_pool, tenant.tenant_id) as connection:
+                row = await connection.fetchrow(
+                    "SELECT status,client_public_key FROM device.terminals WHERE terminal_id=$1",
+                    own_hardware)
+            assert (row["status"], row["client_public_key"]) == ("ACTIVE", "tenant-access-v1")
         finally:
             for pool in pools:
                 await pool.close()

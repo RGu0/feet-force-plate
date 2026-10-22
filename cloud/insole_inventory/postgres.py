@@ -45,7 +45,9 @@ async def _project_insole(connection: Any, tenant_id: UUID, record: InsoleRecord
            VALUES ($1,$2,'insole-pair',$3,'{}'::jsonb,$4,$5,$5)
            ON CONFLICT (device_id) DO UPDATE
            SET status=EXCLUDED.status,
-               updated_at=GREATEST(device.devices.updated_at,EXCLUDED.updated_at)""",
+               updated_at=GREATEST(device.devices.updated_at,EXCLUDED.updated_at)
+           WHERE device.devices.model='insole-pair'
+             AND device.devices.tenant_id=EXCLUDED.tenant_id""",
         record.insole_id, tenant_id, insole_device_serial_hmac(record.insole_id),
         "RETIRED" if record.state is InsoleState.RETIRED else "ACTIVE",
         record.updated_at,
