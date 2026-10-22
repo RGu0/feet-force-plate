@@ -13,6 +13,7 @@ Environment=FEETFORCEPLATE_BIND_HOST=127.0.0.1
 Environment=FEETFORCEPLATE_BIND_PORT=8743
 Environment=FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv
 Environment=XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
+Environment=UV_OFFLINE=1
 ExecStart=/opt/feetforceplate/app/cloud/api/run-seed.sh
 Restart=on-failure
 RestartSec=5s
