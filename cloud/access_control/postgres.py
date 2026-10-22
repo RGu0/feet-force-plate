@@ -331,18 +331,24 @@ class PostgresAccessRepository:
             hardware["model"],
             projected_at,
         )
-        await connection.execute(
+        projected = await connection.fetchval(
             """INSERT INTO device.terminals
                (terminal_id,tenant_id,site_id,installation_id,client_public_key,status,
                 last_seen_at,created_at,updated_at)
                VALUES ($1,$2,NULL,$1,'tenant-access-v1','ACTIVE',$3,$3,$3)
                ON CONFLICT (terminal_id) DO UPDATE
                SET status='ACTIVE',last_seen_at=GREATEST(device.terminals.last_seen_at,$3),
-                   updated_at=GREATEST(device.terminals.updated_at,$3)""",
+                   updated_at=GREATEST(device.terminals.updated_at,$3)
+               WHERE device.terminals.client_public_key<>$4
+               RETURNING terminal_id""",
             installation_id,
             tenant_id,
             projected_at,
+            _TERMINAL_PROJECTION_MARKER,
         )
+        if projected is None:
+            # RAY-728: an activated terminal's projection owns this id; never revive it.
+            raise AccessRepositoryConflict("installation id is used by an activated terminal")
         await connection.execute(
             """INSERT INTO device.terminal_device_bindings
                (terminal_device_binding_id,tenant_id,terminal_id,device_id,valid_from,created_at)

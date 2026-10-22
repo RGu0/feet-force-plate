@@ -21,6 +21,7 @@ from httpx import ASGITransport, AsyncClient
 
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.repository import (
+    AccessRepositoryConflict,
     TenantSeed,
     TerminalInstallationOwned,
     TerminalRecord,
@@ -359,6 +360,28 @@ def test_terminal_projection_never_takes_over_a_hardware_installation() -> None:
                     "SELECT status,client_public_key FROM device.terminals WHERE terminal_id=$1",
                     own_hardware)
             assert (row["status"], row["client_public_key"]) == ("ACTIVE", "tenant-access-v1")
+
+            # Reverse order: a hardware login never takes over a terminal's projection.
+            terminal_id = uuid4()
+            await _activate(access, tenant.tenant_id, group, terminal_id)
+            with pytest.raises(AccessRepositoryConflict):
+                await access.register_or_touch_installation(
+                    tenant_id=tenant.tenant_id, account_id=group.account_id,
+                    installation_id=terminal_id, seen_at=datetime.now(UTC),
+                )
+            await access.revoke_terminal(
+                tenant_id=tenant.tenant_id, account_id=group.account_id,
+                client_installation_id=terminal_id, revoked_at=datetime.now(UTC),
+            )
+            async with tenant_transaction(activation_pool, tenant.tenant_id) as connection:
+                row = await connection.fetchrow(
+                    "SELECT status,client_public_key FROM device.terminals WHERE terminal_id=$1",
+                    terminal_id)
+                installations = await connection.fetchval(
+                    "SELECT count(*) FROM device.client_installations "
+                    "WHERE client_installation_id=$1", terminal_id)
+            assert (row["status"], row["client_public_key"]) == ("REVOKED", "terminal-access-v1")
+            assert installations == 0
         finally:
             for pool in pools:
                 await pool.close()
