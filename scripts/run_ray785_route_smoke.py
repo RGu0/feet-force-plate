@@ -74,6 +74,7 @@ class Client:
         token: str | None = None,
         body: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        content: bytes | None = None,
     ) -> tuple[int, dict[str, Any]]:
         request = Request(self._base_url + path, method=method)
         request.add_header("Accept", "application/json")
@@ -81,7 +82,8 @@ class Client:
             request.add_header("Authorization", f"Bearer {token}")
         for name, value in (headers or {}).items():
             request.add_header(name, value)
-        data = None
+        # Raw bodies (segment uploads) carry their own Content-Type header.
+        data = content
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             request.add_header("Content-Type", "application/json")
