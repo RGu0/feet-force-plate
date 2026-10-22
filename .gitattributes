@@ -1,0 +1,3 @@
+
+# Digest-pinned public trust anchor: must stay byte-identical on every platform (RAY-812).
+release/mobile-integration-trust-anchor/* -text
