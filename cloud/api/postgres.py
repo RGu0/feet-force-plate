@@ -111,6 +111,33 @@ def _session_record(row: Any) -> SessionRecord:
     )
 
 
+# RAY-728 D3/D5: an activated terminal is projected into device.terminals and
+# its institution's insole pairs into device.devices (model 'insole-pair').
+# Same parameter order as the hardware-path query.
+_TERMINAL_SESSION_REFERENCES = """
+SELECT
+    EXISTS (
+        SELECT 1 FROM device.terminals t
+        WHERE t.tenant_id=$1 AND t.terminal_id=$2 AND t.status='ACTIVE'
+          AND t.site_id IS NOT DISTINCT FROM $3
+    ) AS installation_ok,
+    EXISTS (
+        SELECT 1 FROM device.devices d
+        WHERE d.tenant_id=$1 AND d.device_id=$4
+          AND d.model='insole-pair' AND d.status='ACTIVE'
+    ) AS hardware_ok,
+    EXISTS (
+        SELECT 1 FROM subject.subjects s
+        WHERE s.tenant_id=$1 AND s.subject_uuid=$5 AND s.status='ACTIVE'
+    ) AS subject_ok,
+    EXISTS (
+        SELECT 1 FROM subject.consents c
+        WHERE c.tenant_id=$1 AND c.consent_record_id=$6
+          AND c.subject_uuid=$5 AND c.revoked_at IS NULL
+    ) AS consent_ok
+"""
+
+
 class PostgresPlatformRepository:
     """Production asyncpg adapter for tenant-scoped ingestion state."""
 
@@ -746,6 +773,7 @@ class PostgresPlatformRepository:
                     )
                 return response
             validation = await connection.fetchrow(
+                _TERMINAL_SESSION_REFERENCES if context.terminal_access else
                 """
                 SELECT
                     EXISTS (

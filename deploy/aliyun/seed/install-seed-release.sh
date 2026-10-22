@@ -222,6 +222,9 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
      ops.identity_recovery_comparisons, ops.identity_recovery_registrations
      TO ffp_seed_backup;"
+# RAY-728: converging projection backfill; safe to apply on every install.
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0015_terminal_data_plane_projection.sql"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then

@@ -9,6 +9,7 @@ equal revision order.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hashlib
 from typing import Any, AsyncIterator
 from uuid import UUID
 
@@ -24,6 +25,33 @@ from shared.contracts.insole_inventory import (
 )
 
 from .repository import RegistrationKeyRecord
+
+
+def insole_device_serial_hmac(insole_id: UUID) -> bytes:
+    # device.devices is UNIQUE NULLS NOT DISTINCT on (tenant_id, serial_hmac),
+    # so each projected pair needs its own non-null, non-identifying value.
+    return hashlib.sha256(b"insole-pair:" + insole_id.bytes).digest()
+
+
+async def _project_insole(connection: Any, tenant_id: UUID, record: InsoleRecord) -> None:
+    """RAY-728 D3/D5: mirror an insole pair into device.devices.
+
+    ``screening.sessions.device_id`` references device.devices; a terminal
+    session may name an ACTIVE projection only, so retirement follows.
+    """
+    await connection.execute(
+        """INSERT INTO device.devices
+           (device_id,tenant_id,model,serial_hmac,capabilities,status,created_at,updated_at)
+           VALUES ($1,$2,'insole-pair',$3,'{}'::jsonb,$4,$5,$5)
+           ON CONFLICT (device_id) DO UPDATE
+           SET status=EXCLUDED.status,
+               updated_at=GREATEST(device.devices.updated_at,EXCLUDED.updated_at)
+           WHERE device.devices.model='insole-pair'
+             AND device.devices.tenant_id=EXCLUDED.tenant_id""",
+        record.insole_id, tenant_id, insole_device_serial_hmac(record.insole_id),
+        "RETIRED" if record.state is InsoleState.RETIRED else "ACTIVE",
+        record.updated_at,
+    )
 
 
 def _node(row: Any, side: str) -> InsoleNode:
@@ -205,6 +233,7 @@ class _PostgresWriteTransaction:
                 for side, node in (("left", record.left), ("right", record.right))
             ],
         )
+        await _project_insole(self._connection, self._tenant_id, record)
 
     async def update(self, record):
         values = _values(record)
@@ -212,6 +241,7 @@ class _PostgresWriteTransaction:
             f"UPDATE device.insole_pairs SET {_ASSIGNMENTS} WHERE tenant_id=$1 AND insole_id=$2",
             self._tenant_id, record.insole_id, *(values[position] for position, _ in _MUTABLE),
         )
+        await _project_insole(self._connection, self._tenant_id, record)
 
 
 class PostgresInsoleInventoryRepository:

@@ -273,8 +273,9 @@ class TerminalAccessContext:
 class TerminalAccessTokenIssuer:
     """Terminal bearer tokens; a distinct type and audience from tenant tokens.
 
-    Terminal credentials are not hardware-bound, so they are deliberately not
-    accepted by the hardware-scoped tenant data plane.
+    Terminal credentials are not hardware-bound. The hardware-scoped routes
+    (capture grants, migration permits, identity recovery, report copies) do
+    not accept them; since RAY-728 the subject, consent and session routes do.
     """
 
     token_type = "terminal_access"

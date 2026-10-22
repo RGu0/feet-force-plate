@@ -68,6 +68,14 @@ reports and retires. Seed composition wires `InsoleInventoryService` to
 (`install-seed-release.sh` does this and grants the backup role SELECT). Pairs
 are retire-only; there is no delete route or grant.
 
+Since RAY-728 the subject, consent and session routes also accept terminal
+bearer tokens. Terminal activation and revocation project the terminal into
+`device.terminals`, and insole registration and retirement project the pair into
+`device.devices` (`model = 'insole-pair'`), in the same transaction, so the
+existing session and consent foreign keys hold. Migration
+`0015_terminal_data_plane_projection.sql` backfills earlier rows; it converges
+and `install-seed-release.sh` applies it on every install.
+
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful
 provision response, and inspection never prints hashes, DSNs, private keys, or
