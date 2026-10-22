@@ -21,6 +21,7 @@ source "$release_manifest"
 release_sha="${RELEASE_SHA:?missing RELEASE_SHA}"
 archive_sha="${ARCHIVE_SHA256:?missing ARCHIVE_SHA256}"
 archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"
+foundation_wheel="${FOUNDATION_WHEEL_PATH:?missing FOUNDATION_WHEEL_PATH}"
 if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$archive_sha" =~ ^[0-9a-f]{64}$ ]]; then
     echo "release manifest contains an invalid checksum or release identifier" >&2
     exit 1
@@ -33,6 +34,10 @@ work_root="/tmp/feetforceplate-sales-inventory-$release_sha"
 delivery_root="/var/lib/feetforceplate/delivery"
 database_name="feetforceplate_seed"
 
+if [[ "$foundation_wheel" != /home/rui/* || ! -f "$foundation_wheel" ]]; then
+    echo "foundation wheel is missing or not under /home/rui" >&2
+    exit 1
+fi
 if [[ ! -f "$archive" ]]; then
     echo "release archive is missing: $archive" >&2
     exit 1
@@ -55,7 +60,8 @@ bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
     "$work_root/seed.crt" \
     "$work_root/seed.key" \
     "$FEETFORCEPLATE_PUBLIC_BASE_URL" \
-    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT"
+    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT" \
+    "$foundation_wheel"
 
 install -d -o feetforceplate -g feetforceplate -m 0700 "$delivery_root"
 delivery_file="$delivery_root/sales-inventory-$(date -u +%Y%m%dT%H%M%SZ).json"
