@@ -87,10 +87,12 @@ def _running_runner(monkeypatch) -> Iterator[subprocess.Popen]:
         while _process_group_alive(group_id) and time.monotonic() < deadline:
             runner.poll()
             time.sleep(0.02)
-        try:
-            os.killpg(group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        # Only a group seen alive can still be ours; never KILL a reused id.
+        if _process_group_alive(group_id):
+            try:
+                os.killpg(group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         runner.wait()
 
 

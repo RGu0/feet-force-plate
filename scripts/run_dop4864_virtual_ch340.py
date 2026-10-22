@@ -62,14 +62,21 @@ def _stream_zero_frames(*, duration_seconds: float | None = None) -> None:
         os.close(descriptor)
 
 
-def _exit_on_signal(signum: int, _frame: object) -> None:
-    raise SystemExit(128 + signum)
-
-
 def _termination_signals() -> tuple[signal.Signals, ...]:
     return tuple(
         getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
     )
+
+
+def _ignore_further_signals() -> None:
+    # A repeated signal must not abandon cleanup half-way.
+    for signum in (signal.SIGINT, *_termination_signals()):
+        signal.signal(signum, signal.SIG_IGN)
+
+
+def _exit_on_signal(signum: int, _frame: object) -> None:
+    _ignore_further_signals()
+    raise SystemExit(128 + signum)
 
 
 def _stop_socat(process: subprocess.Popen) -> None:
@@ -107,15 +114,17 @@ def run(*, duration_seconds: float | None = None) -> None:
     # before socat exists so no signal can land between the two.
     for signum in _termination_signals():
         signal.signal(signum, _exit_on_signal)
-    process = subprocess.Popen(socat_command())
+    # Aliases left by a killed run could point at a reused, unrelated PTY.
+    _remove_stale_endpoints()
+    process: subprocess.Popen | None = None
     try:
+        process = subprocess.Popen(socat_command())
         _wait_for_endpoints(deadline=time.monotonic() + ENDPOINT_WAIT_SECONDS)
         _stream_zero_frames(duration_seconds=duration_seconds)
     finally:
-        # A repeated signal must not abandon cleanup half-way.
-        for signum in (*_termination_signals(), signal.SIGINT):
-            signal.signal(signum, signal.SIG_IGN)
-        _stop_socat(process)
+        _ignore_further_signals()
+        if process is not None:
+            _stop_socat(process)
         _remove_stale_endpoints()
 
 
