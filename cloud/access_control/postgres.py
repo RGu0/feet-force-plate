@@ -158,6 +158,27 @@ def _grant(row: Any) -> SensitiveAccessGrantRecord:
     )
 
 
+async def _project_access_terminal(
+    connection: Any, tenant_id: UUID, client_installation_id: UUID,
+    *, status: str, at: datetime,
+) -> None:
+    """RAY-728 D3: mirror an activated terminal into device.terminals.
+
+    Session and consent rows reference device.terminals; the projection keeps
+    those foreign keys intact without widening them. It carries no site.
+    """
+    await connection.execute(
+        """INSERT INTO device.terminals
+           (terminal_id,tenant_id,site_id,installation_id,client_public_key,status,
+            created_at,updated_at)
+           VALUES ($1,$2,NULL,$1,'terminal-access-v1',$3,$4,$4)
+           ON CONFLICT (terminal_id) DO UPDATE
+           SET status=EXCLUDED.status,
+               updated_at=GREATEST(device.terminals.updated_at,EXCLUDED.updated_at)""",
+        client_installation_id, tenant_id, status, at,
+    )
+
+
 class PostgresAccessRepository:
     """Pool-separated asyncpg repository; no role silently falls back to another."""
 
@@ -1471,6 +1492,10 @@ class PostgresAccessRepository:
                         terminal.refresh_family_id, terminal.activated_at,
                     )
                 await self._insert_terminal_session(connection, session)
+                await _project_access_terminal(
+                    connection, row["tenant_id"], row["client_installation_id"],
+                    status="ACTIVE", at=terminal.activated_at,
+                )
         except AccessRepositoryError:
             raise
         except Exception as exc:
@@ -1637,6 +1662,10 @@ class PostgresAccessRepository:
                    SET revoked_at=$2,revoke_reason='TERMINAL_REVOKED'
                    WHERE client_installation_id=$1 AND revoked_at IS NULL""",
                 client_installation_id, revoked_at,
+            )
+            await _project_access_terminal(
+                connection, tenant_id, client_installation_id,
+                status="REVOKED", at=revoked_at,
             )
         return _terminal(row)
 

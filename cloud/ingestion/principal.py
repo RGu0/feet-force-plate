@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from cloud.api.access_auth import TenantAccessContext
+from cloud.api.access_auth import TenantAccessContext, TerminalAccessContext
 from cloud.api.auth import TerminalContext
 from cloud.api.errors import AuthenticationError, TenantAccessDenied
 
@@ -21,6 +21,9 @@ class IngestionPrincipal:
     account_id: UUID | None = None
     license_id: UUID | None = None
     hardware_id: str | None = None
+    # RAY-728: an activated institutional terminal (`feetforceplate-terminal`
+    # token) rather than a hardware-bound tenant or legacy terminal principal.
+    terminal_access: bool = False
 
     def ensure_active(self, now: datetime | None = None) -> None:
         if self.expires_at <= (now or datetime.now(UTC)):
@@ -50,6 +53,23 @@ def tenant_ingestion_principal(context: TenantAccessContext) -> IngestionPrincip
     )
 
 
+def terminal_access_principal(
+    context: TerminalAccessContext, *, license_id: UUID, allow_new_test: bool
+) -> IngestionPrincipal:
+    # The caller's current License decides allow_new_test on every request;
+    # uploading already captured data stays allowed (RAY-728 D6).
+    return IngestionPrincipal(
+        tenant_id=context.tenant_id,
+        terminal_id=context.client_installation_id,
+        expires_at=context.expires_at,
+        allow_new_test=allow_new_test,
+        allow_upload=True,
+        account_id=context.account_id,
+        license_id=license_id,
+        terminal_access=True,
+    )
+
+
 def legacy_terminal_principal(context: TerminalContext) -> IngestionPrincipal:
     return IngestionPrincipal(
         tenant_id=context.tenant_id,
@@ -75,4 +95,5 @@ __all__ = [
     "coerce_ingestion_principal",
     "legacy_terminal_principal",
     "tenant_ingestion_principal",
+    "terminal_access_principal",
 ]

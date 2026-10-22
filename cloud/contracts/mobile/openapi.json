@@ -4128,7 +4128,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Create Consent"
+        "summary": "Create Consent",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/consents/{consent_record_id}/revoke": {
@@ -4275,7 +4295,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Revoke Consent"
+        "summary": "Revoke Consent",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/inventory/insoles": {
@@ -5048,7 +5088,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Create Session"
+        "summary": "Create Session",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/sessions/{session_id}/complete": {
@@ -5213,7 +5273,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Complete Session"
+        "summary": "Complete Session",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/sessions/{session_id}/segments": {
@@ -5339,7 +5419,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "List Segments"
+        "summary": "List Segments",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/sessions/{session_id}/segments/{segment_index}": {
@@ -5522,7 +5622,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Put Segment"
+        "summary": "Put Segment",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/sessions/{session_id}/status": {
@@ -5648,7 +5768,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Session Status"
+        "summary": "Session Status",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/subjects": {
@@ -5795,7 +5935,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Create Subject"
+        "summary": "Create Subject",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     },
     "/v1/subjects/resolve": {
@@ -5921,7 +6081,27 @@
             "description": "Business error; use retryable and action together"
           }
         },
-        "summary": "Resolve Subject"
+        "summary": "Resolve Subject",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-AUT-403",
+            "http_status": 403,
+            "retryable": false
+          }
+        ]
       }
     }
   }

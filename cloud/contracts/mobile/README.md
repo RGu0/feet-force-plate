@@ -66,6 +66,33 @@ Every `insole_inventory` scenario is replayed against the server in
 `cloud/tests/test_insole_inventory_api.py`; client alignment is tracked by
 RAY-607.
 
+RAY-728 lets an activated terminal upload with its terminal access token: the
+subject, consent and session routes accept it in addition to the hardware
+tenant token (vector section `terminal_data_plane`). Not part of `v0.2.0`.
+- `X-Terminal-ID` is optional; when sent it must equal `client_installation_id`.
+  Terminal status is checked on every request, so a revoked terminal gets
+  `E-TRM-401-REVOKED` there too, even with an unexpired access token.
+- A session names the caller: `terminal_id` and `client_installation_id` are its
+  `client_installation_id`, `site_id` is null, and `device_id` is the `insole_id`
+  of a non-retired pair in the institution's inventory. Segments, complete and
+  status work only for sessions the calling terminal created. Violations are
+  `E-AUT-403`.
+- A new session needs the current License ACTIVE, within validity and enabling
+  `screening.start`; this is read per request. Segments, complete, subject and
+  consent writes need only an ACTIVE terminal, so already captured data still
+  uploads after the License stops new tests. `X-Capture-Authorization` and
+  `X-Expected-Manifest-SHA256` are not supported for terminals (403).
+- Self-revoke (`POST /v1/access/terminals/{own id}/revoke`) is supported: the seat
+  is released at once, every refresh session ends, repeats return the revoked
+  terminal unchanged. `/v1/access/logout` is for hardware login only. Upload
+  pending data before revoking.
+- Re-activating the same `client_installation_id` on the same account keeps the
+  id, starts a new refresh family, takes a seat again (`E-TRM-409-SEAT-LIMIT` when
+  full) and resumes segments and complete of sessions created before the revoke.
+  Another account gets `E-TRM-409-INSTALLATION-CONFLICT`.
+Every `terminal_data_plane` scenario is replayed against the server in
+`cloud/tests/test_terminal_data_plane.py`.
+
 Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart
 consumption of these fixtures in gait-insole-flutter (PR 7). That evidence
 predates the RAY-656 `terminal` section; client alignment for it is tracked by

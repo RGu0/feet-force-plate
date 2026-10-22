@@ -338,6 +338,40 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     DataDependency = Annotated[IngestionPrincipal, Depends(data_context)]
 
+    async def terminal_data_context(
+        authorization: Annotated[str, Header(alias="Authorization")],
+        terminal_header_id: Annotated[
+            UUID | None,
+            Header(alias="X-Terminal-ID"),
+        ] = None,
+    ) -> IngestionPrincipal:
+        # RAY-728 D1: the subject, consent and session routes also accept an
+        # activated terminal's access token. Hardware-bound tenant and legacy
+        # terminal tokens keep their existing path unchanged.
+        try:
+            return data_context(authorization, terminal_header_id)
+        except (AuthenticationError, RepositoryUnavailable) as rejected:
+            if container.terminal_access is None or container.terminal_tokens is None:
+                raise
+            _, _, token = authorization.partition(" ")
+            try:
+                terminal = container.terminal_tokens.verify(token)
+            except AuthenticationError:
+                raise rejected from None
+        if (
+            terminal_header_id is not None
+            and terminal_header_id != terminal.client_installation_id
+        ):
+            raise TenantAccessDenied(
+                "X-Terminal-ID 与终端凭据不一致",
+                terminal_id=str(terminal_header_id),
+            )
+        return await container.terminal_access.data_principal(terminal)
+
+    TerminalDataDependency = Annotated[
+        IngestionPrincipal, Depends(terminal_data_context)
+    ]
+
     async def platform_context(
         authorization: Annotated[str, Header(alias="Authorization")],
     ) -> PlatformAccessContext:
@@ -956,12 +990,17 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_session(
         request: Request,
         body: SessionCreateRequest,
-        context: DataDependency,
+        context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
         capture_authorization: Annotated[str | None, Header(alias="X-Capture-Authorization")] = None,
         expected_manifest: Annotated[str | None, Header(alias="X-Expected-Manifest-SHA256")] = None,
     ):
         authorization = None
+        if context.terminal_access and (
+            capture_authorization is not None or expected_manifest is not None
+        ):
+            # RAY-728 D6: capture grants and migration permits are hardware-bound.
+            raise TenantAccessDenied("终端凭据不支持采集授权")
         if capture_authorization is not None or expected_manifest is not None:
             try:
                 kind, token = (capture_authorization or "").split(" ", 1)
@@ -1040,7 +1079,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def resolve_subject(
         request: Request,
         body: SubjectResolveRequest,
-        context: DataDependency,
+        context: TerminalDataDependency,
     ):
         result = await container.subjects.resolve(context, body)
         if result is None:
@@ -1051,7 +1090,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_subject(
         request: Request,
         body: SubjectCreateRequest,
-        context: DataDependency,
+        context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.create_subject(context, body, idempotency_key)
@@ -1061,7 +1100,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def create_consent(
         request: Request,
         body: ConsentCreateRequest,
-        context: DataDependency,
+        context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.create_consent(context, body, idempotency_key)
@@ -1072,7 +1111,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         consent_record_id: UUID,
         body: ConsentRevokeRequest,
-        context: DataDependency,
+        context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
     ):
         result = await container.subjects.revoke_consent(
@@ -1085,7 +1124,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         session_id: UUID,
         segment_index: int,
-        context: DataDependency,
+        context: TerminalDataDependency,
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
         schema_version: Annotated[str, Header(alias="X-Schema-Version")],
         metadata_header: Annotated[str, Header(alias="X-Segment-Metadata")],
@@ -1105,7 +1144,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/segments")
     async def list_segments(
-        request: Request, session_id: UUID, context: DataDependency
+        request: Request, session_id: UUID, context: TerminalDataDependency
     ):
         result = await container.ingestion.list_segments(context, session_id)
         return _data_response(request, result)
@@ -1115,7 +1154,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
         request: Request,
         session_id: UUID,
         body: SessionManifest,
-        context: DataDependency,
+        context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
         schema_version: Annotated[str, Header(alias="X-Schema-Version")],
@@ -1129,7 +1168,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/status")
     async def session_status(
-        request: Request, session_id: UUID, context: DataDependency
+        request: Request, session_id: UUID, context: TerminalDataDependency
     ):
         result = await container.ingestion.get_status(context, session_id)
         return _data_response(request, result)

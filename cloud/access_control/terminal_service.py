@@ -32,6 +32,7 @@ from cloud.api.errors import (
     TerminalRevoked,
     TerminalSeatLimitReached,
 )
+from cloud.ingestion.principal import IngestionPrincipal, terminal_access_principal
 from shared.contracts.access_control import AccessCapabilities, AccountState, LicenseState
 from shared.contracts.terminal_access import (
     TERMINAL_REFRESH_REPLAY_GRACE_SECONDS,
@@ -297,6 +298,18 @@ class TerminalAccessService:
         ):
             raise TerminalRevoked("terminal was revoked")
         return terminal
+
+    async def data_principal(self, context: TerminalAccessContext) -> IngestionPrincipal:
+        """Data-plane principal for an ACTIVE terminal (RAY-728 D1/D6)."""
+        caller = await self._active_caller(context)
+        license_record = await self._repository.license(caller.license_id)
+        allow_new = (
+            self._license_usable(license_record, now=self._now())
+            and "screening.start" in license_record.enabled_features
+        )
+        return terminal_access_principal(
+            context, license_id=caller.license_id, allow_new_test=allow_new
+        )
 
     async def list_terminals(self, context: TerminalAccessContext) -> TerminalListResponse:
         caller = await self._active_caller(context)

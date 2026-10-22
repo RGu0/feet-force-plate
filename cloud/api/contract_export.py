@@ -118,6 +118,24 @@ _TERMINAL_OPERATION_ERRORS.update({
         errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
 })
 
+# RAY-728 R1: subject, consent and session routes also accept the terminal
+# access token. The codes below are the terminal-specific outcomes (D1-D6).
+_TERMINAL_DATA_ROUTES = (
+    ('/v1/subjects/resolve', 'post'),
+    ('/v1/subjects', 'post'),
+    ('/v1/consents', 'post'),
+    ('/v1/consents/{consent_record_id}/revoke', 'post'),
+    ('/v1/sessions', 'post'),
+    ('/v1/sessions/{session_id}/segments/{segment_index}', 'put'),
+    ('/v1/sessions/{session_id}/segments', 'get'),
+    ('/v1/sessions/{session_id}/complete', 'post'),
+    ('/v1/sessions/{session_id}/status', 'get'),
+)
+_TERMINAL_OPERATION_ERRORS.update({
+    route: (errors.AuthenticationError, errors.TerminalRevoked, errors.TenantAccessDenied)
+    for route in _TERMINAL_DATA_ROUTES
+})
+
 def _install_schema(model, schemas):
     schema = model.model_json_schema(ref_template='#/components/schemas/{model}')
     schemas.update(schema.pop('$defs', {}))
@@ -238,6 +256,7 @@ def build_vectors():
             'canonical_hex': canonical.hex(), 'signature_base64': signed.signature,
             'negative_cases': ['modified_document', 'modified_signature', 'unknown_key_id']},
         'terminal': terminal_vectors,
+        'terminal_data_plane': _terminal_data_plane_vectors(),
         'insole_inventory': _insole_vectors(meta)}
 
 
@@ -298,6 +317,66 @@ def _terminal_vectors(meta):
             ]},
     }
 
+
+
+def _terminal_data_plane_vectors():
+    """Declarative RAY-728 R1 vectors; cloud tests replay every scenario."""
+    denied = {'http_status': errors.TenantAccessDenied.http_status,
+              'code': errors.TenantAccessDenied.code}
+    revoked = {'http_status': errors.TerminalRevoked.http_status,
+               'code': errors.TerminalRevoked.code}
+    return {
+        'credential': 'terminal access token (POST /v1/access/terminal-activate or '
+                      '/v1/access/terminal-refresh); hardware tenant tokens keep working',
+        'routes': [f'{method.upper()} {path}' for path, method in _TERMINAL_DATA_ROUTES],
+        'x_terminal_id': 'optional; when sent it must equal client_installation_id',
+        'terminal_status': 'checked on every request; a revoked terminal gets '
+                           f'{errors.TerminalRevoked.code} even with an unexpired token',
+        'session_binding': {
+            'terminal_id': 'client_installation_id of the caller',
+            'client_installation_id': 'client_installation_id of the caller',
+            'site_id': None,
+            'device_id': 'insole_id of a non-retired pair in the institution inventory; '
+                         'any terminal of the institution may use it',
+            'existing_session': 'segments, complete and status only for sessions the '
+                                'calling terminal created'},
+        'license': {
+            'new_session': 'current License ACTIVE, within validity and enabling '
+                           'screening.start; read on every request, not from the token',
+            'upload': 'segments, complete, subject and consent writes need only an '
+                      'ACTIVE terminal'},
+        'capture_authorization': 'not supported for terminals: X-Capture-Authorization '
+                                 'or X-Expected-Manifest-SHA256 is rejected',
+        'scenarios': [
+            {'name': 'full_upload', 'expect': {'http_status': 201}},
+            {'name': 'x_terminal_id_mismatch', 'expect': denied},
+            {'name': 'session_names_other_terminal', 'expect': denied},
+            {'name': 'site_id_present', 'expect': denied},
+            {'name': 'unknown_insole', 'expect': denied},
+            {'name': 'retired_insole', 'expect': denied},
+            {'name': 'license_without_new_test', 'expect': denied,
+             'existing_session_upload': {'http_status': 201}},
+            {'name': 'capture_authorization_header', 'expect': denied},
+            {'name': 'session_of_other_terminal', 'expect': denied},
+            {'name': 'revoked_terminal', 'expect': revoked},
+        ],
+        'self_revoke': {
+            'route': 'POST /v1/access/terminals/{client_installation_id}/revoke',
+            'target': 'the calling terminal itself is supported',
+            'effects': ['seat released immediately', 'every refresh session of the '
+                        'terminal invalidated', f'access token gets {errors.TerminalRevoked.code} '
+                        'on /v1/access/* and the data routes until it expires'],
+            'repeat': 'returns the revoked terminal unchanged; safe to retry',
+            'logout': 'POST /v1/access/logout is for hardware login only and does not '
+                      'accept a terminal refresh token'},
+        'reactivation': {
+            'same_account_same_installation': 'keeps client_installation_id; new refresh '
+                                              'family; previous refresh sessions SUPERSEDED',
+            'seat': f'consumes a seat again; {errors.TerminalSeatLimitReached.code} when full',
+            'other_account': errors.TerminalInstallationConflict.code,
+            'sessions_created_before_revoke': 'segments and complete continue after '
+                                              're-activation'},
+    }
 
 
 def _insole_vectors(meta):

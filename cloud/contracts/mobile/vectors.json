@@ -933,5 +933,124 @@
       ],
       "source": "signed_license.document.seats"
     }
+  },
+  "terminal_data_plane": {
+    "capture_authorization": "not supported for terminals: X-Capture-Authorization or X-Expected-Manifest-SHA256 is rejected",
+    "credential": "terminal access token (POST /v1/access/terminal-activate or /v1/access/terminal-refresh); hardware tenant tokens keep working",
+    "license": {
+      "new_session": "current License ACTIVE, within validity and enabling screening.start; read on every request, not from the token",
+      "upload": "segments, complete, subject and consent writes need only an ACTIVE terminal"
+    },
+    "reactivation": {
+      "other_account": "E-TRM-409-INSTALLATION-CONFLICT",
+      "same_account_same_installation": "keeps client_installation_id; new refresh family; previous refresh sessions SUPERSEDED",
+      "seat": "consumes a seat again; E-TRM-409-SEAT-LIMIT when full",
+      "sessions_created_before_revoke": "segments and complete continue after re-activation"
+    },
+    "routes": [
+      "POST /v1/subjects/resolve",
+      "POST /v1/subjects",
+      "POST /v1/consents",
+      "POST /v1/consents/{consent_record_id}/revoke",
+      "POST /v1/sessions",
+      "PUT /v1/sessions/{session_id}/segments/{segment_index}",
+      "GET /v1/sessions/{session_id}/segments",
+      "POST /v1/sessions/{session_id}/complete",
+      "GET /v1/sessions/{session_id}/status"
+    ],
+    "scenarios": [
+      {
+        "expect": {
+          "http_status": 201
+        },
+        "name": "full_upload"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "x_terminal_id_mismatch"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "session_names_other_terminal"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "site_id_present"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "unknown_insole"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "retired_insole"
+      },
+      {
+        "existing_session_upload": {
+          "http_status": 201
+        },
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "license_without_new_test"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "capture_authorization_header"
+      },
+      {
+        "expect": {
+          "code": "E-AUT-403",
+          "http_status": 403
+        },
+        "name": "session_of_other_terminal"
+      },
+      {
+        "expect": {
+          "code": "E-TRM-401-REVOKED",
+          "http_status": 401
+        },
+        "name": "revoked_terminal"
+      }
+    ],
+    "self_revoke": {
+      "effects": [
+        "seat released immediately",
+        "every refresh session of the terminal invalidated",
+        "access token gets E-TRM-401-REVOKED on /v1/access/* and the data routes until it expires"
+      ],
+      "logout": "POST /v1/access/logout is for hardware login only and does not accept a terminal refresh token",
+      "repeat": "returns the revoked terminal unchanged; safe to retry",
+      "route": "POST /v1/access/terminals/{client_installation_id}/revoke",
+      "target": "the calling terminal itself is supported"
+    },
+    "session_binding": {
+      "client_installation_id": "client_installation_id of the caller",
+      "device_id": "insole_id of a non-retired pair in the institution inventory; any terminal of the institution may use it",
+      "existing_session": "segments, complete and status only for sessions the calling terminal created",
+      "site_id": null,
+      "terminal_id": "client_installation_id of the caller"
+    },
+    "terminal_status": "checked on every request; a revoked terminal gets E-TRM-401-REVOKED even with an unexpired token",
+    "x_terminal_id": "optional; when sent it must equal client_installation_id"
   }
 }

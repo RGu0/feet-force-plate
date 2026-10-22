@@ -530,8 +530,10 @@ class InMemoryPlatformRepository:
             error_trends=dict(Counter(error_codes or override.get("error_codes", ()))),
         )
 
-    def add_device(self, tenant_id: UUID, device_id: UUID, model: str) -> None:
-        self._devices[(tenant_id, device_id)] = DeviceRecord(tenant_id, device_id, model)
+    def add_device(
+        self, tenant_id: UUID, device_id: UUID, model: str, status: str = "ACTIVE"
+    ) -> None:
+        self._devices[(tenant_id, device_id)] = DeviceRecord(tenant_id, device_id, model, status)
 
     def add_activation_code_hash(
         self,
@@ -1060,6 +1062,11 @@ class InMemoryPlatformRepository:
         ):
             raise TenantAccessDenied("采集安装或站点不属于认证租户")
         device = self._devices.get((context.tenant_id, request.device_id))
+        if device is not None and context.terminal_access and (
+            device.model != "insole-pair" or device.status != "ACTIVE"
+        ):
+            # RAY-728 D5: terminals capture with ACTIVE insole-pair projections only.
+            device = None
         if device is None:
             raise TenantAccessDenied(
                 "采集硬件资产不属于认证租户",
