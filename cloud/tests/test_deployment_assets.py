@@ -214,7 +214,6 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     # RAY-814: the host has no GitHub access; the operator uploads the wheel.
     assert "curl --fail" not in text
     assert "foundation_wheel_source" in text
-    assert "--retry-all-errors --retry 5" in text
     assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
