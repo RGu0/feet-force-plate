@@ -57,7 +57,9 @@ id "$service_user" >/dev/null 2>&1 || {
 
 install_root="$(mktemp -d /var/lib/feetforceplate/.install-seed.XXXXXX)"
 chown root:postgres "$install_root"
-chmod 0710 "$install_root"
+# Traversable but not listable: postgres reads the migrations and the service
+# user runs the offline dependency check from release/ (RAY-814).
+chmod 0711 "$install_root"
 cleanup() {
     rm -rf -- "$install_root"
 }

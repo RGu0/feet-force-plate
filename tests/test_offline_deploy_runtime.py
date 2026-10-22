@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 SEED = Path(__file__).resolve().parents[1] / "deploy" / "aliyun" / "seed"
 
@@ -21,6 +22,16 @@ def test_installer_proves_offline_resolution_before_migrations() -> None:
     preflight = installer.index("UV_OFFLINE=1")
     assert preflight < installer.index("apply_migration iam.tenants")
     assert preflight < installer.index("createdb")
+
+
+def test_service_user_can_reach_the_offline_check() -> None:
+    # The check runs as feetforceplate, which is not in the install root's
+    # group (postgres); the root must stay traversable by others.
+    installer = _text("install-seed-release.sh")
+    mode = re.search(r'chmod (0[0-7]{3}) "\$install_root"', installer)
+    assert mode is not None
+    assert int(mode.group(1), 8) & 0o001
+    assert installer.index(mode.group(0)) < installer.index("UV_OFFLINE=1")
 
 
 def test_operator_script_uploads_checked_wheel() -> None:
