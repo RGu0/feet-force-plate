@@ -28,6 +28,12 @@ recovery migration 0011. The release installer refuses migration 0011 when the h
 installer run does not itself establish the real incident hold or prove a
 backup restore; record those as separate acceptance evidence.
 
+The host cannot reach github.com. `deploy-sales-inventory-release.sh` downloads
+the foundation wheel on the operator machine, checks it against `uv.lock`, and
+uploads it with the archive; the installer re-checks the digest and proves the
+new release resolves dependencies offline (`UV_OFFLINE=1`, host uv cache)
+before any migration. The seed and backup services run with `UV_OFFLINE=1`.
+
 On a new Alibaba Cloud Linux host, run the reviewed prerequisite script once as
 root. It is idempotent and deliberately does not stop or reconfigure the
 existing 7443 process, so the later cutover remains reversible:

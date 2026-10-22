@@ -6,8 +6,8 @@ if [[ "${EUID}" -ne 0 ]]; then
     echo "install-seed-release.sh must run as root" >&2
     exit 1
 fi
-if [[ "$#" -ne 7 ]]; then
-    echo "usage: install-seed-release.sh RELEASE_ARCHIVE RELEASE_SHA ARCHIVE_SHA256 TLS_CERT TLS_KEY PUBLIC_BASE_URL AGE_RECIPIENT" >&2
+if [[ "$#" -ne 8 ]]; then
+    echo "usage: install-seed-release.sh RELEASE_ARCHIVE RELEASE_SHA ARCHIVE_SHA256 TLS_CERT TLS_KEY PUBLIC_BASE_URL AGE_RECIPIENT FOUNDATION_WHEEL" >&2
     exit 2
 fi
 
@@ -18,6 +18,7 @@ tls_certificate="$4"
 tls_private_key="$5"
 public_base_url="$6"
 age_recipient="$7"
+foundation_wheel_source="$8"
 service_user="feetforceplate"
 service_group="feetforceplate"
 database_name="feetforceplate_seed"
@@ -27,8 +28,8 @@ if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ || ! "$archive_sha256" =~ ^[0-9a-f]{64}
     echo "release and archive SHA values are invalid" >&2
     exit 2
 fi
-if [[ ! -f "$release_archive" || ! -f "$tls_certificate" || ! -f "$tls_private_key" ]]; then
-    echo "release archive and TLS source files must exist" >&2
+if [[ ! -f "$release_archive" || ! -f "$tls_certificate" || ! -f "$tls_private_key" || ! -f "$foundation_wheel_source" ]]; then
+    echo "release archive, foundation wheel and TLS source files must exist" >&2
     exit 2
 fi
 if [[ ! "$public_base_url" =~ ^https://[^/]+:7443$ ]]; then
@@ -67,10 +68,10 @@ tar -xzf "$release_archive" -C "$release_source"
 foundation_info="$(python3 "$release_source/deploy/aliyun/seed/verify_foundation_release_lock.py" \
     "$release_source/pyproject.toml" "$release_source/uv.lock")"
 read -r foundation_url foundation_sha256 <<<"$foundation_info"
+# The host never fetches the wheel: the operator downloads it and uploads it with
+# the archive, and the lock digest is checked again here (RAY-814).
 foundation_wheel="$install_root/foundation-release.whl"
-curl --fail --location --silent --show-error --retry-all-errors --retry 5 --retry-delay 2 \
-    --connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' \
-    --output "$foundation_wheel" "$foundation_url"
+install -m 0600 "$foundation_wheel_source" "$foundation_wheel"
 if [[ "$(sha256sum "$foundation_wheel" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
     echo "foundation release wheel digest mismatch" >&2
     exit 1
@@ -87,6 +88,15 @@ chmod 0755 \
     "$release_source/deploy/aliyun/seed/run-restore-drill.sh" \
     "$release_source/deploy/aliyun/seed/run-live-acceptance.sh" \
     "$release_source/deploy/aliyun/seed/install-layout.sh"
+
+# The seed and backup services resolve dependencies offline from the host uv
+# cache, so prove the new release can before any migration or cutover.
+if ! runuser -u "$service_user" -- env UV_OFFLINE=1 \
+    XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
+    "$release_source/dev" setup >/dev/null; then
+    echo "new release cannot resolve its locked dependencies offline; nothing was changed" >&2
+    exit 1
+fi
 
 if [[ ! -f "$secret_file" ]]; then
     tenant_password="$(openssl rand -hex 32)"

@@ -3,17 +3,22 @@ set -euo pipefail
 umask 077
 
 if [[ "${EUID}" -ne 0 ]]; then
-    echo "run as root: sudo bash /home/rui/feetforceplate-seed-release-server.sh ARCHIVE RELEASE_SHA ARCHIVE_SHA256" >&2
+    echo "run as root: sudo bash /home/rui/feetforceplate-seed-release-server.sh ARCHIVE RELEASE_SHA ARCHIVE_SHA256 FOUNDATION_WHEEL" >&2
     exit 2
 fi
-if [[ "$#" -ne 3 ]]; then
-    echo "usage: $0 ARCHIVE RELEASE_SHA ARCHIVE_SHA256" >&2
+if [[ "$#" -ne 4 ]]; then
+    echo "usage: $0 ARCHIVE RELEASE_SHA ARCHIVE_SHA256 FOUNDATION_WHEEL" >&2
     exit 2
 fi
 
 archive="$1"
 release_sha="$2"
 archive_sha="$3"
+foundation_wheel="$4"
+if [[ "$foundation_wheel" != /home/rui/techflex_cloud_foundation-*.whl || ! -f "$foundation_wheel" ]]; then
+    echo "foundation wheel must be uploaded under /home/rui" >&2
+    exit 2
+fi
 if [[ "$archive" != /home/rui/feetforceplate-*.tar.gz ]]; then
     echo "release archive must be located under /home/rui" >&2
     exit 2
@@ -44,6 +49,7 @@ bash "$work_root/deploy/aliyun/seed/install-seed-release.sh" \
     /etc/feetforceplate/tls/seed.crt \
     /etc/feetforceplate/tls/seed.key \
     "$FEETFORCEPLATE_PUBLIC_BASE_URL" \
-    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT"
+    "$FEETFORCEPLATE_BACKUP_AGE_RECIPIENT" \
+    "$foundation_wheel"
 
 printf 'release=%s deployment=completed secrets=not-printed\n' "$release_sha"

@@ -211,7 +211,9 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "readlink -f" in text
     assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
     assert "verify_foundation_release_lock.py" in text
-    assert "curl --fail --location" in text
+    # RAY-814: the host has no GitHub access; the operator uploads the wheel.
+    assert "curl --fail" not in text
+    assert "foundation_wheel_source" in text
     assert "--retry-all-errors --retry 5" in text
     assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
@@ -259,15 +261,16 @@ def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
     assert 'remote_wrapper_source="$repo_root/deploy/aliyun/seed/feetforceplate-seed-release-server.sh"' in text
     assert 'remote_wrapper="/home/rui/$(basename "$remote_wrapper_source")"' in text
     assert "ssh -tt" in text
-    assert 'scp "$archive" "$remote_wrapper_source" "$server:/home/rui/"' in text
+    assert 'scp "$archive" "$foundation_wheel" "$remote_wrapper_source" "$server:/home/rui/"' in text
     assert 'ssh -tt "$server" sudo /bin/bash "$remote_wrapper"' in text
     assert "/bin/bash -s" not in text
 
 
-def test_remote_release_deploy_ships_only_the_git_archive() -> None:
+def test_remote_release_deploy_ships_the_git_archive_and_checked_wheel() -> None:
     text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
     assert 'git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha"' in text
-    # RAY-511: the host downloads the locked public foundation wheel itself.
+    # RAY-814: the operator downloads and checks the locked wheel, then uploads it.
+    assert 'foundation release wheel digest mismatch' in text
     assert "prepare_foundation_artifact" not in text
     assert ".foundation-artifacts" not in text
 
