@@ -57,11 +57,13 @@ id "$service_user" >/dev/null 2>&1 || {
 
 install_root="$(mktemp -d /var/lib/feetforceplate/.install-seed.XXXXXX)"
 chown root:postgres "$install_root"
-# Traversable but not listable: postgres reads the migrations and the service
-# user runs the offline dependency check from release/ (RAY-814).
-chmod 0711 "$install_root"
+chmod 0710 "$install_root"
+# The service user never reaches install_root: root later executes files from
+# release/, so the offline check runs on a separate copy (RAY-814).
+offline_check_root="$(mktemp -d /var/lib/feetforceplate/.offline-check.XXXXXX)"
+chmod 0711 "$offline_check_root"
 cleanup() {
-    rm -rf -- "$install_root"
+    rm -rf -- "$install_root" "$offline_check_root"
 }
 trap cleanup EXIT
 release_source="$install_root/release"
@@ -93,12 +95,15 @@ chmod 0755 \
 
 # The seed and backup services resolve dependencies offline from the host uv
 # cache, so prove the new release can before any migration or cutover.
+cp -a "$release_source" "$offline_check_root/release"
+chown -R "$service_user:$service_group" "$offline_check_root/release"
 if ! runuser -u "$service_user" -- env UV_OFFLINE=1 \
     XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
-    "$release_source/dev" setup >/dev/null; then
+    "$offline_check_root/release/dev" setup >/dev/null; then
     echo "new release cannot resolve its locked dependencies offline; nothing was changed" >&2
     exit 1
 fi
+rm -rf -- "$offline_check_root/release"
 
 if [[ ! -f "$secret_file" ]]; then
     tenant_password="$(openssl rand -hex 32)"

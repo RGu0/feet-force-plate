@@ -24,14 +24,18 @@ def test_installer_proves_offline_resolution_before_migrations() -> None:
     assert preflight < installer.index("createdb")
 
 
-def test_service_user_can_reach_the_offline_check() -> None:
-    # The check runs as feetforceplate, which is not in the install root's
-    # group (postgres); the root must stay traversable by others.
+def test_offline_check_runs_outside_the_root_executed_tree() -> None:
+    # The check runs as feetforceplate, which is not in install_root's group
+    # (postgres). Root later executes files from install_root/release, so the
+    # service user must not reach it: the check runs on a separate copy.
     installer = _text("install-seed-release.sh")
-    mode = re.search(r'chmod (0[0-7]{3}) "\$install_root"', installer)
-    assert mode is not None
-    assert int(mode.group(1), 8) & 0o001
-    assert installer.index(mode.group(0)) < installer.index("UV_OFFLINE=1")
+    assert 'chmod 0710 "$install_root"' in installer
+    assert re.search(r'chmod 0711 "\$offline_check_root"', installer)
+    check = installer.index("UV_OFFLINE=1")
+    assert installer.index('cp -a "$release_source" "$offline_check_root/release"') < check
+    assert '"$offline_check_root/release/dev" setup' in installer
+    assert '"$release_source/dev"' not in installer
+    assert 'rm -rf -- "$install_root" "$offline_check_root"' in installer
 
 
 def test_operator_script_uploads_checked_wheel() -> None:
