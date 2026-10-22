@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ from client.device.development_simulator import (
 
 FRAME_INTERVAL_SECONDS = 1 / 20.7
 ENDPOINT_WAIT_SECONDS = 5.0
+SOCAT_SELF_EXIT_SECONDS = 0.5
 
 
 def socat_command() -> list[str]:
@@ -60,22 +62,61 @@ def _stream_zero_frames(*, duration_seconds: float | None = None) -> None:
         os.close(descriptor)
 
 
+def _exit_on_signal(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def _termination_signals() -> tuple[signal.Signals, ...]:
+    return tuple(
+        getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
+    )
+
+
+def _stop_socat(process: subprocess.Popen) -> None:
+    # A terminal Ctrl-C or a process-group signal may already have reached
+    # socat.  Signalling it again would cut its own cleanup short and strand
+    # the endpoint aliases, so give it a moment to exit by itself first.
+    try:
+        process.wait(timeout=SOCAT_SELF_EXIT_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    process.terminate()
+    try:
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _remove_stale_endpoints() -> None:
+    # socat removes its aliases on a clean exit; a killed socat leaves aliases
+    # that would point the next run at a dead PTY.
+    for endpoint in (Path(VIRTUAL_CH340_DEVICE_PATH), Path(VIRTUAL_CH340_HOST_PATH)):
+        if endpoint.is_symlink():
+            endpoint.unlink(missing_ok=True)
+
+
 def run(*, duration_seconds: float | None = None) -> None:
     """Create the PTY pair and emit frames until interrupted or duration ends."""
 
     if shutil.which("socat") is None:
         raise RuntimeError("socat is required for the development virtual CH340")
+    # Python's default SIGTERM/SIGHUP disposition exits without unwinding, which
+    # would skip the ``finally`` below and orphan socat.  Install the handlers
+    # before socat exists so no signal can land between the two.
+    for signum in _termination_signals():
+        signal.signal(signum, _exit_on_signal)
     process = subprocess.Popen(socat_command())
     try:
         _wait_for_endpoints(deadline=time.monotonic() + ENDPOINT_WAIT_SECONDS)
         _stream_zero_frames(duration_seconds=duration_seconds)
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+        # A repeated signal must not abandon cleanup half-way.
+        for signum in (*_termination_signals(), signal.SIGINT):
+            signal.signal(signum, signal.SIG_IGN)
+        _stop_socat(process)
+        _remove_stale_endpoints()
 
 
 def main() -> int:
