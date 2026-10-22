@@ -324,7 +324,11 @@ async def build_seed_app(
         lookup_hmac_key=_secret(settings.identity_lookup_hmac_key, "identity lookup key"),
         key_version=settings.identity_key_version,
     )
+    subjects = SubjectConsentService(data_repository, identity)
     sensitive = SensitiveAccessService(access_repository)
+    # D10 and identity recovery share one reader: ACTIVE subjects only, decrypt
+    # failures masked, and called only after the sensitive grant is used.
+    identity_reader = PostgresRecoveryIdentityReader(tenant_pool, identity)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
@@ -332,7 +336,7 @@ async def build_seed_app(
                 supported_payload_schemas={"raw-segment/1"},
                 supported_manifest_schemas={"session-manifest/1"},
             ),
-            subjects=SubjectConsentService(data_repository, identity),
+            subjects=subjects,
             heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
@@ -347,6 +351,7 @@ async def build_seed_app(
             platform_access=platform_access,
             platform_tokens=platform_tokens,
             platform_sensitive=sensitive,
+            platform_subjects=identity_reader,
             session_holds=session_holds,
             report_copies=LocalBasicCopyService(
                 PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
@@ -360,7 +365,7 @@ async def build_seed_app(
             identity_recovery=IdentityRecoveryService(
                 PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
                 sensitive=sensitive,
-                identity_reader=PostgresRecoveryIdentityReader(tenant_pool, identity),
+                identity_reader=identity_reader,
             ),
         )
     )

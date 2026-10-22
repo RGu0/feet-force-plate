@@ -209,6 +209,9 @@ def test_build_composes_only_seed_identity_and_data_plane_services() -> None:
             assert services.ingestion is not None
             assert services.heartbeats is not None
             assert services.validation_telemetry is not None
+            assert services.platform_subjects is not None
+            # D10 must use the hardened ACTIVE-only, failure-masking reader.
+            assert services.platform_subjects is services.identity_recovery._identity_reader
             assert services.insole_inventory is not None
             assert services.devices is None
             assert services.operations is None

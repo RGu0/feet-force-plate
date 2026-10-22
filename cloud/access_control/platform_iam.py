@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import inspect
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import inspect
+from typing import Awaitable, cast
 from uuid import UUID, uuid4
 
 from cloud.api.access_auth import (
@@ -375,7 +376,11 @@ class SensitiveAccessService:
         grant_id: UUID,
         tenant_id: UUID,
         subject_id: UUID,
-        identity_loader: Callable[[], tuple[str | None, str | None]],
+        identity_loader: Callable[
+            [],
+            tuple[str | None, str | None]
+            | Awaitable[tuple[str | None, str | None]],
+        ],
         grant_observer: Callable[[SensitiveAccessGrantRecord], None] | None = None,
     ) -> SensitiveIdentityResponse:
         if context.expires_at <= self._now() or not context.roles:
@@ -415,10 +420,20 @@ class SensitiveAccessService:
             raise PlatformPermissionDenied("sensitive access grant is invalid") from exc
         if grant_observer is not None:
             grant_observer(grant)
-        loaded = identity_loader()
-        if inspect.isawaitable(loaded):
-            loaded = await loaded
-        display_name, contact = loaded
+        try:
+            identity = identity_loader()
+            if inspect.isawaitable(identity):
+                identity = await identity
+        except Exception:
+            await self._append_denial(
+                context=context,
+                tenant_id=tenant_id,
+                resource_id=subject_id,
+                reason="identity_load_failed",
+                details=(("grant_id", str(grant_id)),),
+            )
+            raise
+        display_name, contact = cast(tuple[str | None, str | None], identity)
         response = SensitiveIdentityResponse(
             grant_id=grant.grant_id,
             tenant_id=tenant_id,
