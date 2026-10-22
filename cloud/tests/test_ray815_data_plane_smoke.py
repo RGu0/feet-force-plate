@@ -33,6 +33,7 @@ class _BridgedClient:
     def __init__(self, test: DataPlaneSmokeTest, loop: asyncio.AbstractEventLoop) -> None:
         self._test = test
         self._loop = loop
+        test.secrets_seen = []
 
     def call(self, method, path, *, token=None, body=None, headers=None, content=None):
         if path == "/health/ready":
@@ -49,8 +50,13 @@ class _BridgedClient:
         tenant = self._test.tenant_id
         if response.status_code == 201 and path == "/v1/access/terminal-activate":
             data.add_terminal(tenant, None, UUID(payload["data"]["client_installation_id"]))
+            self._test.secrets_seen += [
+                payload["data"]["access_token"], payload["data"]["refresh_token"]
+            ]
         elif response.status_code == 201 and path == "/v1/inventory/insoles":
             data.add_device(tenant, UUID(payload["data"]["insole"]["insole_id"]), "insole-pair")
+        elif path == "/v1/subjects" and body is not None:
+            self._test.secrets_seen.append(body["external_identifier"]["external_id"])
         elif response.status_code == 200 and path.endswith("/revoke") and "/terminals/" in path:
             data.set_terminal_status(tenant, UUID(path.split("/")[-2]), "REVOKED")
         return response.status_code, payload
@@ -58,6 +64,7 @@ class _BridgedClient:
 
 class DataPlaneSmokeTest(unittest.IsolatedAsyncioTestCase):
     activate = data_plane.TerminalDataPlaneTests.activate
+    headers = staticmethod(data_plane.TerminalDataPlaneTests.headers)
 
     async def asyncSetUp(self) -> None:
         await data_plane.TerminalDataPlaneTests.asyncSetUp(self)
@@ -136,9 +143,14 @@ class DataPlaneSmokeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(steps["data_plane_after_revoke"]["error_code"], "E-TRM-401-REVOKED")
 
         rendered = json.dumps(summary)
-        for secret in (data_plane.PASSWORD, self.account_name, "access_token", "refresh_token"):
+        self.assertEqual(len(self.secrets_seen), 3)
+        for secret in (
+            data_plane.PASSWORD,
+            self.account_name,
+            "ray815-smoke-synthetic-evidence",
+            *self.secrets_seen,
+        ):
             self.assertNotIn(secret, rendered)
-        self.assertNotIn("ray815-smoke-synthetic-evidence", rendered)
 
     async def test_unregistered_insole_fails_at_session_create(self) -> None:
         # Without the D3 projection of the registered pair the session must be refused.
@@ -147,7 +159,92 @@ class DataPlaneSmokeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(summary["result"], "failed")
         self.assertEqual(summary["failed_step"], "session_create")
-        self.assertEqual(summary["steps"][-1]["error_code"], "E-AUT-403")
+        steps = {step["step"]: step for step in summary["steps"]}
+        self.assertEqual(steps["session_create"]["error_code"], "E-AUT-403")
+
+
+    async def test_failure_after_registration_still_releases_seat_and_insole(self) -> None:
+        def failing_complete(call):
+            def wrapped(self, method, path, **kwargs):
+                if path.endswith("/complete"):
+                    return 503, {"error": {"code": "E-SYS-503"}}
+                return call(self, method, path, **kwargs)
+
+            return wrapped
+
+        with patch.object(_BridgedClient, "call", failing_complete(_BridgedClient.call)):
+            summary = await self._run()
+
+        self.assertEqual(summary["result"], "failed")
+        self.assertEqual(summary["failed_step"], "session_complete")
+        steps = {step["step"]: step for step in summary["steps"]}
+        self.assertTrue(steps["cleanup_insole_retire"]["passed"])
+        self.assertTrue(steps["cleanup_terminal_self_revoke"]["passed"])
+        installation = steps["terminal_activate"]["client_installation_id"]
+        listing = await self.client.get(
+            "/v1/access/terminals", headers=self.headers(self.terminal)
+        )
+        statuses = {
+            t["client_installation_id"]: t["status"] for t in listing.json()["data"]["terminals"]
+        }
+        self.assertEqual(statuses[installation], "REVOKED")
+
+    async def test_transport_error_is_recorded_and_cleans_up(self) -> None:
+        def broken_upload(call):
+            def wrapped(self, method, path, **kwargs):
+                if method == "PUT":
+                    raise ConnectionResetError("peer reset")
+                return call(self, method, path, **kwargs)
+
+            return wrapped
+
+        with patch.object(_BridgedClient, "call", broken_upload(_BridgedClient.call)):
+            summary = await self._run()
+
+        self.assertEqual(summary["failed_step"], "transport:ConnectionResetError")
+        self.assertEqual(
+            [step["step"] for step in summary["steps"]][-2:],
+            ["cleanup_insole_retire", "cleanup_terminal_self_revoke"],
+        )
+
+
+class RawBodyClientTest(unittest.TestCase):
+    def test_raw_content_is_sent_as_bytes_with_its_content_type(self) -> None:
+        from scripts.run_ray785_route_smoke import Client
+
+        with tempfile.TemporaryDirectory() as directory:
+            ca_file = Path(directory, "ca.pem")
+            ca_file.write_text("")
+            with patch("ssl.SSLContext.load_verify_locations"):
+                client = Client("https://cloud.test", str(ca_file))
+        sent = {}
+
+        class _Response:
+            status = 201
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b'{"data": {}}'
+
+        def fake_open(request, data=None, timeout=None):
+            sent.update(data=data, headers=dict(request.header_items()))
+            return _Response()
+
+        payload = b"\x00\x01segment"
+        with patch.object(client._opener, "open", fake_open):
+            status, _ = client.call("PUT", "/x", content=payload)
+            self.assertEqual(status, 201)
+            self.assertIs(sent["data"], payload)
+            self.assertEqual(sent["headers"]["Content-type"], "application/octet-stream")
+            client.call(
+                "PUT", "/x", content=payload, headers={"Content-Type": smoke.SEGMENT_CONTENT_TYPE}
+            )
+            self.assertEqual(sent["headers"]["Content-type"], smoke.SEGMENT_CONTENT_TYPE)
 
 
 def _without_device_projection(call):

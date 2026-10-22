@@ -12,7 +12,12 @@ registers a synthetic insole pair and uses its ``insole_id`` as the session
 uploads one segment, completes it and requires ``INGESTED``. It then retires
 the pair, revokes itself, and requires the revoked token to get
 ``E-TRM-401-REVOKED`` on the data plane. Subject, consent and session rows stay
-behind, labelled ``ray815-smoke``.
+behind, labelled ``ray815-smoke``. When a step fails, the run still retires
+the pair and revokes the terminal, so a failed run gives its seat back.
+
+Run it from the repository root (``./scripts/local-env.sh python
+scripts/run_ray815_data_plane_smoke.py ...``): it imports ``scripts`` and
+``shared``.
 """
 
 from __future__ import annotations
@@ -66,9 +71,41 @@ SCHEMA_VERSION = "ray815-data-plane-smoke/1"
 SEGMENT_CONTENT_TYPE = "application/vnd.feetforceplate.segment.v1+octet-stream"
 
 
+def _cleanup(client: Client, recorder: Recorder, state: dict[str, Any]) -> None:
+    """Best effort after a failure; never changes the recorded failed step."""
+    if state.get("insole_id") is not None and not state.get("insole_retired"):
+        try:
+            recorder.expect(
+                "cleanup_insole_retire",
+                client.call(
+                    "POST",
+                    f"/v1/inventory/insoles/{state['insole_id']}/retire",
+                    token=state["token"],
+                ),
+                status={200},
+            )
+        except (SmokeFailure, OSError, ValueError):
+            pass
+    if state.get("installation_id") is not None and not state.get("terminal_revoked"):
+        try:
+            # Self-revoke is idempotent (RAY-728 self_revoke.repeat).
+            recorder.expect(
+                "cleanup_terminal_self_revoke",
+                client.call(
+                    "POST",
+                    f"/v1/access/terminals/{state['installation_id']}/revoke",
+                    token=state["token"],
+                ),
+                status={200},
+            )
+        except (SmokeFailure, OSError, ValueError):
+            pass
+
+
 def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
     client = Client(args.base_url, args.ca_file)
     recorder = Recorder()
+    state: dict[str, Any] = {}
     run_tag = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     summary: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -88,6 +125,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         )
         token = terminal.access_token
         installation_id = terminal.client_installation_id
+        state.update(token=token, installation_id=installation_id)
         # Optional on the data plane; when sent it must match (RAY-728 D1).
         terminal_header = {"X-Terminal-ID": str(installation_id)}
 
@@ -99,7 +137,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
                 token=token,
                 headers={"Idempotency-Key": f"ray815-smoke-{uuid4()}"},
                 body={
-                    "institution_number": f"SMOKE-{run_tag[-7:-1]}",
+                    "institution_number": f"SMOKE-{run_tag[-7:-1]}-{secrets.token_hex(2)}",
                     "size": 40,
                     **{
                         side: {
@@ -117,6 +155,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             model=InsoleRegistrationResponse,
         )
         insole_id = registration.insole.insole_id
+        state["insole_id"] = insole_id
         recorder.note(insole_id=str(insole_id), state=registration.insole.state)
 
         identifier = ExternalIdentifierInput(
@@ -318,6 +357,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             status={200},
             model=InsoleRetireResponse,
         )
+        state["insole_retired"] = True
         recorder.note(state=retired.insole.state)
 
         revoked = recorder.expect(
@@ -326,6 +366,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             status={200},
             model=TerminalSummary,
         )
+        state["terminal_revoked"] = True
         recorder.note(terminal_status=revoked.status)
 
         recorder.expect(
@@ -340,6 +381,12 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
     except SmokeFailure as failure:
         summary["result"] = "failed"
         summary["failed_step"] = str(failure)
+    except (OSError, ValueError) as error:
+        # Transport, TLS, timeout or a non-JSON body: still write evidence.
+        summary["result"] = "failed"
+        summary["failed_step"] = f"transport:{type(error).__name__}"
+    if summary["result"] == "failed":
+        _cleanup(client, recorder, state)
     summary["finished_at"] = _now()
     return summary
 

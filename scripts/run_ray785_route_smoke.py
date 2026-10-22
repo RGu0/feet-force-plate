@@ -82,8 +82,11 @@ class Client:
             request.add_header("Authorization", f"Bearer {token}")
         for name, value in (headers or {}).items():
             request.add_header(name, value)
-        # Raw bodies (segment uploads) carry their own Content-Type header.
+        # Raw bodies (segment uploads) normally name their own Content-Type;
+        # never let urllib fall back to form encoding.
         data = content
+        if content is not None and not request.has_header("Content-type"):
+            request.add_header("Content-Type", "application/octet-stream")
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             request.add_header("Content-Type", "application/json")
