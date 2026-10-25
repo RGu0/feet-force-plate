@@ -341,6 +341,15 @@ class InsoleArchiveApiTests(unittest.IsolatedAsyncioTestCase):
                                     "X-Schema-Version": "session-manifest/1"}),
         )
         self.assertEqual(empty.json()["error"]["details"]["fields"], ["body"])
+        as_text = await self.client.post(
+            f"/v1/sessions/{session_id}/complete",
+            headers=self.headers(**{"Idempotency-Key": "k", "X-Content-SHA256": "0" * 64,
+                                    "X-Schema-Version": "session-manifest/1",
+                                    "Content-Type": "text/plain"}),
+            content=json.dumps({**body, "segment_count": 1}),
+        )
+        self.assertEqual(self.error(as_text), (422, "E-API-422", "FIX_REQUEST"))
+        self.assertEqual(as_text.json()["error"]["details"]["fields"], ["body"])
 
     async def test_insole_manifest_is_rejected_for_raw_session(self) -> None:
         session_id = await self.create_session("raw-segment/1")

@@ -151,6 +151,15 @@ _MANIFEST_MODELS = (SessionManifest, InsoleSessionManifest)
 async def _session_manifest_body(request: Request) -> AnySessionManifest:
     """Validate the complete body against the model its schema_version names."""
     raw = await request.body()
+    # FastAPI's own rule: only application/json or a +json subtype is JSON.
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if raw and not (media_type == "application/json" or (
+        media_type.startswith("application/") and media_type.endswith("+json")
+    )):
+        raise RequestValidationError(
+            [{"type": "model_attributes_type", "loc": ("body",),
+              "msg": "Input should be a valid dictionary or object", "input": None}]
+        )
     if not raw:
         raise RequestValidationError(
             [{"type": "missing", "loc": ("body",), "msg": "Field required", "input": None}]
@@ -158,8 +167,10 @@ async def _session_manifest_body(request: Request) -> AnySessionManifest:
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # FastAPI reports the decode position after "body".
+        position = (exc.pos,) if isinstance(exc, json.JSONDecodeError) else ()
         raise RequestValidationError(
-            [{"type": "json_invalid", "loc": ("body",), "msg": "JSON decode error",
+            [{"type": "json_invalid", "loc": ("body", *position), "msg": "JSON decode error",
               "input": {}, "ctx": {"error": str(exc)}}]
         ) from exc
     try:
