@@ -128,8 +128,9 @@ class InsoleArchiveMigrationTests(unittest.TestCase):
         self.assertEqual(sql.count("DROP NOT NULL"), 7)
         self.assertIn("WHEN payload_schema_version = 'insole-session-archive/1'", sql)
         self.assertIn("WHEN schema_version = 'insole-session-manifest/1'", sql)
-        # Converging: each check is dropped if present before it is added.
-        self.assertEqual(sql.count("DROP CONSTRAINT IF EXISTS"), sql.count("ADD CONSTRAINT"))
+        # Converging: each check is added only when it is missing.
+        self.assertEqual(sql.count("ADD CONSTRAINT"), 2)
+        self.assertEqual(sql.count("IF NOT EXISTS ("), 2)
 
     def test_deployment_applies_and_backs_up_the_migration(self) -> None:
         install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text("utf-8")
@@ -289,6 +290,57 @@ class InsoleArchiveApiTests(unittest.IsolatedAsyncioTestCase):
         }
         response = await self.complete(session_id, raw)
         self.assertEqual(self.error(response), (422, "E-CLD-422", "UPDATE_CLIENT"))
+
+    async def post_complete(self, session_id, body, schema: str):
+        return await self.client.post(
+            f"/v1/sessions/{session_id}/complete",
+            headers=self.headers(**{
+                "Idempotency-Key": f"complete:{session_id}", "X-Content-SHA256": "0" * 64,
+                "X-Schema-Version": schema,
+            }),
+            json=body,
+        )
+
+    async def test_frame_fields_under_insole_manifest_schema_are_rejected(self) -> None:
+        # The body is validated only as the model its schema_version names, so a
+        # frame-bearing manifest cannot fall back to SessionManifest.
+        session_id = await self.create_session()
+        await self.put_parts(session_id)
+        body = VECTORS["manifest"]["body"]
+        crossed = {**body, "total_frames": 2,
+                   "segments": [{**item, "frame_count": 1} for item in body["segments"]]}
+        response = await self.post_complete(session_id, crossed, INSOLE_MANIFEST_SCHEMA)
+        self.assertEqual(self.error(response), (422, "E-API-422", "FIX_REQUEST"))
+        self.assertIn("body.total_frames", response.json()["error"]["details"]["fields"])
+        # Nothing was recorded: the correct manifest still completes.
+        done = await self.client.post(
+            f"/v1/sessions/{session_id}/complete",
+            headers=self.headers(**{
+                **VECTORS["manifest"]["request_headers"],
+                "Idempotency-Key": f"complete-ok:{session_id}",
+            }),
+            json=body,
+        )
+        self.assertEqual(done.status_code, 200, done.text)
+
+    async def test_raw_manifest_validation_errors_keep_their_shape(self) -> None:
+        session_id = await self.create_session("raw-segment/1")
+        body = {"segment_count": 1, "total_frames": 3, "total_bytes": 1,
+                "segments": [{"index": 0, "sha256": "0" * 64, "size_bytes": 1,
+                              "frame_count": 1}],
+                "ended_at": "2026-10-25T12:00:00Z", "local_quality_outcome": "VALID"}
+        response = await self.post_complete(session_id, body, "session-manifest/1")
+        self.assertEqual(self.error(response), (422, "E-API-422", "FIX_REQUEST"))
+        self.assertEqual(response.json()["error"]["details"]["fields"], ["body"])
+        del body["segment_count"]
+        response = await self.post_complete(session_id, body, "session-manifest/1")
+        self.assertEqual(response.json()["error"]["details"]["fields"], ["body.segment_count"])
+        empty = await self.client.post(
+            f"/v1/sessions/{session_id}/complete",
+            headers=self.headers(**{"Idempotency-Key": "k", "X-Content-SHA256": "0" * 64,
+                                    "X-Schema-Version": "session-manifest/1"}),
+        )
+        self.assertEqual(empty.json()["error"]["details"]["fields"], ["body"])
 
     async def test_insole_manifest_is_rejected_for_raw_session(self) -> None:
         session_id = await self.create_session("raw-segment/1")

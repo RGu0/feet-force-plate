@@ -562,11 +562,14 @@ def _insole_archive_vectors():
             'sha256': canonical_sha256(manifest),
             'request_headers': {
                 'X-Content-SHA256': canonical_sha256(manifest),
-                'X-Schema-Version': cloud.INSOLE_MANIFEST_SCHEMA,
-                'Idempotency-Key': 'client-chosen, stable per completion'},
+                'X-Schema-Version': cloud.INSOLE_MANIFEST_SCHEMA},
+            'idempotency_key': 'also send Idempotency-Key: chosen by the client, unique '
+                               'per session and stable across retries of its completion',
             'digest': 'sha256 of the canonical JSON the server re-serializes from the '
-                      'parsed body: sorted keys, no whitespace, ended_at in UTC as '
-                      'YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero)'},
+                      'parsed body: sorted keys, no whitespace. Send ended_at in UTC as '
+                      'YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero); '
+                      'the server digests its own re-serialization, so any other form '
+                      'gets a digest mismatch unless it re-serializes identically'},
         'rules': {
             'local_quality_outcome': 'required; only VALID completes to INGESTED, other '
                                      f'values get {errors.QualityGateRejected.code} '

@@ -110,9 +110,11 @@ next to the force-plate `raw-segment/1`, which is unchanged (vector section
   no frame counts. Each payload schema completes only with its own manifest
   schema (`pairing`); a crossed pair is `E-CLD-422` `UPDATE_CLIENT`.
 - `X-Content-SHA256` is the SHA-256 of the canonical JSON the server rebuilds
-  from the parsed body, so `ended_at` must be sent in the canonical form: UTC,
-  `Z` suffix, microseconds only when non-zero (`2026-10-25T12:58:00Z`,
-  `2026-10-25T12:58:00.250000Z`). Check against `manifest.canonical_hex`.
+  from the parsed body, so send `ended_at` already in that form: UTC, `Z`
+  suffix, microseconds only when non-zero (`2026-10-25T12:58:00Z`,
+  `2026-10-25T12:58:00.250000Z`). Check against `manifest.canonical_hex`. The
+  `Idempotency-Key` is the client's own, unique per session and stable across
+  retries; the vector headers omit it.
 - `local_quality_outcome` is required, and only `VALID` completes to `INGESTED`;
   anything else is `E-CLD-422` `REPEAT_SCREENING`. Send `VALID` only for a session
   that was saved with its archive complete. A manifest that differs from the

@@ -86,5 +86,26 @@ class InsoleArchiveSmokeTest(DataPlaneSmokeTest):
         self.assertTrue(steps["cleanup_insole_retire"]["passed"])
         self.assertTrue(steps["cleanup_terminal_self_revoke"]["passed"])
 
+    async def test_unexpected_exception_still_releases_seat_and_insole(self) -> None:
+        def broken_list(call):
+            def wrapped(self, method, path, **kwargs):
+                if path.endswith("/segments") and method == "GET":
+                    raise KeyError("unexpected")
+                return call(self, method, path, **kwargs)
+
+            return wrapped
+
+        with patch.object(_BridgedClient, "call", broken_list(_BridgedClient.call)):
+            with self.assertRaises(KeyError):
+                await self._run()
+        listing = await self.client.get(
+            "/v1/access/terminals", headers=self.headers(self.terminal)
+        )
+        smoke_terminals = [
+            t for t in listing.json()["data"]["terminals"]
+            if t["terminal_name"].startswith("ray825-smoke-")
+        ]
+        self.assertEqual([t["status"] for t in smoke_terminals], ["REVOKED"])
+
 
 del DataPlaneSmokeTest

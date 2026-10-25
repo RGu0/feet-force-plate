@@ -389,8 +389,12 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         # Transport, TLS, timeout or a non-JSON body: still write evidence.
         summary["result"] = "failed"
         summary["failed_step"] = f"transport:{type(error).__name__}"
-    if summary["result"] == "failed":
-        _cleanup(client, recorder, state)
+    finally:
+        # Any other exception, an interrupt included, still gives the seat back.
+        if summary.get("result") != "passed":
+            summary.setdefault("result", "failed")
+            summary.setdefault("failed_step", "interrupted")
+            _cleanup(client, recorder, state)
     summary["finished_at"] = _now()
     return summary
 

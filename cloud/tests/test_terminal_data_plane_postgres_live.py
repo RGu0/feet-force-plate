@@ -301,7 +301,8 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
                 assert [item["index"] for item in listed.json()["data"]["received"]] == [0, 1]
                 done = await client.post(
                     f"/v1/sessions/{archive_id}/complete", json=archive["manifest"]["body"],
-                    headers=bearer(**archive["manifest"]["request_headers"]),
+                    headers=bearer(**archive["manifest"]["request_headers"],
+                                   **{"Idempotency-Key": f"complete-{archive_id}"}),
                 )
                 assert done.status_code == 200, done.text
                 assert done.json()["data"]["ingest_status"] == "INGESTED"

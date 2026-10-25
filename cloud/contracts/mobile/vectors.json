@@ -607,9 +607,9 @@
         "total_bytes": 44
       },
       "canonical_hex": "7b22656e6465645f6174223a22323032362d31302d32355431323a35383a30302e3235303030305a222c226c6f63616c5f7175616c6974795f6f7574636f6d65223a2256414c4944222c22736368656d615f76657273696f6e223a22696e736f6c652d73657373696f6e2d6d616e69666573742f31222c227365676d656e745f636f756e74223a322c227365676d656e7473223a5b7b22696e646578223a302c22736861323536223a2234373238616535353334306533306666653835636262303236303832623033313738343131616533326437333739613631303965356438393334616137636639222c2273697a655f6279746573223a32337d2c7b22696e646578223a312c22736861323536223a2234653564656666623264356634326166363931383764666636363739303735316164633134326366333934376236633731653137613264636430353061636138222c2273697a655f6279746573223a32317d5d2c22746f74616c5f6279746573223a34347d",
-      "digest": "sha256 of the canonical JSON the server re-serializes from the parsed body: sorted keys, no whitespace, ended_at in UTC as YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero)",
+      "digest": "sha256 of the canonical JSON the server re-serializes from the parsed body: sorted keys, no whitespace. Send ended_at in UTC as YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero); the server digests its own re-serialization, so any other form gets a digest mismatch unless it re-serializes identically",
+      "idempotency_key": "also send Idempotency-Key: chosen by the client, unique per session and stable across retries of its completion",
       "request_headers": {
-        "Idempotency-Key": "client-chosen, stable per completion",
         "X-Content-SHA256": "a00239c69e17e4262097bce598f3aa8423abe7892694ee005231f4efd2071caf",
         "X-Schema-Version": "insole-session-manifest/1"
       },

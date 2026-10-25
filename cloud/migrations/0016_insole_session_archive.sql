@@ -15,8 +15,13 @@ ALTER TABLE screening.session_segments
     ALTER COLUMN compression DROP NOT NULL,
     ALTER COLUMN cipher DROP NOT NULL;
 
-ALTER TABLE screening.session_segments
-    DROP CONSTRAINT IF EXISTS session_segments_shape_by_schema;
+DO $$
+BEGIN
+IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'session_segments_shape_by_schema'
+      AND conrelid = 'screening.session_segments'::regclass
+) THEN
 ALTER TABLE screening.session_segments
     ADD CONSTRAINT session_segments_shape_by_schema CHECK (
         CASE WHEN payload_schema_version = 'insole-session-archive/1' THEN
@@ -29,12 +34,20 @@ ALTER TABLE screening.session_segments
             AND compression IS NOT NULL AND cipher IS NOT NULL
         END
     );
+END IF;
+END
+$$;
 
 ALTER TABLE screening.session_manifests
     ALTER COLUMN total_frames DROP NOT NULL;
 
-ALTER TABLE screening.session_manifests
-    DROP CONSTRAINT IF EXISTS session_manifests_shape_by_schema;
+DO $$
+BEGIN
+IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'session_manifests_shape_by_schema'
+      AND conrelid = 'screening.session_manifests'::regclass
+) THEN
 ALTER TABLE screening.session_manifests
     ADD CONSTRAINT session_manifests_shape_by_schema CHECK (
         CASE WHEN schema_version = 'insole-session-manifest/1'
@@ -42,5 +55,8 @@ ALTER TABLE screening.session_manifests
             ELSE total_frames IS NOT NULL
         END
     );
+END IF;
+END
+$$;
 
 COMMIT;

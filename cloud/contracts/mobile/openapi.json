@@ -209,7 +209,7 @@
         "additionalProperties": false,
         "properties": {
           "index": {
-            "minimum": 0.0,
+            "minimum": 0,
             "title": "Index",
             "type": "integer"
           },
@@ -221,7 +221,7 @@
             "type": "string"
           },
           "size_bytes": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Size Bytes",
             "type": "integer"
           }
@@ -1070,7 +1070,7 @@
             "type": "string"
           },
           "segment_count": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Segment Count",
             "type": "integer"
           },
@@ -1082,7 +1082,7 @@
             "type": "array"
           },
           "total_bytes": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Total Bytes",
             "type": "integer"
           }
@@ -1530,12 +1530,12 @@
         "additionalProperties": false,
         "properties": {
           "frame_count": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Frame Count",
             "type": "integer"
           },
           "index": {
-            "minimum": 0.0,
+            "minimum": 0,
             "title": "Index",
             "type": "integer"
           },
@@ -1547,7 +1547,7 @@
             "type": "string"
           },
           "size_bytes": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Size Bytes",
             "type": "integer"
           }
@@ -2117,7 +2117,7 @@
             "type": "string"
           },
           "segment_count": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Segment Count",
             "type": "integer"
           },
@@ -2129,12 +2129,12 @@
             "type": "array"
           },
           "total_bytes": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Total Bytes",
             "type": "integer"
           },
           "total_frames": {
-            "exclusiveMinimum": 0.0,
+            "exclusiveMinimum": 0,
             "title": "Total Frames",
             "type": "integer"
           }
@@ -5368,15 +5368,14 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
+                "oneOf": [
                   {
                     "$ref": "#/components/schemas/SessionManifest"
                   },
                   {
                     "$ref": "#/components/schemas/InsoleSessionManifest"
                   }
-                ],
-                "title": "Body"
+                ]
               }
             }
           },

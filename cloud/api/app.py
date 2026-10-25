@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 
 from shared.contracts.capture_grants import CaptureGrantBatchRequest, RetireCaptureGrantRequest, SessionAuthorization, UploadMigrationPermitRequest
 
@@ -70,10 +71,12 @@ from shared.contracts.cloud import (
     ConsentCreateRequest,
     ConsentRevokeRequest,
     EnrollmentRequest,
+    AnySessionManifest,
     HeartbeatRequest,
     InsoleSessionManifest,
     SessionCreateRequest,
     SessionManifest,
+    parse_session_manifest,
     SubjectCreateRequest,
     SubjectResolveRequest,
 )
@@ -140,6 +143,48 @@ def _data_response(request: Request, data, status_code: int = 200) -> JSONRespon
         content=jsonable_encoder({"data": data, "meta": _meta(request)}),
         headers={"X-Correlation-ID": str(request.state.correlation_id)},
     )
+
+
+_MANIFEST_MODELS = (SessionManifest, InsoleSessionManifest)
+
+
+async def _session_manifest_body(request: Request) -> AnySessionManifest:
+    """Validate the complete body against the model its schema_version names."""
+    raw = await request.body()
+    if not raw:
+        raise RequestValidationError(
+            [{"type": "missing", "loc": ("body",), "msg": "Field required", "input": None}]
+        )
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RequestValidationError(
+            [{"type": "json_invalid", "loc": ("body",), "msg": "JSON decode error",
+              "input": {}, "ctx": {"error": str(exc)}}]
+        ) from exc
+    try:
+        return parse_session_manifest(value)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [{**error, "loc": ("body", *error["loc"])} for error in exc.errors()]
+        ) from exc
+
+
+def _with_manifest_schemas(app: FastAPI) -> None:
+    """The complete body is parsed by hand, so register its two models."""
+    default_openapi = app.openapi
+
+    def openapi() -> dict:
+        if app.openapi_schema is None:
+            document = default_openapi()
+            schemas = document.setdefault("components", {}).setdefault("schemas", {})
+            for model in _MANIFEST_MODELS:
+                schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
+                schemas.update(schema.pop("$defs", {}))
+                schemas[model.__name__] = schema
+        return app.openapi_schema
+
+    app.openapi = openapi
 
 
 def create_app(container: ServiceContainer) -> FastAPI:
@@ -1152,16 +1197,26 @@ def create_app(container: ServiceContainer) -> FastAPI:
         result = await container.ingestion.list_segments(context, session_id)
         return _data_response(request, result)
 
-    @app.post("/v1/sessions/{session_id}/complete")
+    # RAY-825: the body model follows its schema_version, so a manifest is
+    # validated only against its own schema and raw-segment/1 errors keep
+    # their pre-RAY-825 shape. FastAPI's smart union would try both models.
+    @app.post(
+        "/v1/sessions/{session_id}/complete",
+        openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
+            "schema": {"oneOf": [
+                {"$ref": f"#/components/schemas/{model.__name__}"}
+                for model in _MANIFEST_MODELS
+            ]}}}}},
+    )
     async def complete_session(
         request: Request,
         session_id: UUID,
-        body: SessionManifest | InsoleSessionManifest,
         context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],
         schema_version: Annotated[str, Header(alias="X-Schema-Version")],
     ):
+        body = await _session_manifest_body(request)
         if body.schema_version != schema_version:
             raise RequestContractError("X-Schema-Version 与最终清单不一致")
         result = await container.ingestion.complete_session(
@@ -1240,4 +1295,5 @@ def create_app(container: ServiceContainer) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{report_id}.pdf"'},
         )
 
+    _with_manifest_schemas(app)
     return app
