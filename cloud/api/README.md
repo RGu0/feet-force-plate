@@ -84,6 +84,15 @@ the frame, clock, compression and cipher columns and `total_frames` nullable,
 with per-schema CHECKs; it converges and `install-seed-release.sh` applies it on
 every install. See `cloud/contracts/mobile/README.md` for the wire contract.
 
+RAY-834: every jsonb write in the Postgres repositories sends raw UTF-8
+(`json.dumps(..., ensure_ascii=False)`), because the integration database is
+`SQL_ASCII` and its jsonb rejects `\uXXXX` escapes of non-ASCII text; the stored
+jsonb values are unchanged. `cloud/tests/test_jsonb_utf8_and_error_envelope.py`
+fails on any new escaping write. An unhandled exception now returns the normal
+error envelope: database connection or timeout failures are 503 `E-CLD-503`
+(`RETRY_LATER`), anything else is 500 `E-CLD-500` (`CONTACT_SUPPORT`). Re-creating
+the database as UTF8 is tracked separately (RAY-835).
+
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful
 provision response, and inspection never prints hashes, DSNs, private keys, or

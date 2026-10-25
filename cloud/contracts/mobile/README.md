@@ -10,6 +10,12 @@ any route, including the insole inventory routes, hardware registration or
 institutional access rules, has been deployed.
 
 The server wraps success in `data` + `meta`; failures use `error` + `meta`.
+Since RAY-834 an unexpected server failure uses the same envelope instead of a
+bare 500: a database connection or timeout failure is 503 `E-CLD-503`
+(`retryable: true`, `RETRY_LATER`); anything else is 500 `E-CLD-500`
+(`retryable: false`, `CONTACT_SUPPORT`; vector `errors.internal`). Neither carries
+details; quote the `X-Correlation-ID` when reporting one. A response with no
+envelope at all comes from the transport or proxy, not the API.
 Foundation's top-level `ErrorEnvelope` is a different mechanism. Follow both
 `retryable` and `action`; equal error codes can have different required actions.
 Keep `X-Correlation-ID` a UUID (the business gateway rejects non-UUID values).

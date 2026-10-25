@@ -7,6 +7,7 @@ import hashlib
 from typing import Annotated
 from uuid import UUID, uuid4
 
+import asyncpg
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -127,6 +128,23 @@ class ServiceContainer:
     terminal_access: object | None = None
     terminal_tokens: TerminalAccessTokenIssuer | None = None
     insole_inventory: object | None = None
+
+
+# RAY-834: database failures a retry can cure. Anything else unhandled is a
+# server defect the client cannot fix by retrying.
+_TRANSIENT_ERRORS = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.QueryCanceledError,
+    ConnectionError,
+    TimeoutError,
+)
+
+
+def _unhandled_error(exc: Exception) -> PlatformError:
+    if isinstance(exc, _TRANSIENT_ERRORS):
+        return RepositoryUnavailable("服务暂不可用，请稍后重试")
+    return PlatformError("服务器内部错误")
 
 
 def _meta(request: Request) -> dict[str, str]:
@@ -271,6 +289,18 @@ def create_app(container: ServiceContainer) -> FastAPI:
                 }
             ),
         )
+
+    # RAY-834: an unhandled exception gets the same envelope instead of a bare
+    # 500. Starlette re-raises it after this response, so the traceback is still
+    # logged; nothing from the exception reaches the client.
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, exc: Exception):
+        if not hasattr(request.state, "request_id"):
+            request.state.request_id = uuid4()
+            request.state.correlation_id = uuid4()
+        response = await platform_error_handler(request, _unhandled_error(exc))
+        response.headers["X-Correlation-ID"] = str(request.state.correlation_id)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):

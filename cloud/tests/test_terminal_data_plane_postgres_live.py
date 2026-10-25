@@ -287,6 +287,9 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
                 archive = build_vectors()["insole_session_archive"]
                 archive_session = session_body()
                 archive_session["versions"] = archive["session_versions"]
+                # RAY-834: non-ASCII config_snapshot text is stored even when the
+                # database encoding is SQL_ASCII.
+                archive_session["config_snapshot"] = {"测试计划": "步行 60 秒", "备注": "其他"}
                 assert (await create(archive_session)).status_code == 201
                 archive_id = archive_session["session_id"]
                 for part in archive["segments"]:

@@ -169,7 +169,8 @@ class PostgresPlatformRepository:
                    VALUES ($1,$2,'UPLOAD_MIGRATION_PERMIT_REJECTED',$3,clock_timestamp(),$4::jsonb)""",
                 uuid4(), context.platform_identity_id, request.session_id,
                 json.dumps(dict(tenant_id=str(request.tenant_id), decision_code=decision,
-                                reason=request.reason, evidence_reference=request.evidence_reference)),
+                                reason=request.reason, evidence_reference=request.evidence_reference),
+                       ensure_ascii=False),
             )
 
     async def validate_migration_reconciliation(self, request) -> bool:
@@ -427,7 +428,7 @@ class PostgresPlatformRepository:
             key,
             request_sha256,
             response_status,
-            json.dumps(response, separators=(",", ":")),
+            json.dumps(response, separators=(",", ":"), ensure_ascii=False),
             resource_type,
             resource_id,
             datetime.now(UTC) + self._idempotency_ttl,
@@ -576,6 +577,7 @@ class PostgresPlatformRepository:
                             "app_version": request.system.app_version,
                         },
                         separators=(",", ":"),
+                        ensure_ascii=False,
                     ),
                 )
                 return EnrollmentBinding(
@@ -840,7 +842,7 @@ class PostgresPlatformRepository:
                 request.versions.protocol_profile,
                 request.versions.payload_schema,
                 request.versions.calibration,
-                json.dumps(request.config_snapshot, separators=(",", ":")),
+                json.dumps(request.config_snapshot, separators=(",", ":"), ensure_ascii=False),
                 authorization.manifest_sha256 if authorization else None,
             )
             if inserted is None:
@@ -993,6 +995,7 @@ class PostgresPlatformRepository:
                             for key, value in request.analysis_profile.items()
                         },
                         separators=(",", ":"),
+                        ensure_ascii=False,
                     ),
                     request.profile_schema_version,
                 )
@@ -1516,7 +1519,8 @@ class PostgresPlatformRepository:
                             getattr(manifest, "total_frames", None),
                             manifest.total_bytes,
                             json.dumps(
-                                manifest.model_dump(mode="json"), separators=(",", ":")
+                                manifest.model_dump(mode="json"), separators=(",", ":"),
+                                ensure_ascii=False,
                             ),
                         )
                     await connection.execute(
@@ -1535,6 +1539,7 @@ class PostgresPlatformRepository:
                                 "declared_indices": sorted(declared),
                             },
                             separators=(",", ":"),
+                            ensure_ascii=False,
                         ),
                     )
                     failure = ManifestIncomplete("最终清单与已接收分段集合不一致")
@@ -1563,7 +1568,8 @@ class PostgresPlatformRepository:
                             getattr(manifest, "total_frames", None),
                             manifest.total_bytes,
                             json.dumps(
-                                manifest.model_dump(mode="json"), separators=(",", ":")
+                                manifest.model_dump(mode="json"), separators=(",", ":"),
+                                ensure_ascii=False,
                             ),
                             now,
                             eligibility_reason,
@@ -1621,6 +1627,7 @@ class PostgresPlatformRepository:
                                 "segment_count": manifest.segment_count,
                             },
                             separators=(",", ":"),
+                            ensure_ascii=False,
                         ),
                     )
                     response = ManifestCompletionResponse(

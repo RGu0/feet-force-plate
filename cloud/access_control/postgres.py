@@ -63,7 +63,7 @@ def _hardware(row: Any) -> HardwareAssetRecord:
 def _license(row: Any) -> LicenseEntitlementRecord:
     document = row["document_json"]
     if document is not None and not isinstance(document, str):
-        document = json.dumps(document, separators=(",", ":"), sort_keys=True)
+        document = json.dumps(document, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
     key_id = row["key_id"]
     return LicenseEntitlementRecord(
         tenant_id=row["tenant_id"], license_id=row["license_id"],
@@ -1233,7 +1233,7 @@ class PostgresAccessRepository:
                 )
 
     async def append_audit(self, event: AuditEventRecord) -> None:
-        details = json.dumps(dict(event.details), separators=(",", ":"), sort_keys=True)
+        details = json.dumps(dict(event.details), separators=(",", ":"), sort_keys=True, ensure_ascii=False)
         async with self._plain_transaction(self._platform_pool) as connection:
             await connection.execute(
                 """INSERT INTO ops.access_audit_events

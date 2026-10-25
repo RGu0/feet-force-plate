@@ -28,6 +28,20 @@
         "server_time": "2026-10-07T00:00:00Z"
       }
     },
+    "internal": {
+      "error": {
+        "action": "CONTACT_SUPPORT",
+        "code": "E-CLD-500",
+        "details": {},
+        "message": "Synthetic contract fixture",
+        "retryable": false
+      },
+      "meta": {
+        "correlation_id": "00000000-0000-0000-0000-000000000002",
+        "request_id": "00000000-0000-0000-0000-000000000001",
+        "server_time": "2026-10-07T00:00:00Z"
+      }
+    },
     "schema_unsupported": {
       "error": {
         "action": "UPDATE_CLIENT",
