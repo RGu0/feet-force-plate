@@ -21,7 +21,8 @@ from cloud.api.access_auth import LicenseDocumentSigner
 from cloud.api import errors
 from shared.contracts import access_control as access
 from shared.contracts import cloud
-from shared.contracts.client_sync import canonical_json_bytes, encode_segment_metadata
+from shared.contracts.client_sync import (
+    canonical_json_bytes, canonical_sha256, encode_segment_metadata)
 from shared.contracts import insole_inventory as insole
 from shared.contracts import terminal_access as terminal
 
@@ -172,6 +173,14 @@ def build_openapi():
         if method == 'put':
             operation['requestBody'] = {'required': True, 'content': {
                 'application/octet-stream': {'schema': {'type': 'string', 'format': 'binary'}}}}
+            # RAY-825: the X-Segment-Metadata JSON shape follows the payload schema.
+            operation['x-ffp-segment-metadata'] = {
+                'header': 'X-Segment-Metadata',
+                'encoding': 'unpadded base64url of canonical JSON',
+                'by_payload_schema': {
+                    'raw-segment/1': _install_schema(cloud.SegmentMetadata, schemas),
+                    cloud.INSOLE_ARCHIVE_PAYLOAD_SCHEMA: _install_schema(
+                        cloud.ArchiveSegmentMetadata, schemas)}}
     document['info']['description'] += (
         ' Offline contract of existing FeetForcePlate routes; not proof of deployed '
         'gait-insole support. Endpoints and TLS profiles are injected by consumers.')
@@ -257,7 +266,8 @@ def build_vectors():
             'negative_cases': ['modified_document', 'modified_signature', 'unknown_key_id']},
         'terminal': terminal_vectors,
         'terminal_data_plane': _terminal_data_plane_vectors(),
-        'insole_inventory': _insole_vectors(meta)}
+        'insole_inventory': _insole_vectors(meta),
+        'insole_session_archive': _insole_archive_vectors()}
 
 
 def _terminal_vectors(meta):
@@ -506,6 +516,85 @@ def _insole_vectors(meta):
             'out_of_range_cursor_example': base64.urlsafe_b64encode(
                 b'insole-cursor/1:99999999999999999999').rstrip(b'=').decode('ascii')},
     }
+
+def _insole_archive_vectors():
+    """Declarative RAY-825 R1 vectors; cloud tests replay the full upload."""
+    parts = (b'insole-archive-part-0\x00\xff', b'insole-archive-part-1')
+    segments = []
+    for index, payload in enumerate(parts):
+        metadata = cloud.ArchiveSegmentMetadata(
+            segment_index=index, size_bytes=len(payload),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            payload_schema_version=cloud.INSOLE_ARCHIVE_PAYLOAD_SCHEMA)
+        header = encode_segment_metadata(metadata)
+        segments.append({
+            'payload_base64': base64.b64encode(payload).decode('ascii'),
+            'metadata': metadata.model_dump(mode='json'),
+            'canonical_hex': canonical_json_bytes(metadata).hex(),
+            'request_headers': {
+                'X-Content-SHA256': metadata.sha256,
+                'X-Schema-Version': cloud.INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
+                'X-Segment-Metadata': header,
+                'Content-Type': 'application/octet-stream'}})
+    manifest = cloud.InsoleSessionManifest(
+        schema_version=cloud.INSOLE_MANIFEST_SCHEMA, segment_count=len(parts),
+        total_bytes=sum(len(payload) for payload in parts),
+        segments=tuple(cloud.ArchiveManifestSegment(
+            index=item['metadata']['segment_index'], sha256=item['metadata']['sha256'],
+            size_bytes=item['metadata']['size_bytes']) for item in segments),
+        ended_at=datetime(2026, 10, 25, 12, 58, 0, 250000, tzinfo=UTC),
+        local_quality_outcome=cloud.ValidityStatus.VALID)
+    return {
+        'payload_schema': cloud.INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
+        'manifest_schema': cloud.INSOLE_MANIFEST_SCHEMA,
+        'pairing': dict(cloud.MANIFEST_SCHEMA_FOR_PAYLOAD),
+        'session_versions': {'app': 'gait-insole/1.0.0', 'protocol_profile': 'insole-walk/1',
+                             'payload_schema': cloud.INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
+                             'calibration': 'insole-uncalibrated/1'},
+        'segment_metadata_fields': sorted(cloud.ArchiveSegmentMetadata.model_fields),
+        'segment_metadata_extra_fields': 'rejected (E-API-400)',
+        'metadata_header': 'unpadded base64url of canonical JSON: sorted keys, no '
+                           'whitespace, UTF-8',
+        'segments': segments,
+        'manifest': {
+            'body': manifest.model_dump(mode='json'),
+            'canonical_hex': canonical_json_bytes(manifest).hex(),
+            'sha256': canonical_sha256(manifest),
+            'request_headers': {
+                'X-Content-SHA256': canonical_sha256(manifest),
+                'X-Schema-Version': cloud.INSOLE_MANIFEST_SCHEMA},
+            'idempotency_key': 'also send Idempotency-Key: chosen by the client, unique '
+                               'per session and stable across retries of its completion',
+            'digest': 'sha256 of the canonical JSON the server re-serializes from the '
+                      'parsed body: sorted keys, no whitespace. Send ended_at in UTC as '
+                      'YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero); '
+                      'the server digests its own re-serialization, so any other form '
+                      'gets a digest mismatch unless it re-serializes identically'},
+        'rules': {
+            'local_quality_outcome': 'required; only VALID completes to INGESTED, other '
+                                     f'values get {errors.QualityGateRejected.code} '
+                                     f'{errors.QualityGateRejected.action}',
+            'schema_pairing': 'a manifest whose schema_version is not paired with the '
+                              f'session payload_schema gets {errors.SchemaUnsupported.code} '
+                              f'{errors.SchemaUnsupported.action}',
+            'segment_schema': 'segment payload_schema_version must equal the session '
+                              f'payload_schema, else {errors.SchemaUnsupported.code}',
+            'segment_set': 'manifest segments must equal the received parts by index, '
+                           f'sha256 and size_bytes, else {errors.ManifestIncomplete.code} '
+                           f'{errors.ManifestIncomplete.action}'},
+        'scenarios': [
+            {'name': 'full_upload', 'expect': {'ingest_status': 'INGESTED'}},
+            {'name': 'session_manifest_for_archive_session',
+             'expect': {'http_status': 422, 'code': errors.SchemaUnsupported.code}},
+            {'name': 'quality_not_valid',
+             'expect': {'http_status': 422, 'code': errors.QualityGateRejected.code}},
+            {'name': 'frame_fields_in_metadata',
+             'expect': {'http_status': 400, 'code': errors.RequestContractError.code}},
+            {'name': 'manifest_size_differs_from_part',
+             'expect': {'http_status': 422, 'code': errors.ManifestIncomplete.code}},
+        ],
+    }
+
 
 def main():
     root = Path(__file__).resolve().parents[1] / 'contracts' / 'mobile'

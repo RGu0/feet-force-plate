@@ -23,6 +23,8 @@ from cloud.api.errors import (
 )
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.cloud import (
+    AnySegmentMetadata,
+    AnySessionManifest,
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
@@ -31,10 +33,8 @@ from shared.contracts.cloud import (
     HeartbeatResponse,
     IngestStatus,
     ManifestCompletionResponse,
-    SegmentMetadata,
     SessionCreateRequest,
     SessionCreateResponse,
-    SessionManifest,
     SessionStatusResponse,
     SubjectCreateRequest,
     SubjectSummary,
@@ -121,7 +121,7 @@ class SessionRecord:
 class SegmentRecord:
     tenant_id: UUID
     session_id: UUID
-    metadata: SegmentMetadata
+    metadata: AnySegmentMetadata
     object_key: str
     received_at: datetime
 
@@ -130,7 +130,7 @@ class SegmentRecord:
 class ManifestRecord:
     tenant_id: UUID
     session_id: UUID
-    manifest: SessionManifest
+    manifest: AnySessionManifest
     manifest_sha256: str
     object_key: str
     verification_status: str
@@ -1116,7 +1116,7 @@ class InMemoryPlatformRepository:
         self,
         context: TerminalContext,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         object_key: str,
     ) -> SegmentRecord:
         session = self._session(context, session_id)
@@ -1179,7 +1179,7 @@ class InMemoryPlatformRepository:
         self,
         context: TerminalContext,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         manifest_sha256: str,
         object_key: str,
         idempotency_key: str,
@@ -1228,7 +1228,9 @@ class InMemoryPlatformRepository:
             if record is None or (
                 record.metadata.sha256 != item.sha256
                 or record.metadata.size_bytes != item.size_bytes
-                or record.metadata.frame_count != item.frame_count
+                # Archive parts (RAY-825) have no frame count on either side.
+                or getattr(record.metadata, "frame_count", None)
+                != getattr(item, "frame_count", None)
             ):
                 mismatch.append(item.index)
         extra = sorted(set(accepted_by_index) - {item.index for item in manifest.segments})

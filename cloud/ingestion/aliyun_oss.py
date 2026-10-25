@@ -11,7 +11,7 @@ from uuid import UUID
 
 from cloud.api.errors import DigestMismatch, SegmentDigestConflict
 from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.cloud import SegmentMetadata, SessionManifest
+from shared.contracts.cloud import AnySegmentMetadata, AnySessionManifest
 
 from .object_store import StoredObject, _verified_bytes
 
@@ -152,7 +152,7 @@ class AliyunOSSObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> StoredObject:
         payload = await _verified_bytes(chunks, metadata.sha256, metadata.size_bytes)
@@ -175,7 +175,7 @@ class AliyunOSSObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
     ) -> StoredObject:
         payload = canonical_json_bytes(manifest)

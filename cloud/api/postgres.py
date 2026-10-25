@@ -24,6 +24,10 @@ from cloud.api.errors import (
 from cloud.api.repository import EnrollmentBinding, SegmentRecord, SessionRecord
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.cloud import (
+    INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
+    AnySegmentMetadata,
+    AnySessionManifest,
+    ArchiveSegmentMetadata,
     ConsentCreateRequest,
     ConsentResponse,
     ConsentRevokeRequest,
@@ -36,7 +40,6 @@ from shared.contracts.cloud import (
     SegmentMetadata,
     SessionCreateRequest,
     SessionCreateResponse,
-    SessionManifest,
     SessionStatusResponse,
     SessionVersions,
     SubjectCreateRequest,
@@ -1247,7 +1250,14 @@ class PostgresPlatformRepository:
         return SegmentRecord(
             tenant_id=row["tenant_id"],
             session_id=row["session_id"],
-            metadata=SegmentMetadata(
+            metadata=ArchiveSegmentMetadata(
+                segment_index=row["segment_index"],
+                size_bytes=row["size_bytes"],
+                sha256=row["sha256"],
+                payload_schema_version=row["payload_schema_version"],
+            )
+            if row["payload_schema_version"] == INSOLE_ARCHIVE_PAYLOAD_SCHEMA
+            else SegmentMetadata(
                 segment_index=row["segment_index"],
                 start_frame_index=row["start_frame_index"],
                 frame_count=row["frame_count"],
@@ -1283,7 +1293,7 @@ class PostgresPlatformRepository:
         self,
         context: TerminalContext,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         object_key: str,
     ) -> SegmentRecord:
         async with tenant_transaction(self._pool, context.tenant_id) as connection:
@@ -1317,13 +1327,15 @@ class PostgresPlatformRepository:
                 object_key,
                 metadata.sha256,
                 metadata.size_bytes,
-                metadata.start_frame_index,
-                metadata.frame_count,
-                metadata.start_monotonic_ns,
-                metadata.end_monotonic_ns,
+                # Archive parts (RAY-825) store NULL frame, clock and cipher
+                # columns; 0016 checks the shape against the schema.
+                getattr(metadata, "start_frame_index", None),
+                getattr(metadata, "frame_count", None),
+                getattr(metadata, "start_monotonic_ns", None),
+                getattr(metadata, "end_monotonic_ns", None),
                 metadata.payload_schema_version,
-                metadata.compression,
-                metadata.cipher,
+                getattr(metadata, "compression", None),
+                getattr(metadata, "cipher", None),
             )
             if row is None:
                 row = await connection.fetchrow(
@@ -1404,7 +1416,7 @@ class PostgresPlatformRepository:
         self,
         context: TerminalContext,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         manifest_sha256: str,
         object_key: str,
         idempotency_key: str,
@@ -1479,7 +1491,9 @@ class PostgresPlatformRepository:
                     for row in rows
                 }
                 declared = {
-                    item.index: (item.sha256, item.size_bytes, item.frame_count)
+                    item.index: (
+                        item.sha256, item.size_bytes, getattr(item, "frame_count", None)
+                    )
                     for item in manifest.segments
                 }
                 if accepted != declared:
@@ -1499,7 +1513,7 @@ class PostgresPlatformRepository:
                             manifest_sha256,
                             object_key,
                             manifest.segment_count,
-                            manifest.total_frames,
+                            getattr(manifest, "total_frames", None),
                             manifest.total_bytes,
                             json.dumps(
                                 manifest.model_dump(mode="json"), separators=(",", ":")
@@ -1546,7 +1560,7 @@ class PostgresPlatformRepository:
                             manifest_sha256,
                             object_key,
                             manifest.segment_count,
-                            manifest.total_frames,
+                            getattr(manifest, "total_frames", None),
                             manifest.total_bytes,
                             json.dumps(
                                 manifest.model_dump(mode="json"), separators=(",", ":")

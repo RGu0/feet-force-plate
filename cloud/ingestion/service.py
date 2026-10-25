@@ -16,15 +16,16 @@ from cloud.api.errors import (
 from shared.contracts.client_sync import canonical_sha256
 from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.cloud import (
+    MANIFEST_SCHEMA_FOR_PAYLOAD,
+    AnySegmentMetadata,
+    AnySessionManifest,
     ManifestCompletionResponse,
     ReceivedSegment,
     SegmentAcknowledgement,
     SegmentListResponse,
-    SegmentMetadata,
     SegmentReceiptStatus,
     SessionCreateRequest,
     SessionCreateResponse,
-    SessionManifest,
     SessionStatusResponse,
     ValidityStatus,
 )
@@ -105,7 +106,7 @@ class IngestionService:
         context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
         route_index: int,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> SegmentAcknowledgement:
         context = coerce_ingestion_principal(context)
@@ -199,7 +200,7 @@ class IngestionService:
         self,
         context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
         idempotency_key: str,
     ) -> ManifestCompletionResponse:
@@ -221,7 +222,15 @@ class IngestionService:
                 "未通过本地质量门控的会话不能启动正式分析",
                 validity_status=manifest.local_quality_outcome.value,
             )
-        await self._session(context, session_id)
+        session = await self._session(context, session_id)
+        # RAY-825: a session completes only with its payload schema's manifest.
+        session_schema = session.request.versions.payload_schema
+        if MANIFEST_SCHEMA_FOR_PAYLOAD.get(session_schema) != manifest.schema_version:
+            raise SchemaUnsupported(
+                "最终清单模式与会话模式不一致",
+                session_schema=session_schema,
+                manifest_schema=manifest.schema_version,
+            )
         stored = await self._objects.put_manifest(
             context.tenant_id, session_id, manifest, expected_sha256
         )

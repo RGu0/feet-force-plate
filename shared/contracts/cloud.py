@@ -325,6 +325,68 @@ class SessionManifest(ContractModel):
         return self
 
 
+# RAY-825 R1: the smart-insole session is one deterministic tar.gz archive
+# split into parts after capture, so its parts carry no frame range, clock,
+# compression or cipher. Only the bytes' digest and size are verified.
+INSOLE_ARCHIVE_PAYLOAD_SCHEMA = "insole-session-archive/1"
+INSOLE_MANIFEST_SCHEMA = "insole-session-manifest/1"
+
+
+class ArchiveSegmentMetadata(ContractModel):
+    segment_index: Annotated[int, Field(ge=0)]
+    size_bytes: Annotated[int, Field(gt=0)]
+    sha256: Sha256Hex
+    payload_schema_version: Literal["insole-session-archive/1"]
+
+
+class ArchiveManifestSegment(ContractModel):
+    index: Annotated[int, Field(ge=0)]
+    sha256: Sha256Hex
+    size_bytes: Annotated[int, Field(gt=0)]
+
+
+class InsoleSessionManifest(ContractModel):
+    schema_version: Literal["insole-session-manifest/1"]
+    segment_count: Annotated[int, Field(gt=0)]
+    total_bytes: Annotated[int, Field(gt=0)]
+    segments: tuple[ArchiveManifestSegment, ...]
+    ended_at: datetime
+    local_quality_outcome: ValidityStatus
+
+    @model_validator(mode="after")
+    def validate_segment_set_and_totals(self) -> InsoleSessionManifest:
+        indices = [segment.index for segment in self.segments]
+        if len(self.segments) != self.segment_count:
+            raise ValueError("segment_count does not match segments")
+        if indices != list(range(self.segment_count)):
+            raise ValueError("manifest indices must be unique, ordered, and contiguous from zero")
+        if sum(segment.size_bytes for segment in self.segments) != self.total_bytes:
+            raise ValueError("total_bytes does not match segments")
+        return self
+
+
+AnySegmentMetadata = SegmentMetadata | ArchiveSegmentMetadata
+AnySessionManifest = SessionManifest | InsoleSessionManifest
+
+# Each payload schema completes with exactly one manifest schema.
+MANIFEST_SCHEMA_FOR_PAYLOAD = {
+    "raw-segment/1": "session-manifest/1",
+    INSOLE_ARCHIVE_PAYLOAD_SCHEMA: INSOLE_MANIFEST_SCHEMA,
+}
+
+
+def parse_segment_metadata(value: Any) -> AnySegmentMetadata:
+    if isinstance(value, dict) and value.get("payload_schema_version") == INSOLE_ARCHIVE_PAYLOAD_SCHEMA:
+        return ArchiveSegmentMetadata.model_validate(value)
+    return SegmentMetadata.model_validate(value)
+
+
+def parse_session_manifest(value: Any) -> AnySessionManifest:
+    if isinstance(value, dict) and value.get("schema_version") == INSOLE_MANIFEST_SCHEMA:
+        return InsoleSessionManifest.model_validate(value)
+    return SessionManifest.model_validate(value)
+
+
 class ManifestCompletionResponse(ContractModel):
     session_id: UUID
     ingest_status: IngestStatus
