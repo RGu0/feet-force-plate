@@ -12,8 +12,9 @@ registers a synthetic insole pair (its ``insole_id`` is the session
 sessions with the terminal token, each to ``INGESTED``:
 
 * an ``insole-session-archive/1`` session of two archive parts (a full 4 MiB
-  part and a short tail), after first checking that a ``session-manifest/1``
-  manifest is refused for it with ``UPDATE_CLIENT``;
+  part and a short tail) whose ``config_snapshot`` holds Chinese text
+  (RAY-834), after first checking that a ``session-manifest/1`` manifest is
+  refused for it with ``UPDATE_CLIENT``;
 * a ``raw-segment/1`` session, to show the force-plate schema still works.
 
 It finally retires the pair, revokes itself, and requires the revoked token to
@@ -328,7 +329,9 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         )
         recorder.note(consent_record_id=str(consent.consent_record_id))
 
-        def session_request(payload_schema: str) -> SessionCreateRequest:
+        def session_request(
+            payload_schema: str, config_snapshot: dict[str, Any] | None = None
+        ) -> SessionCreateRequest:
             return SessionCreateRequest(
                 session_id=uuid4(), subject_uuid=subject_id, consent_record_id=consent_id,
                 site_id=None, terminal_id=installation_id,
@@ -339,12 +342,18 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
                     payload_schema=payload_schema, calibration="calibration/1",
                 ),
                 started_at=now,
+                config_snapshot=config_snapshot or {},
             )
 
         archive_parts, archive_manifest, crossed = _archive_contracts(now)
         _upload_session(
             client, recorder, label="archive", token=token, headers=terminal_header,
-            request=session_request(INSOLE_ARCHIVE_PAYLOAD_SCHEMA), parts=archive_parts,
+            # RAY-834: a Chinese test plan, as the insole app sends, must be stored.
+            request=session_request(
+                INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
+                {"测试计划": "步行 60 秒", "项目": ["步行", "其他"]},
+            ),
+            parts=archive_parts,
             manifest=archive_manifest, rejected_manifest=crossed,
         )
         raw_parts, raw_manifest = _raw_contracts(now)

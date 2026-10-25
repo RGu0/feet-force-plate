@@ -159,7 +159,8 @@ def build_openapi():
                           'content': {'application/json': {'schema': ref}}}
             for status in statuses
         }
-        for status in (400, 401, 403, 404, 409, 422, 503):
+        # RAY-834: an unhandled server error is 500 E-CLD-500 with the same envelope.
+        for status in (400, 401, 403, 404, 409, 422, 500, 503):
             operation['responses'][str(status)] = {
                 'description': 'Business error; use retryable and action together',
                 'content': {'application/json': {'schema': error_ref}},
@@ -217,7 +218,8 @@ def build_vectors():
     for name, error_type in (('digest_mismatch', errors.DigestMismatch),
                              ('schema_unsupported', errors.SchemaUnsupported),
                              ('idempotency_conflict', errors.IdempotencyConflict),
-                             ('unavailable', errors.RepositoryUnavailable)):
+                             ('unavailable', errors.RepositoryUnavailable),
+                             ('internal', errors.PlatformError)):
         error_vectors[name] = {'error': {'code': error_type.code,
             'message': 'Synthetic contract fixture', 'retryable': error_type.retryable,
             'action': error_type.action, 'details': {}}, 'meta': meta}

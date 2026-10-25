@@ -470,7 +470,7 @@ class PostgresRecoveryCaseRepository:
                 session.started_at, session.versions.app,
                 session.versions.protocol_profile, session.versions.payload_schema,
                 session.versions.calibration,
-                json.dumps(session.config_snapshot, separators=(",", ":")),
+                json.dumps(session.config_snapshot, separators=(",", ":"), ensure_ascii=False),
                 authorization.manifest_sha256 if authorization is not None else None,
             )
             if authorization_row is not None:
