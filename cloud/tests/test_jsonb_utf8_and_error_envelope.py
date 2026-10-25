@@ -55,14 +55,14 @@ class _FailingIngestion:
         raise self.error
 
 
-async def _status_response(error: Exception):
+async def _status_response(error: Exception, *, raise_app_exceptions: bool = False):
     app = create_app(ServiceContainer(ingestion=_FailingIngestion(error)))
     # Bypass authentication: only the route's own failure is under test.
     for route in app.routes:
         if getattr(route, "path", "") == "/v1/sessions/{session_id}/status":
             for dependency in route.dependant.dependencies:
                 app.dependency_overrides[dependency.call] = lambda: object()
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    transport = ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
     async with AsyncClient(transport=transport, base_url="https://cloud.test") as client:
         response = await client.get(
             f"/v1/sessions/{UUID(int=1)}/status",
@@ -83,6 +83,16 @@ async def _status_response(error: Exception):
         (asyncpg.exceptions.TooManyConnectionsError("secret detail"), 503, "E-CLD-503",
          True, "RETRY_LATER"),
         (TimeoutError("secret detail"), 503, "E-CLD-503", True, "RETRY_LATER"),
+        (asyncpg.exceptions.AdminShutdownError("secret detail"), 503, "E-CLD-503",
+         True, "RETRY_LATER"),
+        (asyncpg.exceptions.CannotConnectNowError("secret detail"), 503, "E-CLD-503",
+         True, "RETRY_LATER"),
+        (asyncpg.exceptions.DeadlockDetectedError("secret detail"), 503, "E-CLD-503",
+         True, "RETRY_LATER"),
+        (asyncpg.exceptions.SerializationError("secret detail"), 503, "E-CLD-503",
+         True, "RETRY_LATER"),
+        (asyncpg.exceptions.DataError("secret detail"), 500, "E-CLD-500",
+         False, "CONTACT_SUPPORT"),
     ],
 )
 async def test_unhandled_errors_get_the_envelope(error, status, code, retryable, action):
@@ -104,3 +114,11 @@ def test_contract_publishes_the_internal_error() -> None:
         "E-CLD-500", False, "CONTACT_SUPPORT")
     operation = build_openapi()["paths"]["/v1/sessions"]["post"]
     assert {"500", "503"} <= set(operation["responses"])
+
+
+@pytest.mark.anyio
+async def test_unhandled_errors_are_still_raised_for_logging() -> None:
+    # Starlette sends the envelope and then re-raises, so the server logs the
+    # traceback; the in-process transport surfaces that re-raise.
+    with pytest.raises(RuntimeError, match="secret detail"):
+        await _status_response(RuntimeError("secret detail"), raise_app_exceptions=True)

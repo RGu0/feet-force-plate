@@ -16,6 +16,10 @@ bare 500: a database connection or timeout failure is 503 `E-CLD-503`
 (`retryable: false`, `CONTACT_SUPPORT`; vector `errors.internal`). Neither carries
 details; quote the `X-Correlation-ID` when reporting one. A response with no
 envelope at all comes from the transport or proxy, not the API.
+JSON the server stores as sent, such as a basic report copy's `document_json`,
+must carry non-ASCII text as raw UTF-8, not `\uXXXX` escapes: the integration
+database is `SQL_ASCII` (RAY-835 tracks UTF8) and rejects escaped non-ASCII
+characters in JSON. Dart `jsonEncode` already writes raw UTF-8.
 Foundation's top-level `ErrorEnvelope` is a different mechanism. Follow both
 `retryable` and `action`; equal error codes can have different required actions.
 Keep `X-Correlation-ID` a UUID (the business gateway rejects non-UUID values).

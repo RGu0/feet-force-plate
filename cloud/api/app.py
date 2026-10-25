@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
+import socket
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -135,9 +136,13 @@ class ServiceContainer:
 _TRANSIENT_ERRORS = (
     asyncpg.PostgresConnectionError,
     asyncpg.TooManyConnectionsError,
-    asyncpg.QueryCanceledError,
+    # Restart, failover, startup and cancel (57xxx).
+    asyncpg.OperatorInterventionError,
+    asyncpg.DeadlockDetectedError,
+    asyncpg.SerializationError,
     ConnectionError,
     TimeoutError,
+    socket.gaierror,
 )
 
 
