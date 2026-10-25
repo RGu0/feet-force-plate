@@ -30,9 +30,11 @@ backup restore; record those as separate acceptance evidence.
 
 The host cannot reach github.com. `deploy-sales-inventory-release.sh` downloads
 the foundation wheel on the operator machine, checks it against `uv.lock`, and
-uploads it with the archive; the installer re-checks the digest and proves the
-new release resolves dependencies offline (`UV_OFFLINE=1`, host uv cache)
-before any migration. The seed and backup services run with `UV_OFFLINE=1`.
+uploads it with the archive; the installer re-checks the digest, seeds the
+service user's uv cache from the uploaded wheel (`warm_foundation_wheel_cache.py`,
+a loopback endpoint that serves only the locked URL, so a fresh host or a
+foundation upgrade needs no prior cache), and proves the new release resolves
+dependencies offline (`UV_OFFLINE=1`) before any migration. The seed and backup services run with `UV_OFFLINE=1`.
 
 On a new Alibaba Cloud Linux host, run the reviewed prerequisite script once as
 root. It is idempotent and deliberately does not stop or reconfigure the

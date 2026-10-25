@@ -97,6 +97,17 @@ chmod 0755 \
 # cache, so prove the new release can before any migration or cutover.
 cp -a "$release_source" "$offline_check_root/release"
 chown -R "$service_user:$service_group" "$offline_check_root/release"
+# The locked wheel is cached under its GitHub URL, which the host cannot reach.
+# Hand the digest-checked upload to uv through a loopback endpoint that serves
+# only that URL, so fresh hosts and foundation upgrades need no prior cache (RAY-836).
+install -m 0644 "$foundation_wheel" "$offline_check_root/foundation-release.whl"
+if ! runuser -u "$service_user" -- env \
+    XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
+    python3 "$offline_check_root/release/deploy/aliyun/seed/warm_foundation_wheel_cache.py" \
+    "$offline_check_root/foundation-release.whl" "$foundation_url" "$foundation_sha256" "$(command -v uv)" >/dev/null; then
+    echo "foundation release wheel could not be placed in the uv cache; nothing was changed" >&2
+    exit 1
+fi
 if ! runuser -u "$service_user" -- env UV_OFFLINE=1 \
     XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
     "$offline_check_root/release/dev" setup >/dev/null; then
