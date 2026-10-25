@@ -21,6 +21,7 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.service import DeviceManagementService
 from cloud.ingestion.object_store import InMemoryObjectStore
 from cloud.ingestion.service import IngestionService
+from shared.contracts.cloud import INSOLE_ARCHIVE_PAYLOAD_SCHEMA, INSOLE_MANIFEST_SCHEMA
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,8 +130,9 @@ def build_integration_app(settings: IntegrationSettings) -> FastAPI:
     ingestion = IngestionService(
         repository,
         objects,
-        supported_payload_schemas={"raw-segment/1"},
-        supported_manifest_schemas={"session-manifest/1"},
+        # RAY-825: insole archive sessions alongside force-plate raw segments.
+        supported_payload_schemas={"raw-segment/1", INSOLE_ARCHIVE_PAYLOAD_SCHEMA},
+        supported_manifest_schemas={"session-manifest/1", INSOLE_MANIFEST_SCHEMA},
     )
     app = create_app(
         ServiceContainer(

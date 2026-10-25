@@ -8,6 +8,7 @@ foreign keys of subject.consents and screening.sessions they satisfy.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import os
 from datetime import UTC, datetime, timedelta
@@ -150,8 +151,8 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
             app = create_app(ServiceContainer(
                 ingestion=IngestionService(
                     data, InMemoryObjectStore(),
-                    supported_payload_schemas={"raw-segment/1"},
-                    supported_manifest_schemas={"session-manifest/1"},
+                    supported_payload_schemas={"raw-segment/1", "insole-session-archive/1"},
+                    supported_manifest_schemas={"session-manifest/1", "insole-session-manifest/1"},
                 ),
                 subjects=SubjectConsentService(data, IdentityProtector(
                     encryption_key=b"e" * 32, lookup_hmac_key=b"h" * 32,
@@ -280,6 +281,39 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
                 status = await client.get(
                     f"/v1/sessions/{first['session_id']}/status", headers=bearer())
                 assert status.status_code == 200, status.text
+
+                # RAY-825: the published insole archive vectors reach INGESTED and
+                # store NULL frame, clock and cipher columns (0016 shape checks).
+                archive = build_vectors()["insole_session_archive"]
+                archive_session = session_body()
+                archive_session["versions"] = archive["session_versions"]
+                assert (await create(archive_session)).status_code == 201
+                archive_id = archive_session["session_id"]
+                for part in archive["segments"]:
+                    index = part["metadata"]["segment_index"]
+                    put = await client.put(
+                        f"/v1/sessions/{archive_id}/segments/{index}",
+                        content=base64.b64decode(part["payload_base64"]),
+                        headers=bearer(**part["request_headers"]),
+                    )
+                    assert put.status_code == 201, put.text
+                listed = await client.get(f"/v1/sessions/{archive_id}/segments", headers=bearer())
+                assert [item["index"] for item in listed.json()["data"]["received"]] == [0, 1]
+                done = await client.post(
+                    f"/v1/sessions/{archive_id}/complete", json=archive["manifest"]["body"],
+                    headers=bearer(**archive["manifest"]["request_headers"]),
+                )
+                assert done.status_code == 200, done.text
+                assert done.json()["data"]["ingest_status"] == "INGESTED"
+                async with tenant_transaction(tenant_pool, tenant.tenant_id) as connection:
+                    rows = await connection.fetch(
+                        "SELECT frame_count, start_monotonic_ns, cipher, compression "
+                        "FROM screening.session_segments WHERE session_id=$1", UUID(archive_id))
+                    total_frames = await connection.fetchval(
+                        "SELECT total_frames FROM screening.session_manifests "
+                        "WHERE session_id=$1", UUID(archive_id))
+                assert len(rows) == 2 and all(set(row.values()) == {None} for row in rows)
+                assert total_frames is None
 
                 # D8: a session created before revoke resumes after re-activation.
                 pending = session_body()

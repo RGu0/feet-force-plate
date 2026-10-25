@@ -93,6 +93,34 @@ tenant token (vector section `terminal_data_plane`). Not part of `v0.2.0`.
 Every `terminal_data_plane` scenario is replayed against the server in
 `cloud/tests/test_terminal_data_plane.py`.
 
+RAY-825 registers the smart-insole payload schema `insole-session-archive/1`
+next to the force-plate `raw-segment/1`, which is unchanged (vector section
+`insole_session_archive`). Not part of `v0.2.0`.
+- Create the session with `versions.payload_schema = insole-session-archive/1`.
+  The session is one deterministic tar.gz archive split into parts; the cloud
+  verifies only each part's bytes (SHA-256 and size), never their content.
+- `X-Segment-Metadata` carries exactly `segment_index`, `size_bytes`, `sha256`
+  and `payload_schema_version` (`ArchiveSegmentMetadata`; OpenAPI
+  `x-ffp-segment-metadata` on the PUT). Any frame, clock, compression or cipher
+  field is rejected with `E-API-400`. `X-Schema-Version` is
+  `insole-session-archive/1`.
+- Complete with `InsoleSessionManifest` (`schema_version`
+  `insole-session-manifest/1`): `segment_count`, `total_bytes`,
+  `segments[{index, sha256, size_bytes}]`, `ended_at`, `local_quality_outcome`;
+  no frame counts. Each payload schema completes only with its own manifest
+  schema (`pairing`); a crossed pair is `E-CLD-422` `UPDATE_CLIENT`.
+- `X-Content-SHA256` is the SHA-256 of the canonical JSON the server rebuilds
+  from the parsed body, so `ended_at` must be sent in the canonical form: UTC,
+  `Z` suffix, microseconds only when non-zero (`2026-10-25T12:58:00Z`,
+  `2026-10-25T12:58:00.250000Z`). Check against `manifest.canonical_hex`.
+- `local_quality_outcome` is required, and only `VALID` completes to `INGESTED`;
+  anything else is `E-CLD-422` `REPEAT_SCREENING`. Send `VALID` only for a session
+  that was saved with its archive complete. A manifest that differs from the
+  received parts (index, sha256 or size) is `E-CLD-422` `UPLOAD_MISSING_SEGMENTS`.
+Every `insole_session_archive` scenario is replayed against the server in
+`cloud/tests/test_insole_session_archive.py`; client alignment is tracked by
+gait-insole-flutter RAY-624.
+
 Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart
 consumption of these fixtures in gait-insole-flutter (PR 7). That evidence
 predates the RAY-656 `terminal` section; client alignment for it is tracked by

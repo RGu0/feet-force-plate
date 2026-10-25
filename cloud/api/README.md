@@ -76,6 +76,14 @@ existing session and consent foreign keys hold. Migration
 `0015_terminal_data_plane_projection.sql` backfills earlier rows; it converges
 and `install-seed-release.sh` applies it on every install.
 
+RAY-825 registers the insole payload schema `insole-session-archive/1` (archive
+parts verified by SHA-256 and size only) with its manifest schema
+`insole-session-manifest/1` in both the seed and integration compositions;
+`raw-segment/1` is unchanged. Migration `0016_insole_session_archive.sql` makes
+the frame, clock, compression and cipher columns and `total_frames` nullable,
+with per-schema CHECKs; it converges and `install-seed-release.sh` applies it on
+every install. See `cloud/contracts/mobile/README.md` for the wire contract.
+
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful
 provision response, and inspection never prints hashes, DSNs, private keys, or

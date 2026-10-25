@@ -47,6 +47,7 @@ from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
 )
+from shared.contracts.cloud import INSOLE_ARCHIVE_PAYLOAD_SCHEMA, INSOLE_MANIFEST_SCHEMA
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -333,8 +334,9 @@ async def build_seed_app(
         ServiceContainer(
             ingestion=IngestionService(
                 data_repository, objects,
-                supported_payload_schemas={"raw-segment/1"},
-                supported_manifest_schemas={"session-manifest/1"},
+                # RAY-825: insole archive sessions alongside force-plate raw segments.
+                supported_payload_schemas={"raw-segment/1", INSOLE_ARCHIVE_PAYLOAD_SCHEMA},
+                supported_manifest_schemas={"session-manifest/1", INSOLE_MANIFEST_SCHEMA},
             ),
             subjects=subjects,
             heartbeats=DeviceHeartbeatService(data_repository),

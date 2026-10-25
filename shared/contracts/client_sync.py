@@ -12,17 +12,18 @@ from uuid import UUID
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from .cloud import (
+    AnySegmentMetadata,
     ContractModel,
     ConsentCreateRequest,
     ReceivedSegment,
     SegmentAcknowledgement,
-    SegmentMetadata,
     SegmentReceiptStatus,
     Sha256Hex,
     SessionCreateRequest,
     SessionVersions,
     SubjectCreateRequest,
     TestProtocol,
+    parse_segment_metadata,
 )
 
 
@@ -312,15 +313,15 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def encode_segment_metadata(metadata: SegmentMetadata) -> str:
+def encode_segment_metadata(metadata: AnySegmentMetadata) -> str:
     return base64.urlsafe_b64encode(canonical_json_bytes(metadata)).rstrip(b"=").decode("ascii")
 
 
-def decode_segment_metadata(value: str) -> SegmentMetadata:
+def decode_segment_metadata(value: str) -> AnySegmentMetadata:
     try:
         padding = "=" * (-len(value) % 4)
         raw = base64.b64decode(value + padding, altchars=b"-_", validate=True)
         decoded = json.loads(raw)
     except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError) as exc:
         raise ValueError("invalid X-Segment-Metadata header") from exc
-    return SegmentMetadata.model_validate(decoded)
+    return parse_segment_metadata(decoded)

@@ -71,6 +71,7 @@ from shared.contracts.cloud import (
     ConsentRevokeRequest,
     EnrollmentRequest,
     HeartbeatRequest,
+    InsoleSessionManifest,
     SessionCreateRequest,
     SessionManifest,
     SubjectCreateRequest,
@@ -1155,7 +1156,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
     async def complete_session(
         request: Request,
         session_id: UUID,
-        body: SessionManifest,
+        body: SessionManifest | InsoleSessionManifest,
         context: TerminalDataDependency,
         idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=256)],
         content_sha256: Annotated[str, Header(alias="X-Content-SHA256")],

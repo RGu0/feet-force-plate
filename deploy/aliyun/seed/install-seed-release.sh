@@ -242,6 +242,9 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
 # RAY-728: converging projection backfill; safe to apply on every install.
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0015_terminal_data_plane_projection.sql"
+# RAY-825: insole archive parts and manifests; converges, safe on every install.
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0016_insole_session_archive.sql"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then

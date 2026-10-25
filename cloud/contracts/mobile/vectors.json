@@ -585,6 +585,133 @@
       }
     }
   },
+  "insole_session_archive": {
+    "manifest": {
+      "body": {
+        "ended_at": "2026-10-25T12:58:00.250000Z",
+        "local_quality_outcome": "VALID",
+        "schema_version": "insole-session-manifest/1",
+        "segment_count": 2,
+        "segments": [
+          {
+            "index": 0,
+            "sha256": "4728ae55340e30ffe85cbb026082b03178411ae32d7379a6109e5d8934aa7cf9",
+            "size_bytes": 23
+          },
+          {
+            "index": 1,
+            "sha256": "4e5deffb2d5f42af69187dff66790751adc142cf3947b6c71e17a2dcd050aca8",
+            "size_bytes": 21
+          }
+        ],
+        "total_bytes": 44
+      },
+      "canonical_hex": "7b22656e6465645f6174223a22323032362d31302d32355431323a35383a30302e3235303030305a222c226c6f63616c5f7175616c6974795f6f7574636f6d65223a2256414c4944222c22736368656d615f76657273696f6e223a22696e736f6c652d73657373696f6e2d6d616e69666573742f31222c227365676d656e745f636f756e74223a322c227365676d656e7473223a5b7b22696e646578223a302c22736861323536223a2234373238616535353334306533306666653835636262303236303832623033313738343131616533326437333739613631303965356438393334616137636639222c2273697a655f6279746573223a32337d2c7b22696e646578223a312c22736861323536223a2234653564656666623264356634326166363931383764666636363739303735316164633134326366333934376236633731653137613264636430353061636138222c2273697a655f6279746573223a32317d5d2c22746f74616c5f6279746573223a34347d",
+      "digest": "sha256 of the canonical JSON the server re-serializes from the parsed body: sorted keys, no whitespace, ended_at in UTC as YYYY-MM-DDTHH:MM:SS[.ffffff]Z (microseconds only when non-zero)",
+      "request_headers": {
+        "Idempotency-Key": "client-chosen, stable per completion",
+        "X-Content-SHA256": "a00239c69e17e4262097bce598f3aa8423abe7892694ee005231f4efd2071caf",
+        "X-Schema-Version": "insole-session-manifest/1"
+      },
+      "sha256": "a00239c69e17e4262097bce598f3aa8423abe7892694ee005231f4efd2071caf"
+    },
+    "manifest_schema": "insole-session-manifest/1",
+    "metadata_header": "unpadded base64url of canonical JSON: sorted keys, no whitespace, UTF-8",
+    "pairing": {
+      "insole-session-archive/1": "insole-session-manifest/1",
+      "raw-segment/1": "session-manifest/1"
+    },
+    "payload_schema": "insole-session-archive/1",
+    "rules": {
+      "local_quality_outcome": "required; only VALID completes to INGESTED, other values get E-CLD-422 REPEAT_SCREENING",
+      "schema_pairing": "a manifest whose schema_version is not paired with the session payload_schema gets E-CLD-422 UPDATE_CLIENT",
+      "segment_schema": "segment payload_schema_version must equal the session payload_schema, else E-CLD-422",
+      "segment_set": "manifest segments must equal the received parts by index, sha256 and size_bytes, else E-CLD-422 UPLOAD_MISSING_SEGMENTS"
+    },
+    "scenarios": [
+      {
+        "expect": {
+          "ingest_status": "INGESTED"
+        },
+        "name": "full_upload"
+      },
+      {
+        "expect": {
+          "code": "E-CLD-422",
+          "http_status": 422
+        },
+        "name": "session_manifest_for_archive_session"
+      },
+      {
+        "expect": {
+          "code": "E-CLD-422",
+          "http_status": 422
+        },
+        "name": "quality_not_valid"
+      },
+      {
+        "expect": {
+          "code": "E-API-400",
+          "http_status": 400
+        },
+        "name": "frame_fields_in_metadata"
+      },
+      {
+        "expect": {
+          "code": "E-CLD-422",
+          "http_status": 422
+        },
+        "name": "manifest_size_differs_from_part"
+      }
+    ],
+    "segment_metadata_extra_fields": "rejected (E-API-400)",
+    "segment_metadata_fields": [
+      "payload_schema_version",
+      "segment_index",
+      "sha256",
+      "size_bytes"
+    ],
+    "segments": [
+      {
+        "canonical_hex": "7b227061796c6f61645f736368656d615f76657273696f6e223a22696e736f6c652d73657373696f6e2d617263686976652f31222c227365676d656e745f696e646578223a302c22736861323536223a2234373238616535353334306533306666653835636262303236303832623033313738343131616533326437333739613631303965356438393334616137636639222c2273697a655f6279746573223a32337d",
+        "metadata": {
+          "payload_schema_version": "insole-session-archive/1",
+          "segment_index": 0,
+          "sha256": "4728ae55340e30ffe85cbb026082b03178411ae32d7379a6109e5d8934aa7cf9",
+          "size_bytes": 23
+        },
+        "payload_base64": "aW5zb2xlLWFyY2hpdmUtcGFydC0wAP8=",
+        "request_headers": {
+          "Content-Type": "application/octet-stream",
+          "X-Content-SHA256": "4728ae55340e30ffe85cbb026082b03178411ae32d7379a6109e5d8934aa7cf9",
+          "X-Schema-Version": "insole-session-archive/1",
+          "X-Segment-Metadata": "eyJwYXlsb2FkX3NjaGVtYV92ZXJzaW9uIjoiaW5zb2xlLXNlc3Npb24tYXJjaGl2ZS8xIiwic2VnbWVudF9pbmRleCI6MCwic2hhMjU2IjoiNDcyOGFlNTUzNDBlMzBmZmU4NWNiYjAyNjA4MmIwMzE3ODQxMWFlMzJkNzM3OWE2MTA5ZTVkODkzNGFhN2NmOSIsInNpemVfYnl0ZXMiOjIzfQ"
+        }
+      },
+      {
+        "canonical_hex": "7b227061796c6f61645f736368656d615f76657273696f6e223a22696e736f6c652d73657373696f6e2d617263686976652f31222c227365676d656e745f696e646578223a312c22736861323536223a2234653564656666623264356634326166363931383764666636363739303735316164633134326366333934376236633731653137613264636430353061636138222c2273697a655f6279746573223a32317d",
+        "metadata": {
+          "payload_schema_version": "insole-session-archive/1",
+          "segment_index": 1,
+          "sha256": "4e5deffb2d5f42af69187dff66790751adc142cf3947b6c71e17a2dcd050aca8",
+          "size_bytes": 21
+        },
+        "payload_base64": "aW5zb2xlLWFyY2hpdmUtcGFydC0x",
+        "request_headers": {
+          "Content-Type": "application/octet-stream",
+          "X-Content-SHA256": "4e5deffb2d5f42af69187dff66790751adc142cf3947b6c71e17a2dcd050aca8",
+          "X-Schema-Version": "insole-session-archive/1",
+          "X-Segment-Metadata": "eyJwYXlsb2FkX3NjaGVtYV92ZXJzaW9uIjoiaW5zb2xlLXNlc3Npb24tYXJjaGl2ZS8xIiwic2VnbWVudF9pbmRleCI6MSwic2hhMjU2IjoiNGU1ZGVmZmIyZDVmNDJhZjY5MTg3ZGZmNjY3OTA3NTFhZGMxNDJjZjM5NDdiNmM3MWUxN2EyZGNkMDUwYWNhOCIsInNpemVfYnl0ZXMiOjIxfQ"
+        }
+      }
+    ],
+    "session_versions": {
+      "app": "gait-insole/1.0.0",
+      "calibration": "insole-uncalibrated/1",
+      "payload_schema": "insole-session-archive/1",
+      "protocol_profile": "insole-walk/1"
+    }
+  },
   "license": {
     "canonical_hex": "7b226163636f756e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303062222c22656e61626c65645f6665617475726573223a5b22666978747572652e66656174757265225d2c2268617264776172655f6964223a224646502d4450343836342d303030303030222c226973737565645f6174223a22323032362d31302d30375430303a30303a30305a222c226c6963656e73655f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303063222c22736368656d615f76657273696f6e223a226c6963656e73652f32222c22737461747573223a22414354495645222c2274656e616e745f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303061222c2276616c69645f66726f6d223a22323032362d31302d30375430303a30303a30305a222c2276616c69645f756e74696c223a22323032362d31312d30375430303a30303a30305a222c2276657273696f6e223a317d",
     "negative_cases": [

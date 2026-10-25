@@ -205,6 +205,70 @@
         "title": "AnalysisStatus",
         "type": "string"
       },
+      "ArchiveManifestSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "sha256",
+          "size_bytes"
+        ],
+        "title": "ArchiveManifestSegment",
+        "type": "object"
+      },
+      "ArchiveSegmentMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "payload_schema_version": {
+            "const": "insole-session-archive/1",
+            "title": "Payload Schema Version",
+            "type": "string"
+          },
+          "segment_index": {
+            "minimum": 0,
+            "title": "Segment Index",
+            "type": "integer"
+          },
+          "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "segment_index",
+          "size_bytes",
+          "sha256",
+          "payload_schema_version"
+        ],
+        "title": "ArchiveSegmentMetadata",
+        "type": "object"
+      },
       "BatteryReading": {
         "additionalProperties": false,
         "description": "One side's battery reading; ``read_at`` is the device-side reading time.\n\n``millivolts`` is the raw value so a later discharge curve can recompute\n``percent``; the percent is the reporting client's conversion.",
@@ -987,6 +1051,51 @@
           "meta"
         ],
         "title": "InsoleRetireResponseEnvelope",
+        "type": "object"
+      },
+      "InsoleSessionManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "ended_at": {
+            "format": "date-time",
+            "title": "Ended At",
+            "type": "string"
+          },
+          "local_quality_outcome": {
+            "$ref": "#/components/schemas/ValidityStatus"
+          },
+          "schema_version": {
+            "const": "insole-session-manifest/1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "segment_count": {
+            "exclusiveMinimum": 0.0,
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveManifestSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "total_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "segment_count",
+          "total_bytes",
+          "segments",
+          "ended_at",
+          "local_quality_outcome"
+        ],
+        "title": "InsoleSessionManifest",
         "type": "object"
       },
       "InsoleState": {
@@ -1788,6 +1897,80 @@
           "meta"
         ],
         "title": "SegmentListResponseEnvelope",
+        "type": "object"
+      },
+      "SegmentMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "cipher": {
+            "const": "aes-256-gcm",
+            "title": "Cipher",
+            "type": "string"
+          },
+          "compression": {
+            "enum": [
+              "none",
+              "zstd"
+            ],
+            "title": "Compression",
+            "type": "string"
+          },
+          "end_monotonic_ns": {
+            "exclusiveMinimum": 0,
+            "title": "End Monotonic Ns",
+            "type": "integer"
+          },
+          "frame_count": {
+            "exclusiveMinimum": 0,
+            "title": "Frame Count",
+            "type": "integer"
+          },
+          "payload_schema_version": {
+            "pattern": "^[a-z0-9-]+/[1-9][0-9]*$",
+            "title": "Payload Schema Version",
+            "type": "string"
+          },
+          "segment_index": {
+            "minimum": 0,
+            "title": "Segment Index",
+            "type": "integer"
+          },
+          "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "start_frame_index": {
+            "minimum": 0,
+            "title": "Start Frame Index",
+            "type": "integer"
+          },
+          "start_monotonic_ns": {
+            "minimum": 0,
+            "title": "Start Monotonic Ns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "segment_index",
+          "start_frame_index",
+          "frame_count",
+          "start_monotonic_ns",
+          "end_monotonic_ns",
+          "compression",
+          "cipher",
+          "size_bytes",
+          "sha256",
+          "payload_schema_version"
+        ],
+        "title": "SegmentMetadata",
         "type": "object"
       },
       "SegmentReceiptStatus": {
@@ -5185,7 +5368,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionManifest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionManifest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/InsoleSessionManifest"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -5642,7 +5833,19 @@
             "http_status": 403,
             "retryable": false
           }
-        ]
+        ],
+        "x-ffp-segment-metadata": {
+          "by_payload_schema": {
+            "insole-session-archive/1": {
+              "$ref": "#/components/schemas/ArchiveSegmentMetadata"
+            },
+            "raw-segment/1": {
+              "$ref": "#/components/schemas/SegmentMetadata"
+            }
+          },
+          "encoding": "unpadded base64url of canonical JSON",
+          "header": "X-Segment-Metadata"
+        }
       }
     },
     "/v1/sessions/{session_id}/status": {
