@@ -85,12 +85,12 @@ def _wheel(directory: Path, version: str) -> Path:
     return path
 
 
-def _warm(wheel: Path, url: str, digest: str, cache: Path) -> int:
+def _warm(wheel: Path, url: str, digest: str, cache: Path, cwd: Path | None = None) -> int:
     env = {**os.environ, "UV_CACHE_DIR": str(cache)}
     return subprocess.run(
         [sys.executable, str(SEED / "warm_foundation_wheel_cache.py"), str(wheel), url, digest,
          shutil.which("uv") or "uv"],
-        env=env, capture_output=True, check=False, timeout=120,
+        env=env, capture_output=True, check=False, timeout=120, cwd=cwd,
     ).returncode
 
 
@@ -130,3 +130,19 @@ def test_wrong_or_missing_wheel_leaves_the_cache_untouched(tmp_path: Path) -> No
     assert _warm(wheel, url, "0" * 64, cache) != 0
     assert _warm(tmp_path / "missing.whl", url, "0" * 64, cache) != 0
     assert not cache.exists()
+
+
+@needs_tools
+def test_warmup_ignores_config_in_the_callers_directory(tmp_path: Path) -> None:
+    # RAY-836 rehearsal: the installer ran the warm-up from /home/rui, where the
+    # service user could not read uv.toml, and uv failed.
+    wheel = _wheel(tmp_path, "0.2.0")
+    url = f"https://github.com/example/probe/releases/download/v0.2.0/{wheel.name}"
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    (caller / "uv.toml").write_text("this is not valid = = toml\n", encoding="utf-8")
+    cache = tmp_path / "cache"
+
+    assert _warm(wheel, url, digest, cache, cwd=caller) == 0
+    assert _offline_install(url, cache, tmp_path / "after") == 0

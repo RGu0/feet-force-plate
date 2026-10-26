@@ -149,8 +149,11 @@ def warm(wheel: Path, url: str, expected_sha256: str, uv_bin: str) -> int:
         )
         try:
             result = subprocess.run(
-                [uv_bin, "pip", "install", "--no-deps", "--target", str(scratch / "target"), url],
+                [uv_bin, "pip", "install", "--no-config", "--no-deps", "--target", str(scratch / "target"), url],
                 env=env,
+                # The caller's directory may be unreadable to the service user
+                # (a deploy runs from the operator's home); uv reads config there.
+                cwd=str(scratch),
                 stdout=subprocess.DEVNULL,
                 check=False,
             )
