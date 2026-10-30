@@ -256,6 +256,12 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
 # RAY-825: insole archive parts and manifests; converges, safe on every install.
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
     -f "$release_source/cloud/migrations/0016_insole_session_archive.sql"
+# RAY-907: subject revisions, name lookup key and tag dictionary; applied once.
+apply_migration_if_column_missing subject subjects revision "$release_source/cloud/migrations/0017_subject_sync.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON subject.subject_revision_counters, subject.tag_revision_counters,
+     subject.tags, subject.subject_tags
+     TO ffp_seed_backup;"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then
