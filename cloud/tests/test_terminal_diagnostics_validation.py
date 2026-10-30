@@ -190,3 +190,18 @@ def test_a_placeholder_cannot_hide_an_identity_key() -> None:
     assert is_sensitive_key("con<redacted:id>tact")
     assert _reject(_body(HEADER, _log(fields={"na<redacted>me": "Wang Fang"}))) == (
         2, "identity_detected")
+
+
+def test_header_ids_shaped_like_a_landline_are_accepted() -> None:
+    # Review of 3d98f21: digit-only middle groups match the landline pattern.
+    tenant = UUID("5a1f0c3e-0123-4567-8901-2d4b8e1a0f37")
+    terminal = UUID("c3d9e2f1-0755-1234-5678-9b2a1c0d3e5f")
+    assert contains_identity(str(tenant)) and contains_identity(str(terminal))
+    header = {**HEADER, "tenant_id": str(tenant), "terminal_id": str(terminal)}
+    assert validate_package(
+        _body(header, _log()), tenant_id=tenant, client_installation_id=terminal) == 2
+    # Elsewhere the same text is still screened.
+    with pytest.raises(DiagnosticRejection) as raised:
+        validate_package(_body(header, _log(msg=str(tenant))), tenant_id=tenant,
+                         client_installation_id=terminal)
+    assert (raised.value.line, raised.value.reason.value) == (2, "identity_detected")

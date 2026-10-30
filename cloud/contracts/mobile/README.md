@@ -159,7 +159,8 @@ the `terminal_diagnostics` vector section. Not part of `v0.2.0`.
   screened, as the client does not redact them either.
 - Write the header's `tenant_id` and `terminal_id` exactly, after redaction: if
   the export's redaction rewrites them (a registered value or pattern that
-  happens to match part of a UUID), every upload is `header_mismatch`.
+  happens to match part of a UUID), every upload is `header_mismatch`. The
+  server compares them to the token and does not pattern-screen them.
 - Package lines in the vectors carry `{tenant_id}` and `{terminal_id}`; substitute
   the uploading terminal's ids (`package.example_*` shows fixed ids).
 - There is no terminal or tenant read path; platform support access is outside

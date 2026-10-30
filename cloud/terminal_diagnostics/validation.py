@@ -84,6 +84,9 @@ _IDENTITY_PATTERN = re.compile(
 _WIDTH = {code: code - 0xFEE0 for code in (*range(0xFF10, 0xFF1A), 0xFF0B, 0xFF0D, 0xFF0E, 0xFF20)}
 
 
+_HEADER_IDS = frozenset({"tenant_id", "terminal_id"})
+
+
 class DiagnosticRejection(Exception):
     def __init__(self, line: int, reason: Reason) -> None:
         super().__init__(f"line {line}: {reason.value}")
@@ -241,7 +244,13 @@ def validate_package(
             and _same_id(record.get("terminal_id"), client_installation_id)
         ):
             raise DiagnosticRejection(number, Reason.HEADER_MISMATCH)
-        if any(_screen(value) for value in record.values()):
+        # The header ids equal the authenticated ids exactly; a UUID can look
+        # like a landline ("…-0123-4567-8901-…") and must not be screened.
+        screened = (
+            value for key, value in record.items()
+            if number != 1 or key not in _HEADER_IDS
+        )
+        if any(_screen(value) for value in screened):
             raise DiagnosticRejection(number, Reason.IDENTITY_DETECTED)
     return len(lines)
 
