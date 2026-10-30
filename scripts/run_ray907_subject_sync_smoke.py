@@ -25,8 +25,10 @@ name, then exercises, with the terminal token:
 
 It then archives the subject, revokes itself, and requires the revoked token to
 get ``E-TRM-401-REVOKED``. The archived subject and the tag stay behind,
-labelled ``ray907-smoke``. When a step fails, the run still revokes the
-terminal, so a failed run gives its seat back.
+labelled ``ray907-smoke``; R1 cannot delete tags, so each run adds one tag to
+the institution's dictionary. When a step fails, the run still archives the
+subject (best effort) and revokes the terminal, so a failed run gives its seat
+back and leaves no active smoke subject.
 
 Run it from the repository root (``./scripts/local-env.sh python
 scripts/run_ray907_subject_sync_smoke.py ...``): it imports ``scripts`` and
@@ -72,6 +74,7 @@ from shared.contracts.subject_sync import (
     SubjectNameSearchResponse,
     SubjectPatchRequest,
     SubjectRecord,
+    SubjectStatus,
     SubjectTagChangesResponse,
     SubjectTagCreateRequest,
     SubjectTagCreateResponse,
@@ -129,7 +132,8 @@ def _page_until(
             return found
         cursor = changes.next_cursor
         recorder.steps.pop()
-    recorder.note(pages=MAX_PAGES, found=False, passed=False)
+    # The scan cap, not the server, ended the search.
+    recorder.note(pages=MAX_PAGES, found=False, cap_reached=True, passed=False)
     raise SmokeFailure(name)
 
 
@@ -152,6 +156,38 @@ def _validate(model: type[BaseModel], payload: Any) -> Any:
         return model.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _archive_after_failure(client: Client, recorder: Recorder, state: dict[str, Any]) -> None:
+    """Best effort: keep a failed run's subject out of the active roster.
+
+    Never changes the recorded failed step. A stale revision is retried once
+    with the server's current one.
+    """
+    if state.get("subject_uuid") is None or state.get("subject_archived"):
+        return
+    # Before the download there is no known revision; the conflict supplies it.
+    revision = state.get("subject_revision", 1)
+    for _ in range(2):
+        try:
+            status, body = _patch(
+                client, state["token"], state["subject_uuid"], f"{LABEL}-archive-{uuid4()}",
+                SubjectPatchRequest(
+                    base_revision=revision, status=SubjectEditableStatus.ARCHIVED
+                ),
+            )
+        except (OSError, ValueError):
+            return
+        try:
+            recorder.expect("cleanup_subject_archive", (status, body), status={200})
+            return
+        except SmokeFailure:
+            current = _validate(
+                SubjectRecord, ((body.get("error") or {}).get("details") or {}).get("current")
+            )
+            if current is None:
+                return
+            revision = current.revision
 
 
 def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
@@ -205,12 +241,14 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             model=SubjectSummary,
         )
         recorder.note(subject_uuid=str(created.subject_uuid))
+        state["subject_uuid"] = subject_uuid
 
         downloaded: SubjectRecord = _page_until(
             client, recorder, "subject_download", "/v1/subjects", SubjectChangesResponse,
             token, subject_uuid, "subject_uuid",
         )
         base_revision = downloaded.revision
+        state["subject_revision"] = base_revision
 
         patch_key = f"{LABEL}-patch-{uuid4()}"
         patch_request = SubjectPatchRequest(
@@ -222,6 +260,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             status={200},
             model=SubjectRecord,
         )
+        state["subject_revision"] = patched.revision
         recorder.note(base_revision=base_revision, revision=patched.revision)
         if patched.revision <= base_revision:
             recorder.note(passed=False)
@@ -325,6 +364,7 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             status={200},
             model=SubjectRecord,
         )
+        state["subject_revision"] = tagged.revision
         recorder.note(
             base_revision=patched.revision, revision=tagged.revision,
             tag_ids=[str(value) for value in tagged.tag_ids],
@@ -348,6 +388,10 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             model=SubjectRecord,
         )
         recorder.note(revision=archived.revision, subject_status=archived.status)
+        if archived.status != SubjectStatus.ARCHIVED or archived.revision <= tagged.revision:
+            recorder.note(passed=False)
+            raise SmokeFailure("subject_archive")
+        state["subject_archived"] = True
 
         revoked = recorder.expect(
             "cleanup_terminal_self_revoke",
@@ -377,7 +421,11 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         if summary.get("result") != "passed":
             summary.setdefault("result", "failed")
             summary.setdefault("failed_step", "interrupted")
-            _cleanup(client, recorder, state)
+            try:
+                _archive_after_failure(client, recorder, state)
+            finally:
+                # The seat is returned even when archiving raises.
+                _cleanup(client, recorder, state)
     summary["finished_at"] = _now()
     return _redacted(summary, sensitive)
 
@@ -385,7 +433,10 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
 def _redacted(summary: dict[str, Any], sensitive: list[str]) -> dict[str, Any]:
     """Drop every step rather than write evidence that holds a sensitive value."""
     rendered = json.dumps(summary, ensure_ascii=False, sort_keys=True)
-    if not any(value and value in rendered for value in sensitive):
+    # A value with quotes or backslashes appears escaped in the JSON.
+    forms = {form for value in sensitive if value
+             for form in (value, json.dumps(value, ensure_ascii=False)[1:-1])}
+    if not any(form in rendered for form in forms):
         return summary
     return {
         key: summary[key]

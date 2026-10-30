@@ -224,7 +224,10 @@ class SubjectSyncSmokeTest(unittest.IsolatedAsyncioTestCase):
             summary = await self._run()
 
         self.assertEqual(summary["failed_step"], "transport:ConnectionResetError")
-        self.assertEqual(summary["steps"][-1]["step"], "cleanup_terminal_self_revoke")
+        self.assertEqual(
+            [step["step"] for step in summary["steps"]][-2:],
+            ["cleanup_subject_archive", "cleanup_terminal_self_revoke"],
+        )
         self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
 
     async def test_unexpected_exception_still_releases_seat(self) -> None:
@@ -240,6 +243,129 @@ class SubjectSyncSmokeTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(KeyError):
                 await self._run()
         self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
+
+
+def _tamper(call, match, mutate):
+    """Rewrite the responses ``match`` selects; ``mutate`` returns the new pair."""
+
+    def wrapped(self, method, path, **kwargs):
+        status, payload = call(self, method, path, **kwargs)
+        key = (kwargs.get("headers") or {}).get("Idempotency-Key", "")
+        if match(method, path, key, status, payload):
+            return mutate(status, payload)
+        return status, payload
+
+    return wrapped
+
+
+def _set(field, value):
+    def mutate(status, payload):
+        payload["data"][field] = value
+        return status, payload
+
+    return mutate
+
+
+def _second(match):
+    seen = set()
+
+    def matcher(method, path, key, status, payload):
+        if not match(method, path, key, status, payload):
+            return False
+        if key in seen:
+            return True
+        seen.add(key)
+        return False
+
+    return matcher
+
+
+def _bump_current(status, payload):
+    payload["error"]["details"]["current"]["revision"] += 1
+    return status, payload
+
+
+def _key(prefix):
+    return lambda method, path, key, status, payload: (
+        method == "PATCH" and key.startswith(prefix) and status == 200
+    )
+
+
+TAMPER_CASES = {
+    "subject_download": (
+        lambda method, path, *_: method == "GET" and path.startswith("/v1/subjects?"),
+        lambda status, payload: (status, {**payload, "data": {
+            **payload["data"], "items": [], "has_more": False}}),
+    ),
+    "subject_patch": (_key("ray907-smoke-patch-"), _set("revision", 1)),
+    "subject_patch_replay": (_second(_key("ray907-smoke-patch-")), _set("revision", 999)),
+    "subject_patch_stale_revision": (
+        lambda *args: (args[4].get("error") or {}).get("code") == "E-SUB-409-REVISION-CONFLICT",
+        _bump_current,
+    ),
+    "tag_create_name_conflict": (
+        lambda method, path, key, status, payload: path == "/v1/subject-tags" and status == 200,
+        _set("conflict", False),
+    ),
+    "subject_patch_tags": (_key("ray907-smoke-tags-"), _set("tag_ids", [])),
+    "subject_archive": (_key("ray907-smoke-archive-"), _set("status", "ACTIVE")),
+    "subject_download_after_revoke": (
+        lambda method, path, *_: method == "GET" and path == "/v1/subjects",
+        lambda status, payload: (401, {"error": {"code": "E-AUT-401"}}),
+    ),
+}
+
+
+class SubjectSyncSmokeTamperTest(SubjectSyncSmokeTest):
+    """Each check fails its own step when the server's answer is wrong."""
+
+    async def test_each_wrong_answer_fails_its_step_and_still_cleans_up(self) -> None:
+        for step, (match, mutate) in TAMPER_CASES.items():
+            with self.subTest(step=step):
+                await self.asyncTearDown()
+                await self.asyncSetUp()
+                with patch.object(
+                    _BridgedClient, "call", _tamper(_BridgedClient.call, match, mutate)
+                ):
+                    summary = await self._run()
+
+                self.assertEqual(summary["failed_step"], step)
+                self.assertFalse(
+                    next(s for s in summary["steps"] if s["step"] == step)["passed"]
+                )
+                self.assert_redacted(summary)
+                self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
+                subjects = (await self.client.get(
+                    "/v1/subjects", headers=self.headers(self.terminal)
+                )).json()["data"]["items"]
+                self.assertEqual([s["status"] for s in subjects], ["ARCHIVED"])
+
+    async def test_only_the_cleanup_archive_runs_on_failure(self) -> None:
+        def broken_search(call):
+            def wrapped(self, method, path, **kwargs):
+                if path == "/v1/subjects/search-by-name":
+                    return 503, {"error": {"code": "E-SYS-503"}}
+                return call(self, method, path, **kwargs)
+
+            return wrapped
+
+        with patch.object(_BridgedClient, "call", broken_search(_BridgedClient.call)):
+            summary = await self._run()
+
+        self.assertEqual(
+            [step["step"] for step in summary["steps"]][-2:],
+            ["cleanup_subject_archive", "cleanup_terminal_self_revoke"],
+        )
+        self.assertTrue(summary["steps"][-2]["passed"])
+
+    # Inherited tests already run in SubjectSyncSmokeTest.
+    test_full_flow_passes_and_redacts = None
+    test_download_pages_with_the_cursor = None
+    test_out_of_order_download_fails = None
+    test_missing_name_match_fails_and_still_releases_seat = None
+    test_conflict_without_current_record_fails = None
+    test_transport_error_is_recorded_and_cleans_up = None
+    test_unexpected_exception_still_releases_seat = None
 
 
 class RedactionGuardTest(unittest.TestCase):
@@ -258,3 +384,5 @@ class RedactionGuardTest(unittest.TestCase):
             ("failed", "redaction_check", []),
         )
         self.assertNotIn("RAY907 Smoke 0123", json.dumps(guarded))
+        quoted = {**summary, "steps": [{"echo": 'pass"word'}]}
+        self.assertEqual(smoke._redacted(quoted, ['pass"word'])["failed_step"], "redaction_check")
