@@ -43,8 +43,8 @@ def test_vectors_have_verifiable_bytes_and_signature_without_secret_material():
 
 def test_published_artifacts_match_generator():
     root = Path(__file__).resolve().parents[1] / 'contracts' / 'mobile'
-    assert json.loads((root / 'openapi.json').read_text()) == build_openapi()
-    assert json.loads((root / 'vectors.json').read_text()) == build_vectors()
+    assert json.loads((root / 'openapi.json').read_text(encoding='utf-8')) == build_openapi()
+    assert json.loads((root / 'vectors.json').read_text(encoding='utf-8')) == build_vectors()
 
 
 def test_signature_negative_cases_are_rejected():
