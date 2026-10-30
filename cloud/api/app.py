@@ -41,6 +41,7 @@ from cloud.ingestion.principal import (
     legacy_terminal_principal,
     tenant_ingestion_principal,
 )
+from cloud.terminal_diagnostics.service import NonPlatformCaller, SupportCaller
 from cloud.session_hold.models import (
     HoldApplyBody, HoldApplyRequest, HoldDispositionBody,
     HoldDispositionRequest, HoldReleaseBody, HoldReleaseRequest,
@@ -69,6 +70,11 @@ from shared.contracts.subject_sync import (
     SubjectNameSearchRequest,
     SubjectPatchRequest,
     SubjectTagCreateRequest,
+)
+from shared.contracts.terminal_diagnostics import (
+    DIAGNOSTICS_MAX_BYTES,
+    DIAGNOSTICS_MEDIA_TYPE,
+    DIAGNOSTICS_SHA256_PATTERN,
 )
 from shared.contracts.terminal_access import (
     TerminalActivationRequest,
@@ -136,6 +142,7 @@ class ServiceContainer:
     terminal_tokens: TerminalAccessTokenIssuer | None = None
     insole_inventory: object | None = None
     subject_sync: object | None = None
+    terminal_diagnostics: object | None = None
 
 
 # RAY-834: database failures a retry can cure. Anything else unhandled is a
@@ -287,6 +294,10 @@ def create_app(container: ServiceContainer) -> FastAPI:
             # RAY-907: returned to the caller's own terminal, never logged.
             "current",
             "external_id_masked",
+            # RAY-802: a diagnostic rejection's line and fixed reason, and the size cap.
+            "line",
+            "reason",
+            "max_bytes",
         }
         details = {key: value for key, value in exc.details.items() if key in allowed_details}
         return JSONResponse(
@@ -716,6 +727,109 @@ def create_app(container: ServiceContainer) -> FastAPI:
                 context, body, idempotency_key
             )
             return _data_response(request, result, status)
+
+    if container.terminal_diagnostics is not None and container.terminal_tokens is not None:
+
+        # RAY-802: one terminal diagnostic package per request, as exported.
+        @app.post(
+            "/v1/diagnostics",
+            openapi_extra={"requestBody": {"required": True, "content": {
+                DIAGNOSTICS_MEDIA_TYPE: {"schema": {
+                    "type": "string", "format": "binary",
+                    "maxLength": DIAGNOSTICS_MAX_BYTES}}}}},
+        )
+        async def diagnostics_upload(
+            request: Request,
+            context: TerminalAccessDependency,
+            idempotency_key: Annotated[
+                str, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+            ],
+            content_sha256: Annotated[
+                str, Header(alias="X-Content-SHA256", pattern=DIAGNOSTICS_SHA256_PATTERN)
+            ],
+            content_type: Annotated[str, Header(alias="Content-Type")],
+            content_length: Annotated[str | None, Header(alias="Content-Length")] = None,
+            content_encoding: Annotated[str | None, Header(alias="Content-Encoding")] = None,
+        ):
+            if content_type.partition(";")[0].strip().lower() != DIAGNOSTICS_MEDIA_TYPE:
+                raise RequestContractError(f"Content-Type must be {DIAGNOSTICS_MEDIA_TYPE}")
+            if content_encoding is not None and content_encoding.strip().lower() != "identity":
+                raise RequestContractError("Content-Encoding is not accepted")
+            declared_length = None
+            if content_length is not None:
+                if not content_length.strip().isdigit():
+                    raise RequestContractError("Content-Length is invalid")
+                declared_length = int(content_length)
+            result, created = await container.terminal_diagnostics.upload(
+                context,
+                request.stream(),
+                declared_length=declared_length,
+                content_sha256=content_sha256,
+                idempotency_key=idempotency_key,
+            )
+            return _data_response(request, result, 201 if created else 200)
+
+    if container.terminal_diagnostics is not None and container.platform_tokens is not None:
+
+        async def diagnostics_support_caller(
+            authorization: Annotated[str, Header(alias="Authorization")],
+        ) -> SupportCaller:
+            try:
+                return await platform_context(authorization)
+            except AuthenticationError:
+                # A valid terminal or tenant credential is denied and audited;
+                # anything else stays a plain authentication failure.
+                _, separator, token = authorization.partition(" ")
+                for kind, issuer, actor in (
+                    ("terminal", container.terminal_tokens, "client_installation_id"),
+                    ("tenant", container.tenant_tokens, "account_id"),
+                ):
+                    if issuer is None or separator != " " or not token:
+                        continue
+                    try:
+                        verified = issuer.verify(token)
+                    except AuthenticationError:
+                        continue
+                    return NonPlatformCaller(kind, getattr(verified, actor))
+                raise
+
+        SupportCallerDependency = Annotated[SupportCaller, Depends(diagnostics_support_caller)]
+
+        @app.get("/v1/platform/tenants/{tenant_id}/diagnostics")
+        async def platform_list_diagnostics(
+            request: Request,
+            tenant_id: UUID,
+            caller: SupportCallerDependency,
+            ticket_reference: str | None = None,
+        ):
+            result = await container.terminal_diagnostics.list(
+                caller, tenant_id, ticket_reference
+            )
+            response = _data_response(request, result)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        @app.get("/v1/platform/tenants/{tenant_id}/diagnostics/{diagnostic_id}/content")
+        async def platform_read_diagnostic(
+            tenant_id: UUID,
+            diagnostic_id: UUID,
+            caller: SupportCallerDependency,
+            ticket_reference: str | None = None,
+        ):
+            record, payload = await container.terminal_diagnostics.read(
+                caller, tenant_id, diagnostic_id, ticket_reference
+            )
+            return Response(
+                content=payload,
+                media_type=DIAGNOSTICS_MEDIA_TYPE,
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Content-SHA256": record.sha256,
+                    "Content-Disposition":
+                        f'attachment; filename="diagnostic-{record.diagnostic_id}.ndjson"',
+                },
+            )
 
     if container.validation_telemetry is not None and container.tenant_tokens is not None:
 

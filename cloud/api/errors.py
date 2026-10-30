@@ -137,6 +137,28 @@ class SubjectUnknownTag(PlatformError):
     action = "REFRESH_TAGS"
 
 
+# RAY-802 terminal diagnostic packages. A rejection names only the line and a
+# fixed reason in ``details``; the content itself is never echoed.
+class DiagnosticTooLarge(PlatformError):
+    code = "E-DIA-413-TOO-LARGE"
+    http_status = 413
+    action = "TRIM_DIAGNOSTICS"
+
+
+class DiagnosticDigestMismatch(PlatformError):
+    code = "E-DIA-422-DIGEST-MISMATCH"
+    http_status = 422
+    # The body changed in transit; the same package may be sent again.
+    retryable = True
+    action = "RETRY_UPLOAD"
+
+
+class DiagnosticContentRejected(PlatformError):
+    code = "E-DIA-422-CONTENT-REJECTED"
+    http_status = 422
+    action = "UPDATE_CLIENT"
+
+
 class TenantAccessDenied(PlatformError):
     code = "E-AUT-403"
     http_status = 403

@@ -262,6 +262,10 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON subject.subject_revision_counters, subject.tag_revision_counters,
      subject.tags, subject.subject_tags
      TO ffp_seed_backup;"
+# RAY-802: terminal diagnostic package records (tombstones kept by the purge).
+apply_migration ops.terminal_diagnostics "$release_source/cloud/migrations/0018_terminal_diagnostics.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON ops.terminal_diagnostics TO ffp_seed_backup;"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then

@@ -1,3 +1,5 @@
 
 # Digest-pinned public trust anchor: must stay byte-identical on every platform (RAY-812).
 release/mobile-integration-trust-anchor/* -text
+# RAY-802: a client-generated export; its bytes are the test sample.
+cloud/tests/fixtures/terminal_diagnostics/*.ndjson -text

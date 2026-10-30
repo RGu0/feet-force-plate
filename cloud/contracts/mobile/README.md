@@ -163,6 +163,42 @@ Every `subject_sync` scenario is replayed against the server in
 `cloud/tests/test_subject_sync_api.py`; client alignment is tracked by
 gait-insole-flutter RAY-592 / RAY-912.
 
+RAY-802 adds the terminal diagnostic package upload `POST /v1/diagnostics` and
+the `terminal_diagnostics` vector section. Not part of `v0.2.0`.
+- Send the RAY-910 export unchanged as the body: one JSON Lines text,
+  `gait-insole-diagnostics/1`, `Content-Type: application/x-ndjson`, at most
+  8 MiB (`constants.max_bytes`) uncompressed; `Content-Encoding` is not accepted.
+  Headers: terminal bearer token, `Idempotency-Key` (scoped to the uploading
+  terminal) and `X-Content-SHA256`, the lowercase SHA-256 of the exact body bytes.
+- 201 returns `diagnostic_id, format, size_bytes, sha256, received_at,
+  expires_at` (30 days after upload). The same key and digest again returns 200
+  with the identical body; the same key with another digest is `E-API-409`.
+- Over the limit is 413 `E-DIA-413-TOO-LARGE` (`details.max_bytes`); a digest
+  that does not match the body is `E-DIA-422-DIGEST-MISMATCH` (retryable).
+- The package is accepted or rejected whole, never repaired:
+  `E-DIA-422-CONTENT-REJECTED` with only `details.line` (1-based) and
+  `details.reason` (`not_json`, `header_missing`, `format_unsupported`,
+  `unknown_kind`, `unknown_field`, `header_mismatch`, `identity_detected`).
+  The header's `tenant_id` and `terminal_id` must be the token's tenant and
+  `client_installation_id`; each kind's top-level fields are the fixed sets in
+  `package.line_fields`. Every string, keys included, at any depth is screened
+  with the client `Redactor`'s key and pattern rules: a key the Redactor treats
+  as identity holds only `<redacted>`, and no unredacted mobile, landline,
+  e-mail or resident ID number may remain. An export produced by the client's
+  `DiagnosticsBundle` passes as is. Numbers (JSON numbers, not text) are not
+  screened, as the client does not redact them either.
+- Write the header's `tenant_id` and `terminal_id` exactly, after redaction: if
+  the export's redaction rewrites them (a registered value or pattern that
+  happens to match part of a UUID), every upload is `header_mismatch`. The
+  server compares them to the token and does not pattern-screen them.
+- Package lines in the vectors carry `{tenant_id}` and `{terminal_id}`; substitute
+  the uploading terminal's ids (`package.example_*` shows fixed ids).
+- There is no terminal or tenant read path; platform support access is outside
+  this contract (`cloud/api/README.md`).
+Every `terminal_diagnostics` scenario is replayed against the server in
+`cloud/tests/test_terminal_diagnostics_api.py`; one-tap upload in the client is
+gait-insole-flutter RAY-615.
+
 Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart
 consumption of these fixtures in gait-insole-flutter (PR 7). That evidence
 predates the RAY-656 `terminal` section; client alignment for it is tracked by
