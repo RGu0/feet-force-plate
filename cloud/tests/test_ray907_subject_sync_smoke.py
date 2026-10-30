@@ -303,12 +303,26 @@ TAMPER_CASES = {
         lambda *args: (args[4].get("error") or {}).get("code") == "E-SUB-409-REVISION-CONFLICT",
         _bump_current,
     ),
+    "tag_create": (
+        lambda method, path, key, status, payload: path == "/v1/subject-tags" and status == 201,
+        _set("conflict", True),
+    ),
     "tag_create_name_conflict": (
         lambda method, path, key, status, payload: path == "/v1/subject-tags" and status == 200,
         _set("conflict", False),
     ),
     "subject_patch_tags": (_key("ray907-smoke-tags-"), _set("tag_ids", [])),
+    "tag_download": (
+        lambda method, path, *_: method == "GET" and path.startswith("/v1/subject-tags?"),
+        lambda status, payload: (status, {**payload, "data": {
+            **payload["data"], "items": [], "has_more": False}}),
+    ),
     "subject_archive": (_key("ray907-smoke-archive-"), _set("status", "ACTIVE")),
+    # The cleanup re-revokes, so the seat still ends REVOKED.
+    "cleanup_terminal_self_revoke": (
+        lambda method, path, key, status, payload: path.endswith("/revoke") and status == 200,
+        lambda status, payload: (500, {"error": {"code": "E-SYS-500"}}),
+    ),
     "subject_download_after_revoke": (
         lambda method, path, *_: method == "GET" and path == "/v1/subjects",
         lambda status, payload: (401, {"error": {"code": "E-AUT-401"}}),

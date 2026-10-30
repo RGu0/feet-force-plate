@@ -178,6 +178,8 @@ def _archive_after_failure(client: Client, recorder: Recorder, state: dict[str, 
             )
         except (OSError, ValueError):
             return
+        if not isinstance(body, dict):
+            return
         try:
             recorder.expect("cleanup_subject_archive", (status, body), status={200})
             return
@@ -222,6 +224,8 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
         sensitive += [token, terminal.refresh_token, str(terminal.tenant_id)]
 
         subject_uuid = uuid4()
+        # Set before the call: a create that commits but fails here is still archived.
+        state["subject_uuid"] = subject_uuid
         created = recorder.expect(
             "subject_create",
             client.call(
@@ -241,7 +245,6 @@ def run(args: argparse.Namespace, password: str) -> dict[str, Any]:
             model=SubjectSummary,
         )
         recorder.note(subject_uuid=str(created.subject_uuid))
-        state["subject_uuid"] = subject_uuid
 
         downloaded: SubjectRecord = _page_until(
             client, recorder, "subject_download", "/v1/subjects", SubjectChangesResponse,
