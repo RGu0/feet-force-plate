@@ -933,6 +933,7 @@ class PostgresPlatformRepository:
         identity_nonce: bytes | None,
         identity_key_version: str | None,
         idempotency_key: str,
+        name_lookup_hmac: bytes | None = None,
     ) -> SubjectSummary:
         context.ensure_active()
         digest = canonical_sha256(request)
@@ -1010,14 +1011,15 @@ class PostgresPlatformRepository:
                         """
                         INSERT INTO subject.identity_profiles (
                             subject_uuid, tenant_id, identity_ciphertext,
-                            encryption_nonce, key_version
-                        ) VALUES ($1,$2,$3,$4,$5)
+                            encryption_nonce, key_version, name_lookup_hmac
+                        ) VALUES ($1,$2,$3,$4,$5,$6)
                         """,
                         request.subject_uuid,
                         context.tenant_id,
                         identity_ciphertext,
                         identity_nonce,
                         identity_key_version,
+                        name_lookup_hmac,
                     )
                 if external is not None:
                     if None in (

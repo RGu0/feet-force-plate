@@ -68,6 +68,16 @@ reports and retires. Seed composition wires `InsoleInventoryService` to
 (`install-seed-release.sh` does this and grants the backup role SELECT). Pairs
 are retire-only; there is no delete route or grant.
 
+Institutional subject sync (RAY-907) is served under `GET /v1/subjects`,
+`PATCH /v1/subjects/{subject_uuid}`, `POST /v1/subjects/search-by-name` and
+`/v1/subject-tags` to terminal bearer tokens only. Seed composition wires
+`SubjectSyncService` to `PostgresSubjectSyncRepository` on the tenant pool with
+the same `IdentityProtector` as subject creation, so migration
+`0017_subject_sync.sql` (revision triggers, name lookup key, tag tables) must be
+applied before the seed release starts; `install-seed-release.sh` applies it once
+and grants the backup role SELECT. Reads ignore the License; PATCH and tag
+creation need a usable one.
+
 Since RAY-728 the subject, consent and session routes also accept terminal
 bearer tokens. Terminal activation and revocation project the terminal into
 `device.terminals`, and insole registration and retirement project the pair into

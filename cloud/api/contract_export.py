@@ -24,6 +24,7 @@ from shared.contracts import cloud
 from shared.contracts.client_sync import (
     canonical_json_bytes, canonical_sha256, encode_segment_metadata)
 from shared.contracts import insole_inventory as insole
+from shared.contracts import subject_sync as subjects
 from shared.contracts import terminal_access as terminal
 
 
@@ -59,6 +60,11 @@ _RESPONSE_TYPES = {
     ('/v1/inventory/insoles', 'get'): (insole.InsoleChangesResponse, (200,)),
     ('/v1/inventory/insoles/{insole_id}/reports', 'post'): (insole.InsoleReportResponse, (200,)),
     ('/v1/inventory/insoles/{insole_id}/retire', 'post'): (insole.InsoleRetireResponse, (200,)),
+    ('/v1/subjects', 'get'): (subjects.SubjectChangesResponse, (200,)),
+    ('/v1/subjects/{subject_uuid}', 'patch'): (subjects.SubjectRecord, (200,)),
+    ('/v1/subjects/search-by-name', 'post'): (subjects.SubjectNameSearchResponse, (200,)),
+    ('/v1/subject-tags', 'get'): (subjects.SubjectTagChangesResponse, (200,)),
+    ('/v1/subject-tags', 'post'): (subjects.SubjectTagCreateResponse, (200, 201)),
     ('/v1/subjects/resolve', 'post'): (cloud.SubjectSummary, (200,)),
     ('/v1/subjects', 'post'): (cloud.SubjectSummary, (200, 201)),
     ('/v1/consents', 'post'): (cloud.ConsentResponse, (201,)),
@@ -117,6 +123,31 @@ _TERMINAL_OPERATION_ERRORS.update({
         errors.InsoleRetired, errors.InsoleReadingInFuture),
     ('/v1/inventory/insoles/{insole_id}/retire', 'post'): (
         errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
+})
+
+# RAY-907: subject sync. Terminal credentials only; reads ignore the License,
+# writes need a usable one; another institution's subject is 404.
+_SUBJECT_SYNC_ERRORS = (
+    ('cursor_invalid', errors.SubjectCursorInvalid),
+    ('revision_conflict', errors.SubjectRevisionConflict),
+    ('number_taken', errors.SubjectNumberTaken),
+    ('not_editable', errors.SubjectNotEditable),
+    ('unknown_tag', errors.SubjectUnknownTag),
+)
+_TERMINAL_OPERATION_ERRORS.update({
+    ('/v1/subjects', 'get'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.SubjectCursorInvalid),
+    ('/v1/subjects/{subject_uuid}', 'patch'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.TerminalLicenseInactive,
+        errors.ResourceNotFound, errors.SubjectNotEditable, errors.SubjectRevisionConflict,
+        errors.SubjectUnknownTag, errors.SubjectNumberTaken, errors.IdempotencyConflict),
+    ('/v1/subjects/search-by-name', 'post'): (
+        errors.AuthenticationError, errors.TerminalRevoked),
+    ('/v1/subject-tags', 'get'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.SubjectCursorInvalid),
+    ('/v1/subject-tags', 'post'): (
+        errors.AuthenticationError, errors.TerminalRevoked, errors.TerminalLicenseInactive,
+        errors.IdempotencyConflict),
 })
 
 # RAY-728 R1: subject, consent and session routes also accept the terminal
@@ -269,6 +300,7 @@ def build_vectors():
         'terminal': terminal_vectors,
         'terminal_data_plane': _terminal_data_plane_vectors(),
         'insole_inventory': _insole_vectors(meta),
+        'subject_sync': _subject_sync_vectors(meta),
         'insole_session_archive': _insole_archive_vectors()}
 
 
@@ -518,6 +550,150 @@ def _insole_vectors(meta):
             'out_of_range_cursor_example': base64.urlsafe_b64encode(
                 b'insole-cursor/1:99999999999999999999').rstrip(b'=').decode('ascii')},
     }
+
+def _subject_sync_vectors(meta):
+    """Declarative RAY-907 R1 vectors; cloud tests replay every scenario."""
+    at = datetime(2026, 10, 29, 8, 0, tzinfo=UTC)
+    tag_id = UUID(int=71)
+    record = subjects.SubjectRecord(
+        subject_uuid=UUID(int=60), revision=7, status=subjects.SubjectStatus.ACTIVE,
+        external_identifier=subjects.SubjectExternalIdentifier(
+            external_identifier_id=UUID(int=61), issuer='gait-clinic',
+            id_type='medical_record_number', external_id_masked='****-001'),
+        identity_profile=subjects.SubjectIdentity(display_name='Zhang San'),
+        analysis_profile={'height_cm': cloud.ProfileValue(
+            state=cloud.MissingValueState.PROVIDED, value=168.0)},
+        profile_schema_version='analysis-profile/1', tag_ids=(tag_id,),
+        consents=(subjects.SubjectConsentRecord(
+            consent_record_id=UUID(int=62), policy_version='privacy-policy/1.0',
+            purpose_codes=('SCREENING_SERVICE',),
+            data_categories=('PRESSURE_RAW', 'ANALYSIS_PROFILE'),
+            evidence_type='OPERATOR_CONFIRMED', granted_at=at),),
+        created_at=at, updated_at=at).model_dump(mode='json')
+    tag = subjects.SubjectTag(
+        tag_id=tag_id, name='Follow-up', created_at=at, revision=1).model_dump(mode='json')
+    envelopes = {}
+    for name, error_type in _SUBJECT_SYNC_ERRORS:
+        details = {
+            errors.SubjectRevisionConflict: {'current': record},
+            errors.SubjectNumberTaken: {'subject_uuid': record['subject_uuid'],
+                                        'external_id_masked': '****-002'},
+        }.get(error_type, {})
+        envelopes[name] = {'http_status': error_type.http_status, 'body': {'error': {
+            'code': error_type.code, 'message': 'Synthetic contract fixture',
+            'retryable': error_type.retryable, 'action': error_type.action,
+            'details': details}, 'meta': meta}}
+
+    def expect(error_type=None, status=None):
+        if error_type is None:
+            return {'http_status': status}
+        return {'http_status': error_type.http_status, 'code': error_type.code}
+
+    return {
+        'errors': envelopes,
+        'authentication': {
+            'credential': 'terminal access token (POST /v1/access/terminal-activate)',
+            'scope': 'tenant of the terminal; any ACTIVE terminal of the tenant',
+            'other_tenant_subject': expect(errors.ResourceNotFound),
+            'revoked_terminal': expect(errors.TerminalRevoked),
+            'license_inactive': {
+                'reads': 'GET /v1/subjects, POST /v1/subjects/search-by-name and '
+                         'GET /v1/subject-tags keep working',
+                'writes': f'PATCH /v1/subjects/{{subject_uuid}} and POST /v1/subject-tags '
+                          f'get {errors.TerminalLicenseInactive.code}',
+                'create': 'POST /v1/subjects is unchanged (RAY-728 D6): an ACTIVE '
+                          'terminal may still create'}},
+        'record': record,
+        'record_rules': {
+            'identity_profile': 'display_name only (D1); contact is never sent (D2); '
+                                'absent when none is stored, for MERGED and RESTRICTED '
+                                'subjects, and when it cannot be decrypted',
+            'external_identifier': 'the active number, masked only (D3); look a number '
+                                   'up with POST /v1/subjects/resolve',
+            'tag_ids': 'ascending',
+            'consents': 'every consent of the subject, granted_at ascending, revoked '
+                        'ones included'},
+        'download': {
+            'route': 'GET /v1/subjects?cursor=&limit=',
+            'cursor': 'opaque; omit or empty for a full download from the beginning',
+            'order': 'revision ascending; each subject appears once, at its latest revision',
+            'revision_bumps': ['create', 'any PATCH', 'archive or restore',
+                               'consent created or revoked', 'tag set changed',
+                               'identity, analysis profile or number changed'],
+            'clock_source': 'server-assigned per-tenant revision sequence, never wall clock',
+            'deletion': 'none; archived subjects are delivered with status ARCHIVED',
+            'next_cursor': 'always returned; unchanged when the page is empty',
+            'default_limit': subjects.SUBJECT_PAGE_DEFAULT_LIMIT,
+            'max_limit': subjects.SUBJECT_PAGE_MAX_LIMIT,
+            'invalid_cursor_error': errors.SubjectCursorInvalid.code,
+            'invalid_cursor_example': 'bm90LWEtY3Vyc29y',
+            'other_schema_cursor_example': base64.urlsafe_b64encode(
+                b'subject-tag-cursor/1:1').rstrip(b'=').decode('ascii'),
+            'out_of_range_cursor_example': base64.urlsafe_b64encode(
+                b'subject-cursor/1:99999999999999999999').rstrip(b'=').decode('ascii')},
+        'patch': {
+            'route': 'PATCH /v1/subjects/{subject_uuid}',
+            'request': {'base_revision': 7, 'analysis_profile': {
+                'weight_kg': {'state': 'PROVIDED', 'value': 61.5}}},
+            'request_headers': {'Idempotency-Key': 'fixture:subject-patch:60'},
+            'concurrency': 'base_revision must equal the current revision; otherwise '
+                           f'{errors.SubjectRevisionConflict.code} with details.current; '
+                           'the server never merges (D4)',
+            'merge': {'analysis_profile': 'per field', 'identity_profile': 'replaced whole',
+                      'tag_ids': 'replaced whole', 'external_identifier':
+                      'replaces the active number, which becomes SUPERSEDED',
+                      'status': [status.value for status in subjects.SubjectEditableStatus]},
+            'replay': 'same Idempotency-Key and body returns 200 with the current record',
+            'same_key_different_request_error': errors.IdempotencyConflict.code,
+            'precedence': ['idempotent replay', 'subject of the tenant (404)',
+                           'editable status', 'base_revision', 'tags', 'number'],
+            'max_tag_ids': subjects.SUBJECT_TAGS_MAX},
+        'name_search': {
+            'route': 'POST /v1/subjects/search-by-name',
+            'request': {'display_name': 'zhang san'},
+            'normalization': 'NFKC, then trim, then Unicode case fold; exact match only',
+            # Each pair normalizes equal, so both spellings find the same subject.
+            'equal_examples': [['Zhang San', '  zhang san  '], ['Zhang San', 'ＺＨＡＮＧ ＳＡＮ'],
+                               ['Straße', 'STRASSE']],
+            'unequal_examples': [['Zhang San', 'Zhang'], ['Zhang San', 'ZhangSan']],
+            'statuses': ['ACTIVE', 'ARCHIVED'],
+            'max_results': subjects.SUBJECT_NAME_SEARCH_MAX_RESULTS,
+            'audit': 'every lookup is audited with the result count, never the name',
+            'pre_0017_subjects': 'not findable until their identity is next written (D6)'},
+        'tags': {
+            'routes': ['GET /v1/subject-tags?cursor=&limit=', 'POST /v1/subject-tags'],
+            'request': {'tag_id': str(tag_id), 'name': 'Follow-up'},
+            'request_headers': {'Idempotency-Key': 'fixture:subject-tag:71'},
+            'tag': tag,
+            'created_status': 201,
+            'name_conflict': {'http_status': 200, 'conflict': True,
+                              'returns': 'the existing tag; use its tag_id'},
+            'name_compare': 'NFKC, trim and case fold',
+            'max_name_length': subjects.SUBJECT_TAG_NAME_MAX_LENGTH,
+            'cursor_schema': 'independent of the subject cursor',
+            'same_key_different_request_error': errors.IdempotencyConflict.code},
+        # Steps: activate, create a subject with display_name 'Zhang San' and
+        # number GAIT-001, then run each scenario; state-changing ones run last.
+        'scenarios': [
+            {'name': 'download_from_start', 'expect': expect(status=200)},
+            {'name': 'invalid_cursor', 'expect': expect(errors.SubjectCursorInvalid)},
+            {'name': 'name_search_normalized', 'expect': {'http_status': 200, 'count': 1}},
+            {'name': 'tag_create', 'expect': expect(status=201)},
+            {'name': 'tag_name_conflict', 'expect': {'http_status': 200, 'conflict': True}},
+            {'name': 'patch_current_revision', 'expect': expect(status=200)},
+            {'name': 'patch_replay', 'expect': {'http_status': 200, 'same_revision': True}},
+            {'name': 'patch_same_key_other_body', 'expect': expect(errors.IdempotencyConflict)},
+            {'name': 'patch_stale_revision', 'expect': expect(errors.SubjectRevisionConflict)},
+            {'name': 'patch_unknown_tag', 'expect': expect(errors.SubjectUnknownTag)},
+            {'name': 'patch_number_taken', 'expect': expect(errors.SubjectNumberTaken)},
+            {'name': 'patch_unknown_subject', 'expect': expect(errors.ResourceNotFound)},
+            {'name': 'patch_restricted_subject', 'expect': expect(errors.SubjectNotEditable)},
+            {'name': 'license_inactive_read', 'expect': expect(status=200)},
+            {'name': 'license_inactive_write', 'expect': expect(errors.TerminalLicenseInactive)},
+            {'name': 'revoked_terminal', 'expect': expect(errors.TerminalRevoked)},
+        ],
+    }
+
 
 def _insole_archive_vectors():
     """Declarative RAY-825 R1 vectors; cloud tests replay the full upload."""
