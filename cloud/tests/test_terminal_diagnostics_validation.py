@@ -170,14 +170,19 @@ def test_sensitive_key_value_must_be_exactly_the_placeholder_at_any_depth() -> N
     assert outcome(nested) == "identity_detected"
 
 
-@pytest.mark.parametrize("text", [
-    "a" * (8 * 1024 * 1024 - 1024),
-    "a@" + "a" * (8 * 1024 * 1024 - 1024),
-    ".-" * (4 * 1024 * 1024 - 1024),
-])
-def test_screen_stays_linear_on_a_full_size_string(text) -> None:
+# Built inside the test: as parameters, the 8 MiB strings became test ids.
+_FULL_SIZE = {
+    "letters": lambda: "a" * (8 * 1024 * 1024 - 1024),
+    "at_then_letters": lambda: "a@" + "a" * (8 * 1024 * 1024 - 1024),
+    "local_part_symbols": lambda: ".-" * (4 * 1024 * 1024 - 1024),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_FULL_SIZE))
+def test_screen_stays_linear_on_a_full_size_string(shape) -> None:
     import time
 
+    text = _FULL_SIZE[shape]()
     # A quadratic pattern takes hours here (review of 9dd3ff7, finding 1).
     payload = _body(HEADER, _log(msg=text))
     started = time.perf_counter()
