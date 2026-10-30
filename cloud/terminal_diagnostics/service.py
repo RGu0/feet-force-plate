@@ -9,6 +9,7 @@ returned. No terminal or tenant credential has a read path.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
@@ -129,7 +130,9 @@ class TerminalDiagnosticsService:
         if previous is not None:
             return self._replay(previous, digest), False
         try:
-            validate_package(
+            # Up to 8 MiB of parsing and screening: off the event loop.
+            await asyncio.to_thread(
+                validate_package,
                 payload,
                 tenant_id=caller.tenant_id,
                 client_installation_id=caller.client_installation_id,
@@ -158,8 +161,13 @@ class TerminalDiagnosticsService:
         await self._objects.put_diagnostic(record.object_key, payload)
         try:
             stored = await self._repository.insert(record)
-        except BaseException:
-            await self._objects.delete(record.object_key)
+        except Exception:
+            # Delete only content no committed record names.
+            committed = await self._repository.by_key(
+                caller.tenant_id, caller.client_installation_id, idempotency_key
+            )
+            if committed is None or committed.diagnostic_id != diagnostic_id:
+                await self._objects.delete(record.object_key)
             raise
         if stored.diagnostic_id != diagnostic_id:
             # A concurrent request with the same key stored first.
@@ -206,9 +214,20 @@ class TerminalDiagnosticsService:
             await self._deny(caller, tenant_id, diagnostic_id, reason, ticket_reference=ticket)
             raise ResourceNotFound("diagnostic package does not exist")
         assert record is not None
-        payload = await self._objects.read_diagnostic(record.object_key)
-        if len(payload) != record.size_bytes or hashlib.sha256(payload).hexdigest() != record.sha256:
-            raise PlatformError("stored diagnostic package does not match its record")
+        try:
+            payload = await self._objects.read_diagnostic(record.object_key)
+            if (
+                len(payload) != record.size_bytes
+                or hashlib.sha256(payload).hexdigest() != record.sha256
+            ):
+                raise PlatformError("stored diagnostic package does not match its record")
+        except Exception:
+            # The attempt is audited even though nothing is returned.
+            await self._audit(
+                context, "diagnostics.read_failed", tenant_id, diagnostic_id,
+                ticket_reference=ticket,
+            )
+            raise
         await self._audit(
             context, "diagnostics.read", tenant_id, diagnostic_id, ticket_reference=ticket
         )

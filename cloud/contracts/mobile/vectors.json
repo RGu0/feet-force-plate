@@ -1598,7 +1598,7 @@
         "lines": [
           "{\"kind\":\"header\",\"exported_at\":\"2026-10-29T06:51:33.000Z\",\"app_version\":\"1.6.0+42\",\"cloud_environment\":\"integration\",\"platform\":\"android\",\"os_version\":\"15\",\"terminal_id\":\"{terminal_id}\",\"tenant_id\":\"{tenant_id}\",\"format\":\"gait-insole-diagnostics/1\",\"dropped_lines\":0}",
           "{\"kind\":\"log\",\"t\":\"2026-10-29T06:40:00.000Z\",\"level\":\"info\",\"cat\":\"ble\",\"msg\":\"connected\",\"fields\":{\"device_name\":\"Insole-L\",\"mac_address\":\"C0:FF:EE:00:00:01\"}}",
-          "{\"kind\":\"log\",\"t\":\"2026-10-29T06:42:00.000Z\",\"level\":\"info\",\"cat\":\"app\",\"msg\":\"电话１３８１２３４５６７８\"}"
+          "{\"kind\":\"log\",\"t\":\"2026-10-29T06:42:00.000Z\",\"level\":\"info\",\"cat\":\"app\",\"msg\":\"\\u7535\\u8bdd\\uff11\\uff13\\uff18\\uff11\\uff12\\uff13\\uff14\\uff15\\uff16\\uff17\\uff18\"}"
         ],
         "name": "identity_full_width_mobile"
       },
@@ -1694,7 +1694,7 @@
         "lines": [
           "{\"kind\":\"header\",\"exported_at\":\"2026-10-29T06:51:33.000Z\",\"app_version\":\"1.6.0+42\",\"cloud_environment\":\"integration\",\"platform\":\"android\",\"os_version\":\"15\",\"terminal_id\":\"{terminal_id}\",\"tenant_id\":\"{tenant_id}\",\"format\":\"gait-insole-diagnostics/1\",\"dropped_lines\":0}",
           "{\"kind\":\"log\",\"t\":\"2026-10-29T06:40:00.000Z\",\"level\":\"info\",\"cat\":\"ble\",\"msg\":\"connected\",\"fields\":{\"device_name\":\"Insole-L\",\"mac_address\":\"C0:FF:EE:00:00:01\"}}",
-          "{\"kind\":\"log\",\"t\":\"2026-10-29T06:42:00.000Z\",\"level\":\"info\",\"cat\":\"app\",\"msg\":\"ok\",\"fields\":{\"姓名\":\"王芳\"}}"
+          "{\"kind\":\"log\",\"t\":\"2026-10-29T06:42:00.000Z\",\"level\":\"info\",\"cat\":\"app\",\"msg\":\"ok\",\"fields\":{\"\\u59d3\\u540d\":\"\\u738b\\u82b3\"}}"
         ],
         "name": "identity_chinese_key"
       },

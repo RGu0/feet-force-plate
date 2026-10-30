@@ -472,6 +472,50 @@ class DiagnosticsSupportAccessTests(_DiagnosticsApiFixture):
         self.assertEqual(dict(orphan.details)["reason"], "tenant_unknown")
 
 
+class DiagnosticsFailureTests(_DiagnosticsApiFixture):
+    async def test_a_failed_content_read_is_audited(self) -> None:
+        uploaded = await self.uploaded()
+        key = f"diagnostics/{self.tenant_id}/{uploaded['diagnostic_id']}.ndjson"
+        self.objects._objects[key] = b"tampered\n"
+        response = await self.support_get(self.content_path(uploaded["diagnostic_id"]))
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertNotIn("tampered", response.text)
+        [event] = await self.audit(self.tenant_id)
+        self.assertEqual(event.action, "diagnostics.read_failed")
+        self.assertEqual(event.resource_id, UUID(uploaded["diagnostic_id"]))
+
+    async def test_failed_insert_deletes_content_only_when_no_record_names_it(self) -> None:
+        context = self.terminal_tokens.verify(self.terminal_a["access_token"])
+        body = package(VECTORS["package"]["lines"], self.terminal_a)
+        repository = self.diagnostics
+
+        class Failing:
+            def __init__(self, commit_first: bool) -> None:
+                self.commit_first = commit_first
+
+            async def by_key(self, *args):
+                return await repository.by_key(*args)
+
+            async def insert(self, record):
+                if self.commit_first:
+                    await repository.insert(record)
+                raise ConnectionError("connection dropped")
+
+        async def stream():
+            yield body
+
+        for commit_first, kept in ((False, 0), (True, 1)):
+            with self.subTest(commit_first=commit_first):
+                service = TerminalDiagnosticsService(
+                    Failing(commit_first), self.objects, self.repository, now=lambda: self.now)
+                with self.assertRaises(ConnectionError):
+                    await service.upload(
+                        context, stream(), declared_length=len(body),
+                        content_sha256=hashlib.sha256(body).hexdigest(),
+                        idempotency_key=f"k-{commit_first}")
+                self.assertEqual(self.objects.object_count, kept)
+
+
 class DiagnosticsPurgeTests(_DiagnosticsApiFixture):
     async def test_purge_deletes_expired_content_and_keeps_the_tombstone(self) -> None:
         old = await self.uploaded()

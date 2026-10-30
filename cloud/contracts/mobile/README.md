@@ -155,7 +155,11 @@ the `terminal_diagnostics` vector section. Not part of `v0.2.0`.
   with the client `Redactor`'s key and pattern rules: a key the Redactor treats
   as identity holds only `<redacted>`, and no unredacted mobile, landline,
   e-mail or resident ID number may remain. An export produced by the client's
-  `DiagnosticsBundle` passes as is.
+  `DiagnosticsBundle` passes as is. Numbers (JSON numbers, not text) are not
+  screened, as the client does not redact them either.
+- Write the header's `tenant_id` and `terminal_id` exactly, after redaction: if
+  the export's redaction rewrites them (a registered value or pattern that
+  happens to match part of a UUID), every upload is `header_mismatch`.
 - Package lines in the vectors carry `{tenant_id}` and `{terminal_id}`; substitute
   the uploading terminal's ids (`package.example_*` shows fixed ids).
 - There is no terminal or tenant read path; platform support access is outside

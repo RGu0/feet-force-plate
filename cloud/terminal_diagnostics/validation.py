@@ -14,7 +14,10 @@ does not:
   only the redacted key is visible, so the placeholders it may contain are
   neutralised first (``<redacted:phone>`` must not read as a ``phone`` key).
 * Patterns. No string, key or value, may still hold a mobile, landline,
-  e-mail or resident ID number after full-width normalisation.
+  e-mail or resident ID number after full-width normalisation. The client
+  applies its patterns one after another, so ``a@b.cn13812345678`` exports
+  as ``<redacted:email>13812345678``; that number is rejected here, on
+  purpose. Numbers are not text and are not screened, as in the client.
 
 Registered values (the names the client held at export) cannot be known
 here; that layer stays the client's.
@@ -70,7 +73,11 @@ _IDENTITY_PATTERN = re.compile(
         r"(?<![A-Za-z0-9])(?:\+?86[ -]?)?1[3-9][0-9][ -]?[0-9]{4}[ -]?[0-9]{4}(?![0-9])",
         # Landlines with a dash or parentheses after the area code.
         r"(?<![A-Za-z0-9])(?:\(0[0-9]{2,3}\)\s?|0[0-9]{2,3}-)[0-9]{3,4}-?[0-9]{4}(?![0-9])",
-        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        # The client's parts are unbounded. Any match it finds has a local
+        # suffix of at most 64 characters that matches too; the domain bound
+        # misses only names longer than DNS allows (253). The bounds keep a
+        # long run with or without "@" linear instead of quadratic.
+        r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}",
     ))
 )
 # Full-width digits and ＋ － ． ＠ to ASCII, as Redactor._normalizeWidth.
@@ -119,15 +126,25 @@ def _is_allowed_key(key: str) -> bool:
     return False
 
 
-def is_sensitive_key(key: str) -> bool:
-    """Redactor.isSensitiveKey, applied to a key as the export wrote it."""
-
-    key = _PLACEHOLDERS.sub("/", key)
+def _client_sensitive(key: str) -> bool:
     if _is_allowed_key(key):
         return False
     normalized = _normalize_key(key)
     return normalized.endswith(_TEL_SUFFIX) or any(
         fragment in normalized for fragment in _FRAGMENTS
+    )
+
+
+def is_sensitive_key(key: str) -> bool:
+    """Redactor.isSensitiveKey, applied to a key as the export wrote it.
+
+    Checked with the placeholders replaced by a separator (so
+    ``<redacted:phone>`` is not a ``phone`` key) and removed (so
+    ``na<redacted>me`` cannot hide a ``name`` key).
+    """
+
+    return _client_sensitive(_PLACEHOLDERS.sub("/", key)) or _client_sensitive(
+        _PLACEHOLDERS.sub("", key)
     )
 
 

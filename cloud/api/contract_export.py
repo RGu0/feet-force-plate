@@ -637,8 +637,10 @@ def _diagnostics_vectors(meta):
             'retryable': error_type.retryable, 'action': error_type.action,
             'details': details}, 'meta': meta}}
 
+    # ASCII escapes keep vectors.json ASCII-only; the lines stay valid JSON
+    # and decode to the same text as the client's raw UTF-8.
     def line(**fields):
-        return json.dumps(fields, ensure_ascii=False, separators=(',', ':'))
+        return json.dumps(fields, separators=(',', ':'))
 
     header_fields = {
         'kind': 'header', 'exported_at': '2026-10-29T06:51:33.000Z', 'app_version': '1.6.0+42',

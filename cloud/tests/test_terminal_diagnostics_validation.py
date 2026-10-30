@@ -168,3 +168,25 @@ def test_sensitive_key_value_must_be_exactly_the_placeholder_at_any_depth() -> N
         cursor = cursor["n"]
     cursor["home_tel"] = "x"
     assert outcome(nested) == "identity_detected"
+
+
+@pytest.mark.parametrize("text", [
+    "a" * (8 * 1024 * 1024 - 1024),
+    "a@" + "a" * (8 * 1024 * 1024 - 1024),
+    ".-" * (4 * 1024 * 1024 - 1024),
+])
+def test_screen_stays_linear_on_a_full_size_string(text) -> None:
+    import time
+
+    # A quadratic pattern takes hours here (review of 9dd3ff7, finding 1).
+    payload = _body(HEADER, _log(msg=text))
+    started = time.perf_counter()
+    validate_package(payload, tenant_id=TENANT, client_installation_id=TERMINAL)
+    assert time.perf_counter() - started < 20
+
+
+def test_a_placeholder_cannot_hide_an_identity_key() -> None:
+    assert is_sensitive_key("na<redacted>me")
+    assert is_sensitive_key("con<redacted:id>tact")
+    assert _reject(_body(HEADER, _log(fields={"na<redacted>me": "Wang Fang"}))) == (
+        2, "identity_detected")

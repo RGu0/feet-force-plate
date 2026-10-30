@@ -128,7 +128,8 @@ Platform support access, not part of the mobile contract:
   `context_inactive`, `terminal_credential` / `tenant_credential` (a valid
   terminal or tenant token is 403 `E-PLT-403`, audited with that actor),
   `tenant_unknown`, `not_found`, `expired`, `deleted` (the last four are 404
-  `E-API-404`).
+  `E-API-404`). A read whose stored content is missing or fails its digest
+  check appends `diagnostics.read_failed` and returns 500.
 - Retention is 30 days from upload. Run the purge on the seed host with the
   seed environment: `./dev run python -m cloud.terminal_diagnostics.purge`. It
   deletes the content of every package past `expires_at` and keeps the row as a
