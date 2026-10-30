@@ -116,6 +116,16 @@ class InMemoryObjectStore:
     async def read(self, object_key: str) -> bytes:
         return self._objects[object_key]
 
+    async def put_diagnostic(self, object_key: str, payload: bytes) -> StoredObject:
+        existing = self._objects.get(object_key)
+        if existing is not None and existing != payload:
+            raise SegmentDigestConflict("不可变对象键已存在不同内容", object_key=object_key)
+        self._objects[object_key] = payload
+        return StoredObject(object_key, hashlib.sha256(payload).hexdigest(), len(payload))
+
+    async def read_diagnostic(self, object_key: str) -> bytes:
+        return self._objects[object_key]
+
 
 class FileSystemObjectStore:
     """Private immutable filesystem storage with verified atomic publication."""
@@ -288,6 +298,18 @@ class FileSystemObjectStore:
             object_key, chunks(), expected_sha256=hashlib.sha256(payload).hexdigest(),
             expected_size=len(payload), kind="basic report PDF",
         )
+
+    async def put_diagnostic(self, object_key: str, payload: bytes) -> StoredObject:
+        async def chunks():
+            yield payload
+
+        return await self._write_stream(
+            object_key, chunks(), expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload), kind="diagnostic package",
+        )
+
+    async def read_diagnostic(self, object_key: str) -> bytes:
+        return self._path(object_key).read_bytes()
 
 
 class S3ObjectStore:

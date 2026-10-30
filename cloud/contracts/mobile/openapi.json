@@ -469,6 +469,65 @@
         "title": "ConsentRevokeRequest",
         "type": "object"
       },
+      "DiagnosticUploadResponse": {
+        "additionalProperties": false,
+        "description": "The stored package; an idempotent replay returns the identical body.",
+        "properties": {
+          "diagnostic_id": {
+            "format": "uuid",
+            "title": "Diagnostic Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "diagnostic_id",
+          "format",
+          "size_bytes",
+          "sha256",
+          "received_at",
+          "expires_at"
+        ],
+        "title": "DiagnosticUploadResponse",
+        "type": "object"
+      },
+      "DiagnosticUploadResponseEnvelope": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DiagnosticUploadResponse"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "DiagnosticUploadResponseEnvelope",
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -4626,6 +4685,253 @@
             "action": "CONTACT_ADMINISTRATOR",
             "code": "E-AUT-403",
             "http_status": 403,
+            "retryable": false
+          }
+        ]
+      }
+    },
+    "/v1/diagnostics": {
+      "post": {
+        "operationId": "diagnostics_upload_v1_diagnostics_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Content-SHA256",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "X-Content-Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Content-Type",
+            "required": true,
+            "schema": {
+              "title": "Content-Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Content-Length",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content-Length"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Content-Encoding",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content-Encoding"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "format": "binary",
+                "maxLength": 8388608,
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticUploadResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticUploadResponseEnvelope"
+                }
+              }
+            },
+            "description": "Success (200 may be an idempotent replay)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessErrorEnvelope"
+                }
+              }
+            },
+            "description": "Business error; use retryable and action together"
+          }
+        },
+        "summary": "Diagnostics Upload",
+        "x-ffp-error-codes": [
+          {
+            "action": "REFRESH_CREDENTIAL",
+            "code": "E-AUT-401",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "CONTACT_ADMINISTRATOR",
+            "code": "E-TRM-401-REVOKED",
+            "http_status": 401,
+            "retryable": false
+          },
+          {
+            "action": "FIX_REQUEST",
+            "code": "E-API-400",
+            "http_status": 400,
+            "retryable": false
+          },
+          {
+            "action": "TRIM_DIAGNOSTICS",
+            "code": "E-DIA-413-TOO-LARGE",
+            "http_status": 413,
+            "retryable": false
+          },
+          {
+            "action": "RETRY_UPLOAD",
+            "code": "E-DIA-422-DIGEST-MISMATCH",
+            "http_status": 422,
+            "retryable": true
+          },
+          {
+            "action": "UPDATE_CLIENT",
+            "code": "E-DIA-422-CONTENT-REJECTED",
+            "http_status": 422,
+            "retryable": false
+          },
+          {
+            "action": "EXPORT_DIAGNOSTIC",
+            "code": "E-API-409",
+            "http_status": 409,
             "retryable": false
           }
         ]

@@ -25,6 +25,8 @@ from cloud.access_control.tenant_service import TenantAuthenticationService
 from cloud.access_control.terminal_service import TerminalAccessService
 from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
 from cloud.insole_inventory.service import InsoleInventoryService
+from cloud.terminal_diagnostics.postgres import PostgresDiagnosticRepository
+from cloud.terminal_diagnostics.service import TerminalDiagnosticsService
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     PlatformAccessTokenIssuer,
@@ -231,6 +233,19 @@ class SeedSettings:
         )
 
 
+def build_object_store(
+    settings: SeedSettings,
+    object_store_factory: Callable[[SeedSettings], Any] | None = None,
+) -> Any:
+    if object_store_factory is not None:
+        return object_store_factory(settings)
+    if settings.object_backend == "aliyun-oss":
+        from cloud.ingestion.aliyun_oss import build_aliyun_oss_object_store
+
+        return build_aliyun_oss_object_store(settings)
+    return FileSystemObjectStore(settings.object_root)
+
+
 async def build_seed_app(
     settings: SeedSettings,
     *,
@@ -257,14 +272,7 @@ async def build_seed_app(
 
     hold_repository = PostgresSessionHoldRepository(platform_pool)
     session_holds = SessionHoldService(hold_repository)
-    if object_store_factory is not None:
-        objects = object_store_factory(settings)
-    elif settings.object_backend == "aliyun-oss":
-        from cloud.ingestion.aliyun_oss import build_aliyun_oss_object_store
-
-        objects = build_aliyun_oss_object_store(settings)
-    else:
-        objects = FileSystemObjectStore(settings.object_root)
+    objects = build_object_store(settings, object_store_factory)
     private_key = settings.license_private_key()
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     license_signer = LicenseDocumentSigner(
@@ -346,6 +354,12 @@ async def build_seed_app(
             terminal_tokens=terminal_tokens,
             insole_inventory=InsoleInventoryService(
                 PostgresInsoleInventoryRepository(activation_pool), access_repository
+            ),
+            # RAY-802: packages are uploaded by terminals, read by Platform support.
+            terminal_diagnostics=TerminalDiagnosticsService(
+                PostgresDiagnosticRepository(activation_pool, platform_pool),
+                objects,
+                access_repository,
             ),
             hardware_leases=HardwareLeaseService(access_repository),
             capture_grants=CaptureGrantService(data_repository),
@@ -439,4 +453,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["SeedSettings", "build_seed_app", "serve_seed"]
+__all__ = ["SeedSettings", "build_object_store", "build_seed_app", "serve_seed"]

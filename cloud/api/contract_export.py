@@ -25,6 +25,7 @@ from shared.contracts.client_sync import (
     canonical_json_bytes, canonical_sha256, encode_segment_metadata)
 from shared.contracts import insole_inventory as insole
 from shared.contracts import terminal_access as terminal
+from shared.contracts import terminal_diagnostics as diagnostics
 
 
 class ResponseMeta(BaseModel):
@@ -59,6 +60,7 @@ _RESPONSE_TYPES = {
     ('/v1/inventory/insoles', 'get'): (insole.InsoleChangesResponse, (200,)),
     ('/v1/inventory/insoles/{insole_id}/reports', 'post'): (insole.InsoleReportResponse, (200,)),
     ('/v1/inventory/insoles/{insole_id}/retire', 'post'): (insole.InsoleRetireResponse, (200,)),
+    ('/v1/diagnostics', 'post'): (diagnostics.DiagnosticUploadResponse, (200, 201)),
     ('/v1/subjects/resolve', 'post'): (cloud.SubjectSummary, (200,)),
     ('/v1/subjects', 'post'): (cloud.SubjectSummary, (200, 201)),
     ('/v1/consents', 'post'): (cloud.ConsentResponse, (201,)),
@@ -119,6 +121,20 @@ _TERMINAL_OPERATION_ERRORS.update({
         errors.AuthenticationError, errors.TerminalRevoked, errors.ResourceNotFound),
 })
 
+# RAY-802: terminal diagnostic package upload. The platform support routes
+# are not part of the mobile contract (cloud/api/README.md).
+_DIAGNOSTICS_ERRORS = (
+    ('too_large', errors.DiagnosticTooLarge),
+    ('digest_mismatch', errors.DiagnosticDigestMismatch),
+    ('content_rejected', errors.DiagnosticContentRejected),
+    ('idempotency_conflict', errors.IdempotencyConflict),
+    ('terminal_revoked', errors.TerminalRevoked),
+)
+_TERMINAL_OPERATION_ERRORS[('/v1/diagnostics', 'post')] = (
+    errors.AuthenticationError, errors.TerminalRevoked, errors.RequestContractError,
+    errors.DiagnosticTooLarge, errors.DiagnosticDigestMismatch,
+    errors.DiagnosticContentRejected, errors.IdempotencyConflict)
+
 # RAY-728 R1: subject, consent and session routes also accept the terminal
 # access token. The codes below are the terminal-specific outcomes (D1-D6).
 _TERMINAL_DATA_ROUTES = (
@@ -160,7 +176,10 @@ def build_openapi():
             for status in statuses
         }
         # RAY-834: an unhandled server error is 500 E-CLD-500 with the same envelope.
-        for status in (400, 401, 403, 404, 409, 422, 500, 503):
+        error_statuses = [400, 401, 403, 404, 409, 422, 500, 503]
+        if errors.DiagnosticTooLarge in _TERMINAL_OPERATION_ERRORS.get((path, method), ()):
+            error_statuses.append(errors.DiagnosticTooLarge.http_status)
+        for status in sorted(error_statuses):
             operation['responses'][str(status)] = {
                 'description': 'Business error; use retryable and action together',
                 'content': {'application/json': {'schema': error_ref}},
@@ -269,7 +288,8 @@ def build_vectors():
         'terminal': terminal_vectors,
         'terminal_data_plane': _terminal_data_plane_vectors(),
         'insole_inventory': _insole_vectors(meta),
-        'insole_session_archive': _insole_archive_vectors()}
+        'insole_session_archive': _insole_archive_vectors(),
+        'terminal_diagnostics': _diagnostics_vectors(meta)}
 
 
 def _terminal_vectors(meta):
@@ -596,6 +616,149 @@ def _insole_archive_vectors():
              'expect': {'http_status': 422, 'code': errors.ManifestIncomplete.code}},
         ],
     }
+
+
+def _diagnostics_vectors(meta):
+    """Declarative RAY-802 vectors; cloud tests replay every scenario.
+
+    Package lines carry ``{tenant_id}`` and ``{terminal_id}``: substitute the
+    uploading terminal's tenant and client_installation_id. ``example`` shows
+    the result for fixed ids.
+    """
+    envelopes = {}
+    for name, error_type in _DIAGNOSTICS_ERRORS:
+        details = {}
+        if error_type is errors.DiagnosticTooLarge:
+            details = {'max_bytes': diagnostics.DIAGNOSTICS_MAX_BYTES}
+        elif error_type is errors.DiagnosticContentRejected:
+            details = {'line': 3, 'reason': diagnostics.DiagnosticRejectionReason.IDENTITY_DETECTED.value}
+        envelopes[name] = {'http_status': error_type.http_status, 'body': {'error': {
+            'code': error_type.code, 'message': 'Synthetic contract fixture',
+            'retryable': error_type.retryable, 'action': error_type.action,
+            'details': details}, 'meta': meta}}
+
+    def line(**fields):
+        return json.dumps(fields, ensure_ascii=False, separators=(',', ':'))
+
+    header_fields = {
+        'kind': 'header', 'exported_at': '2026-10-29T06:51:33.000Z', 'app_version': '1.6.0+42',
+        'cloud_environment': 'integration', 'platform': 'android', 'os_version': '15',
+        'terminal_id': '{terminal_id}', 'tenant_id': '{tenant_id}',
+        'format': diagnostics.DIAGNOSTICS_FORMAT, 'dropped_lines': 0}
+    header = line(**header_fields)
+    log = line(kind='log', t='2026-10-29T06:40:00.000Z', level='info', cat='ble',
+               msg='connected', fields={'device_name': 'Insole-L', 'mac_address': 'C0:FF:EE:00:00:01'})
+    command = line(kind='command', t='2026-10-29T06:40:01.000Z', command='READ_BATTERY',
+                   params='', expected_reply='BAT', actual_reply='BAT 3987', elapsed_ms=42,
+                   status='success', ending='replied')
+    redacted = line(kind='log', t='2026-10-29T06:41:00.000Z', level='warning', cat='subject',
+                    msg='lookup for <redacted> at <redacted:phone>',
+                    fields={'subject_uuid': '8d0b9c1e-5f2a-4c4e-9b8a-0d6f3e2a1b7c',
+                            'patient_name': '<redacted>', 'contactTel': '<redacted>',
+                            '<redacted:phone>': 'seen', 'retries': [1, 2]},
+                    error='timeout', stack='#0 main')
+    package = [header, log, command, redacted]
+
+    def rejected(name, lines, line_number, reason):
+        return {'name': name, 'lines': lines, 'expect': {
+            'http_status': errors.DiagnosticContentRejected.http_status,
+            'code': errors.DiagnosticContentRejected.code,
+            'details': {'line': line_number, 'reason': reason.value}}}
+
+    reason = diagnostics.DiagnosticRejectionReason
+
+    def identity(name, **fields):
+        return rejected(f'identity_{name}', [header, log, line(**{
+            'kind': 'log', 't': '2026-10-29T06:42:00.000Z', 'level': 'info', 'cat': 'app',
+            'msg': 'ok', **fields})], 3, reason.IDENTITY_DETECTED)
+
+    example_ids = {'tenant_id': str(UUID(int=10)), 'terminal_id': str(UUID(int=30))}
+    example = ''.join(
+        entry.replace('{tenant_id}', example_ids['tenant_id']).replace(
+            '{terminal_id}', example_ids['terminal_id']) + '\n'
+        for entry in package).encode('utf-8')
+    return {
+        'errors': envelopes,
+        'route': 'POST /v1/diagnostics',
+        'credential': 'terminal access token (POST /v1/access/terminal-activate); any '
+                      'ACTIVE terminal uploads its own export',
+        'constants': {
+            'format': diagnostics.DIAGNOSTICS_FORMAT,
+            'media_type': diagnostics.DIAGNOSTICS_MEDIA_TYPE,
+            'max_bytes': diagnostics.DIAGNOSTICS_MAX_BYTES,
+            'max_bytes_applies_to': 'uncompressed body; Content-Encoding is not accepted',
+            'retention_days': diagnostics.DIAGNOSTICS_RETENTION_DAYS,
+            'sha256_pattern': diagnostics.DIAGNOSTICS_SHA256_PATTERN,
+            'redacted_value': diagnostics.DIAGNOSTICS_REDACTED_VALUE},
+        'request_headers': {
+            'Content-Type': diagnostics.DIAGNOSTICS_MEDIA_TYPE,
+            'Idempotency-Key': 'fixture:diagnostics:1',
+            'X-Content-SHA256': 'lowercase hex SHA-256 of the exact body bytes'},
+        'idempotency_key_scope': 'uploading client_installation_id',
+        'response': {
+            'fields': sorted(diagnostics.DiagnosticUploadResponse.model_fields),
+            'expires_at': f'received_at + {diagnostics.DIAGNOSTICS_RETENTION_DAYS} days',
+            'replay': 'same key and same SHA-256 returns 200 with the identical body'},
+        'package': {
+            'line_separator': '\n; the last line ends with it',
+            'first_line': 'header, format ' + diagnostics.DIAGNOSTICS_FORMAT,
+            'header_ids': 'tenant_id and terminal_id equal the token tenant and '
+                          'client_installation_id',
+            'line_fields': {kind: sorted(names)
+                            for kind, names in diagnostics.DIAGNOSTICS_LINE_FIELDS.items()},
+            'identity_screen': 'every string, key or value, at any depth: no mobile, '
+                               'landline, e-mail or resident ID number; a key the client '
+                               'Redactor treats as identity holds only redacted_value',
+            'rejection': 'whole package; details carry only line (1-based) and reason',
+            'rejection_reasons': [item.value for item in reason],
+            'placeholders': ['{tenant_id}', '{terminal_id}'],
+            'lines': package,
+            'example_ids': example_ids,
+            'example_sha256': hashlib.sha256(example).hexdigest(),
+            'example_size_bytes': len(example)},
+        # Steps: each scenario uploads with a new Idempotency-Key unless noted.
+        'scenarios': [
+            {'name': 'created', 'lines': package, 'expect': {'http_status': 201}},
+            {'name': 'replay', 'after': 'created', 'same_key': True, 'lines': package,
+             'expect': {'http_status': 200, 'body': 'identical to created'}},
+            {'name': 'idempotency_conflict', 'after': 'created', 'same_key': True,
+             'lines': package[:3],
+             'expect': {'http_status': errors.IdempotencyConflict.http_status,
+                        'code': errors.IdempotencyConflict.code}},
+            {'name': 'digest_mismatch', 'lines': package, 'declared_sha256': '0' * 64,
+             'expect': {'http_status': errors.DiagnosticDigestMismatch.http_status,
+                        'code': errors.DiagnosticDigestMismatch.code}},
+            {'name': 'over_limit', 'size_bytes': diagnostics.DIAGNOSTICS_MAX_BYTES + 1,
+             'expect': {'http_status': errors.DiagnosticTooLarge.http_status,
+                        'code': errors.DiagnosticTooLarge.code,
+                        'details': {'max_bytes': diagnostics.DIAGNOSTICS_MAX_BYTES}}},
+            {'name': 'revoked_terminal', 'lines': package, 'revoke_first': True,
+             'expect': {'http_status': errors.TerminalRevoked.http_status,
+                        'code': errors.TerminalRevoked.code}},
+            rejected('not_json', [header, '{"kind":"log",'], 2, reason.NOT_JSON),
+            rejected('header_missing', [log, header], 1, reason.HEADER_MISSING),
+            rejected('format_unsupported', [line(**{
+                **header_fields, 'format': 'gait-insole-diagnostics/2'})], 1,
+                reason.FORMAT_UNSUPPORTED),
+            rejected('unknown_kind', [header, line(kind='audit', t='2026-10-29T06:40:00.000Z')],
+                     2, reason.UNKNOWN_KIND),
+            rejected('second_header', [header, header], 2, reason.UNKNOWN_KIND),
+            rejected('unknown_field', [header, command, line(
+                kind='log', t='2026-10-29T06:40:00.000Z', level='info', cat='app', msg='ok',
+                timeline=[])], 3, reason.UNKNOWN_FIELD),
+            rejected('header_mismatch', [line(**{
+                **header_fields, 'tenant_id': str(UUID(int=99))})], 1, reason.HEADER_MISMATCH),
+            identity('mobile_in_msg', msg='call 138 1234 5678'),
+            identity('full_width_mobile', msg='电话１３８１２３４５６７８'),
+            identity('landline', error='dial 010-12345678'),
+            identity('email', fields={'note': 'from li.wei@example.com'}),
+            identity('resident_id', fields={'list': ['11010519491231002X']}),
+            identity('name_key', fields={'subjectName': 'Wang Fang'}),
+            identity('tel_suffix_key', fields={'nested': {'home_tel': 'x'}}),
+            identity('chinese_key', fields={'姓名': '王芳'}),
+            identity('phone_as_key', fields={'13812345678': 'seen'}),
+            identity('allowed_key_with_sensitive_prefix', fields={'contact_device_name': 'x'}),
+        ]}
 
 
 def main():

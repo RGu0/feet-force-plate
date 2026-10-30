@@ -87,6 +87,13 @@ E-UPD-xxx  更新和配置
 - 若确需会话数据，使用单独授权和独立导出动作；
 - 诊断包加密并生成内容摘要。
 
+终端上传与支持访问（RAY-802 R1，2026-10-30 确认）：
+
+- 终端以 `POST /v1/diagnostics` 单次上传 RAY-910 导出（`gait-insole-diagnostics/1`，≤ 8 MiB），云端整包白名单校验并再做一次身份筛查，不修补；契约见[通信接口设计文档](../通信接口设计文档.md) §10.2。
+- 保留期自上传起 30 天；清理作业（`./dev run python -m cloud.terminal_diagnostics.purge`）删除对象内容，只保留墓碑（ID、机构、大小、摘要、时间戳、`deleted_at`）供审计，过期或已删包读取返回 404。
+- 只有 Platform IAM `PLATFORM_SUPPORT` 或 `PLATFORM_ENGINEER` 可列出 / 读取，每次须带 `ticket_reference`；不走 SensitiveAccessGrant（诊断包按构造不含身份明文）。列出、读取与每次拒绝（错角色、缺工单、终端或租户令牌、过期 / 不存在）都写入不可变访问审计；`PLATFORM_OWNER` / `PLATFORM_OPERATIONS`、终端令牌、租户令牌均不可读。
+- 已知限制：没有字段名、也不符合模式的裸姓名服务端无法识别，由客户端导出时登记全部身份值再脱敏兜底。
+
 ## 8. 运营指标和告警
 
 至少监控：

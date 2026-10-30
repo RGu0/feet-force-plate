@@ -267,6 +267,29 @@ class AliyunOSSObjectStore:
             raise DigestMismatch("basic report PDF digest mismatch")
         return payload
 
+    async def put_diagnostic(self, object_key: str, payload: bytes) -> StoredObject:
+        digest = hashlib.sha256(payload).hexdigest()
+        await self._put_immutable(
+            object_key, payload, content_type="application/x-ndjson",
+            metadata={"sha256": digest, "schema-version": "gait-insole-diagnostics/1"},
+        )
+        return StoredObject(object_key, digest, len(payload))
+
+    async def read_diagnostic(self, object_key: str) -> bytes:
+        head = await asyncio.to_thread(self._gateway.head, object_key)
+        if (
+            head.size_bytes > 8 * 1024 * 1024
+            or head.server_side_encryption != self._server_side_encryption
+        ):
+            raise DigestMismatch("diagnostic package security attributes invalid")
+        payload = await asyncio.to_thread(self._gateway.get, object_key)
+        if (
+            len(payload) != head.size_bytes
+            or hashlib.sha256(payload).hexdigest() != head.metadata.get("sha256")
+        ):
+            raise DigestMismatch("diagnostic package digest mismatch")
+        return payload
+
     async def check_ready(self) -> None:
         await asyncio.to_thread(self._gateway.check_ready)
 
