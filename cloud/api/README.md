@@ -68,6 +68,16 @@ reports and retires. Seed composition wires `InsoleInventoryService` to
 (`install-seed-release.sh` does this and grants the backup role SELECT). Pairs
 are retire-only; there is no delete route or grant.
 
+Institutional subject sync (RAY-907) is served under `GET /v1/subjects`,
+`PATCH /v1/subjects/{subject_uuid}`, `POST /v1/subjects/search-by-name` and
+`/v1/subject-tags` to terminal bearer tokens only. Seed composition wires
+`SubjectSyncService` to `PostgresSubjectSyncRepository` on the tenant pool with
+the same `IdentityProtector` as subject creation, so migration
+`0017_subject_sync.sql` (revision triggers, name lookup key, tag tables) must be
+applied before the seed release starts; `install-seed-release.sh` applies it once
+and grants the backup role SELECT. Reads ignore the License; PATCH and tag
+creation need a usable one.
+
 Since RAY-728 the subject, consent and session routes also accept terminal
 bearer tokens. Terminal activation and revocation project the terminal into
 `device.terminals`, and insole registration and retirement project the pair into
@@ -103,7 +113,7 @@ Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002
 
 Terminal diagnostic packages (RAY-802) are uploaded with a terminal access token
 to `POST /v1/diagnostics` (mobile contract: `cloud/contracts/mobile/README.md`).
-Migration `0017_terminal_diagnostics.sql` must be applied before the seed release
+Migration `0018_terminal_diagnostics.sql` must be applied before the seed release
 starts; `install-seed-release.sh` applies it and grants the backup role SELECT.
 Records live in `ops.terminal_diagnostics` (tenant RLS forced; the activation role
 inserts, the platform role reads and may set only `deleted_at`, nobody deletes);

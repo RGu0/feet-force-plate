@@ -25,6 +25,8 @@ from cloud.access_control.tenant_service import TenantAuthenticationService
 from cloud.access_control.terminal_service import TerminalAccessService
 from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
 from cloud.insole_inventory.service import InsoleInventoryService
+from cloud.subject_sync.postgres import PostgresSubjectSyncRepository
+from cloud.subject_sync.service import SubjectSyncService
 from cloud.terminal_diagnostics.postgres import PostgresDiagnosticRepository
 from cloud.terminal_diagnostics.service import TerminalDiagnosticsService
 from cloud.api.access_auth import (
@@ -354,6 +356,9 @@ async def build_seed_app(
             terminal_tokens=terminal_tokens,
             insole_inventory=InsoleInventoryService(
                 PostgresInsoleInventoryRepository(activation_pool), access_repository
+            ),
+            subject_sync=SubjectSyncService(
+                PostgresSubjectSyncRepository(tenant_pool), terminal_access, identity
             ),
             # RAY-802: packages are uploaded by terminals, read by Platform support.
             terminal_diagnostics=TerminalDiagnosticsService(

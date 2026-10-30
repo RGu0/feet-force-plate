@@ -28,6 +28,17 @@ recovery migration 0011. The release installer refuses migration 0011 when the h
 installer run does not itself establish the real incident hold or prove a
 backup restore; record those as separate acceptance evidence.
 
+After the role grants the installer applies, in order: 0011 controlled
+identity recovery, 0012 terminal activation, 0013 insole inventory, 0014
+recovery-bound migration permits, 0015 terminal data-plane projection (every
+install), 0016 insole session archive (every install), and 0017 subject sync
+(RAY-907; once, while `subject.subjects.revision` is absent). 0017 backfills a
+revision for every existing subject in creation order and adds the revision
+triggers, the name lookup column and the tag tables; it is additive but not
+reversible by the installer, so take a backup and pass `run-restore-drill.sh`
+before deploying it. `backup.sh` records the applied list in
+`metadata.json` `schema_versions`.
+
 The host cannot reach github.com. `deploy-sales-inventory-release.sh` downloads
 the foundation wheel on the operator machine, checks it against `uv.lock`, and
 uploads it with the archive; the installer re-checks the digest, seeds the

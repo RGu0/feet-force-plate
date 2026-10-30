@@ -133,6 +133,36 @@ Every `insole_session_archive` scenario is replayed against the server in
 `cloud/tests/test_insole_session_archive.py`; client alignment is tracked by
 gait-insole-flutter RAY-624.
 
+RAY-907 adds institutional subject sync (vector section `subject_sync`), all
+authenticated with the terminal bearer token. Not part of `v0.2.0`.
+- `GET /v1/subjects?cursor=&limit=`: incremental download by server `revision`,
+  same paging rules as the insole download. A subject gets a new revision on
+  create, any PATCH, archive or restore, consent create or revoke and tag-set
+  change. Nothing is deleted; archived subjects arrive with `status: ARCHIVED`.
+  The record carries `identity_profile.display_name`, never `contact`, and the
+  institution number masked only; resolve a number with `/v1/subjects/resolve`.
+  `identity_profile` is absent for `MERGED`/`RESTRICTED` subjects. On
+  `E-SUB-400-CURSOR-INVALID` clear the cursor and download from the start.
+- `PATCH /v1/subjects/{subject_uuid}` with `Idempotency-Key` and the
+  `base_revision` you last saw. A stale one is `E-SUB-409-REVISION-CONFLICT` with
+  the current record in `error.details.current`: merge locally and retry with its
+  revision; the server never merges. `analysis_profile` merges per field;
+  `identity_profile` and `tag_ids` replace the stored value (a replaced identity
+  without `contact` drops the stored contact); a new `external_identifier`
+  supersedes the old. A replay returns the subject's current record.
+- `POST /v1/subjects/search-by-name` `{display_name}`: exact match after NFKC,
+  trim and case fold (`name_search.equal_examples`), ACTIVE and ARCHIVED only,
+  at most 20. Subjects created before migration 0017 are found only after their
+  identity is next edited.
+- `GET /v1/subject-tags` / `POST /v1/subject-tags` `{tag_id, name}`: 201 new; 200
+  with `conflict: true` and the existing tag when the normalized name is taken;
+  switch to its `tag_id`. Set tags on a subject only through PATCH.
+- With an inactive License the three reads keep working and the two writes are
+  `E-TRM-403-LICENSE-INACTIVE`; `POST /v1/subjects` is unchanged.
+Every `subject_sync` scenario is replayed against the server in
+`cloud/tests/test_subject_sync_api.py`; client alignment is tracked by
+gait-insole-flutter RAY-592 / RAY-912.
+
 RAY-802 adds the terminal diagnostic package upload `POST /v1/diagnostics` and
 the `terminal_diagnostics` vector section. Not part of `v0.2.0`.
 - Send the RAY-910 export unchanged as the body: one JSON Lines text,

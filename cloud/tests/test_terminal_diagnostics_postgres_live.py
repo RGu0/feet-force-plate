@@ -30,7 +30,7 @@ from shared.contracts.access_control import PlatformRole
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = ROOT / "cloud/migrations/0017_terminal_diagnostics.sql"
+MIGRATION = ROOT / "cloud/migrations/0018_terminal_diagnostics.sql"
 FIXTURE = ROOT / "cloud/tests/fixtures/terminal_diagnostics/ray910_export.ndjson"
 FIXTURE_IDS = ("5a1f0c3e-7b2d-4e8a-9c6f-2d4b8e1a0f37", "c3d9e2f1-6a4b-4f0c-8e7d-9b2a1c0d3e5f")
 
@@ -54,11 +54,11 @@ def test_migration_is_additive_rls_forced_and_tombstone_only() -> None:
 def test_deployment_applies_and_backs_up_diagnostics_migration() -> None:
     install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
     backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
-    assert install.index("0017_terminal_diagnostics.sql") > install.index(
-        "0016_insole_session_archive.sql"
+    assert install.index("0018_terminal_diagnostics.sql") > install.index(
+        "0017_subject_sync.sql"
     )
     assert "GRANT SELECT ON ops.terminal_diagnostics TO ffp_seed_backup;" in install
-    assert "0016_insole_session_archive,0017_terminal_diagnostics\"" in backup
+    assert "0017_subject_sync,0018_terminal_diagnostics\"" in backup
 
 
 def _record(tenant_id, installation, key, *, received=NOW, days=30) -> DiagnosticRecord:

@@ -65,6 +65,12 @@ from shared.contracts.insole_inventory import (
     InsoleRegistrationRequest,
     InsoleReportRequest,
 )
+from shared.contracts.subject_sync import (
+    SUBJECT_PAGE_MAX_LIMIT,
+    SubjectNameSearchRequest,
+    SubjectPatchRequest,
+    SubjectTagCreateRequest,
+)
 from shared.contracts.terminal_diagnostics import (
     DIAGNOSTICS_MAX_BYTES,
     DIAGNOSTICS_MEDIA_TYPE,
@@ -135,6 +141,7 @@ class ServiceContainer:
     terminal_access: object | None = None
     terminal_tokens: TerminalAccessTokenIssuer | None = None
     insole_inventory: object | None = None
+    subject_sync: object | None = None
     terminal_diagnostics: object | None = None
 
 
@@ -284,6 +291,9 @@ def create_app(container: ServiceContainer) -> FastAPI:
             "validity_status",
             "object_key",
             "existing",
+            # RAY-907: returned to the caller's own terminal, never logged.
+            "current",
+            "external_id_masked",
             # RAY-802: a diagnostic rejection's line and fixed reason, and the size cap.
             "line",
             "reason",
@@ -651,6 +661,72 @@ def create_app(container: ServiceContainer) -> FastAPI:
         ):
             result = await container.insole_inventory.retire(context, insole_id)
             return _data_response(request, result)
+
+    if container.subject_sync is not None and container.terminal_tokens is not None:
+
+        # RAY-907: institutional subject sync, terminal credentials only.
+        @app.get("/v1/subjects")
+        async def subject_changes(
+            request: Request,
+            context: TerminalAccessDependency,
+            cursor: Annotated[str | None, Query(max_length=128)] = None,
+            limit: Annotated[int | None, Query(ge=1, le=SUBJECT_PAGE_MAX_LIMIT)] = None,
+        ):
+            result = await container.subject_sync.changes(context, cursor=cursor, limit=limit)
+            return _data_response(request, result)
+
+        @app.patch("/v1/subjects/{subject_uuid}")
+        async def subject_patch(
+            request: Request,
+            subject_uuid: UUID,
+            body: SubjectPatchRequest,
+            context: TerminalAccessDependency,
+            idempotency_key: Annotated[
+                str, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+            ],
+        ):
+            result = await container.subject_sync.patch(
+                context, subject_uuid, body, idempotency_key
+            )
+            return _data_response(request, result)
+
+        # POST keeps the name out of URLs and access logs.
+        @app.post("/v1/subjects/search-by-name")
+        async def subject_search_by_name(
+            request: Request,
+            body: SubjectNameSearchRequest,
+            context: TerminalAccessDependency,
+        ):
+            result = await container.subject_sync.search_by_name(
+                context, body, correlation_id=request.state.correlation_id
+            )
+            return _data_response(request, result)
+
+        @app.get("/v1/subject-tags")
+        async def subject_tag_changes(
+            request: Request,
+            context: TerminalAccessDependency,
+            cursor: Annotated[str | None, Query(max_length=128)] = None,
+            limit: Annotated[int | None, Query(ge=1, le=SUBJECT_PAGE_MAX_LIMIT)] = None,
+        ):
+            result = await container.subject_sync.tag_changes(
+                context, cursor=cursor, limit=limit
+            )
+            return _data_response(request, result)
+
+        @app.post("/v1/subject-tags")
+        async def subject_tag_create(
+            request: Request,
+            body: SubjectTagCreateRequest,
+            context: TerminalAccessDependency,
+            idempotency_key: Annotated[
+                str, Header(alias="Idempotency-Key", min_length=1, max_length=256)
+            ],
+        ):
+            result, status = await container.subject_sync.create_tag(
+                context, body, idempotency_key
+            )
+            return _data_response(request, result, status)
 
     if container.terminal_diagnostics is not None and container.terminal_tokens is not None:
 
