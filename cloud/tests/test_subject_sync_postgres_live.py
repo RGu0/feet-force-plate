@@ -412,6 +412,42 @@ def test_subject_sync_flow_over_live_role_pools() -> None:
                 all_revisions = [i["revision"] for i in everything]
                 assert all_revisions == sorted(set(all_revisions))
 
+                # Writers of one number serialize: exactly one wins, the others
+                # get E-SUB-409-NUMBER-TAKEN (never 500 or a deadlock), also
+                # against a concurrent create with that number.
+                for round_index in range(3):
+                    racers = [await create(f"Racer {i}", f"R-{run}-{round_index}-{i}")
+                              for i in range(3)]
+                    contested = f"CONTESTED-{run}-{round_index}"
+                    bases = [(await record(uuid))["revision"] for uuid in racers]
+
+                    async def create_contested():
+                        response = await client.post(
+                            "/v1/subjects", headers=a(str(uuid4())), json={
+                                "subject_uuid": str(uuid4()),
+                                "external_identifier": {**number, "external_id": contested},
+                                "analysis_profile": {}})
+                        return response
+
+                    outcomes = await asyncio.gather(
+                        *(patch(uuid, {"base_revision": base, "external_identifier": {
+                            **number, "external_id": contested}})
+                          for uuid, base in zip(racers, bases)),
+                        create_contested(),
+                    )
+                    patch_results = outcomes[:3]
+                    assert all(r.status_code in (200, 409) for r in patch_results), [
+                        r.text for r in patch_results]
+                    created = outcomes[3]
+                    assert created.status_code in (200, 201), created.text
+                    winners = [r for r in patch_results if r.status_code == 200]
+                    if created.status_code == 201:
+                        assert winners == []
+                    else:
+                        assert len(winners) == 1 and created.json()["data"]["conflict"]
+                    assert all(r.json()["error"]["code"] == "E-SUB-409-NUMBER-TAKEN"
+                               for r in patch_results if r.status_code == 409)
+
             if admin_dsn:
                 admin = await asyncpg.connect(admin_dsn)
                 try:

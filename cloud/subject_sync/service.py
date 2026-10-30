@@ -290,6 +290,7 @@ class SubjectSyncService:
         )
         return IdentityChange(
             protected=StoredIdentity(protected.ciphertext, protected.nonce, protected.key_version),
+            # None (not searchable) without a display name or for a blank one.
             name_lookup_hmac=(
                 None
                 if profile.display_name is None

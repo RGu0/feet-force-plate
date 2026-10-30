@@ -66,13 +66,16 @@ class IdentityProtector:
         )
         return hmac.new(self._lookup_hmac_key, scoped_value, hashlib.sha256).digest()
 
-    def name_digest(self, display_name: str, *, tenant_id: str) -> bytes:
+    def name_digest(self, display_name: str, *, tenant_id: str) -> bytes | None:
         """RAY-907: tenant-scoped exact-match key for a normalized display name.
 
         Domain-separated from institution numbers, so a name digest never
-        equals a number digest of the same text.
+        equals a number digest of the same text. None for a name that is empty
+        after normalization: such names are never searchable.
         """
 
+        if not self.normalize(display_name):
+            return None
         scoped_value = (
             f"{tenant_id}\x1fdisplay-name\x1f{self.normalize(display_name)}".encode("utf-8")
         )

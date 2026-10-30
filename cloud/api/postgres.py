@@ -944,6 +944,19 @@ class PostgresPlatformRepository:
             )
             if replay is not None:
                 return SubjectSummary.model_validate(replay)
+            # RAY-907: hold the tenant's subject revision counter (migration
+            # 0017) before the number check, as PATCH does, so concurrent
+            # writers of one number serialize and the loser sees the winner.
+            await connection.execute(
+                "INSERT INTO subject.subject_revision_counters (tenant_id) VALUES ($1) "
+                "ON CONFLICT (tenant_id) DO NOTHING",
+                context.tenant_id,
+            )
+            await connection.execute(
+                "SELECT last_revision FROM subject.subject_revision_counters "
+                "WHERE tenant_id=$1 FOR UPDATE",
+                context.tenant_id,
+            )
             external = request.external_identifier
             existing = None
             if external is not None:

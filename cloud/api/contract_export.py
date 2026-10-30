@@ -651,7 +651,8 @@ def _subject_sync_vectors(meta):
         'name_search': {
             'route': 'POST /v1/subjects/search-by-name',
             'request': {'display_name': 'zhang san'},
-            'normalization': 'NFKC, then trim, then Unicode case fold; exact match only',
+            'normalization': 'NFKC, then trim, then Unicode case fold; exact match only; a name '
+                             'that is empty after normalization matches nothing',
             # Each pair normalizes equal, so both spellings find the same subject.
             'equal_examples': [['Zhang San', '  zhang san  '], ['Zhang San', 'ＺＨＡＮＧ ＳＡＮ'],
                                ['Straße', 'STRASSE']],
@@ -671,7 +672,8 @@ def _subject_sync_vectors(meta):
             'name_compare': 'NFKC, trim and case fold',
             'max_name_length': subjects.SUBJECT_TAG_NAME_MAX_LENGTH,
             'cursor_schema': 'independent of the subject cursor',
-            'same_key_different_request_error': errors.IdempotencyConflict.code},
+            'same_key_different_request_error': errors.IdempotencyConflict.code,
+            'same_tag_id_other_name_error': errors.IdempotencyConflict.code},
         # Steps: activate, create a subject with display_name 'Zhang San' and
         # number GAIT-001, then run each scenario; state-changing ones run last.
         'scenarios': [

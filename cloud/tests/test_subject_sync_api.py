@@ -566,6 +566,14 @@ class SubjectSyncApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Zhang", response.text)
         self.assertEqual(len(audits), 2)
 
+    async def test_blank_names_are_never_searchable(self) -> None:
+        await self.create_subject(name="   ", number="BLANK-1")
+        await self.create_subject(name="\u3000", number="BLANK-2")
+        for spelling in ("   ", " ", "\u3000"):
+            response = await self.search(spelling)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["data"]["items"], [], repr(spelling))
+
     async def test_subject_without_name_key_is_found_after_its_identity_is_edited(self) -> None:
         subject_uuid = await self.create_subject()
         # D6: a row from before migration 0017 has no name key.

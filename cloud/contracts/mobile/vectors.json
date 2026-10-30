@@ -977,7 +977,7 @@
         ]
       ],
       "max_results": 20,
-      "normalization": "NFKC, then trim, then Unicode case fold; exact match only",
+      "normalization": "NFKC, then trim, then Unicode case fold; exact match only; a name that is empty after normalization matches nothing",
       "pre_0017_subjects": "not findable until their identity is next written (D6)",
       "request": {
         "display_name": "zhang san"
@@ -1217,6 +1217,7 @@
         "POST /v1/subject-tags"
       ],
       "same_key_different_request_error": "E-API-409",
+      "same_tag_id_other_name_error": "E-API-409",
       "tag": {
         "created_at": "2026-10-29T08:00:00Z",
         "name": "Follow-up",

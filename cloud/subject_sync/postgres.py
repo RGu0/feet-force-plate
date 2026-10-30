@@ -177,7 +177,23 @@ class _PostgresWriter:
             "SELECT subject_uuid FROM subject.subjects WHERE subject_uuid=$1 FOR UPDATE",
             subject_uuid,
         )
-        return None if locked is None else await self._subject(subject_uuid)
+        if locked is None:
+            return None
+        # Take the revision counter now (row, then counter, as everywhere), not
+        # at the first write: subject creation holds it before inserting its
+        # number, so the number and tag checks below see every committed
+        # writer and two writers of one number cannot both pass them.
+        await self._connection.execute(
+            "INSERT INTO subject.subject_revision_counters (tenant_id) VALUES ($1) "
+            "ON CONFLICT (tenant_id) DO NOTHING",
+            self._tenant_id,
+        )
+        await self._connection.execute(
+            "SELECT last_revision FROM subject.subject_revision_counters "
+            "WHERE tenant_id=$1 FOR UPDATE",
+            self._tenant_id,
+        )
+        return await self._subject(subject_uuid)
 
     async def unknown_tags(self, tag_ids):
         known = {

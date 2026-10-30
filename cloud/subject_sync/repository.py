@@ -145,7 +145,12 @@ class SubjectSyncRepository(Protocol):
     ) -> tuple[StoredSubject, ...]: ...
 
     async def search_by_name(
-        self, tenant_id: UUID, name_lookup_hmac: bytes, *, limit: int, audit: NameSearchAudit
+        self,
+        tenant_id: UUID,
+        name_lookup_hmac: bytes | None,
+        *,
+        limit: int,
+        audit: NameSearchAudit,
     ) -> tuple[StoredSubject, ...]: ...
 
     async def tag_changes(
@@ -339,7 +344,8 @@ class InMemorySubjectSyncRepository:
     async def search_by_name(self, tenant_id, name_lookup_hmac, *, limit, audit):
         matches = tuple(
             row for row in self._all(tenant_id)
-            if row.status in _SEARCHABLE
+            if name_lookup_hmac is not None
+            and row.status in _SEARCHABLE
             and self._platform._name_lookup_hmacs.get((tenant_id, row.subject_uuid))
             == name_lookup_hmac
         )[:limit]
