@@ -153,10 +153,12 @@ authenticated with the terminal bearer token. Not part of `v0.2.0`.
   A superseded number never becomes active again (setting the old value back
   creates a new `external_identifier_id`), so a different number strands any
   identity-recovery case of that subject that is not yet registered: compare
-  answers 404, register 403, and a new case for the same session 409. The
-  server does not refuse the PATCH. Finish a pending recovery registration
-  before changing the subject's number; on those responses do not retry, keep
-  the session blocked and export diagnostics (RAY-933; details in
+  answers 404, register 403 (409 once the receipt has expired), a new case for
+  the same session 409, and `POST /v1/sessions` 403, so the session cannot be
+  uploaded by any route. The server does not refuse the PATCH. Finish a
+  pending recovery registration before changing the subject's number; on those
+  responses do not retry, keep the session `BLOCKED` and export diagnostics
+  (RAY-933; details in
   `docs/通信接口设计文档.md`, 机构受试者同步).
 - `POST /v1/subjects/search-by-name` `{display_name}`: exact match after NFKC,
   trim and case fold (`name_search.equal_examples`), ACTIVE and ARCHIVED only,
