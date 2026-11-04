@@ -213,10 +213,10 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
 
 
 def test_tenant_status_gate_is_granted_read_only_and_installed() -> None:
-    migration = (ROOT / "cloud/migrations/0019_tenant_status_gate.sql").read_text()
-    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text()
-    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text()
-    source = (ROOT / "cloud/api/postgres.py").read_text()
+    migration = (ROOT / "cloud/migrations/0019_tenant_status_gate.sql").read_text(encoding="utf-8")
+    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
+    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
+    source = (ROOT / "cloud/api/postgres.py").read_text(encoding="utf-8")
     assert "GRANT SELECT ON iam.tenants TO ffp_tenant_app;" in migration
     assert "INSERT" not in migration and "UPDATE" not in migration
     assert "0019_tenant_status_gate.sql" in install
