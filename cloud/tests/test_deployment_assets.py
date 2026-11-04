@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import stat
@@ -393,10 +394,17 @@ def test_seed_readme_grants_the_oss_role_every_diagnostics_object_action() -> No
     # support read need GetObject, the purge needs DeleteObject.
     text = _read_repository_text(ROOT / "README.md")
     section = text[text.index("### OSS role grant for `diagnostics/`"):text.index("### OSS lifecycle backstop")]
-    assert '"Action": ["oss:PutObject", "oss:GetObject", "oss:DeleteObject"]' in section
-    assert '"acs:oss:*:*:<bucket>/tenants/*"' in section
-    assert '"acs:oss:*:*:<bucket>/diagnostics/*"' in section
-    assert "must allow `oss:DeleteObject` on `diagnostics/*`" not in text
-    backstop = text[text.index("### OSS lifecycle backstop"):]
+    block = section[section.index("```json\n") + len("```json\n"):]
+    statement = json.loads(block[:block.index("```")])
+    assert statement["Effect"] == "Allow"
+    assert set(statement["Action"]) == {"oss:PutObject", "oss:GetObject", "oss:DeleteObject"}
+    assert set(statement["Resource"]) == {
+        "acs:oss:*:*:<bucket>/tenants/*",
+        "acs:oss:*:*:<bucket>/diagnostics/*",
+    }
+    flat = " ".join(text.split())
+    assert "must allow `oss:DeleteObject` on `diagnostics/*`" not in flat
+    assert "only `oss:DeleteObject`" not in flat
+    backstop = " ".join(text[text.index("### OSS lifecycle backstop"):].split())
     assert "allow prefix overlap" in backstop
     assert "delete marker" in backstop

@@ -125,6 +125,9 @@ needs, on `acs:oss:*:*:<bucket>/diagnostics/*` in addition to its existing
   authorizes as `GetObject`) and the support read;
 - `oss:DeleteObject` for the purge.
 
+No list action is needed; keep the actions to these three rather than a
+wildcard.
+
 Without it the upload fails with 500 `E-CLD-500` (OSS 403 `AccessDenied` on
 `HeadObject`). The simplest form adds the prefix to the statement that already
 grants these actions on `tenants/*`:
@@ -154,10 +157,12 @@ was broken):
   margin for time zones and clock skew;
 - set by the operator in the Aliyun OSS console (bucket, Data Management,
   Lifecycle). Before saving, review every existing rule on the bucket: none may
-  cover `diagnostics/` with a shorter expiry (an empty-prefix whole-bucket rule
-  counts) and the new rule must not cover any other prefix. When a whole-bucket
-  rule exists, the console refuses the new rule as overlapping (`InvalidRequest`,
-  ecCode `0014-00000084`) until "allow prefix overlap" (允许前缀重叠) is on;
+  cover `diagnostics/` with a shorter current-version expiry (an empty-prefix
+  whole-bucket rule counts; its noncurrent-version expiry is expected, see
+  below) and the new rule must not cover any other prefix. On the integration
+  bucket, which has a whole-bucket rule, the first save failed with
+  `InvalidRequest` (ecCode `0014-00000084`); it saved only with "allow prefix
+  overlap" (允许前缀重叠) on;
 - record only the rule's description (prefix, action, days, the review of
   existing rules) in evidence; never an AccessKey, STS token or console
   credential. The rule itself needs no change to the ECS RAM role.
