@@ -128,7 +128,7 @@ needs, on `acs:oss:*:*:<bucket>/diagnostics/*` in addition to its existing
 No list action is needed; keep the actions to these three rather than a
 wildcard.
 
-Without it the upload fails with 500 `E-CLD-500` (OSS 403 `AccessDenied` on
+Without this grant the upload fails with 500 `E-CLD-500` (OSS 403 `AccessDenied` on
 `HeadObject`). The simplest form adds the prefix to the statement that already
 grants these actions on `tenants/*`:
 
