@@ -286,6 +286,7 @@ def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -
 
 def test_systemd_entry_scripts_are_executable() -> None:
     for relative in (
+        "dev",
         "cloud/api/run-seed.sh",
         "scripts/local-env.sh",
         "deploy/aliyun/seed/backup.sh",
@@ -318,3 +319,70 @@ def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in text
     assert "scripts/verify_aliyun_oss_live.py" in text
     assert "aliyun-oss-summary.json" in text
+
+
+def _unit_settings(text: str) -> dict[str, list[str]]:
+    settings: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        if "=" in line and not line.startswith(("#", "[")):
+            key, value = line.split("=", 1)
+            settings.setdefault(key, []).append(value)
+    return settings
+
+
+def test_diagnostics_purge_service_runs_the_purge_unprivileged_with_seed_settings() -> None:
+    # RAY-927: the purge reads the same seed.env as the API and prints counts only.
+    service = _unit_settings(_read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service"))
+    assert service["Type"] == ["oneshot"]
+    assert service["User"] == ["feetforceplate"]
+    assert service["Group"] == ["feetforceplate"]
+    assert service["WorkingDirectory"] == ["/opt/feetforceplate/app"]
+    assert service["EnvironmentFile"] == ["/etc/feetforceplate/seed.env"]
+    assert service["ExecStart"] == [
+        "/opt/feetforceplate/app/dev run python -m cloud.terminal_diagnostics.purge"
+    ]
+    # Offline from the host uv cache, like the backup service.
+    assert "XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache" in service["Environment"]
+    assert "UV_OFFLINE=1" in service["Environment"]
+    for key, value in (
+        ("NoNewPrivileges", "true"), ("PrivateTmp", "true"), ("ProtectSystem", "strict"),
+        ("ProtectHome", "true"), ("UMask", "0077"),
+    ):
+        assert service[key] == [value]
+    assert service["ReadOnlyPaths"] == ["/opt/feetforceplate/app /etc/feetforceplate/seed.env"]
+    # Filesystem-backed content is deleted under objects; OSS content needs no local path.
+    assert service["ReadWritePaths"] == [
+        "/var/lib/feetforceplate/objects /var/lib/feetforceplate/runtime"
+    ]
+    assert "User=root" not in _read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service")
+
+
+def test_diagnostics_purge_timer_fires_once_a_day_and_catches_up() -> None:
+    timer = _unit_settings(_read_repository_text(ROOT / "feetforceplate-diagnostics-purge.timer"))
+    [calendar] = timer["OnCalendar"]
+    # A fixed time every day (or "daily"): never more than once a day.
+    assert calendar == "daily" or calendar.startswith("*-*-* ")
+    assert timer["Persistent"] == ["true"]
+    assert timer["Unit"] == ["feetforceplate-diagnostics-purge.service"]
+    assert timer["WantedBy"] == ["timers.target"]
+
+
+def test_release_installer_installs_and_enables_the_diagnostics_purge_timer() -> None:
+    text = _read_repository_text(ROOT / "install-seed-release.sh")
+    for unit in ("feetforceplate-diagnostics-purge.service", "feetforceplate-diagnostics-purge.timer"):
+        assert (
+            f'install -o root -g root -m 0644 "$release_target/deploy/aliyun/seed/{unit}" \\\n'
+            f"    /etc/systemd/system/{unit}"
+        ) in text
+        assert text.index(f"/etc/systemd/system/{unit}") < text.index("systemctl daemon-reload")
+    enable = text[text.index("systemctl enable "):text.index("systemctl restart feetforceplate-seed")]
+    assert "feetforceplate-diagnostics-purge.timer" in enable
+    # Only the timer is enabled; the oneshot service runs when the timer fires.
+    assert "feetforceplate-diagnostics-purge.service" not in enable
+    # The timer starts only after the new ingress is ready, like the backup timer.
+    assert text.index("systemctl start feetforceplate-diagnostics-purge.timer") > text.index(
+        "curl -kfsS https://127.0.0.1:7443/health/ready"
+    )
+    # The service executes ./dev directly; its git mode (checked in
+    # test_systemd_entry_scripts_are_executable) survives the release archive.
+    assert "diagnostics_purge=timer-enabled secrets=not-printed" in text

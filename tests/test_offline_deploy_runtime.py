@@ -54,7 +54,8 @@ def test_operator_script_uploads_checked_wheel() -> None:
 
 
 def test_services_resolve_dependencies_offline() -> None:
-    for unit in ("feetforceplate-seed.service", "feetforceplate-backup.service"):
+    for unit in ("feetforceplate-seed.service", "feetforceplate-backup.service",
+                 "feetforceplate-diagnostics-purge.service"):
         assert "Environment=UV_OFFLINE=1" in _text(unit)
 
 
