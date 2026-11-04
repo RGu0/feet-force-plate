@@ -59,6 +59,10 @@ Provider-only lifecycle commands are:
 Platform identity, such as the `PLATFORM_SUPPORT` login the diagnostics smoke
 needs; it reads the owner password and the new password (twice) with getpass,
 is audited as `platform-identity.create` and prints only the new id and roles.
+There is no command yet to suspend a Platform identity (`rotate-platform-role`
+needs at least one role), so a support login created for a smoke keeps its
+access: give it a unique strong password, create it on integration only, and
+track its retirement separately.
 `rotate-platform-role` replaces the roles of an identity that already exists.
 
 `set-terminal-seats` (RAY-656) sets how many mobile terminals the account may

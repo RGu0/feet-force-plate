@@ -87,15 +87,32 @@ service runs as `feetforceplate` with `seed.env`, offline from the service uv
 cache like the backup service, and executes
 `./dev run python -m cloud.terminal_diagnostics.purge`. It deletes the content
 of every expired package and keeps the row as a tombstone with `deleted_at`; an
-interrupted run is safe to repeat. Its only output is `{"purged": <count>}` in
-the journal: no content, object key, DSN or credential. `install-seed-release.sh`
-installs both units, enables and starts the timer. To run it once by hand and
-read the result:
+interrupted run is safe to repeat. Its stdout is only `{"purged": <count>}`;
+the journal also gets `uv sync` progress lines, and on failure a Python
+traceback that holds no DSN or credential but may name an object key (which
+contains a tenant UUID), so read a failed run's journal before quoting it in
+evidence. A start timeout of 30 minutes stops a hung run from blocking the next
+day's. With the OSS backend the purge calls `DeleteObject`, so the ECS RAM role
+must allow `oss:DeleteObject` on `diagnostics/*` in the bucket; one manual run
+(below) after each first install proves it, as nothing alerts on a failed
+nightly run. `install-seed-release.sh` installs both units, enables and starts
+the timer. To run it once by hand and read the result:
 
 ```bash
 sudo systemctl start feetforceplate-diagnostics-purge.service
 sudo journalctl -u feetforceplate-diagnostics-purge.service -n 5 --no-pager
 systemctl list-timers feetforceplate-diagnostics-purge.timer --no-pager
+```
+
+The diagnostics smoke (`scripts/run_ray802_diagnostics_smoke.py`) can only see
+HTTP answers; it records the run's `ticket_reference`, and the audit rows the
+support list/read and the two refusals produced are checked read-only on the
+host with that value:
+
+```bash
+sudo -u postgres psql -d feetforceplate_seed -Atc "select action, coalesce(details->>'actor_kind',''), coalesce(details->>'reason',''), count(*) from ops.access_audit_events where details->>'ticket_reference' = '<ticket_reference>' group by 1,2,3 order by 1,2,3"
+# expect diagnostics.deny|platform|role_unauthorized|1, diagnostics.deny|terminal|terminal_credential|1,
+#        diagnostics.list|platform||1, diagnostics.read|platform||1
 ```
 
 The purge is the mechanism. With `FEETFORCEPLATE_OBJECT_BACKEND=aliyun-oss`
@@ -113,7 +130,8 @@ the bucket also carries a lifecycle backstop for content the purge missed
   version behind, which needs its own decision before the rule is saved;
 - record only the rule's description (prefix, action, days, the review of
   existing rules) in evidence; never an AccessKey, STS token or console
-  credential. The ECS RAM role used by the service is unchanged.
+  credential. The rule needs no change to the service's ECS RAM role (the
+  role's `oss:DeleteObject` on `diagnostics/*`, above, is a separate check).
 
 With the filesystem backend there is no backstop; the purge alone deletes
 content under `/var/lib/feetforceplate/objects/diagnostics/`.

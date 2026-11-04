@@ -39,6 +39,7 @@ import argparse
 from datetime import UTC, datetime
 import getpass
 import hashlib
+from http.client import HTTPException
 import json
 from pathlib import Path
 import secrets
@@ -210,7 +211,6 @@ def run(
             "diagnostic_upload_key_reused", _upload(client, token, key, other),
             status={409}, error_code="E-API-409",
         )
-        recorder.note(digest_differs=hashlib.sha256(other).hexdigest() != digest)
 
         status, rejected = _upload(
             client, token, f"{LABEL}-{_nonce()}",
@@ -291,7 +291,7 @@ def run(
     except SmokeFailure as failure:
         summary["result"] = "failed"
         summary["failed_step"] = str(failure)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, HTTPException) as error:
         # Transport, TLS, timeout or a non-JSON body: still write evidence.
         summary["result"] = "failed"
         summary["failed_step"] = f"transport:{type(error).__name__}"

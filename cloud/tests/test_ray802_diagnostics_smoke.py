@@ -116,7 +116,6 @@ class DiagnosticsSmokeTest(diagnostics._DiagnosticsApiFixture):
         self.assertTrue(steps["diagnostic_upload_replay"]["identical"])
         reused = steps["diagnostic_upload_key_reused"]
         self.assertEqual((reused["status"], reused["error_code"]), (409, "E-API-409"))
-        self.assertTrue(reused["digest_differs"])
         planted = steps["diagnostic_upload_identity_planted"]
         self.assertEqual((planted["status"], planted["reason"], planted["line"]),
                          (422, "identity_detected", 2))
@@ -220,17 +219,23 @@ class DiagnosticsSmokeTamperTest(DiagnosticsSmokeTest):
         self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
 
     async def test_transport_error_is_recorded_and_cleans_up(self) -> None:
+        from http.client import IncompleteRead
+
         original = _BridgedClient.call
+        for error in (ConnectionResetError("dropped"), IncompleteRead(b"")):
+            with self.subTest(type(error).__name__):
+                await self.asyncTearDown()
+                await self.asyncSetUp()
 
-        def call(client, method, path, **kwargs):
-            if path == "/v1/platform/login":
-                raise ConnectionResetError("dropped")
-            return original(client, method, path, **kwargs)
+                def call(client, method, path, error=error, **kwargs):
+                    if path == "/v1/platform/login":
+                        raise error
+                    return original(client, method, path, **kwargs)
 
-        with patch.object(_BridgedClient, "call", call):
-            summary = await self._run()
-        self.assertEqual(summary["failed_step"], "transport:ConnectionResetError")
-        self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
+                with patch.object(_BridgedClient, "call", call):
+                    summary = await self._run()
+                self.assertEqual(summary["failed_step"], f"transport:{type(error).__name__}")
+                self.assertEqual(await self.smoke_terminal_statuses(), ["REVOKED"])
 
 
 class SyntheticPackageTest(unittest.TestCase):

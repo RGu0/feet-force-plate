@@ -492,7 +492,7 @@ def test_cli_create_platform_identity_needs_the_owner_and_prints_no_secret(capsy
     from cloud.access_control import cli
 
     async def exercise() -> None:
-        _, _, identities, _ = _services()
+        repository, _, identities, _ = _services()
         await identities.bootstrap_owner(
             login_name="platform-owner", display_name="Platform Owner",
             password="correct-horse-battery-staple",
@@ -516,6 +516,10 @@ def test_cli_create_platform_identity_needs_the_owner_and_prints_no_secret(capsy
         support = await identities.login(PlatformLoginRequest(
             login_name="ray802-smoke-support", password="support-password-long-enough"))
         assert support.roles == (PlatformRole.SUPPORT,)
+        [created] = [event for event in await repository.audit_events()
+                     if event.action == "platform-identity.create"]
+        assert created.resource_id == support.platform_identity_id
+        assert dict(created.details) == {"role": "PLATFORM_SUPPORT"}
 
         # A non-owner cannot create identities; a mistyped confirmation stops first.
         denied = argparse.Namespace(**{**vars(args), "platform_login": "ray802-smoke-support",

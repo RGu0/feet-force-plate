@@ -346,7 +346,7 @@ def test_diagnostics_purge_service_runs_the_purge_unprivileged_with_seed_setting
     assert "UV_OFFLINE=1" in service["Environment"]
     for key, value in (
         ("NoNewPrivileges", "true"), ("PrivateTmp", "true"), ("ProtectSystem", "strict"),
-        ("ProtectHome", "true"), ("UMask", "0077"),
+        ("ProtectHome", "true"), ("UMask", "0077"), ("TimeoutStartSec", "30min"),
     ):
         assert service[key] == [value]
     assert service["ReadOnlyPaths"] == ["/opt/feetforceplate/app /etc/feetforceplate/seed.env"]
