@@ -160,7 +160,8 @@ Platform support access, not part of the mobile contract:
   seed host `feetforceplate-diagnostics-purge.timer` runs it once a day; an OSS
   lifecycle rule on the `diagnostics/` prefix (delete after 31 days) is the
   backstop, not the mechanism. Both belong to RAY-927, not RAY-785; see
-  `deploy/aliyun/seed/README.md`.
+  `deploy/aliyun/seed/README.md`, which also lists the OSS role grant on
+  `diagnostics/*` (`PutObject`, `GetObject`, `DeleteObject`).
 
 ## Application composition
 

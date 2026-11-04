@@ -386,3 +386,17 @@ def test_release_installer_installs_and_enables_the_diagnostics_purge_timer() ->
     # The service executes ./dev directly; its git mode (checked in
     # test_systemd_entry_scripts_are_executable) survives the release archive.
     assert "diagnostics_purge=timer-enabled secrets=not-printed" in text
+
+
+def test_seed_readme_grants_the_oss_role_every_diagnostics_object_action() -> None:
+    # RAY-927 oss-role-doc: upload needs PutObject, the HeadObject pre-check and
+    # support read need GetObject, the purge needs DeleteObject.
+    text = _read_repository_text(ROOT / "README.md")
+    section = text[text.index("### OSS role grant for `diagnostics/`"):text.index("### OSS lifecycle backstop")]
+    assert '"Action": ["oss:PutObject", "oss:GetObject", "oss:DeleteObject"]' in section
+    assert '"acs:oss:*:*:<bucket>/tenants/*"' in section
+    assert '"acs:oss:*:*:<bucket>/diagnostics/*"' in section
+    assert "must allow `oss:DeleteObject` on `diagnostics/*`" not in text
+    backstop = text[text.index("### OSS lifecycle backstop"):]
+    assert "allow prefix overlap" in backstop
+    assert "delete marker" in backstop
