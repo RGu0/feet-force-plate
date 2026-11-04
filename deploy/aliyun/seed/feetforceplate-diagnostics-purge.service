@@ -10,7 +10,7 @@ WorkingDirectory=/opt/feetforceplate/app
 EnvironmentFile=/etc/feetforceplate/seed.env
 Environment=XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache
 Environment=UV_OFFLINE=1
-# Prints only {"purged": <count>}; content, keys and settings never reach the journal.
+# stdout is only {"purged": <count>}; see the seed README for what else reaches the journal.
 ExecStart=/opt/feetforceplate/app/dev run python -m cloud.terminal_diagnostics.purge
 TimeoutStartSec=30min
 UMask=0077
