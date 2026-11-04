@@ -58,7 +58,7 @@ def test_deployment_applies_and_backs_up_diagnostics_migration() -> None:
         "0017_subject_sync.sql"
     )
     assert "GRANT SELECT ON ops.terminal_diagnostics TO ffp_seed_backup;" in install
-    assert "0017_subject_sync,0018_terminal_diagnostics\"" in backup
+    assert "0017_subject_sync,0018_terminal_diagnostics,0019_tenant_status_gate\"" in backup
 
 
 def _record(tenant_id, installation, key, *, received=NOW, days=30) -> DiagnosticRecord:

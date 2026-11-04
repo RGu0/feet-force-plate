@@ -59,6 +59,7 @@ from shared.contracts.access_control import (
     ProvisionTenantRequest,
     RefreshRequest,
     SensitiveAccessGrantRequest,
+    TenantControlRequest,
 )
 from shared.contracts.insole_inventory import (
     INSOLE_PAGE_MAX_LIMIT,
@@ -905,6 +906,20 @@ def create_app(container: ServiceContainer) -> FastAPI:
                 body,
             )
             return _data_response(request, result, 201)
+
+        @app.patch("/v1/platform/tenants/{tenant_id}")
+        async def platform_control_tenant(
+            request: Request,
+            tenant_id: UUID,
+            body: TenantControlRequest,
+            context: PlatformAccessDependency,
+        ):
+            result = await container.platform_access.control_tenant(
+                context,
+                tenant_id,
+                body,
+            )
+            return _data_response(request, result)
 
         @app.patch("/v1/platform/licenses/{license_id}")
         async def platform_control_license(

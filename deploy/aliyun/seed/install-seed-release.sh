@@ -266,6 +266,9 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
 apply_migration ops.terminal_diagnostics "$release_source/cloud/migrations/0018_terminal_diagnostics.sql"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
     "GRANT SELECT ON ops.terminal_diagnostics TO ffp_seed_backup;"
+# RAY-963: tenant role reads its own tenant status; converges, safe on every install.
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0019_tenant_status_gate.sql"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then
