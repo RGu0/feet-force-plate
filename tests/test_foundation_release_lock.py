@@ -22,7 +22,7 @@ def test_public_release_url_must_match_lock(tmp_path: Path) -> None:
     lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
     project_path = tmp_path / "pyproject.toml"
     lock_path = tmp_path / "uv.lock"
-    project_path.write_text(project.replace("releases/download/v0.2.0", "releases/download/v0.2.1"), encoding="utf-8")
+    project_path.write_text(project.replace("releases/download/v0.9.0", "releases/download/v0.9.1"), encoding="utf-8")
     lock_path.write_text(lock, encoding="utf-8")
     with pytest.raises(RuntimeError, match="release URL differs"):
         locked_foundation_release(project_path, lock_path)
@@ -33,7 +33,7 @@ def test_missing_locked_wheel_hash_is_rejected(tmp_path: Path) -> None:
     lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
     lock_path = tmp_path / "uv.lock"
     lock_path.write_text(lock.replace(
-        "sha256:1dd34fb4902fb7359af346e153123e8db12befc6ae8a9de2105e11f80af74303",
+        "sha256:d1e5f8a8ed7ad678332edb8cfb50dd307d38fe08fa89ad63a673462afa40ab76",
         "sha256:missing",
     ), encoding="utf-8")
     with pytest.raises(RuntimeError, match="SHA-256 is absent"):
