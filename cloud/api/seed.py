@@ -16,16 +16,26 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from cloud.access_control.capture_grants import CaptureGrantService
 from cloud.access_control.lease_service import HardwareLeaseService
 from cloud.access_control.platform_iam import PlatformIdentityService, SensitiveAccessService
 from cloud.access_control.platform_service import PlatformProvisioningService
 from cloud.access_control.postgres import PostgresAccessRepository
 from cloud.access_control.tenant_service import TenantAuthenticationService
+from cloud.access_control.terminal_service import TerminalAccessService
+from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
+from cloud.insole_inventory.service import InsoleInventoryService
+from cloud.subject_sync.postgres import PostgresSubjectSyncRepository
+from cloud.subject_sync.service import SubjectSyncService
+from cloud.terminal_diagnostics.postgres import PostgresDiagnosticRepository
+from cloud.terminal_diagnostics.service import TerminalDiagnosticsService
 from cloud.api.access_auth import (
     LicenseDocumentSigner,
     PlatformAccessTokenIssuer,
     RefreshTokenFactory,
     TenantAccessTokenIssuer,
+    TerminalAccessTokenIssuer,
+    TerminalRefreshTokenFactory,
 )
 from cloud.api.app import ServiceContainer, create_app
 from cloud.api.postgres import PostgresPlatformRepository
@@ -33,10 +43,15 @@ from cloud.api.subject_service import IdentityProtector, SubjectConsentService
 from cloud.device_management.heartbeat_service import DeviceHeartbeatService
 from cloud.ingestion.object_store import FileSystemObjectStore
 from cloud.ingestion.service import IngestionService
+from cloud.identity_recovery.postgres import (
+    PostgresRecoveryCaseRepository, PostgresRecoveryIdentityReader,
+)
+from cloud.identity_recovery.service import IdentityRecoveryService
 from cloud.observability.validation_telemetry import (
     FileSystemValidationTelemetryRepository,
     ValidationTelemetryService,
 )
+from shared.contracts.cloud import INSOLE_ARCHIVE_PAYLOAD_SCHEMA, INSOLE_MANIFEST_SCHEMA
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -220,6 +235,19 @@ class SeedSettings:
         )
 
 
+def build_object_store(
+    settings: SeedSettings,
+    object_store_factory: Callable[[SeedSettings], Any] | None = None,
+) -> Any:
+    if object_store_factory is not None:
+        return object_store_factory(settings)
+    if settings.object_backend == "aliyun-oss":
+        from cloud.ingestion.aliyun_oss import build_aliyun_oss_object_store
+
+        return build_aliyun_oss_object_store(settings)
+    return FileSystemObjectStore(settings.object_root)
+
+
 async def build_seed_app(
     settings: SeedSettings,
     *,
@@ -237,15 +265,16 @@ async def build_seed_app(
     access_repository = PostgresAccessRepository(
         tenant_pool=tenant_pool, activation_pool=activation_pool, platform_pool=platform_pool
     )
-    data_repository = PostgresPlatformRepository(tenant_pool)
-    if object_store_factory is not None:
-        objects = object_store_factory(settings)
-    elif settings.object_backend == "aliyun-oss":
-        from cloud.ingestion.aliyun_oss import build_aliyun_oss_object_store
+    data_repository = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
+    from cloud.session_hold.postgres import PostgresSessionHoldRepository
+    from cloud.session_hold.service import SessionHoldService
+    from cloud.report_copy.object_store import LocalBasicPdfStore
+    from cloud.report_copy.postgres import PostgresLocalBasicCopyRepository
+    from cloud.report_copy.service import LocalBasicCopyService
 
-        objects = build_aliyun_oss_object_store(settings)
-    else:
-        objects = FileSystemObjectStore(settings.object_root)
+    hold_repository = PostgresSessionHoldRepository(platform_pool)
+    session_holds = SessionHoldService(hold_repository)
+    objects = build_object_store(settings, object_store_factory)
     private_key = settings.license_private_key()
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     license_signer = LicenseDocumentSigner(
@@ -266,6 +295,21 @@ async def build_seed_app(
         activation_hmac_key=_secret(settings.activation_hmac_key, "activation key"),
         tenant_tokens=tenant_tokens,
         refresh_tokens=RefreshTokenFactory(
+            digest_key=_secret(settings.tenant_refresh_hmac_key, "tenant refresh key")
+        ),
+        license_signer=license_signer,
+    )
+    # Terminal tokens share the tenant signing secret but carry their own
+    # token type and audience, so neither verifier accepts the other's token.
+    terminal_tokens = TerminalAccessTokenIssuer(
+        secret=_secret(settings.tenant_token_secret, "tenant token secret"),
+        key_id=settings.tenant_token_key_id,
+    )
+    terminal_access = TerminalAccessService(
+        access_repository,
+        login_lookup_hmac_key=_secret(settings.tenant_login_hmac_key, "tenant login key"),
+        terminal_tokens=terminal_tokens,
+        refresh_tokens=TerminalRefreshTokenFactory(
             digest_key=_secret(settings.tenant_refresh_hmac_key, "tenant refresh key")
         ),
         license_signer=license_signer,
@@ -291,26 +335,58 @@ async def build_seed_app(
         lookup_hmac_key=_secret(settings.identity_lookup_hmac_key, "identity lookup key"),
         key_version=settings.identity_key_version,
     )
+    subjects = SubjectConsentService(data_repository, identity)
+    sensitive = SensitiveAccessService(access_repository)
+    # D10 and identity recovery share one reader: ACTIVE subjects only, decrypt
+    # failures masked, and called only after the sensitive grant is used.
+    identity_reader = PostgresRecoveryIdentityReader(tenant_pool, identity)
     app = create_app(
         ServiceContainer(
             ingestion=IngestionService(
                 data_repository, objects,
-                supported_payload_schemas={"raw-segment/1"},
-                supported_manifest_schemas={"session-manifest/1"},
+                # RAY-825: insole archive sessions alongside force-plate raw segments.
+                supported_payload_schemas={"raw-segment/1", INSOLE_ARCHIVE_PAYLOAD_SCHEMA},
+                supported_manifest_schemas={"session-manifest/1", INSOLE_MANIFEST_SCHEMA},
             ),
-            subjects=SubjectConsentService(data_repository, identity),
+            subjects=subjects,
             heartbeats=DeviceHeartbeatService(data_repository),
             tenant_access=tenant_access,
             tenant_tokens=tenant_tokens,
+            terminal_access=terminal_access,
+            terminal_tokens=terminal_tokens,
+            insole_inventory=InsoleInventoryService(
+                PostgresInsoleInventoryRepository(activation_pool), access_repository
+            ),
+            subject_sync=SubjectSyncService(
+                PostgresSubjectSyncRepository(tenant_pool), terminal_access, identity
+            ),
+            # RAY-802: packages are uploaded by terminals, read by Platform support.
+            terminal_diagnostics=TerminalDiagnosticsService(
+                PostgresDiagnosticRepository(activation_pool, platform_pool),
+                objects,
+                access_repository,
+            ),
             hardware_leases=HardwareLeaseService(access_repository),
+            capture_grants=CaptureGrantService(data_repository),
             platform_identities=platform_identities,
             platform_access=platform_access,
             platform_tokens=platform_tokens,
-            platform_sensitive=SensitiveAccessService(access_repository),
+            platform_sensitive=sensitive,
+            platform_subjects=identity_reader,
+            session_holds=session_holds,
+            report_copies=LocalBasicCopyService(
+                PostgresLocalBasicCopyRepository(tenant_pool, LocalBasicPdfStore(objects)),
+                hold_repository,
+            ),
             validation_telemetry=ValidationTelemetryService(
                 FileSystemValidationTelemetryRepository(
                     Path(settings.validation_telemetry_root)
                 )
+            ),
+            identity_recovery=IdentityRecoveryService(
+                PostgresRecoveryCaseRepository(tenant_pool, platform_pool),
+                sensitive=sensitive,
+                identity_reader=identity_reader,
             ),
         )
     )
@@ -382,4 +458,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["SeedSettings", "build_seed_app", "serve_seed"]
+__all__ = ["SeedSettings", "build_object_store", "build_seed_app", "serve_seed"]

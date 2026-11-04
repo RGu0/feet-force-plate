@@ -186,8 +186,35 @@ def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
     assert "0005_sales_inventory_activation.sql" in text
     assert "0006_inventory_activation_pairing.sql" in text
     assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
+    assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
+    assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
+    assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
+    assert text.index("0011_controlled_identity_recovery.sql") > text.index("0010_local_basic_report_copies.sql")
+    assert text.index("0012_terminal_activation.sql") > text.index("0011_controlled_identity_recovery.sql")
+    assert text.index("0013_insole_inventory.sql") > text.index("0012_terminal_activation.sql")
+    assert text.index("0014_recovery_bound_migration_permits.sql") > text.index("0013_insole_inventory.sql")
+    # 0014 only alters an existing table, so its idempotence marker must be a
+    # column; a constraint name is not a relation and to_regclass never sees it.
+    assert (
+        "apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "
+        '"$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"'
+    ) in text
+    assert "upload_migration_permits_recovery_binding \"" not in text
+    assert text.index("to_regclass('ops.session_holds')") < text.index("0011_controlled_identity_recovery.sql")
+    assert text.index("GRANT SELECT ON ops.identity_recovery_cases") > text.index(
+        "0011_controlled_identity_recovery.sql"
+    )
+    assert text.index("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup") > text.index(
+        "0010_local_basic_report_copies.sql"
+    )
     assert "install_tls_file" in text
     assert "readlink -f" in text
+    assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
+    assert "verify_foundation_release_lock.py" in text
+    # RAY-814: the host has no GitHub access; the operator uploads the wheel.
+    assert "curl --fail" not in text
+    assert "foundation_wheel_source" in text
+    assert "foundation release wheel digest mismatch" in text
     assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
     assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
 
@@ -226,6 +253,35 @@ def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
     assert 'release_sha="${RELEASE_SHA:?missing RELEASE_SHA}"' in text
     assert 'archive_sha="${ARCHIVE_SHA256:?missing ARCHIVE_SHA256}"' in text
     assert 'archive="${ARCHIVE_PATH:?missing ARCHIVE_PATH}"' in text
+
+
+def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
+    text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
+    assert 'remote_wrapper_source="$repo_root/deploy/aliyun/seed/feetforceplate-seed-release-server.sh"' in text
+    assert 'remote_wrapper="/home/rui/$(basename "$remote_wrapper_source")"' in text
+    assert "ssh -tt" in text
+    assert 'scp "$archive" "$foundation_wheel" "$remote_wrapper_source" "$server:/home/rui/"' in text
+    assert 'ssh -tt "$server" sudo /bin/bash "$remote_wrapper"' in text
+    assert "/bin/bash -s" not in text
+
+
+def test_remote_release_deploy_ships_the_git_archive_and_checked_wheel() -> None:
+    text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
+    assert 'git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha"' in text
+    # RAY-814: the operator downloads and checks the locked wheel, then uploads it.
+    assert 'foundation release wheel digest mismatch' in text
+    assert "prepare_foundation_artifact" not in text
+    assert ".foundation-artifacts" not in text
+
+
+def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -> None:
+    text = _read_repository_text(ROOT / "feetforceplate-seed-release-server.sh")
+    assert '[[ "${EUID}" -ne 0 ]]' in text
+    assert 'archive must be located under /home/rui' in text
+    assert 'release archive checksum mismatch' in text
+    assert 'source /etc/feetforceplate/seed.env' in text
+    assert 'install-seed-release.sh' in text
+    assert 'secrets=not-printed' in text
 
 
 def test_systemd_entry_scripts_are_executable() -> None:

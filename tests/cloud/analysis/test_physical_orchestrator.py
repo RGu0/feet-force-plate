@@ -24,9 +24,15 @@ from cloud.analysis.risk_rules import (
     questionnaire_snapshot_sha256,
 )
 from cloud.analysis.protocol_context import protocol_context_sha256
+from cloud.session_hold.service import SessionHeld
 
 from test_physical_features import _session_payload
 from test_physical_input import valid_protocol_context
+
+
+class UnheldReader:
+    def is_held(self, tenant_id: str, session_id: str) -> bool:
+        return False
 
 
 def make_event(**overrides: object) -> CompleteSessionEvent:
@@ -88,6 +94,8 @@ def release_descriptor(**overrides: object) -> PhysicalMetricDescriptor:
 def make_orchestrator(
     *,
     sample_rate_hz: float = 20.0,
+    holds=None,
+    loader_override=None,
 ) -> tuple[PhysicalAnalysisOrchestrator, InMemoryPhysicalAnalysisRepository]:
     repository = InMemoryPhysicalAnalysisRepository()
     parameters = FeatureParameters(
@@ -96,9 +104,7 @@ def make_orchestrator(
         lowpass_cutoff_hz=0.0,
     )
     session = parse_physical_pressure_session(_session_payload(sample_rate_hz=sample_rate_hz))
-    loader = InMemoryPhysicalSessionLoader(
-        session
-    )
+    loader = loader_override or InMemoryPhysicalSessionLoader(session)
     orchestrator = PhysicalAnalysisOrchestrator(
         loader=loader,
         repository=repository,
@@ -116,8 +122,36 @@ def make_orchestrator(
                 medication_tags=frozenset(),
             )
         ),
+        holds=holds if holds is not None else UnheldReader(),
     )
     return orchestrator, repository
+
+
+def test_queued_physical_event_is_blocked_before_raw_load_or_run() -> None:
+    queued = make_event(event_id="queued-before-hold")
+
+    class Holds:
+        def __init__(self) -> None:
+            self.held: set[tuple[str, str]] = set()
+
+        def is_held(self, tenant_id: str, session_id: str) -> bool:
+            return (tenant_id, session_id) in self.held
+
+    class Loader:
+        calls = 0
+
+        def load(self, event):
+            self.calls += 1
+            raise AssertionError("raw load must not start for held session")
+
+    holds, loader = Holds(), Loader()
+    service, repository = make_orchestrator(holds=holds, loader_override=loader)
+    holds.held.add((queued.tenant_id, queued.session_id))
+
+    with pytest.raises(SessionHeld):
+        service.handle(queued)
+    assert loader.calls == 0
+    assert repository.count() == 0
 
 
 def test_only_ingested_complete_triggers_feature_reconstruction() -> None:

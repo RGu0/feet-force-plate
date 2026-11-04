@@ -288,6 +288,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     institution = SimpleNamespace(consent_port=lambda: object())
     controller = _FakeController()
     physical_store = PhysicalStore()
+    live_runtime.EngineeringDeviceBindingStore(tmp_path).register_device_id("FFP-001")
     baseline: object | None = None
     acquisition: Acquisition | None = None
     capture: Capture | None = None
@@ -341,7 +342,11 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         ),
         raising=False,
     )
-    monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", lambda _store: object())
+    session_bindings = {}
+    def make_sessions(_store, **kwargs):
+        session_bindings.update(kwargs)
+        return object()
+    monkeypatch.setattr(live_runtime, "InstitutionLiveSessions", make_sessions)
     monkeypatch.setattr(live_runtime, "LiveBaselinePreflight", make_baseline)
     monkeypatch.setattr(live_runtime, "HardwareLeasePreflight", lambda _lease: object())
     monkeypatch.setattr(live_runtime, "build_production_preflight", lambda **_kwargs: object())
@@ -392,7 +397,11 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         export_destination=lambda: None,
         app_version="9.8.7-authoritative",
         payload_schema="raw-segment/7",
+        engineering_login=lambda _login, _password: None,
     )
+    assert session_bindings["tenant_id"] == "tenant-1"
+    assert session_bindings["installation_id"] == "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
+    assert callable(session_bindings["replenish"])
 
     assert (
         acquisition is not None
@@ -412,9 +421,21 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert formal_upload.app_version == "9.8.7-authoritative"
     assert formal_upload.payload_schema == "raw-segment/7"
     assert formal_upload.calibration_profile == "calibration-authoritative/42"
+    assert callable(capture_kwargs["dynamic_defect_mask_loader"])
+    assert capture_kwargs["dynamic_defect_mask_loader"]().device_id == "FFP-001"
+    assert connected_kwargs["controller_options"]["engineering_login"] is not None
     read_models = connected_kwargs["controller_options"]["read_models"]
     assert read_models.tenant_id == "tenant-1"
     assert read_models.institution is institution
+    live_protocol = connected_kwargs["protocol"]
+    assert live_protocol.protocol_id == "standard-static-balance"
+    assert live_protocol.version == "static-balance/live-hardware-demo/1"
+    assert [stage.stage_id for stage in live_protocol.stages] == [
+        "BILATERAL_EYES_OPEN",
+        "BILATERAL_EYES_CLOSED",
+        "SEMI_TANDEM_LEFT_FORWARD",
+        "SEMI_TANDEM_RIGHT_FORWARD",
+    ]
     callbacks = acquisition.callbacks
     callbacks["on_progress"](7)
     result = SimpleNamespace(stage_windows=("window-1",))

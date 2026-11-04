@@ -368,8 +368,13 @@ class MandatoryStartupGate(QObject):
             and self._coordinator.can_enter_workbench
         ):
             self._last_run = result
-            self._workbench = self._workbench_factory()
-            self._workbench.show()
+            try:
+                self._workbench = self._workbench_factory()
+                self._workbench.show()
+            except Exception:
+                # A passed hardware check must not leave a silent 100% startup screen.
+                self.window.present(presentation_for(StartupValidationState.INTERNAL_ERROR))
+                return
             self.window.hide()
             return
         if isinstance(result, Exception):

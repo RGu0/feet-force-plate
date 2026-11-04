@@ -191,13 +191,21 @@ class DoP4864HardwareQualityGate:
     def frozen_configuration_versions(self) -> dict[str, str]:
         """Expose the complete V1 quality/physical conversion selection for storage."""
 
-        return {
+        versions = {
             **self._adapter.frozen_configuration_versions,
             "bad_point_policy": self._policy.version,
             "baseline_window_id": self._baseline_reference.baseline_window_id,
             "baseline_rules": self._baseline_reference.rules_version,
             "baseline_threshold": self._baseline_reference.threshold_version,
         }
+        if self._dynamic_defect_mask is not None:
+            versions["dynamic_defect_mask_policy"] = (
+                self._dynamic_defect_mask.policy_version
+            )
+            versions["dynamic_defect_mask_version"] = str(
+                self._dynamic_defect_mask.mask_version
+            )
+        return versions
 
     @staticmethod
     def _row_column(source_index: int) -> tuple[int, int]:

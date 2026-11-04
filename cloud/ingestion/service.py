@@ -11,18 +11,21 @@ from cloud.api.errors import (
     QualityGateRejected,
     SchemaUnsupported,
     SegmentDigestConflict,
+    TenantAccessDenied,
 )
 from shared.contracts.client_sync import canonical_sha256
+from shared.contracts.capture_grants import SessionAuthorization
 from shared.contracts.cloud import (
+    MANIFEST_SCHEMA_FOR_PAYLOAD,
+    AnySegmentMetadata,
+    AnySessionManifest,
     ManifestCompletionResponse,
     ReceivedSegment,
     SegmentAcknowledgement,
     SegmentListResponse,
-    SegmentMetadata,
     SegmentReceiptStatus,
     SessionCreateRequest,
     SessionCreateResponse,
-    SessionManifest,
     SessionStatusResponse,
     ValidityStatus,
 )
@@ -37,6 +40,24 @@ _COMPLETION_ELIGIBILITY_REASON = (
     "principal can_upload; manifest digest matched; schema supported; "
     "local quality gate VALID"
 )
+
+
+def _require_terminal_request(
+    context: IngestionPrincipal, request: SessionCreateRequest
+) -> None:
+    # RAY-728 D2/D4: an activated terminal creates sessions only as itself,
+    # and terminal activation carries no site.
+    if not context.terminal_access:
+        return
+    if (
+        request.terminal_id != context.terminal_id
+        or request.client_installation_id != context.terminal_id
+    ):
+        raise TenantAccessDenied(
+            "会话终端与终端凭据不一致", terminal_id=str(request.terminal_id)
+        )
+    if request.site_id is not None:
+        raise TenantAccessDenied("终端会话不支持站点")
 
 
 class IngestionService:
@@ -58,6 +79,7 @@ class IngestionService:
         context: IngestionPrincipal | TerminalContext,
         request: SessionCreateRequest,
         idempotency_key: str,
+        authorization: SessionAuthorization | None = None,
     ) -> SessionCreateResponse:
         context = coerce_ingestion_principal(context)
         context.ensure_can_upload()
@@ -66,14 +88,25 @@ class IngestionService:
                 "客户端原始分段模式不受支持",
                 schema_version=request.versions.payload_schema,
             )
-        return await self._repository.create_session(context, request, idempotency_key)
+        _require_terminal_request(context, request)
+        return await self._repository.create_session(context, request, idempotency_key, authorization)
+
+    async def _session(self, context: IngestionPrincipal, session_id: UUID):
+        session = await self._repository.session(context, session_id)
+        # RAY-728 D2: a terminal reads and writes only the sessions it created.
+        if (
+            context.terminal_access
+            and session.request.client_installation_id != context.terminal_id
+        ):
+            raise TenantAccessDenied("会话不属于当前终端", session_id=str(session_id))
+        return session
 
     async def put_segment(
         self,
         context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
         route_index: int,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> SegmentAcknowledgement:
         context = coerce_ingestion_principal(context)
@@ -84,7 +117,7 @@ class IngestionService:
             raise SchemaUnsupported(
                 "分段模式不受支持", schema_version=metadata.payload_schema_version
             )
-        session = await self._repository.session(context, session_id)
+        session = await self._session(context, session_id)
         if session.request.versions.payload_schema != metadata.payload_schema_version:
             raise SchemaUnsupported(
                 "分段模式与会话模式不一致",
@@ -142,6 +175,9 @@ class IngestionService:
         self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SegmentListResponse:
         context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
+        if context.terminal_access:
+            await self._session(context, session_id)
         accepted = await self._repository.list_segments(context, session_id)
         indices = [record.metadata.segment_index for record in accepted]
         expected_count = await self._repository.expected_segment_count(context, session_id)
@@ -164,7 +200,7 @@ class IngestionService:
         self,
         context: IngestionPrincipal | TerminalContext,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
         idempotency_key: str,
     ) -> ManifestCompletionResponse:
@@ -186,7 +222,15 @@ class IngestionService:
                 "未通过本地质量门控的会话不能启动正式分析",
                 validity_status=manifest.local_quality_outcome.value,
             )
-        await self._repository.session(context, session_id)
+        session = await self._session(context, session_id)
+        # RAY-825: a session completes only with its payload schema's manifest.
+        session_schema = session.request.versions.payload_schema
+        if MANIFEST_SCHEMA_FOR_PAYLOAD.get(session_schema) != manifest.schema_version:
+            raise SchemaUnsupported(
+                "最终清单模式与会话模式不一致",
+                session_schema=session_schema,
+                manifest_schema=manifest.schema_version,
+            )
         stored = await self._objects.put_manifest(
             context.tenant_id, session_id, manifest, expected_sha256
         )
@@ -213,4 +257,7 @@ class IngestionService:
         self, context: IngestionPrincipal | TerminalContext, session_id: UUID
     ) -> SessionStatusResponse:
         context = coerce_ingestion_principal(context)
+        context.ensure_can_upload()
+        if context.terminal_access:
+            await self._session(context, session_id)
         return await self._repository.status(context, session_id)

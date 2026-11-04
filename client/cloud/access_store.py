@@ -11,6 +11,9 @@ import threading
 from typing import Protocol
 from uuid import UUID
 
+from techflex_cloud_foundation import CredentialVault
+
+from client.security.credential_vault import SystemCredentialVault
 from shared.contracts.access_control import AccessSession, SignedLicenseV2
 
 
@@ -25,96 +28,33 @@ class CredentialStore(Protocol):
     def delete_refresh_token(self, account_id: UUID) -> None: ...
 
 
-class CredentialStoreUnavailable(RuntimeError):
-    """The platform credential vault cannot safely serve this request."""
+class CredentialVaultStore:
+    """Refresh tokens through Foundation's target-system CredentialVault port."""
 
-
-class KeyringCredentialStore:
     def __init__(
         self,
+        vault: CredentialVault | None = None,
         *,
         service_name: str = "FeetForcePlate.access",
-        backend=None,
     ) -> None:
-        if backend is None:
-            try:
-                import keyring
-            except Exception:
-                raise CredentialStoreUnavailable(
-                    "system credential storage is unavailable"
-                ) from None
-
-            _require_windows_credential_manager(keyring)
-            backend = keyring
         self._service_name = service_name
-        self._backend = backend
+        self._vault = vault or SystemCredentialVault()
 
     @staticmethod
     def _username(account_id: UUID) -> str:
         return f"refresh:{account_id}"
 
+    def _key(self, account_id: UUID) -> str:
+        return f"{self._service_name}/{self._username(account_id)}"
+
     def set_refresh_token(self, account_id: UUID, refresh_token: str) -> None:
-        try:
-            self._backend.set_password(
-                self._service_name,
-                self._username(account_id),
-                refresh_token,
-            )
-        except Exception:
-            raise CredentialStoreUnavailable(
-                "system credential storage is unavailable"
-            ) from None
+        self._vault.set(self._key(account_id), refresh_token)
 
     def get_refresh_token(self, account_id: UUID) -> str | None:
-        try:
-            return self._backend.get_password(
-                self._service_name,
-                self._username(account_id),
-            )
-        except Exception:
-            raise CredentialStoreUnavailable(
-                "system credential storage is unavailable"
-            ) from None
+        return self._vault.get(self._key(account_id))
 
     def delete_refresh_token(self, account_id: UUID) -> None:
-        try:
-            self._backend.delete_password(
-                self._service_name,
-                self._username(account_id),
-            )
-        except Exception as exc:
-            if _is_missing_keyring_credential(exc):
-                return
-            raise CredentialStoreUnavailable(
-                "system credential storage is unavailable"
-            ) from None
-
-
-def _is_missing_keyring_credential(error: Exception) -> bool:
-    try:
-        from keyring.errors import PasswordDeleteError
-    except Exception:
-        return False
-    return isinstance(error, PasswordDeleteError)
-
-
-def _require_windows_credential_manager(backend) -> None:
-    if os.name != "nt":
-        return
-    try:
-        native_backend = backend.get_keyring()
-    except Exception:
-        raise CredentialStoreUnavailable(
-            "Windows Credential Manager backend is required"
-        ) from None
-    backend_type = type(native_backend)
-    if (
-        backend_type.__module__ != "keyring.backends.Windows"
-        or backend_type.__name__ != "WinVaultKeyring"
-    ):
-        raise CredentialStoreUnavailable(
-            "Windows Credential Manager backend is required"
-        )
+        self._vault.delete(self._key(account_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,9 +266,8 @@ def _decode_datetime(value: str | None) -> datetime | None:
 
 __all__ = [
     "ClientAccessStore",
+    "CredentialVaultStore",
     "CredentialStore",
-    "CredentialStoreUnavailable",
-    "KeyringCredentialStore",
     "LOCK_TIMEOUT_OPTIONS",
     "StoredAccessState",
 ]

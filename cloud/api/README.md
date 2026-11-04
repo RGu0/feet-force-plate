@@ -48,7 +48,60 @@ Provider-only lifecycle commands are:
   --roles PLATFORM_SUPPORT
 ./scripts/local-env.sh python -m cloud.access_control.cli inspect-license \
   --license-id "$FEETFORCEPLATE_LICENSE_ID"
+./scripts/local-env.sh python -m cloud.access_control.cli set-terminal-seats \
+  --platform-login platform-owner --license-id "$FEETFORCEPLATE_LICENSE_ID" --seats 3
 ```
+
+`set-terminal-seats` (RAY-656) sets how many mobile terminals the account may
+activate through `/v1/access/terminal-activate`; it needs a Platform write role,
+is audited as `license.terminal_seats`, and defaults to 0 for every License.
+Lowering it blocks new activations only; active terminals keep their seats.
+`list-terminals --license-id` and `revoke-terminal --client-installation-id
+--reason-code` (Platform write role, audited as `terminal.revoke`) free a seat
+held by a lost, reinstalled or expired terminal.
+
+Institutional insole inventory (RAY-778) is served under `/v1/inventory/insoles`
+to terminal bearer tokens only; any ACTIVE terminal of the tenant registers,
+reports and retires. Seed composition wires `InsoleInventoryService` to
+`PostgresInsoleInventoryRepository` on the activation pool, so migration
+`0013_insole_inventory.sql` must be applied before the seed release starts
+(`install-seed-release.sh` does this and grants the backup role SELECT). Pairs
+are retire-only; there is no delete route or grant.
+
+Institutional subject sync (RAY-907) is served under `GET /v1/subjects`,
+`PATCH /v1/subjects/{subject_uuid}`, `POST /v1/subjects/search-by-name` and
+`/v1/subject-tags` to terminal bearer tokens only. Seed composition wires
+`SubjectSyncService` to `PostgresSubjectSyncRepository` on the tenant pool with
+the same `IdentityProtector` as subject creation, so migration
+`0017_subject_sync.sql` (revision triggers, name lookup key, tag tables) must be
+applied before the seed release starts; `install-seed-release.sh` applies it once
+and grants the backup role SELECT. Reads ignore the License; PATCH and tag
+creation need a usable one.
+
+Since RAY-728 the subject, consent and session routes also accept terminal
+bearer tokens. Terminal activation and revocation project the terminal into
+`device.terminals`, and insole registration and retirement project the pair into
+`device.devices` (`model = 'insole-pair'`), in the same transaction, so the
+existing session and consent foreign keys hold. Migration
+`0015_terminal_data_plane_projection.sql` backfills earlier rows; it converges
+and `install-seed-release.sh` applies it on every install.
+
+RAY-825 registers the insole payload schema `insole-session-archive/1` (archive
+parts verified by SHA-256 and size only) with its manifest schema
+`insole-session-manifest/1` in both the seed and integration compositions;
+`raw-segment/1` is unchanged. Migration `0016_insole_session_archive.sql` makes
+the frame, clock, compression and cipher columns and `total_frames` nullable,
+with per-schema CHECKs; it converges and `install-seed-release.sh` applies it on
+every install. See `cloud/contracts/mobile/README.md` for the wire contract.
+
+RAY-834: every jsonb write in the Postgres repositories sends raw UTF-8
+(`json.dumps(..., ensure_ascii=False)`), because the integration database is
+`SQL_ASCII` and its jsonb rejects `\uXXXX` escapes of non-ASCII text; the stored
+jsonb values are unchanged. `cloud/tests/test_jsonb_utf8_and_error_envelope.py`
+fails on any new escaping write. An unhandled exception now returns the normal
+error envelope: database connection or timeout failures are 503 `E-CLD-503`
+(`RETRY_LATER`), anything else is 500 `E-CLD-500` (`CONTACT_SUPPORT`). Re-creating
+the database as UTF8 is tracked separately (RAY-835).
 
 `provision-tenant --json-input -` supports controlled automation. Passwords are
 read from stdin/getpass, activation codes are printed only in the one successful
@@ -57,6 +110,41 @@ signed License material. `/health/live` and `/health/ready` expose only named
 dependency classes and readiness states.
 
 Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002_p5_device_operations.sql`, with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
+
+Terminal diagnostic packages (RAY-802) are uploaded with a terminal access token
+to `POST /v1/diagnostics` (mobile contract: `cloud/contracts/mobile/README.md`).
+Migration `0018_terminal_diagnostics.sql` must be applied before the seed release
+starts; `install-seed-release.sh` applies it and grants the backup role SELECT.
+Records live in `ops.terminal_diagnostics` (tenant RLS forced; the activation role
+inserts, the platform role reads and may set only `deleted_at`, nobody deletes);
+content lives in the object store at `diagnostics/{tenant_id}/{diagnostic_id}.ndjson`,
+encrypted at rest by the store (OSS server-side encryption).
+
+Platform support access, not part of the mobile contract:
+
+- `GET /v1/platform/tenants/{tenant_id}/diagnostics?ticket_reference=…` lists
+  metadata (`DiagnosticListResponse`: id, uploading `client_installation_id`,
+  format, size, SHA-256, `received_at`, `expires_at`, `deleted_at`), newest first,
+  tombstones included.
+- `GET /v1/platform/tenants/{tenant_id}/diagnostics/{diagnostic_id}/content?ticket_reference=…`
+  returns the body as `application/x-ndjson` with `Cache-Control: no-store` and
+  `X-Content-SHA256`.
+- Only `PLATFORM_SUPPORT` and `PLATFORM_ENGINEER` are allowed; no
+  `SensitiveAccessGrant` is involved, since a package holds no identity by
+  construction. Each list and read needs a non-empty `ticket_reference` (at most
+  256 characters) and appends `diagnostics.list` / `diagnostics.read` to
+  `ops.access_audit_events` before anything is returned. A denial appends
+  `diagnostics.deny` with a `reason`: `role_unauthorized`, `ticket_missing`,
+  `context_inactive`, `terminal_credential` / `tenant_credential` (a valid
+  terminal or tenant token is 403 `E-PLT-403`, audited with that actor),
+  `tenant_unknown`, `not_found`, `expired`, `deleted` (the last four are 404
+  `E-API-404`). A read whose stored content is missing or fails its digest
+  check appends `diagnostics.read_failed` and returns 500.
+- Retention is 30 days from upload. Run the purge on the seed host with the
+  seed environment: `./dev run python -m cloud.terminal_diagnostics.purge`. It
+  deletes the content of every package past `expires_at` and keeps the row as a
+  tombstone with `deleted_at`; an interrupted run is safe to repeat. The OSS
+  lifecycle backstop rule is deployed with RAY-785.
 
 ## Application composition
 

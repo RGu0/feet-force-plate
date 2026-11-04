@@ -12,17 +12,18 @@ from uuid import UUID
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from .cloud import (
+    AnySegmentMetadata,
     ContractModel,
     ConsentCreateRequest,
     ReceivedSegment,
     SegmentAcknowledgement,
-    SegmentMetadata,
     SegmentReceiptStatus,
     Sha256Hex,
     SessionCreateRequest,
     SessionVersions,
     SubjectCreateRequest,
     TestProtocol,
+    parse_segment_metadata,
 )
 
 
@@ -68,6 +69,44 @@ class FormalUploadEnvelope(ContractModel):
             started_at=self.started_at,
             config_snapshot=self.config_snapshot,
         )
+
+
+class SubjectRecoveryAuthorization(ContractModel):
+    """Encrypted local authorization; the original upload envelope stays immutable."""
+
+    schema_version: Literal["subject-recovery/1", "subject-recovery/2"] = "subject-recovery/1"
+    session_id: UUID
+    original_envelope_sha256: Sha256Hex
+    original_subject_uuid: UUID
+    cloud_subject_uuid: UUID
+    replacement_consent: ConsentCreateRequest
+    operator_account_id: UUID
+    confirmed_at: datetime
+    cloud_external_id_masked: str | None = None
+    case_id: UUID | None = None
+    receipt_id: UUID | None = None
+    receipt_expires_at: datetime | None = None
+    platform_ticket_sha256: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def validate_bindings(self) -> SubjectRecoveryAuthorization:
+        if self.original_subject_uuid == self.cloud_subject_uuid:
+            raise ValueError("recovery requires distinct subject identities")
+        if self.replacement_consent.subject_uuid != self.cloud_subject_uuid:
+            raise ValueError("replacement consent must target the cloud subject")
+        if self.replacement_consent.granted_at < self.confirmed_at:
+            raise ValueError("replacement consent predates operator confirmation")
+        if self.schema_version == "subject-recovery/2":
+            if (
+                not self.case_id or not self.receipt_id or not self.receipt_expires_at
+                or not self.platform_ticket_sha256
+            ):
+                raise ValueError("server case and receipt are required")
+            if self.replacement_consent.evidence_type not in {
+                "SUBJECT_CONFIRMED", "REPRESENTATIVE_CONFIRMED",
+            }:
+                raise ValueError("fresh subject or representative evidence is required")
+        return self
 
 
 class LocalSegmentState(StrEnum):
@@ -274,15 +313,15 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def encode_segment_metadata(metadata: SegmentMetadata) -> str:
+def encode_segment_metadata(metadata: AnySegmentMetadata) -> str:
     return base64.urlsafe_b64encode(canonical_json_bytes(metadata)).rstrip(b"=").decode("ascii")
 
 
-def decode_segment_metadata(value: str) -> SegmentMetadata:
+def decode_segment_metadata(value: str) -> AnySegmentMetadata:
     try:
         padding = "=" * (-len(value) % 4)
         raw = base64.b64decode(value + padding, altchars=b"-_", validate=True)
         decoded = json.loads(raw)
     except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError) as exc:
         raise ValueError("invalid X-Segment-Metadata header") from exc
-    return SegmentMetadata.model_validate(decoded)
+    return parse_segment_metadata(decoded)

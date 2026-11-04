@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from shared.contracts.cloud import (
     SubjectCreateRequest,
     SubjectResolveRequest,
     SubjectSummary,
+    IdentityProfileInput,
 )
 
 
@@ -64,6 +66,21 @@ class IdentityProtector:
         )
         return hmac.new(self._lookup_hmac_key, scoped_value, hashlib.sha256).digest()
 
+    def name_digest(self, display_name: str, *, tenant_id: str) -> bytes | None:
+        """RAY-907: tenant-scoped exact-match key for a normalized display name.
+
+        Domain-separated from institution numbers, so a name digest never
+        equals a number digest of the same text. None for a name that is empty
+        after normalization: such names are never searchable.
+        """
+
+        if not self.normalize(display_name):
+            return None
+        scoped_value = (
+            f"{tenant_id}\x1fdisplay-name\x1f{self.normalize(display_name)}".encode("utf-8")
+        )
+        return hmac.new(self._lookup_hmac_key, scoped_value, hashlib.sha256).digest()
+
     def protect(
         self, value: str, *, tenant_id: str, issuer: str, id_type: str
     ) -> ProtectedIdentifier:
@@ -94,6 +111,16 @@ class IdentityProtector:
             nonce, canonical_json_bytes(value), associated_data
         )
         return ProtectedIdentityProfile(ciphertext, nonce, self.key_version)
+
+    def unprotect_identity_profile(
+        self, ciphertext: bytes, nonce: bytes, key_version: str,
+        *, tenant_id: str, subject_uuid: str,
+    ) -> IdentityProfileInput:
+        if key_version != self.key_version:
+            raise ValueError("unsupported identity key version")
+        associated_data = f"{tenant_id}\x1f{subject_uuid}\x1fidentity-profile".encode("utf-8")
+        plaintext = self._cipher.decrypt(nonce, ciphertext, associated_data)
+        return IdentityProfileInput.model_validate(json.loads(plaintext))
 
 
 class SubjectConsentService:
@@ -156,6 +183,16 @@ class SubjectConsentService:
             identity_nonce=None if protected_identity is None else protected_identity.nonce,
             identity_key_version=(
                 None if protected_identity is None else protected_identity.key_version
+            ),
+            # RAY-907 D6: every subject created from now on is name-searchable.
+            name_lookup_hmac=(
+                None
+                if request.identity_profile is None
+                or request.identity_profile.display_name is None
+                else self._identity.name_digest(
+                    request.identity_profile.display_name,
+                    tenant_id=str(context.tenant_id),
+                )
             ),
             idempotency_key=idempotency_key,
         )

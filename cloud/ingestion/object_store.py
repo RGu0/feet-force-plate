@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 from cloud.api.errors import DigestMismatch, SegmentDigestConflict, SizeMismatch
 from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.cloud import SegmentMetadata, SessionManifest
+from shared.contracts.cloud import AnySegmentMetadata, AnySessionManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,7 @@ class ObjectStore(Protocol):
         self,
         tenant_id: UUID,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> StoredObject: ...
 
@@ -36,7 +36,7 @@ class ObjectStore(Protocol):
         self,
         tenant_id: UUID,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
     ) -> StoredObject: ...
 
@@ -72,7 +72,7 @@ class InMemoryObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> StoredObject:
         payload = await _verified_bytes(chunks, metadata.sha256, metadata.size_bytes)
@@ -90,7 +90,7 @@ class InMemoryObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
     ) -> StoredObject:
         payload = canonical_json_bytes(manifest)
@@ -114,6 +114,16 @@ class InMemoryObjectStore:
         self._objects.pop(object_key, None)
 
     async def read(self, object_key: str) -> bytes:
+        return self._objects[object_key]
+
+    async def put_diagnostic(self, object_key: str, payload: bytes) -> StoredObject:
+        existing = self._objects.get(object_key)
+        if existing is not None and existing != payload:
+            raise SegmentDigestConflict("不可变对象键已存在不同内容", object_key=object_key)
+        self._objects[object_key] = payload
+        return StoredObject(object_key, hashlib.sha256(payload).hexdigest(), len(payload))
+
+    async def read_diagnostic(self, object_key: str) -> bytes:
         return self._objects[object_key]
 
 
@@ -152,7 +162,7 @@ class FileSystemObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> StoredObject:
         object_key = (
@@ -171,7 +181,7 @@ class FileSystemObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
     ) -> StoredObject:
         payload = canonical_json_bytes(manifest)
@@ -280,6 +290,27 @@ class FileSystemObjectStore:
     async def read(self, object_key: str) -> bytes:
         return self._path(object_key).read_bytes()
 
+    async def put_report_pdf(self, object_key: str, payload: bytes) -> StoredObject:
+        async def chunks():
+            yield payload
+
+        return await self._write_stream(
+            object_key, chunks(), expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload), kind="basic report PDF",
+        )
+
+    async def put_diagnostic(self, object_key: str, payload: bytes) -> StoredObject:
+        async def chunks():
+            yield payload
+
+        return await self._write_stream(
+            object_key, chunks(), expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload), kind="diagnostic package",
+        )
+
+    async def read_diagnostic(self, object_key: str) -> bytes:
+        return self._path(object_key).read_bytes()
+
 
 class S3ObjectStore:
     """S3-compatible immutable object adapter with KMS server-side encryption."""
@@ -293,7 +324,7 @@ class S3ObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        metadata: SegmentMetadata,
+        metadata: AnySegmentMetadata,
         chunks: AsyncIterable[bytes],
     ) -> StoredObject:
         with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as handle:
@@ -362,7 +393,7 @@ class S3ObjectStore:
         self,
         tenant_id: UUID,
         session_id: UUID,
-        manifest: SessionManifest,
+        manifest: AnySessionManifest,
         expected_sha256: str,
     ) -> StoredObject:
         payload = canonical_json_bytes(manifest)

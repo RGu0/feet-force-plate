@@ -295,6 +295,79 @@ class PlatformProvisioningService:
         )
         return LicenseControlResponse(signed_license=signed, changed_at=now)
 
+    async def set_terminal_seats(
+        self,
+        context: PlatformAccessContext,
+        license_id: UUID,
+        seats: int,
+    ):
+        """Set the RAY-656 terminal seat limit carried by signed terminal Licenses.
+
+        Lowering the limit below the active count blocks new activations only;
+        already active terminals keep their seats until revoked.
+        """
+        self._require_write_role(context)
+        if not 0 <= seats <= 1000:
+            raise ValueError("terminal seats must be between 0 and 1000")
+        current = await self._repository.license(license_id)
+        now = self._now()
+        updated = await self._repository.set_terminal_seats(
+            license_id=license_id, seats=seats, changed_at=now
+        )
+        await self._audit(
+            context,
+            action="license.terminal_seats",
+            tenant_id=current.tenant_id,
+            resource_id=license_id,
+            occurred_at=now,
+            details={
+                "previous_seats": str(current.terminal_seats),
+                "terminal_seats": str(seats),
+            },
+        )
+        return updated
+
+    async def list_terminals(self, context: PlatformAccessContext, license_id: UUID):
+        """RAY-656 operations view of one License's terminals (write role only)."""
+        self._require_write_role(context)
+        group = await self._repository.access_group_for_license(license_id)
+        rows = await self._repository.terminals_for_account(
+            tenant_id=group.tenant_id, account_id=group.account_id
+        )
+        return tuple(row for row in rows if row.license_id == license_id)
+
+    async def revoke_terminal(
+        self,
+        context: PlatformAccessContext,
+        client_installation_id: UUID,
+        *,
+        reason_code: str,
+    ):
+        """Free a seat held by a lost, reinstalled or expired terminal."""
+        self._require_write_role(context)
+        reason_code = reason_code.strip()
+        if not 0 < len(reason_code) <= 64:
+            raise ValueError("terminal revoke requires a reason_code")
+        terminal = await self._repository.terminal(client_installation_id)
+        if terminal is None:
+            raise ValueError("terminal does not exist")
+        now = self._now()
+        revoked = await self._repository.revoke_terminal(
+            tenant_id=terminal.tenant_id,
+            account_id=terminal.account_id,
+            client_installation_id=client_installation_id,
+            revoked_at=now,
+        )
+        await self._audit(
+            context,
+            action="terminal.revoke",
+            tenant_id=terminal.tenant_id,
+            resource_id=client_installation_id,
+            occurred_at=now,
+            details={"reason_code": reason_code, "license_id": str(terminal.license_id)},
+        )
+        return revoked
+
     async def _audit(
         self,
         context: PlatformAccessContext,

@@ -22,6 +22,31 @@ by the cloud security group or host firewall. The migration role applies
 `postgresql-role-grants.sql` using `psql` variables supplied outside shell
 history. No application role is an owner, superuser, or `BYPASSRLS` role.
 
+For the RAY-99 upgrade, deploy the unverified-session-hold release and verify
+migrations 0009 (hold) and 0010 (report copy) before controlled identity
+recovery migration 0011. The release installer refuses migration 0011 when the hold table is absent. A successful
+installer run does not itself establish the real incident hold or prove a
+backup restore; record those as separate acceptance evidence.
+
+After the role grants the installer applies, in order: 0011 controlled
+identity recovery, 0012 terminal activation, 0013 insole inventory, 0014
+recovery-bound migration permits, 0015 terminal data-plane projection (every
+install), 0016 insole session archive (every install), and 0017 subject sync
+(RAY-907; once, while `subject.subjects.revision` is absent). 0017 backfills a
+revision for every existing subject in creation order and adds the revision
+triggers, the name lookup column and the tag tables; it is additive but not
+reversible by the installer, so take a backup and pass `run-restore-drill.sh`
+before deploying it. `backup.sh` records the applied list in
+`metadata.json` `schema_versions`.
+
+The host cannot reach github.com. `deploy-sales-inventory-release.sh` downloads
+the foundation wheel on the operator machine, checks it against `uv.lock`, and
+uploads it with the archive; the installer re-checks the digest, seeds the
+service user's uv cache from the uploaded wheel (`warm_foundation_wheel_cache.py`,
+a loopback endpoint that serves only the locked URL, so a fresh host or a
+foundation upgrade needs no prior cache), and proves the new release resolves
+dependencies offline (`UV_OFFLINE=1`) before any migration. The seed and backup services run with `UV_OFFLINE=1`.
+
 On a new Alibaba Cloud Linux host, run the reviewed prerequisite script once as
 root. It is idempotent and deliberately does not stop or reconfigure the
 existing 7443 process, so the later cutover remains reversible:

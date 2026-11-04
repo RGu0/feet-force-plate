@@ -12,6 +12,12 @@ import pytest
 from client.cloud.packaged_defaults import load_packaged_cloud_defaults
 
 
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="the public integration bundle publisher is a POSIX root-only bash workflow",
+)
+
+
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "deploy" / "aliyun" / "seed" / "build-integration-public-bundle.sh"
 _BUNDLE_ARGUMENTS = (
@@ -62,6 +68,8 @@ def _run_bundle(
 
 
 def _require_root() -> None:
+    if os.name == "nt":
+        pytest.skip("public bundle publication requires POSIX root and bash")
     if os.geteuid() != 0:
         pytest.skip("publication path requires root; root gate is tested separately")
 
@@ -171,6 +179,7 @@ def test_rejects_control_characters_in_reported_destination(tmp_path: Path) -> N
     assert not unsafe_root.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="root gate requires POSIX user IDs")
 def test_requires_root_without_creating_bundle(tmp_path: Path) -> None:
     """Catches a wrapper that lets an unprivileged caller publish test output."""
 

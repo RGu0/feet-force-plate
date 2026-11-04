@@ -20,6 +20,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from techflex_cloud_foundation import CredentialVault
+
+from client.security.credential_vault import (
+    CredentialVaultUnavailable,
+    SystemCredentialVault,
+    get_or_create_credential,
+)
 
 
 _ENVELOPE_VERSION = "dual-envelope/1"
@@ -51,14 +58,6 @@ class TestKeyPair:
 
     public_key_pem: bytes
     private_key_pem: bytes
-
-
-class PasswordKeyring(Protocol):
-    """The narrow API used by the OS-backed keyring package."""
-
-    def get_password(self, service_name: str, username: str) -> str | None: ...
-
-    def set_password(self, service_name: str, username: str, password: str) -> None: ...
 
 
 class TerminalKeyHandle(Protocol):
@@ -158,12 +157,11 @@ class KeyringTerminalKeyHandle:
         *,
         service_name: str,
         account_name: str,
-        keyring_backend: PasswordKeyring | None = None,
+        credential_vault: CredentialVault | None = None,
     ) -> None:
         self._service_name = service_name
         self._account_name = account_name
-        self._backend = keyring_backend or _runtime_keyring()
-        self._private_key_pem: bytes | None = None
+        self._vault = credential_vault or SystemCredentialVault()
 
     @property
     def public_key_pem(self) -> bytes:
@@ -177,40 +175,38 @@ class KeyringTerminalKeyHandle:
         return "terminal-p256-" + hashlib.sha256(self.public_key_pem).hexdigest()[:16]
 
     def unwrap_dek(self, wrapped: WrappedDataKey, *, context: str) -> bytes:
-        return _unwrap_dek(
+        return _unwrap_dek_with_key(
             wrapped,
-            self._private_key().private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            ),
+            self._private_key(create_if_missing=False),
             context.encode("utf-8"),
         )
 
-    def _private_key(self) -> ec.EllipticCurvePrivateKey:
-        if self._private_key_pem is None:
-            saved = self._backend.get_password(self._service_name, self._account_name)
+    def _private_key(self, *, create_if_missing: bool = True) -> ec.EllipticCurvePrivateKey:
+        def generate() -> str:
+            generated = ec.generate_private_key(ec.SECP256R1())
+            pem = generated.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            return base64.b64encode(pem).decode("ascii")
+
+        if create_if_missing:
+            saved = get_or_create_credential(self._vault, self._vault_key(), generate)
+        else:
+            saved = self._vault.get(self._vault_key())
             if saved is None:
-                generated = ec.generate_private_key(ec.SECP256R1())
-                pem = generated.private_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PrivateFormat.PKCS8,
-                    serialization.NoEncryption(),
-                )
-                self._backend.set_password(
-                    self._service_name,
-                    self._account_name,
-                    base64.b64encode(pem).decode("ascii"),
-                )
-                self._private_key_pem = pem
-            else:
-                self._private_key_pem = base64.b64decode(saved.encode("ascii"), validate=True)
-        loaded = serialization.load_pem_private_key(self._private_key_pem, password=None)
+                raise CredentialVaultUnavailable("terminal credential is missing")
+        pem = base64.b64decode(saved.encode("ascii"), validate=True)
+        loaded = serialization.load_pem_private_key(pem, password=None)
         if not isinstance(loaded, ec.EllipticCurvePrivateKey) or not isinstance(
             loaded.curve, ec.SECP256R1
         ):
             raise ValueError("terminal key must be P-256")
         return loaded
+
+    def _vault_key(self) -> str:
+        return f"{self._service_name}/{self._account_name}"
 
 
 def generate_test_keypair() -> TestKeyPair:
@@ -369,6 +365,12 @@ def _wrap_dek(dek: bytes, recipient_public_key_pem: bytes, aad: bytes) -> Wrappe
 
 def _unwrap_dek(wrapped: WrappedDataKey, private_key_pem: bytes, aad: bytes) -> bytes:
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    return _unwrap_dek_with_key(wrapped, private_key, aad)
+
+
+def _unwrap_dek_with_key(
+    wrapped: WrappedDataKey, private_key: object, aad: bytes
+) -> bytes:
     ephemeral = serialization.load_der_public_key(wrapped.ephemeral_public_key_der)
     if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(
         private_key.curve, ec.SECP256R1
@@ -387,14 +389,6 @@ def _derive_wrapping_key(shared_secret: bytes, aad: bytes) -> bytes:
     return HKDF(
         algorithm=hashes.SHA256(), length=32, salt=None, info=_WRAP_INFO + aad
     ).derive(shared_secret)
-
-
-def _runtime_keyring() -> PasswordKeyring:
-    try:
-        import keyring
-    except ImportError as exc:  # pragma: no cover - packaging is verified separately
-        raise RuntimeError("system credential storage package is unavailable") from exc
-    return keyring
 
 
 def _keyset_payload(value: SignedServerKeyset) -> bytes:

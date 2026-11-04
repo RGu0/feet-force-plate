@@ -9,6 +9,7 @@ from cloud.api.auth import TerminalContext
 from cloud.api.errors import DigestMismatch, SchemaUnsupported, SegmentDigestConflict, TenantAccessDenied
 from cloud.api.repository import InMemoryPlatformRepository
 from cloud.ingestion.object_store import InMemoryObjectStore
+from cloud.ingestion.principal import IngestionPrincipal
 from cloud.ingestion.service import IngestionService
 from shared.contracts.cloud import (
     SegmentMetadata,
@@ -110,6 +111,31 @@ class SegmentIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.object_key, second.object_key)
         self.assertFalse(first.idempotent_replay)
         self.assertTrue(second.idempotent_replay)
+        self.assertEqual(self.objects.object_count, 1)
+
+    async def test_upload_denial_also_blocks_existing_segment_replay(self) -> None:
+        payload = b"immutable segment accepted before upload was disabled"
+        metadata = self.metadata(payload)
+        accepted = await self.service.put_segment(
+            self.context, self.session_id, 0, metadata, chunks(payload)
+        )
+        denied = IngestionPrincipal(
+            tenant_id=self.tenant_id,
+            terminal_id=self.terminal_id,
+            expires_at=self.context.expires_at,
+            allow_new_test=True,
+            allow_upload=False,
+        )
+
+        # Even a byte-identical retry must pass the current upload gate before
+        # returning the stored acknowledgement; grant/session history cannot
+        # turn upload revocation into an idempotent success.
+        with self.assertRaises(TenantAccessDenied):
+            await self.service.put_segment(
+                denied, self.session_id, 0, metadata, chunks(payload)
+            )
+
+        self.assertEqual(await self.objects.read(accepted.object_key), payload)
         self.assertEqual(self.objects.object_count, 1)
 
     async def test_revocation_blocks_new_sessions_but_allows_existing_session_upload(self) -> None:

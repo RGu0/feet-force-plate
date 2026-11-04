@@ -21,10 +21,17 @@ from cloud.reporting.static_balance import (
     StaticBalanceCloudReportService,
     StaticBalanceReportBuilder,
 )
+from cloud.session_hold.service import SessionHeld
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "analysis"))
 from test_physical_features import _session_payload
 from test_physical_input import valid_protocol_context
+
+
+class UnheldReader:
+    def is_held(self, tenant_id: str, session_id: str) -> bool:
+        return False
 
 
 def report_context() -> ReportContext:
@@ -37,7 +44,7 @@ def report_context() -> ReportContext:
     )
 
 
-def publish_service() -> tuple[StaticBalanceCloudReportService, InMemoryReportRepository, InMemoryArtifactStore]:
+def publish_service(holds=None) -> tuple[StaticBalanceCloudReportService, InMemoryReportRepository, InMemoryArtifactStore]:
     repository = InMemoryReportRepository()
     repository.seed_basic(
         tenant_id="tenant-a",
@@ -53,8 +60,37 @@ def publish_service() -> tuple[StaticBalanceCloudReportService, InMemoryReportRe
         builder=StaticBalanceReportBuilder(),
         renderer=MinimalPdfRenderer(),
         publisher=InMemoryReportEventPublisher(),
+        holds=holds if holds is not None else UnheldReader(),
     )
     return service, repository, artifacts
+
+
+def test_hold_blocks_static_balance_version_and_preserves_existing_pdf() -> None:
+    class Holds:
+        held = False
+
+        def is_held(self, tenant_id: str, session_id: str) -> bool:
+            return self.held and (tenant_id, session_id) == ("tenant-a", "session-physical-1")
+
+    holds = Holds()
+    service, repository, artifacts = publish_service(holds)
+    session, features, risk = analysis_input()
+    kwargs = dict(
+        tenant_id="tenant-a", session_id=session.session_id,
+        source_analysis_run_id="run-physical-1", correlation_id="corr-physical-1",
+        report_schema_version="static-balance-report/1.0",
+        rule_set_version="fall-screen-rule-set/1.0", risk=risk,
+        features=features, context=report_context(),
+    )
+    existing = service.publish(**kwargs)
+    previous_bytes = artifacts.get(existing.artifact.object_key)
+    holds.held = True
+
+    with pytest.raises(SessionHeld):
+        service.publish(**{**kwargs, "source_analysis_run_id": "run-physical-2"})
+    assert artifacts.get(existing.artifact.object_key) == previous_bytes
+    assert artifacts.count() == 1
+    assert repository.get_for_session("tenant-a", session.session_id).latest_version == 2
 
 
 def analysis_input():

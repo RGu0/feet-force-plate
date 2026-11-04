@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from client.spool.state_store import (
+    SCHEMA_VERSION,
     GateReason,
     SensitiveBlobCodec,
     StateStore,
@@ -85,7 +86,7 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.journal_mode, "wal")
         self.assertEqual(self.store.synchronous_level, 2)
         self.assertEqual(self.store.busy_timeout_ms, 5_000)
-        self.assertEqual(self.store.schema_version, 10)
+        self.assertEqual(self.store.schema_version, SCHEMA_VERSION)
         expected = {
             "subject_refs",
             "consent_records",
@@ -98,7 +99,6 @@ class StateStoreTests(unittest.TestCase):
             "telemetry_events",
             "sync_handoffs",
             "session_artifacts",
-            "foundation_operations",
         }
         self.assertTrue(expected.issubset(self.store.table_names()))
 
@@ -304,12 +304,7 @@ class StateStoreTests(unittest.TestCase):
                 ),
             ),
         )
-        leased = self.store.lease_sync_handoff(now_ns=25)
-        self.assertIsNotNone(leased)
-        assert leased is not None
-        self.store.mark_cloud_confirmed(
-            leased.operation_id, "session-1", confirmed_at_ns=30
-        )
+        self.store.mark_cloud_confirmed("session-1", confirmed_at_ns=30)
         payload = b'{"authority":"SUPPORTING_NON_AUTHORITATIVE"}'
 
         self.store.attach_supporting_local_analysis("session-1", payload)
@@ -337,7 +332,7 @@ class StateStoreTests(unittest.TestCase):
 
         self.store = StateStore(self.db_path, SensitiveBlobCodec(self.keys))
 
-        self.assertEqual(self.store.schema_version, 10)
+        self.assertEqual(self.store.schema_version, SCHEMA_VERSION)
         with closing(sqlite3.connect(self.db_path)) as verification:
             columns = {
                 row[1]
@@ -347,67 +342,6 @@ class StateStoreTests(unittest.TestCase):
         self.assertIn("upload_envelope", columns)
         self.store.close()
         self.db_path.unlink()
-
-    def test_schema_nine_database_backfills_only_unconfirmed_handoffs(self) -> None:
-        v9_path = Path(self.directory.name) / "v9-state.sqlite3"
-        store = StateStore(v9_path, SensitiveBlobCodec(self.keys))
-        store.put_subject_ref("subject-uuid", b"opaque")
-        for index, session_id in enumerate(
-            ("ready-session", "confirmed-session", "uploading-session")
-        ):
-            store.commit_valid_session(
-                session_id,
-                subject_uuid="subject-uuid",
-                consent_id=None,
-                versions_json=b"{}",
-                started_at_ns=index,
-                ended_at_ns=index + 1,
-                manifest_sha256=f"{index:064x}",
-                segments=(
-                    ValidSegmentRecord(
-                        segment_id=f"segment-{index}",
-                        relative_path=f"{session_id}/segment-{index}.ffps",
-                        byte_count=10,
-                        sealed_at_ns=index + 1,
-                    ),
-                ),
-            )
-        with closing(sqlite3.connect(v9_path)) as legacy:
-            legacy.execute(
-                "UPDATE sync_handoffs SET state='CLOUD_CONFIRMED', "
-                "cloud_confirmed_at_ns=9 WHERE session_id='confirmed-session'"
-            )
-            legacy.execute(
-                "UPDATE sync_handoffs SET state='UPLOADING' "
-                "WHERE session_id='uploading-session'"
-            )
-            legacy.execute("DELETE FROM foundation_operations")
-            legacy.execute("PRAGMA user_version=9")
-            legacy.commit()
-        store.close()
-
-        store = StateStore(v9_path, SensitiveBlobCodec(self.keys))
-        try:
-            self.assertEqual(store.schema_version, 10)
-            with closing(sqlite3.connect(v9_path)) as verification:
-                operations = {
-                    str(row[0]): str(row[1])
-                    for row in verification.execute(
-                        "SELECT payload_ref, state FROM foundation_operations"
-                    )
-                }
-            self.assertEqual(
-                operations,
-                {"ready-session": "READY", "uploading-session": "READY"},
-            )
-            self.assertEqual(
-                store.sync_handoff_state("uploading-session"), "UPLOADING"
-            )
-            self.assertEqual(
-                store.sync_handoff_state("confirmed-session"), "CLOUD_CONFIRMED"
-            )
-        finally:
-            store.close()
 
     def test_recovery_marks_acquiring_incomplete_and_requeues_uploading(self) -> None:
         self.store.put_subject_ref("subject-uuid", b"opaque")

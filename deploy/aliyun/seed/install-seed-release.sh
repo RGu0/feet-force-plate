@@ -6,8 +6,8 @@ if [[ "${EUID}" -ne 0 ]]; then
     echo "install-seed-release.sh must run as root" >&2
     exit 1
 fi
-if [[ "$#" -ne 7 ]]; then
-    echo "usage: install-seed-release.sh RELEASE_ARCHIVE RELEASE_SHA ARCHIVE_SHA256 TLS_CERT TLS_KEY PUBLIC_BASE_URL AGE_RECIPIENT" >&2
+if [[ "$#" -ne 8 ]]; then
+    echo "usage: install-seed-release.sh RELEASE_ARCHIVE RELEASE_SHA ARCHIVE_SHA256 TLS_CERT TLS_KEY PUBLIC_BASE_URL AGE_RECIPIENT FOUNDATION_WHEEL" >&2
     exit 2
 fi
 
@@ -18,6 +18,7 @@ tls_certificate="$4"
 tls_private_key="$5"
 public_base_url="$6"
 age_recipient="$7"
+foundation_wheel_source="$8"
 service_user="feetforceplate"
 service_group="feetforceplate"
 database_name="feetforceplate_seed"
@@ -27,8 +28,8 @@ if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ || ! "$archive_sha256" =~ ^[0-9a-f]{64}
     echo "release and archive SHA values are invalid" >&2
     exit 2
 fi
-if [[ ! -f "$release_archive" || ! -f "$tls_certificate" || ! -f "$tls_private_key" ]]; then
-    echo "release archive and TLS source files must exist" >&2
+if [[ ! -f "$release_archive" || ! -f "$tls_certificate" || ! -f "$tls_private_key" || ! -f "$foundation_wheel_source" ]]; then
+    echo "release archive, foundation wheel and TLS source files must exist" >&2
     exit 2
 fi
 if [[ ! "$public_base_url" =~ ^https://[^/]+:7443$ ]]; then
@@ -43,7 +44,7 @@ if [[ "$(sha256sum "$release_archive" | sed 's/ .*//')" != "$archive_sha256" ]];
     echo "release archive checksum mismatch" >&2
     exit 1
 fi
-for command_name in age curl nginx openssl pg_isready psql runuser systemctl tar uv; do
+for command_name in age curl nginx openssl pg_isready psql python3 runuser systemctl tar uv; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "required command is missing: $command_name" >&2
         exit 1
@@ -57,13 +58,28 @@ id "$service_user" >/dev/null 2>&1 || {
 install_root="$(mktemp -d /var/lib/feetforceplate/.install-seed.XXXXXX)"
 chown root:postgres "$install_root"
 chmod 0710 "$install_root"
+# The service user never reaches install_root: root later executes files from
+# release/, so the offline check runs on a separate copy (RAY-814).
+offline_check_root="$(mktemp -d /var/lib/feetforceplate/.offline-check.XXXXXX)"
+chmod 0711 "$offline_check_root"
 cleanup() {
-    rm -rf -- "$install_root"
+    rm -rf -- "$install_root" "$offline_check_root"
 }
 trap cleanup EXIT
 release_source="$install_root/release"
 install -d -o "$service_user" -g "$service_group" -m 0700 "$release_source"
 tar -xzf "$release_archive" -C "$release_source"
+foundation_info="$(python3 "$release_source/deploy/aliyun/seed/verify_foundation_release_lock.py" \
+    "$release_source/pyproject.toml" "$release_source/uv.lock")"
+read -r foundation_url foundation_sha256 <<<"$foundation_info"
+# The host never fetches the wheel: the operator downloads it and uploads it with
+# the archive, and the lock digest is checked again here (RAY-814).
+foundation_wheel="$install_root/foundation-release.whl"
+install -m 0600 "$foundation_wheel_source" "$foundation_wheel"
+if [[ "$(sha256sum "$foundation_wheel" | sed 's/ .*//')" != "$foundation_sha256" ]]; then
+    echo "foundation release wheel digest mismatch" >&2
+    exit 1
+fi
 chown -R "$service_user:$service_group" "$release_source"
 chmod -R a+rX "$release_source"
 chmod 0755 \
@@ -76,6 +92,29 @@ chmod 0755 \
     "$release_source/deploy/aliyun/seed/run-restore-drill.sh" \
     "$release_source/deploy/aliyun/seed/run-live-acceptance.sh" \
     "$release_source/deploy/aliyun/seed/install-layout.sh"
+
+# The seed and backup services resolve dependencies offline from the host uv
+# cache, so prove the new release can before any migration or cutover.
+cp -a "$release_source" "$offline_check_root/release"
+chown -R "$service_user:$service_group" "$offline_check_root/release"
+# The locked wheel is cached under its GitHub URL, which the host cannot reach.
+# Hand the digest-checked upload to uv through a loopback endpoint that serves
+# only that URL, so fresh hosts and foundation upgrades need no prior cache (RAY-836).
+install -m 0644 "$foundation_wheel" "$offline_check_root/foundation-release.whl"
+if ! runuser -u "$service_user" -- env \
+    XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
+    python3 "$offline_check_root/release/deploy/aliyun/seed/warm_foundation_wheel_cache.py" \
+    "$offline_check_root/foundation-release.whl" "$foundation_url" "$foundation_sha256" "$(command -v uv)" >/dev/null; then
+    echo "foundation release wheel could not be placed in the uv cache; nothing was changed" >&2
+    exit 1
+fi
+if ! runuser -u "$service_user" -- env UV_OFFLINE=1 \
+    XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache \
+    "$offline_check_root/release/dev" setup >/dev/null; then
+    echo "new release cannot resolve its locked dependencies offline; nothing was changed" >&2
+    exit 1
+fi
+rm -rf -- "$offline_check_root/release"
 
 if [[ ! -f "$secret_file" ]]; then
     tenant_password="$(openssl rand -hex 32)"
@@ -162,6 +201,8 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
 apply_migration sales.inventory_batches "$release_source/cloud/migrations/0005_sales_inventory_activation.sql"
 apply_migration_if_column_missing sales inventory_batches activation_binding_mode "$release_source/cloud/migrations/0006_inventory_activation_pairing.sql"
 apply_migration_if_column_missing screening session_manifests eligibility_reason "$release_source/cloud/migrations/0007_completion_receipt_fields.sql"
+apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"
+apply_migration_if_column_missing screening sessions expected_manifest_sha256 "$release_source/cloud/migrations/0010_session_expected_manifest.sql"
 
 role_wrapper="$install_root/roles.sql"
 {
@@ -175,6 +216,13 @@ role_wrapper="$install_root/roles.sql"
 chown postgres:postgres "$role_wrapper"
 chmod 0600 "$role_wrapper"
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -f "$role_wrapper"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0008_activation_projection_grants.sql"
+apply_migration ops.session_holds "$release_source/cloud/migrations/0009_unverified_session_holds.sql"
+apply_migration reporting.local_basic_report_copies "$release_source/cloud/migrations/0010_local_basic_report_copies.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup;
+     GRANT SELECT ON reporting.local_basic_report_copies TO ffp_seed_backup;"
 
 cp -a /var/lib/pgsql/data/pg_hba.conf "/var/lib/pgsql/data/pg_hba.conf.pre-seed.$(date -u +%Y%m%dT%H%M%SZ)"
 install -o postgres -g postgres -m 0600 \
@@ -182,6 +230,42 @@ install -o postgres -g postgres -m 0600 \
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -Atqc "ALTER SYSTEM SET password_encryption = 'scram-sha-256'"
 systemctl restart postgresql
 pg_isready -h 127.0.0.1 -p 5432 >/dev/null
+if [[ "$(runuser -u postgres -- psql -d "$database_name" -Atqc "SELECT to_regclass('ops.session_holds') IS NOT NULL")" != "t" ]]; then
+    echo "RAY-99 session-hold migration 0009 must precede identity recovery 0011" >&2
+    exit 1
+fi
+apply_migration ops.identity_recovery_cases "$release_source/cloud/migrations/0011_controlled_identity_recovery.sql"
+apply_migration iam.access_terminals "$release_source/cloud/migrations/0012_terminal_activation.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON iam.access_terminals, iam.terminal_refresh_sessions,
+     iam.terminal_directory, iam.terminal_refresh_directory
+     TO ffp_seed_backup;"
+apply_migration device.insole_pairs "$release_source/cloud/migrations/0013_insole_inventory.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON device.insole_revision_counters, device.insole_pairs,
+     device.insole_identities, device.insole_registration_keys
+     TO ffp_seed_backup;"
+apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON ops.identity_recovery_cases, ops.identity_recovery_receipts,
+     ops.identity_recovery_comparisons, ops.identity_recovery_registrations
+     TO ffp_seed_backup;"
+# RAY-728: converging projection backfill; safe to apply on every install.
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0015_terminal_data_plane_projection.sql"
+# RAY-825: insole archive parts and manifests; converges, safe on every install.
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" \
+    -f "$release_source/cloud/migrations/0016_insole_session_archive.sql"
+# RAY-907: subject revisions, name lookup key and tag dictionary; applied once.
+apply_migration_if_column_missing subject subjects revision "$release_source/cloud/migrations/0017_subject_sync.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON subject.subject_revision_counters, subject.tag_revision_counters,
+     subject.tags, subject.subject_tags
+     TO ffp_seed_backup;"
+# RAY-802: terminal diagnostic package records (tombstones kept by the purge).
+apply_migration ops.terminal_diagnostics "$release_source/cloud/migrations/0018_terminal_diagnostics.sql"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "$database_name" -c \
+    "GRANT SELECT ON ops.terminal_diagnostics TO ffp_seed_backup;"
 
 release_target="/opt/feetforceplate/releases/$release_sha"
 if [[ ! -d "$release_target" ]]; then

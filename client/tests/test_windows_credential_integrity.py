@@ -9,8 +9,9 @@ import pytest
 from keyring.errors import PasswordDeleteError
 
 import client.app.windows_credential_integrity as windows_credential_integrity
-import client.cloud.access_store as access_store
-from client.cloud.access_store import KeyringCredentialStore
+from client.cloud.access_store import CredentialVaultStore
+from client.security import credential_vault
+from client.security.credential_vault import SystemCredentialVault
 from client.app.windows_credential_integrity import require_standard_user_process
 
 
@@ -126,7 +127,7 @@ def test_native_token_query_configures_pointer_sized_win32_signatures(
         return {"kernel32": kernel32, "advapi32": advapi32}[name]
 
     monkeypatch.setattr(windows_credential_integrity.os, "name", "nt")
-    monkeypatch.setattr(windows_credential_integrity.ctypes, "WinDLL", load_library)
+    monkeypatch.setattr(windows_credential_integrity.ctypes, "WinDLL", load_library, raising=False)
 
     assert windows_credential_integrity._is_windows_process_elevated() is False
     assert kernel32.GetCurrentProcess.restype is wintypes.HANDLE
@@ -135,46 +136,55 @@ def test_native_token_query_configures_pointer_sized_win32_signatures(
     assert kernel32.CloseHandle.restype is wintypes.BOOL
 
 
+def _store_with_backend(backend: object) -> CredentialVaultStore:
+    vault = SystemCredentialVault(
+        platform_name="win32",
+        backend_loader=lambda _platform: credential_vault._KeyringCredentialVault(backend),
+    )
+    return CredentialVaultStore(vault)
+
+
 def test_credential_manager_read_failure_has_no_backend_or_secret_detail() -> None:
-    store = KeyringCredentialStore(backend=_UnavailableCredentialBackend())
+    store = _store_with_backend(_UnavailableCredentialBackend())
 
     with pytest.raises(RuntimeError) as raised:
         store.get_refresh_token(uuid4())
 
-    assert str(raised.value) == "system credential storage is unavailable"
+    assert str(raised.value) == "platform credential vault is unavailable"
+    assert "refresh-token" not in str(raised.value)
 
 
 def test_credential_manager_write_failure_has_no_backend_or_secret_detail() -> None:
-    store = KeyringCredentialStore(backend=_WriteUnavailableCredentialBackend())
+    store = _store_with_backend(_WriteUnavailableCredentialBackend())
 
     with pytest.raises(RuntimeError) as raised:
         store.set_refresh_token(uuid4(), "refresh-token-must-never-reach-the-operator")
 
-    assert str(raised.value) == "system credential storage is unavailable"
+    assert str(raised.value) == "platform credential vault is unavailable"
+    assert "refresh-token" not in str(raised.value)
 
 
 def test_credential_manager_delete_failure_has_no_backend_or_secret_detail() -> None:
-    store = KeyringCredentialStore(backend=_DeleteUnavailableCredentialBackend())
+    store = _store_with_backend(_DeleteUnavailableCredentialBackend())
 
     with pytest.raises(RuntimeError) as raised:
         store.delete_refresh_token(uuid4())
 
-    assert str(raised.value) == "system credential storage is unavailable"
+    assert str(raised.value) == "platform credential vault is unavailable"
+    assert "refresh-token" not in str(raised.value)
 
 
 def test_missing_credential_delete_is_idempotent() -> None:
-    store = KeyringCredentialStore(backend=_MissingCredentialBackend())
-
-    store.delete_refresh_token(uuid4())
+    _store_with_backend(_MissingCredentialBackend()).delete_refresh_token(uuid4())
 
 
 def test_credential_manager_delete_failure_with_misleading_not_found_text_is_rejected() -> None:
-    store = KeyringCredentialStore(backend=_MisleadingDeleteFailureBackend())
+    store = _store_with_backend(_MisleadingDeleteFailureBackend())
 
     with pytest.raises(RuntimeError) as raised:
         store.delete_refresh_token(uuid4())
 
-    assert str(raised.value) == "system credential storage is unavailable"
+    assert str(raised.value) == "platform credential vault is unavailable"
 
 
 def test_missing_keyring_module_is_reported_without_import_detail(
@@ -183,33 +193,31 @@ def test_missing_keyring_module_is_reported_without_import_detail(
     monkeypatch.setitem(sys.modules, "keyring", None)
 
     with pytest.raises(RuntimeError) as raised:
-        KeyringCredentialStore()
+        SystemCredentialVault(platform_name="win32")
 
-    assert str(raised.value) == "system credential storage is unavailable"
+    assert str(raised.value) == "platform credential vault is unavailable"
 
 
 def test_windows_requires_credential_manager_instead_of_another_keyring_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(access_store.os, "name", "nt")
     monkeypatch.setitem(
         sys.modules,
         "keyring",
         SimpleNamespace(get_keyring=_NotWindowsCredentialManager().get_keyring),
     )
 
-    with pytest.raises(RuntimeError, match="Windows Credential Manager backend is required"):
-        KeyringCredentialStore()
+    with pytest.raises(RuntimeError, match="platform credential vault is unavailable"):
+        SystemCredentialVault(platform_name="win32")
 
 
 def test_windows_accepts_the_native_credential_manager_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(access_store.os, "name", "nt")
     monkeypatch.setitem(
         sys.modules,
         "keyring",
         SimpleNamespace(get_keyring=_WindowsCredentialManager().get_keyring),
     )
 
-    KeyringCredentialStore()
+    SystemCredentialVault(platform_name="win32")

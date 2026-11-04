@@ -28,7 +28,7 @@ from shared.contracts.access_control import (
 )
 
 from .access_client import AccessAuthenticationFailed, CloudAccessClient
-from .access_store import ClientAccessStore, KeyringCredentialStore
+from .access_store import ClientAccessStore, CredentialVaultStore
 from .hardware_identity import (
     ActivationHardwareIdentityProvider,
     ActivationHardwareStatus,
@@ -55,6 +55,8 @@ class AccessClientPort(Protocol):
     def refresh(self, request: RefreshRequest): ...
 
     def logout(self, request: LogoutRequest) -> None: ...
+
+    def issue_capture_grants(self, access_token: str, count: int): ...
 
     def acquire_hardware_lease(
         self, access_token: str, request: HardwareLeaseRequest
@@ -367,6 +369,31 @@ class ClientAccessRuntime:
             now=self._now,
         )
 
+    def replenish_capture_grants(self, institution, session: AuthenticatedInstitutionSession) -> None:
+        """New-test-only best effort; server verifies current License before issuance."""
+        count = 50 - institution.available_capture_grants(
+            session.tenant_id, session.client_installation_id
+        )
+        if count <= 0:
+            return
+        from .access_client import CloudAccessError
+
+        try:
+            with self._token_lock:
+                token = self.current_access_token()
+                current = self._session
+                if current is None or (
+                    current.tenant_id, current.account_id, current.client_installation_id
+                ) != (session.tenant_id, session.account_id, session.client_installation_id):
+                    raise ValueError("capture grant session binding changed")
+                response = self._client.issue_capture_grants(token, count)
+        except (CloudAccessError, ClientAccessRuntimeError):
+            # Offline/denied replenishment must not invalidate previously issued grants.
+            return
+        institution.add_capture_grants(
+            session.tenant_id, session.client_installation_id, response.grants
+        )
+
     def refresh(self) -> AuthenticatedInstitutionSession:
         with self._token_lock:
             try:
@@ -512,7 +539,7 @@ def build_client_access_runtime(
     )
     store = ClientAccessStore(
         root / "database" / "access.sqlite3",
-        KeyringCredentialStore(),
+        CredentialVaultStore(),
     )
     client = CloudAccessClient(settings.base_url, verify=settings.verify)
     raw_public_key = settings.license_public_key_file.read_bytes().strip()
