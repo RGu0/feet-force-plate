@@ -301,8 +301,14 @@ install -o root -g root -m 0644 "$release_target/deploy/aliyun/seed/feetforcepla
     /etc/systemd/system/feetforceplate-backup.service
 install -o root -g root -m 0644 "$release_target/deploy/aliyun/seed/feetforceplate-backup.timer" \
     /etc/systemd/system/feetforceplate-backup.timer
+# RAY-927: daily purge of expired diagnostic package content (counts only).
+install -o root -g root -m 0644 "$release_target/deploy/aliyun/seed/feetforceplate-diagnostics-purge.service" \
+    /etc/systemd/system/feetforceplate-diagnostics-purge.service
+install -o root -g root -m 0644 "$release_target/deploy/aliyun/seed/feetforceplate-diagnostics-purge.timer" \
+    /etc/systemd/system/feetforceplate-diagnostics-purge.timer
 systemctl daemon-reload
-systemctl enable feetforceplate-seed.service feetforceplate-backup.timer nginx
+systemctl enable feetforceplate-seed.service feetforceplate-backup.timer \
+    feetforceplate-diagnostics-purge.timer nginx
 systemctl restart feetforceplate-seed.service
 
 backend_ready=false
@@ -355,5 +361,6 @@ systemctl start nginx
 curl -kfsS https://127.0.0.1:7443/health/ready >/dev/null
 systemctl start feetforceplate-backup.service
 systemctl start feetforceplate-backup.timer
+systemctl start feetforceplate-diagnostics-purge.timer
 
-printf 'seed_release=%s backend=ready ingress=7443 backup=verified-once secrets=not-printed\n' "$release_sha"
+printf 'seed_release=%s backend=ready ingress=7443 backup=verified-once diagnostics_purge=timer-enabled secrets=not-printed\n' "$release_sha"

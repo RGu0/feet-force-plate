@@ -73,3 +73,65 @@ Readiness returns only `postgres` and `object_store` states. Logs contain method
 URI, status, byte count, remote address and request ID; they exclude request
 bodies and Authorization headers. Never put DSNs, passwords, activation codes,
 private keys, raw identities, or full hardware serials in deployment evidence.
+
+## Diagnostic package purge and OSS backstop (RAY-927)
+
+The installer applies `0018_terminal_diagnostics.sql` (RAY-802) once, while
+`ops.terminal_diagnostics` is absent, and grants the backup role `SELECT` on it.
+Packages are kept 30 days from upload (`expires_at`).
+
+`feetforceplate-diagnostics-purge.timer` runs
+`feetforceplate-diagnostics-purge.service` once a day (03:30 host time plus up
+to 20 minutes; `Persistent=true` catches up a missed run after downtime). The
+service runs as `feetforceplate` with `seed.env`, offline from the service uv
+cache like the backup service, and executes
+`./dev run python -m cloud.terminal_diagnostics.purge`. It deletes the content
+of every expired package and keeps the row as a tombstone with `deleted_at`; an
+interrupted run is safe to repeat. Its stdout is only `{"purged": <count>}`;
+the journal also gets `uv sync` progress lines, and on failure a Python
+traceback that holds no DSN or credential but may name an object key (which
+contains a tenant UUID), so read a failed run's journal before quoting it in
+evidence. A start timeout of 30 minutes stops a hung run from blocking the next
+day's. With the OSS backend the purge calls `DeleteObject`, so the ECS RAM role
+must allow `oss:DeleteObject` on `diagnostics/*` in the bucket; one manual run
+(below) after each first install proves it, as nothing alerts on a failed
+nightly run. `install-seed-release.sh` installs both units, enables and starts
+the timer. To run it once by hand and read the result:
+
+```bash
+sudo systemctl start feetforceplate-diagnostics-purge.service
+sudo journalctl -u feetforceplate-diagnostics-purge.service -n 5 --no-pager
+systemctl list-timers feetforceplate-diagnostics-purge.timer --no-pager
+```
+
+The diagnostics smoke (`scripts/run_ray802_diagnostics_smoke.py`) can only see
+HTTP answers; it records the run's `ticket_reference`, and the audit rows the
+support list/read and the two refusals produced are checked read-only on the
+host with that value:
+
+```bash
+sudo -u postgres psql -d feetforceplate_seed -Atc "select action, coalesce(details->>'actor_kind',''), coalesce(details->>'reason',''), count(*) from ops.access_audit_events where details->>'ticket_reference' = '<ticket_reference>' group by 1,2,3 order by 1,2,3"
+# expect diagnostics.deny|platform|role_unauthorized|1, diagnostics.deny|terminal|terminal_credential|1,
+#        diagnostics.list|platform||1, diagnostics.read|platform||1
+```
+
+The purge is the mechanism. With `FEETFORCEPLATE_OBJECT_BACKEND=aliyun-oss`
+the bucket also carries a lifecycle backstop for content the purge missed
+(for example while the timer was broken):
+
+- one rule, prefix `diagnostics/` only, current-version objects expire 31 days
+  after last modification: not earlier than the 30-day retention, with a day of
+  margin for time zones and clock skew;
+- set by the operator in the Aliyun OSS console (bucket, Data Management,
+  Lifecycle). Before saving, review every existing rule on the bucket: none may
+  cover `diagnostics/` with a shorter expiry (an empty-prefix whole-bucket rule
+  counts) and the new rule must not cover any other prefix. Note whether the
+  bucket has versioning enabled: then a purge or expiry leaves a noncurrent
+  version behind, which needs its own decision before the rule is saved;
+- record only the rule's description (prefix, action, days, the review of
+  existing rules) in evidence; never an AccessKey, STS token or console
+  credential. The rule needs no change to the service's ECS RAM role (the
+  role's `oss:DeleteObject` on `diagnostics/*`, above, is a separate check).
+
+With the filesystem backend there is no backstop; the purge alone deletes
+content under `/var/lib/feetforceplate/objects/diagnostics/`.

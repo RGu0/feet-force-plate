@@ -43,6 +43,9 @@ Provider-only lifecycle commands are:
   --platform-login platform-owner --tenant-name "Seed Clinic" \
   --account-name seed-clinic --hardware-id usb-serial-0123456789abcdef0123 \
   --license-period-months 12
+./scripts/local-env.sh python -m cloud.access_control.cli create-platform-identity \
+  --platform-login platform-owner --login-name platform-support \
+  --display-name "Platform Support" --roles PLATFORM_SUPPORT
 ./scripts/local-env.sh python -m cloud.access_control.cli rotate-platform-role \
   --platform-login platform-owner --target-login platform-support \
   --roles PLATFORM_SUPPORT
@@ -51,6 +54,16 @@ Provider-only lifecycle commands are:
 ./scripts/local-env.sh python -m cloud.access_control.cli set-terminal-seats \
   --platform-login platform-owner --license-id "$FEETFORCEPLATE_LICENSE_ID" --seats 3
 ```
+
+`create-platform-identity` (RAY-927) lets the Platform owner add another
+Platform identity, such as the `PLATFORM_SUPPORT` login the diagnostics smoke
+needs; it reads the owner password and the new password (twice) with getpass,
+is audited as `platform-identity.create` and prints only the new id and roles.
+There is no command yet to suspend a Platform identity (`rotate-platform-role`
+needs at least one role), so a support login created for a smoke keeps its
+access: give it a unique strong password, create it on integration only, and
+track its retirement separately.
+`rotate-platform-role` replaces the roles of an identity that already exists.
 
 `set-terminal-seats` (RAY-656) sets how many mobile terminals the account may
 activate through `/v1/access/terminal-activate`; it needs a Platform write role,
@@ -143,8 +156,11 @@ Platform support access, not part of the mobile contract:
 - Retention is 30 days from upload. Run the purge on the seed host with the
   seed environment: `./dev run python -m cloud.terminal_diagnostics.purge`. It
   deletes the content of every package past `expires_at` and keeps the row as a
-  tombstone with `deleted_at`; an interrupted run is safe to repeat. The OSS
-  lifecycle backstop rule is deployed with RAY-785.
+  tombstone with `deleted_at`; an interrupted run is safe to repeat. On the
+  seed host `feetforceplate-diagnostics-purge.timer` runs it once a day; an OSS
+  lifecycle rule on the `diagnostics/` prefix (delete after 31 days) is the
+  backstop, not the mechanism. Both belong to RAY-927, not RAY-785; see
+  `deploy/aliyun/seed/README.md`.
 
 ## Application composition
 
