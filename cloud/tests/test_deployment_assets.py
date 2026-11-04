@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import stat
@@ -386,3 +387,24 @@ def test_release_installer_installs_and_enables_the_diagnostics_purge_timer() ->
     # The service executes ./dev directly; its git mode (checked in
     # test_systemd_entry_scripts_are_executable) survives the release archive.
     assert "diagnostics_purge=timer-enabled secrets=not-printed" in text
+
+
+def test_seed_readme_grants_the_oss_role_every_diagnostics_object_action() -> None:
+    # RAY-927 oss-role-doc: upload needs PutObject, the HeadObject pre-check and
+    # support read need GetObject, the purge needs DeleteObject.
+    text = _read_repository_text(ROOT / "README.md")
+    section = text[text.index("### OSS role grant for `diagnostics/`"):text.index("### OSS lifecycle backstop")]
+    block = section[section.index("```json\n") + len("```json\n"):]
+    statement = json.loads(block[:block.index("```")])
+    assert statement["Effect"] == "Allow"
+    assert set(statement["Action"]) == {"oss:PutObject", "oss:GetObject", "oss:DeleteObject"}
+    assert set(statement["Resource"]) == {
+        "acs:oss:*:*:<bucket>/tenants/*",
+        "acs:oss:*:*:<bucket>/diagnostics/*",
+    }
+    flat = " ".join(text.split())
+    assert "must allow `oss:DeleteObject` on `diagnostics/*`" not in flat
+    assert "only `oss:DeleteObject`" not in flat
+    backstop = " ".join(text[text.index("### OSS lifecycle backstop"):].split())
+    assert "allow prefix overlap" in backstop
+    assert "delete marker" in backstop

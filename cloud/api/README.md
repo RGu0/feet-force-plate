@@ -156,11 +156,14 @@ Platform support access, not part of the mobile contract:
 - Retention is 30 days from upload. Run the purge on the seed host with the
   seed environment: `./dev run python -m cloud.terminal_diagnostics.purge`. It
   deletes the content of every package past `expires_at` and keeps the row as a
-  tombstone with `deleted_at`; an interrupted run is safe to repeat. On the
+  tombstone with `deleted_at` (on a versioned OSS bucket the content stays as a
+  noncurrent version until a noncurrent-version rule removes it; see the seed
+  README); an interrupted run is safe to repeat. On the
   seed host `feetforceplate-diagnostics-purge.timer` runs it once a day; an OSS
   lifecycle rule on the `diagnostics/` prefix (delete after 31 days) is the
   backstop, not the mechanism. Both belong to RAY-927, not RAY-785; see
-  `deploy/aliyun/seed/README.md`.
+  `deploy/aliyun/seed/README.md`, which also lists the OSS role grant on
+  `diagnostics/*` (`PutObject`, `GetObject`, `DeleteObject`).
 
 ## Application composition
 
