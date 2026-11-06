@@ -274,6 +274,38 @@ and physical hardware binding, while client installation identifies a login
 session on a replaceable computer. Suspension or expiry blocks new sessions;
 upload and report access continue.
 
+A Platform identity with the write role (`PLATFORM_OWNER` or
+`PLATFORM_OPERATIONS`) closes or restores a whole tenant with
+`PATCH /v1/platform/tenants/{tenant_id}` and body
+`{"action": "CLOSE" | "RESTORE", "reason_code": "…"}` (`reason_code` is
+optional, up to 64 characters). `CLOSE` applies to an `ACTIVE` or `SUSPENDED`
+tenant and `RESTORE` only to a `CLOSED` one; any other transition answers 409
+`E-PLT-409-TENANT-STATE`, and an unknown tenant answers 404. Nothing is deleted
+and the change is audited as `tenant.close` / `tenant.restore`. While a tenant
+is `CLOSED`, sign-in and activation of its accounts are rejected with the same
+answer as wrong credentials, issuing or retiring a capture grant is refused,
+and so is registering a new session, whether it is bare, grant-authorised or
+migration-permit-authorised; replaying an already registered session still
+resolves. Unlike License suspension, a closed tenant gets no upload or report
+access through a fresh sign-in. Closing revokes nothing that was already
+issued: access tokens and refresh sessions (up to 30 days idle, 180 days
+absolute) keep their upload and report access for sessions that already exist,
+and grants or migration permits already issued stay in place, but cannot start a
+session while the tenant is `CLOSED`. Identity-recovery registration is a
+separate controlled path and is not gated by this status.
+`RESTORE` always returns the tenant to `ACTIVE`; a `SUSPENDED` tenant that was
+closed is not returned to `SUSPENDED` (its previous status is kept only in the
+audit event). The status is read, not row-locked, because the application roles
+may not lock `iam.tenants`; a sign-in, activation, grant or registration that
+read `ACTIVE` just before a close commits can still succeed once. Terminal
+sign-in (`POST /v1/access/terminal-activate`) is gated like sign-in and
+activation. Token refresh (`/v1/access/refresh`, `/v1/access/terminal-refresh`),
+hardware leases and the legacy device enrolment (`POST /v1/terminals/enroll`)
+are not gated.
+`cloud/migrations/0019_tenant_status_gate.sql` gives the tenant role read-only
+access to `iam.tenants` for the capture-session check; the installer applies it
+on every install.
+
 The seed object adapter is a private filesystem object store. The public 7443
 endpoint is controlled integration only; commercial ingress requires
 domain + public CA + 443.

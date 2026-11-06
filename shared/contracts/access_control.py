@@ -73,6 +73,11 @@ class LicenseControlAction(StrEnum):
     REVOKE = "REVOKE"
 
 
+class TenantControlAction(StrEnum):
+    CLOSE = "CLOSE"
+    RESTORE = "RESTORE"
+
+
 class PlatformRole(StrEnum):
     OWNER = "PLATFORM_OWNER"
     OPERATIONS = "PLATFORM_OPERATIONS"
@@ -250,6 +255,20 @@ class LicenseControlResponse(ContractModel):
     changed_at: datetime
 
 
+class TenantControlRequest(ContractModel):
+    action: TenantControlAction
+    reason_code: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
+    ] | None = None
+
+
+class TenantControlResponse(ContractModel):
+    tenant_id: UUID
+    status: Literal["ACTIVE", "SUSPENDED", "CLOSED"]
+    changed_at: datetime
+
+
 class HardwareLeaseRequest(ContractModel):
     hardware_id: HardwareIdentity
     client_installation_id: UUID
@@ -378,4 +397,7 @@ __all__ = [
     "SensitiveAccessGrantResponse",
     "SensitiveIdentityResponse",
     "SignedLicenseV2",
+    "TenantControlAction",
+    "TenantControlRequest",
+    "TenantControlResponse",
 ]

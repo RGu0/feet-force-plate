@@ -11,7 +11,7 @@ import unicodedata
 from uuid import UUID, uuid4
 
 from cloud.api.access_auth import LicenseDocumentSigner, PlatformAccessContext
-from cloud.api.errors import PlatformError
+from cloud.api.errors import PlatformError, ResourceNotFound
 from shared.contracts.access_control import (
     LicenseControlAction,
     LicenseControlRequest,
@@ -21,6 +21,9 @@ from shared.contracts.access_control import (
     PlatformRole,
     ProvisionTenantRequest,
     ProvisionTenantResponse,
+    TenantControlAction,
+    TenantControlRequest,
+    TenantControlResponse,
 )
 from shared.contracts.client_sync import canonical_json_bytes
 
@@ -28,6 +31,8 @@ from .repository import (
     AccessGroupSeed,
     AuditEventRecord,
     AccessRepository,
+    AccessRepositoryConflict,
+    AccessRepositoryError,
     TenantSeed,
 )
 
@@ -38,6 +43,14 @@ class PlatformAuthorizationDenied(PlatformError):
     code = "E-PLT-403"
     http_status = 403
     action = "CONTACT_PLATFORM_OWNER"
+
+
+class TenantStateConflict(PlatformError):
+    """The requested tenant transition does not apply to its current state."""
+
+    code = "E-PLT-409-TENANT-STATE"
+    http_status = 409
+    action = "VERIFY_REFERENCE"
 
 
 def normalize_login_name(value: str) -> str:
@@ -294,6 +307,50 @@ class PlatformProvisioningService:
             },
         )
         return LicenseControlResponse(signed_license=signed, changed_at=now)
+
+    async def control_tenant(
+        self,
+        context: PlatformAccessContext,
+        tenant_id: UUID,
+        request: TenantControlRequest,
+    ) -> TenantControlResponse:
+        """Close a tenant, or restore a closed one; nothing is deleted."""
+
+        self._require_write_role(context)
+        try:
+            current = await self._repository.tenant(tenant_id)
+        except AccessRepositoryError as exc:
+            raise ResourceNotFound("tenant does not exist") from exc
+        if request.action is TenantControlAction.CLOSE:
+            if current.status not in {"ACTIVE", "SUSPENDED"}:
+                raise TenantStateConflict("only an active or suspended tenant can be closed")
+            status = "CLOSED"
+        else:
+            if current.status != "CLOSED":
+                raise TenantStateConflict("only a closed tenant can be restored")
+            status = "ACTIVE"
+        now = self._now()
+        try:
+            await self._repository.set_tenant_status(
+                tenant_id=tenant_id,
+                expected_status=current.status,
+                status=status,
+                changed_at=now,
+            )
+        except AccessRepositoryConflict as exc:
+            raise TenantStateConflict("tenant status changed concurrently") from exc
+        await self._audit(
+            context,
+            action=f"tenant.{request.action.value.lower()}",
+            tenant_id=tenant_id,
+            resource_id=tenant_id,
+            occurred_at=now,
+            details={
+                "reason_code": request.reason_code or "",
+                "previous_status": current.status,
+            },
+        )
+        return TenantControlResponse(tenant_id=tenant_id, status=status, changed_at=now)
 
     async def set_terminal_seats(
         self,

@@ -335,6 +335,15 @@ class InMemoryPlatformRepository:
             and record.request.envelope_sha256 == request.original_envelope_sha256
         )
 
+    def _require_active_tenant(self, tenant_id) -> None:
+        """A closed tenant starts no new session, whichever way it is authorised."""
+        access = self._capture_access
+        if access is None:
+            return
+        tenant = access._tenants.get(tenant_id)
+        if tenant is None or tenant.status != "ACTIVE":
+            raise TenantAccessDenied("机构已关闭，不能创建新会话")
+
     def _capture_entitlement(self, context):
         """Called under the reference access adapter's shared mutation lock."""
         context.ensure_can_start_new()
@@ -343,10 +352,12 @@ class InMemoryPlatformRepository:
         license_record = access._licenses.get(context.license_id)
         installation = access._installations.get(context.terminal_id)
         hardware = access._hardware.get(access._hardware_by_identity.get(context.hardware_id))
+        tenant = access._tenants.get(context.tenant_id)
         now = datetime.now(UTC)
         group = next((g for g in access._group_history if g.license_id == context.license_id and g.closed_at is None), None)
         if (
-            account is None or license_record is None or installation is None or hardware is None or group is None
+            tenant is None or tenant.status != "ACTIVE"
+            or account is None or license_record is None or installation is None or hardware is None or group is None
             or any(row.tenant_id != context.tenant_id for row in (account, license_record, installation, hardware, group))
             or account.status != "ACTIVE" or license_record.status != "ACTIVE"
             or installation.status != "ACTIVE" or hardware.status != "ACTIVE"
@@ -1075,6 +1086,8 @@ class InMemoryPlatformRepository:
                 raise IdempotencyConflict("同一会话对应不同最终清单")
         elif authorization is None:
             context.ensure_can_start_new()
+        if existing is None:
+            self._require_active_tenant(context.tenant_id)
         authorization_row = None
         if authorization is not None:
             rows = self._capture_grants if authorization.kind == "grant" else self._migration_permits
