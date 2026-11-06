@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from client import support
 from client.support import safe_events
+from techflex_cloud_foundation import local_audit
 from client.support.diagnostic_export import (
     SafeDiagnosticExporter,
     SafeDiagnosticMetadata,
@@ -230,10 +231,9 @@ def test_private_store_falls_back_to_path_permissions_without_fchmod(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Windows Python versions without fchmod must still create a private store."""
-    def unavailable_fchmod(*_args: object) -> None:
-        raise AttributeError("fchmod is unavailable")
-
-    monkeypatch.setattr(safe_events.os, "fchmod", unavailable_fchmod, raising=False)
+    # foundation's log picks the permission call by whether os.fchmod exists,
+    # which is how a Windows interpreter differs: the attribute is absent.
+    monkeypatch.delattr(safe_events.os, "fchmod", raising=False)
     store = SafeClientEventStore(tmp_path / "safe-support-events")
     recorder = make_recorder(store, iter((EVENT_1,)).__next__)
 
@@ -262,9 +262,11 @@ def test_windows_process_lock_retries_transient_contention(
 
     fake_msvcrt = types.SimpleNamespace(LK_NBLCK=7, LK_UNLCK=8, locking=locking)
     monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-    monkeypatch.setattr(safe_events.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(local_audit.time, "sleep", lambda _seconds: None)
 
-    unlock = safe_events._acquire_windows_lock(42)
+    # The lock is foundation's (ChainedAppendLog); this pins that the event store
+    # still waits through transient contention instead of dropping an event.
+    unlock = local_audit._acquire_windows_lock(42)
     unlock()
 
     assert calls == [7, 7, 7, 8]
@@ -454,7 +456,7 @@ def test_encrypted_export_rejects_broken_chain_digest_without_artifacts(tmp_path
     store_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     destination = tmp_path / "broken.ffpdiag"
 
-    with pytest.raises(ValueError, match="invalid safe event digest"):
+    with pytest.raises(ValueError, match="invalid record digest"):
         exporter.export(destination)
     assert not destination.exists()
     assert not list(tmp_path.glob("*.zip"))
