@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -883,7 +883,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy" },
     { name = "sqlalchemy" },
-    { name = "techflex-cloud-foundation", url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.2.0/techflex_cloud_foundation-0.2.0-py3-none-any.whl" },
+    { name = "techflex-cloud-foundation", url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.2/techflex_cloud_foundation-0.9.2-py3-none-any.whl" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 provides-extras = ["build", "dev"]
@@ -3103,25 +3103,36 @@ wheels = [
 
 [[package]]
 name = "techflex-cloud-foundation"
-version = "0.2.0"
-source = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.2.0/techflex_cloud_foundation-0.2.0-py3-none-any.whl" }
+version = "0.9.2"
+source = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.2/techflex_cloud_foundation-0.9.2-py3-none-any.whl" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
+    { name = "pydantic" },
 ]
 wheels = [
-    { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.2.0/techflex_cloud_foundation-0.2.0-py3-none-any.whl", hash = "sha256:1dd34fb4902fb7359af346e153123e8db12befc6ae8a9de2105e11f80af74303" },
+    { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.2/techflex_cloud_foundation-0.9.2-py3-none-any.whl", hash = "sha256:61608c0d7974db31b8a4920626e97c8eb2e64639e9ce687b525d09a1f256878a" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "alibabacloud-credentials", marker = "extra == 'dev'", specifier = ">=1.0,<2" },
+    { name = "alibabacloud-credentials", marker = "extra == 'server'", specifier = ">=1.0,<2" },
+    { name = "alibabacloud-oss-v2", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
+    { name = "alibabacloud-oss-v2", marker = "extra == 'server'", specifier = ">=1.2,<2" },
+    { name = "asyncpg", marker = "extra == 'dev'", specifier = ">=0.30,<1" },
     { name = "asyncpg", marker = "extra == 'server'", specifier = ">=0.30,<1" },
     { name = "cryptography", specifier = ">=42,<51" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.116,<1" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.116,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.17,<3" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10,<3" },
+    { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
+    { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.35,<1" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.35,<1" },
 ]
 provides-extras = ["dev", "server"]
 

@@ -188,19 +188,19 @@ def test_capacity_counts_every_nonconfirmed_handoff_state(tmp_path: Path) -> Non
     try:
         store.put_subject_ref("subject-1", b"opaque")
         retry_session_id, _ = _commit_handoff(store, tmp_path, index=0, byte_count=1)
-        retry_handoff = store.lease_sync_handoff(now_ns=1)
+        retry_handoff = store.lease_sync_handoff(now_ns=1_000)
         assert retry_handoff is not None
         assert retry_handoff.session_id == retry_session_id
         store.defer_sync_handoff(
             retry_handoff.session_id,
-            next_attempt_at_ns=2,
+            next_attempt_at_ns=2_000,
             error_code="E-SYN-001",
         )
 
         conflict_session_id, _ = _commit_handoff(
             store, tmp_path, index=1, byte_count=2
         )
-        conflict_handoff = store.lease_sync_handoff(now_ns=1)
+        conflict_handoff = store.lease_sync_handoff(now_ns=1_000)
         assert conflict_handoff is not None
         assert conflict_handoff.session_id == conflict_session_id
         store.mark_sync_handoff_conflict(conflict_handoff.session_id)
@@ -208,7 +208,7 @@ def test_capacity_counts_every_nonconfirmed_handoff_state(tmp_path: Path) -> Non
         blocked_session_id, _ = _commit_handoff(
             store, tmp_path, index=2, byte_count=4
         )
-        blocked_handoff = store.lease_sync_handoff(now_ns=1)
+        blocked_handoff = store.lease_sync_handoff(now_ns=1_000)
         assert blocked_handoff is not None
         assert blocked_handoff.session_id == blocked_session_id
         store.mark_sync_handoff_blocked(blocked_handoff.session_id, error_code="E-SYN-400")

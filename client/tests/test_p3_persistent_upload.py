@@ -508,7 +508,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
             connection.execute("PRAGMA user_version=9")
         connection.close()
         self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
-        self.assertEqual(self.store.schema_version, 12)
+        self.assertEqual(self.store.schema_version, 13)
         self.assertIsNone(self.store.sync_handoff_credential(str(self.session_id)))
         self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), self.envelope)
         self.assertEqual(self._queue(_IngestionService()).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
@@ -652,6 +652,54 @@ class PersistentUploadQueueTests(unittest.TestCase):
         self.assertEqual(remote.calls, ["status:first-access-token", "subject"])
         self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
         self.assertTrue(sealed.path.exists())
+
+    def test_failed_recovery_release_rolls_back_the_new_consent_record(self) -> None:
+        self.envelope = self.envelope.model_copy(update={
+            "subject": SubjectCreateRequest(
+                subject_uuid=self.subject_id,
+                external_identifier=ExternalIdentifierInput(
+                    issuer="INSTITUTION", id_type="MEDICAL_RECORD_NUMBER",
+                    external_id="test-2781",
+                ),
+            ),
+        })
+        sealed = self._seal(0)
+        self._commit(sealed, stored_session_id=self.session_id.hex)
+        cloud_subject = uuid4()
+        new_consent = uuid4()
+        remote = _IngestionService()
+        remote.subject_response = SubjectSummary(subject_uuid=cloud_subject, conflict=True)
+        self.assertIs(self._queue(remote).upload_next(_Tokens()), UploadCycleOutcome.CONFLICT)
+        original_envelope = self.store.sync_handoff_envelope(str(self.session_id))
+        authorization = SubjectRecoveryAuthorization(
+            schema_version="subject-recovery/2",
+            session_id=self.session_id,
+            original_envelope_sha256=canonical_sha256(original_envelope),
+            original_subject_uuid=self.subject_id,
+            cloud_subject_uuid=cloud_subject,
+            replacement_consent=ConsentCreateRequest(
+                consent_record_id=new_consent,
+                subject_uuid=cloud_subject,
+                policy_version=self.envelope.consent.policy_version,
+                purpose_codes=self.envelope.consent.purpose_codes,
+                data_categories=self.envelope.consent.data_categories,
+                granted_at=datetime.fromtimestamp(2, UTC),
+                evidence_type="SUBJECT_CONFIRMED",
+                terminal_signature="new-signed-evidence",
+            ),
+            operator_account_id=uuid4(),
+            confirmed_at=datetime.fromtimestamp(1, UTC),
+            cloud_external_id_masked="***2781",
+            case_id=uuid4(), receipt_id=uuid4(),
+            receipt_expires_at=datetime.fromtimestamp(30, UTC),
+            platform_ticket_sha256="a" * 64,
+        )
+        # The release is the last write of the transaction that records the consent.
+        self.store._queue.requeue = lambda *a, **k: False
+        with self.assertRaises(ValueError):
+            self.store.authorize_subject_recovery(authorization)
+        self.assertIsNone(self.store.subject_recovery_authorization(str(self.session_id)))
+        self.assertEqual(self.store.sync_handoff_state(str(self.session_id)), "CONFLICT")
 
     def test_server_matched_recovery_uploads_original_raw_session_after_restart(self) -> None:
         self.envelope = self.envelope.model_copy(update={
@@ -1201,7 +1249,8 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 finally:
                     client.close()
                 _, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
-                self.assertEqual(due_ns, clock.value + delay * 1_000_000_000)
+                # The queue stores the deadline as a datetime: microsecond resolution.
+                self.assertEqual(due_ns, (clock.value + delay * 1_000_000_000) // 1000 * 1000)
                 clock.value = due_ns
         self.assertIs(self._queue(_IngestionService(), clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
 

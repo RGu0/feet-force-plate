@@ -378,6 +378,7 @@ class ValidSessionStagerTests(unittest.TestCase):
         stager = self._stager("manual-delete")
         stager.append(_frame(10))
         stager.commit_valid(ended_at_ns=1_100_000_000)
+        self.assertIsNotNone(self.store.lease_sync_handoff(now_ns=1_150_000_000))
         self.store.mark_cloud_confirmed("manual-delete", confirmed_at_ns=1_200_000_000)
 
         snapshot = self.store.valid_local_storage_snapshot()
