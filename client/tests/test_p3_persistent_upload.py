@@ -508,7 +508,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
             connection.execute("PRAGMA user_version=9")
         connection.close()
         self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
-        self.assertEqual(self.store.schema_version, 12)
+        self.assertEqual(self.store.schema_version, 13)
         self.assertIsNone(self.store.sync_handoff_credential(str(self.session_id)))
         self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), self.envelope)
         self.assertEqual(self._queue(_IngestionService()).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
@@ -1201,7 +1201,8 @@ class PersistentUploadQueueTests(unittest.TestCase):
                 finally:
                     client.close()
                 _, due_ns, _ = self.store.sync_handoff_retry_state(str(self.session_id))
-                self.assertEqual(due_ns, clock.value + delay * 1_000_000_000)
+                # The queue stores the deadline as a datetime: microsecond resolution.
+                self.assertEqual(due_ns, (clock.value + delay * 1_000_000_000) // 1000 * 1000)
                 clock.value = due_ns
         self.assertIs(self._queue(_IngestionService(), clock=clock).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
 

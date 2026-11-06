@@ -14,6 +14,14 @@ import threading
 from typing import Protocol
 from uuid import UUID
 
+from client.spool.operation_queue import (
+    LEGACY_STATE_NAMES,
+    datetime_from_ns,
+    import_legacy_operation,
+    new_operation,
+    ns_from_datetime,
+    purge_operation,
+)
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from shared.contracts.capture_grants import CaptureCredential, LegacyMigrationBinding
 from shared.contracts.client_sync import (
@@ -21,9 +29,10 @@ from shared.contracts.client_sync import (
     SubjectRecoveryAuthorization,
     canonical_sha256,
 )
+from techflex_cloud_foundation import OperationState, SqliteOperationStore
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -335,6 +344,10 @@ class StateStore:
         self._connection.execute("PRAGMA synchronous=FULL")
         self._connection.execute("PRAGMA busy_timeout=5000")
         self._migrate()
+        # Upload queue state lives in foundation's operation store on this very
+        # connection, so a queue change commits or rolls back with the rest.
+        self._queue = SqliteOperationStore.attach(self._connection)
+        self._heal_queue()
 
     def close(self) -> None:
         with self._lock:
@@ -513,6 +526,82 @@ class StateStore:
                        END;"""
                 )
                 self._connection.execute("PRAGMA user_version=12")
+            if version < 13:
+                self._migrate_upload_queue_to_operations()
+                self._connection.execute("PRAGMA user_version=13")
+
+    def _migrate_upload_queue_to_operations(self) -> None:
+        """v12 to v13: move each handoff's queue state into the operation store.
+
+        In place and without clearing the queue (clearing would break the
+        capacity gate's pending counts).  Runs inside ``_migrate``'s transaction.
+        """
+
+        SqliteOperationStore.attach(self._connection)  # creates foundation_operations
+        columns = {
+            str(row[1]) for row in self._connection.execute("PRAGMA table_info(sync_handoffs)")
+        }
+        if "operation_id" not in columns:
+            self._connection.execute("ALTER TABLE sync_handoffs ADD COLUMN operation_id TEXT")
+        # A database that already lost the legacy columns has nothing to import;
+        # any handoff still without an operation is queued by `_heal_queue`.
+        rows = [] if "state" not in columns else self._connection.execute(
+            """SELECT session_id, manifest_sha256, state, created_at_ns, attempt_count,
+                next_attempt_at_ns, last_error_code
+            FROM sync_handoffs WHERE operation_id IS NULL ORDER BY created_at_ns, session_id"""
+        ).fetchall()
+        for row in rows:
+            operation = new_operation(str(row[0]), str(row[1]), int(row[3]))
+            import_legacy_operation(
+                self._connection,
+                operation,
+                legacy_state=str(row[2]),
+                attempt_count=int(row[4]),
+                next_attempt_at_ns=None if row[5] is None else int(row[5]),
+                error_code=None if row[6] is None else str(row[6]),
+            )
+            self._connection.execute(
+                "UPDATE sync_handoffs SET operation_id=? WHERE session_id=?",
+                (str(operation.operation_id), row[0]),
+            )
+        self._connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_handoffs_operation "
+            "ON sync_handoffs(operation_id)"
+        )
+        self._connection.execute("DROP INDEX IF EXISTS idx_sync_handoffs_state")
+        for column in ("state", "attempt_count", "next_attempt_at_ns", "last_error_code"):
+            if column in columns:
+                self._connection.execute(f"ALTER TABLE sync_handoffs DROP COLUMN {column}")
+
+    def _heal_queue(self) -> None:
+        """Give any handoff without a queue entry one, so no upload is ever forgotten.
+
+        A handoff row without an operation, or whose operation row is missing,
+        is re-queued as ready: the server treats a repeated upload of the same
+        manifest as idempotent.
+        """
+
+        with self._lock, self._connection:
+            rows = self._connection.execute(
+                """SELECT session_id, manifest_sha256, created_at_ns, operation_id
+                FROM sync_handoffs"""
+            ).fetchall()
+            for row in rows:
+                if row[3] is not None:
+                    try:
+                        self._queue.get(UUID(str(row[3])))
+                        continue
+                    except KeyError:
+                        pass
+                operation = new_operation(
+                    str(row[0]), str(row[1]), int(row[2]),
+                    operation_id=None if row[3] is None else UUID(str(row[3])),
+                )
+                self._queue.enqueue(operation)
+                self._connection.execute(
+                    "UPDATE sync_handoffs SET operation_id=? WHERE session_id=?",
+                    (str(operation.operation_id), row[0]),
+                )
 
     def record_validation_audit(
         self,
@@ -859,18 +948,22 @@ class StateStore:
                     for artifact in artifacts
                 ],
             )
+            operation = new_operation(session_id, manifest_sha256, ended_at_ns)
             self._connection.execute(
                 """INSERT INTO sync_handoffs(
-                    session_id, manifest_sha256, state, created_at_ns, upload_envelope, upload_credential
-                ) VALUES (?, ?, 'READY_FOR_NETWORK', ?, ?, ?)""",
+                    session_id, manifest_sha256, created_at_ns, upload_envelope,
+                    upload_credential, operation_id
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     session_id,
                     manifest_sha256,
                     ended_at_ns,
                     encrypted_upload_envelope,
                     encrypted_credential,
+                    str(operation.operation_id),
                 ),
             )
+            self._queue.enqueue(operation)
 
     def sync_handoff_credential(self, session_id: str) -> CaptureCredential | None:
         with self._lock:
@@ -908,13 +1001,33 @@ class StateStore:
     def sync_handoff_state(self, session_id: str) -> str:
         stored_session_id = self._stored_sync_handoff_id(session_id)
         with self._lock:
-            row = self._connection.execute(
-                "SELECT state FROM sync_handoffs WHERE session_id=?",
-                (stored_session_id,),
-            ).fetchone()
-        if row is None:
+            try:
+                operation_id = self._operation_id(stored_session_id)
+            except KeyError:
+                raise KeyError(session_id) from None
+            return LEGACY_STATE_NAMES[self._queue.get(operation_id).state]
+
+    def _operation_id(self, session_id: str) -> UUID:
+        """The queue entry of a handoff; KeyError when the handoff does not exist."""
+
+        row = self._connection.execute(
+            "SELECT operation_id FROM sync_handoffs WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is None or row[0] is None:
             raise KeyError(session_id)
-        return str(row[0])
+        return UUID(str(row[0]))
+
+    def _pending_session_ids(self) -> list[str]:
+        """Handoffs whose upload the cloud has not confirmed yet."""
+
+        rows = self._connection.execute(
+            "SELECT session_id, operation_id FROM sync_handoffs"
+        ).fetchall()
+        return [
+            str(row[0])
+            for row in rows
+            if self._queue.get(UUID(str(row[1]))).state is not OperationState.CONFIRMED
+        ]
 
     def sync_handoff_envelope(self, session_id: str) -> FormalUploadEnvelope:
         stored_session_id = self._stored_sync_handoff_id(session_id)
@@ -1068,13 +1181,22 @@ class StateStore:
 
         with self._lock:
             rows = self._connection.execute(
-                """SELECT session_id FROM sync_handoffs
+                """SELECT session_id, operation_id FROM sync_handoffs
                 WHERE upload_envelope IS NOT NULL
-                  AND (state='CONFLICT' AND last_error_code='E-SUB-409'
-                    OR (state='BLOCKED' AND last_error_code='E-AUT-403'))
                 ORDER BY created_at_ns, session_id"""
             ).fetchall()
-        return tuple(str(row[0]) for row in rows)
+            candidates: list[str] = []
+            for session_id, operation_id in rows:
+                stored = self._queue.get(UUID(str(operation_id)))
+                if (
+                    stored.state is OperationState.CONFLICT
+                    and stored.error_code == "E-SUB-409"
+                ) or (
+                    stored.state is OperationState.BLOCKED
+                    and stored.error_code == "E-AUT-403"
+                ):
+                    candidates.append(str(session_id))
+        return tuple(candidates)
 
     def authorize_subject_recovery(
         self, authorization: SubjectRecoveryAuthorization
@@ -1109,11 +1231,10 @@ class StateStore:
             context=f"subject_recovery:{session_id}",
         )
         with self._lock, self._connection:
-            row = self._connection.execute(
-                "SELECT state, last_error_code FROM sync_handoffs WHERE session_id=?",
-                (session_id,),
-            ).fetchone()
-            if row is None or row[0] not in {"CONFLICT", "BLOCKED"}:
+            operation_id = self._operation_id(session_id)
+            parked = self._queue.get(operation_id)
+            row = (LEGACY_STATE_NAMES[parked.state], parked.error_code)
+            if row[0] not in {"CONFLICT", "BLOCKED"}:
                 raise ValueError("recovery requires a blocked handoff")
             if row[0] == "CONFLICT" and row[1] != "E-SUB-409":
                 raise ValueError("conflict has another cause")
@@ -1145,11 +1266,9 @@ class StateStore:
                     (session_id, encrypted_payload, recorded_at_ns) VALUES (?,?,?)""",
                     (session_id, encrypted, recorded_at_ns),
                 )
-            self._connection.execute(
-                """UPDATE sync_handoffs SET state='READY_FOR_NETWORK',
-                next_attempt_at_ns=NULL, last_error_code=NULL WHERE session_id=?""",
-                (session_id,),
-            )
+            # Same transaction as the consent record above: both commit or neither does.
+            if not self._queue.requeue(operation_id, expected_error_code=str(row[1])):
+                raise ValueError("recovery requires a blocked handoff")
 
     def attach_supporting_local_analysis(
         self,
@@ -1209,53 +1328,42 @@ class StateStore:
         """Record cloud receipt without granting local deletion eligibility."""
 
         with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs
-                SET state='CLOUD_CONFIRMED', cloud_confirmed_at_ns=?,
-                    next_attempt_at_ns=NULL, last_error_code=NULL
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'UPLOADING', 'RETRY_WAIT')""",
+            if not self._queue.confirm(self._operation_id(session_id)):
+                raise KeyError(session_id)
+            self._connection.execute(
+                "UPDATE sync_handoffs SET cloud_confirmed_at_ns=? WHERE session_id=?",
                 (confirmed_at_ns, session_id),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+            )
 
     def lease_sync_handoff(self, *, now_ns: int) -> SyncHandoff | None:
         """Lease the earliest retryable handoff without depending on process memory."""
 
         with self._lock, self._connection:
-            row = self._connection.execute(
-                """SELECT handoff.session_id, session.subject_uuid, session.consent_id,
-                    session.started_at_ns, session.ended_at_ns, handoff.manifest_sha256,
-                    handoff.attempt_count
-                FROM sync_handoffs AS handoff
-                JOIN sessions AS session USING(session_id)
-                WHERE handoff.state='READY_FOR_NETWORK'
-                   OR (handoff.state='RETRY_WAIT'
-                       AND (handoff.next_attempt_at_ns IS NULL
-                            OR handoff.next_attempt_at_ns <= ?))
-                ORDER BY handoff.created_at_ns, handoff.session_id
-                LIMIT 1""",
-                (now_ns,),
-            ).fetchone()
-            if row is None:
-                return None
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs
-                SET state='UPLOADING', attempt_count=attempt_count+1, next_attempt_at_ns=NULL
-                WHERE session_id=? AND state IN ('READY_FOR_NETWORK', 'RETRY_WAIT')""",
-                (row[0],),
-            ).rowcount
-            if not changed:
-                return None
-        return SyncHandoff(
-            session_id=str(row[0]),
-            subject_uuid=str(row[1]),
-            consent_id=str(row[2]) if row[2] is not None else None,
-            started_at_ns=int(row[3]),
-            ended_at_ns=int(row[4]),
-            manifest_sha256=str(row[5]),
-            attempt_count=int(row[6]) + 1,
-        )
+            while True:
+                operation = self._queue.lease_due(now=datetime_from_ns(now_ns))
+                if operation is None:
+                    return None
+                row = self._connection.execute(
+                    """SELECT handoff.session_id, session.subject_uuid, session.consent_id,
+                        session.started_at_ns, session.ended_at_ns, handoff.manifest_sha256
+                    FROM sync_handoffs AS handoff
+                    JOIN sessions AS session USING(session_id)
+                    WHERE handoff.operation_id=?""",
+                    (str(operation.operation_id),),
+                ).fetchone()
+                if row is None:
+                    # A queue entry with no session behind it can never be uploaded.
+                    self._queue.block(operation.operation_id, error_code="E-SYN-500")
+                    continue
+                return SyncHandoff(
+                    session_id=str(row[0]),
+                    subject_uuid=str(row[1]),
+                    consent_id=str(row[2]) if row[2] is not None else None,
+                    started_at_ns=int(row[3]),
+                    ended_at_ns=int(row[4]),
+                    manifest_sha256=str(row[5]),
+                    attempt_count=self._queue.get(operation.operation_id).attempt_count,
+                )
 
     def sync_handoff_segments(self, session_id: str) -> tuple[SyncHandoffSegment, ...]:
         with self._lock:
@@ -1284,13 +1392,12 @@ class StateStore:
         if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
             raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='RETRY_WAIT',
-                    next_attempt_at_ns=?, last_error_code=?
-                WHERE session_id=? AND state='UPLOADING'""",
-                (next_attempt_at_ns, error_code, session_id),
-            ).rowcount
-        if not changed:
+            deferred = self._queue.defer(
+                self._operation_id(session_id),
+                next_attempt_at=datetime_from_ns(next_attempt_at_ns),
+                error_code=error_code,
+            )
+        if not deferred:
             raise KeyError(session_id)
 
     def sync_handoff_retry_state(
@@ -1299,17 +1406,11 @@ class StateStore:
         """Expose durable scheduling facts without decrypting upload identity."""
 
         with self._lock:
-            row = self._connection.execute(
-                """SELECT attempt_count, next_attempt_at_ns, last_error_code
-                FROM sync_handoffs WHERE session_id=?""",
-                (session_id,),
-            ).fetchone()
-        if row is None:
-            raise KeyError(session_id)
+            stored = self._queue.get(self._operation_id(session_id))
         return (
-            int(row[0]),
-            int(row[1]) if row[1] is not None else None,
-            str(row[2]) if row[2] is not None else None,
+            stored.attempt_count,
+            None if stored.next_attempt_at is None else ns_from_datetime(stored.next_attempt_at),
+            stored.error_code,
         )
 
     def mark_sync_handoff_conflict(
@@ -1320,14 +1421,10 @@ class StateStore:
         if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
             raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='CONFLICT',
-                    next_attempt_at_ns=NULL, last_error_code=?
-                WHERE session_id=? AND state='UPLOADING'""",
-                (error_code, session_id),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+            if not self._queue.mark_conflict(
+                self._operation_id(session_id), error_code=error_code
+            ):
+                raise KeyError(session_id)
 
     def mark_sync_handoff_blocked(self, session_id: str, *, error_code: str) -> None:
         """Stop automatic retries after a non-retryable cloud contract rejection."""
@@ -1335,14 +1432,11 @@ class StateStore:
         if re.fullmatch(r"E-[A-Z]{3}-[0-9]{3}", error_code) is None:
             raise ValueError("error_code must be a safe diagnostic code")
         with self._lock, self._connection:
-            changed = self._connection.execute(
-                """UPDATE sync_handoffs SET state='BLOCKED',
-                    next_attempt_at_ns=NULL, last_error_code=?
-                WHERE session_id=? AND state='UPLOADING'""",
-                (error_code, session_id),
-            ).rowcount
-        if not changed:
-            raise KeyError(session_id)
+            operation_id = self._operation_id(session_id)
+            if self._queue.get(operation_id).state is not OperationState.LEASED:
+                raise KeyError(session_id)
+            if not self._queue.block(operation_id, error_code=error_code):
+                raise KeyError(session_id)
 
     def valid_local_storage_snapshot(self) -> ValidLocalStorageSnapshot:
         """Describe retained valid data without treating cloud receipt as deletion."""
@@ -1361,9 +1455,7 @@ class StateStore:
                 FROM session_artifacts JOIN sessions USING(session_id)
                 WHERE sessions.validity_status='VALID'"""
             ).fetchone()[0]
-            pending_handoff_count = self._connection.execute(
-                "SELECT COUNT(*) FROM sync_handoffs WHERE state != 'CLOUD_CONFIRMED'"
-            ).fetchone()[0]
+            pending_handoff_count = len(self._pending_session_ids())
             last_confirmed = self._connection.execute(
                 "SELECT MAX(cloud_confirmed_at_ns) FROM sync_handoffs"
             ).fetchone()[0]
@@ -1392,8 +1484,13 @@ class StateStore:
             ).fetchone()[0]
             if report_count:
                 raise ValueError("session with retained reports cannot be manually deleted")
+            operation = self._connection.execute(
+                "SELECT operation_id FROM sync_handoffs WHERE session_id=?", (session_id,)
+            ).fetchone()
             self._connection.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
             self._connection.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+            if operation is not None and operation[0] is not None:
+                purge_operation(self._connection, str(operation[0]))
 
     def completed_valid_session_ids(self) -> tuple[str, ...]:
         """Return only operator-deletable sessions; never an ACK cleanup list."""
@@ -1507,11 +1604,14 @@ class StateStore:
                 SET state='PENDING', attempt_count=attempt_count+1
                 WHERE state='UPLOADING'"""
             ).rowcount
-            handoffs = self._connection.execute(
-                """UPDATE sync_handoffs
-                SET state='READY_FOR_NETWORK', next_attempt_at_ns=NULL
-                WHERE state='UPLOADING'"""
-            ).rowcount
+            handoffs = sum(
+                1
+                for row in self._connection.execute(
+                    "SELECT operation_id FROM sync_handoffs"
+                ).fetchall()
+                if self._queue.get(UUID(str(row[0]))).state is OperationState.LEASED
+            )
+            self._queue.recover_interrupted_leases(now=datetime.now(UTC))
         return RecoveryResult(sessions, uploads, telemetry, handoffs)
 
     def quarantine_segment_path(self, relative_path: str) -> int:
@@ -1582,20 +1682,18 @@ class StateStore:
     def offline_snapshot(self) -> OfflineSnapshot:
         with self._lock:
             row = self._connection.execute(
-                """SELECT terminal_state.last_successful_online_ns,
-                    COUNT(DISTINCT CASE
-                        WHEN h.state != 'CLOUD_CONFIRMED' THEN h.session_id
-                    END),
-                    COALESCE(SUM(CASE
-                        WHEN h.state != 'CLOUD_CONFIRMED' THEN s.byte_count
-                        ELSE 0
-                    END), 0)
-                FROM terminal_state
-                LEFT JOIN sync_handoffs h ON 1=1
-                LEFT JOIN segments s ON s.session_id=h.session_id
-                WHERE terminal_state.singleton=1"""
+                "SELECT last_successful_online_ns FROM terminal_state WHERE singleton=1"
             ).fetchone()
-        return OfflineSnapshot(row[0], int(row[1]), int(row[2]))
+            pending = self._pending_session_ids()
+            pending_bytes = 0
+            for start in range(0, len(pending), 500):
+                chunk = pending[start:start + 500]
+                pending_bytes += int(self._connection.execute(
+                    f"SELECT COALESCE(SUM(byte_count), 0) FROM segments "
+                    f"WHERE session_id IN ({','.join('?' for _ in chunk)})",
+                    chunk,
+                ).fetchone()[0])
+        return OfflineSnapshot(row[0], len(pending), pending_bytes)
 
     def evaluate_new_test(
         self,

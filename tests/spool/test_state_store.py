@@ -304,6 +304,7 @@ class StateStoreTests(unittest.TestCase):
                 ),
             ),
         )
+        self.assertIsNotNone(self.store.lease_sync_handoff(now_ns=25))
         self.store.mark_cloud_confirmed("session-1", confirmed_at_ns=30)
         payload = b'{"authority":"SUPPORTING_NON_AUTHORITATIVE"}'
 
