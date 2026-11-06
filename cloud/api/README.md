@@ -290,6 +290,15 @@ absolute) keep their upload and report access for sessions that already exist,
 and grants or migration permits already issued stay in place, but cannot start a
 session while the tenant is `CLOSED`. Identity-recovery registration is a
 separate controlled path and is not gated by this status.
+`RESTORE` always returns the tenant to `ACTIVE`; a `SUSPENDED` tenant that was
+closed is not returned to `SUSPENDED` (its previous status is kept only in the
+audit event). The status is read, not row-locked, because the application roles
+may not lock `iam.tenants`; a sign-in, activation, grant or registration that
+read `ACTIVE` just before a close commits can still succeed once. Terminal
+sign-in (`POST /v1/access/terminal-activate`) is gated like sign-in and
+activation. Token refresh (`/v1/access/refresh`, `/v1/access/terminal-refresh`),
+hardware leases and the legacy device enrolment (`POST /v1/terminals/enroll`)
+are not gated.
 `cloud/migrations/0019_tenant_status_gate.sql` gives the tenant role read-only
 access to `iam.tenants` for the capture-session check; the installer applies it
 on every install.

@@ -733,8 +733,8 @@ class PostgresAccessRepository:
         return TenantRecord(row["tenant_id"], row["name"], row["status"], row["created_at"])
 
     async def tenant_is_active(self, tenant_id: UUID) -> bool:
-        # Sign-in and activation run as the pre-authentication role, which can
-        # read only this one column of the tenant row.
+        # Sign-in and activation run as the pre-authentication role; only the
+        # status of the tenant row is read here.
         async with tenant_transaction(self._activation_pool, tenant_id) as connection:
             status = await connection.fetchval(
                 "SELECT status FROM iam.tenants WHERE tenant_id=$1", tenant_id

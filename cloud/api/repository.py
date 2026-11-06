@@ -338,8 +338,10 @@ class InMemoryPlatformRepository:
     def _require_active_tenant(self, tenant_id) -> None:
         """A closed tenant starts no new session, whichever way it is authorised."""
         access = self._capture_access
-        tenant = None if access is None else access._tenants.get(tenant_id)
-        if tenant is not None and tenant.status != "ACTIVE":
+        if access is None:
+            return
+        tenant = access._tenants.get(tenant_id)
+        if tenant is None or tenant.status != "ACTIVE":
             raise TenantAccessDenied("机构已关闭，不能创建新会话")
 
     def _capture_entitlement(self, context):
