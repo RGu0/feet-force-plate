@@ -272,3 +272,81 @@ def test_nanosecond_times_round_trip_at_microsecond_resolution() -> None:
     value_ns = 1_700_000_000_123_456_789
     assert ns_from_datetime(datetime_from_ns(value_ns)) == 1_700_000_000_123_456_000
     assert datetime_from_ns(0).isoformat() == "1970-01-01T00:00:00+00:00"
+
+
+def test_a_legacy_retry_wait_without_a_deadline_is_leased_after_migration(
+    db_path: Path, store: StateStore
+) -> None:
+    # Rows written before schema v7 have no deadline; v12 leased them at once.
+    _commit(store, 0)
+    store.close()
+    _make_v12(db_path, {"session-0": {"state": "RETRY_WAIT", "attempts": 3, "error": "E-NET-503"}})
+
+    migrated = _open(db_path)
+    try:
+        assert migrated.sync_handoff_state("session-0") == "RETRY_WAIT"
+        handoff = migrated.lease_sync_handoff(now_ns=1_000_000_000)
+        assert handoff is not None and handoff.session_id == "session-0"
+        assert handoff.attempt_count == 4
+    finally:
+        migrated.close()
+
+
+def test_a_handoff_with_a_cloud_receipt_stays_confirmed_when_its_entry_is_rebuilt(
+    db_path: Path, store: StateStore
+) -> None:
+    session_id = _commit(store, 0)
+    assert store.lease_sync_handoff(now_ns=1) is not None
+    store.mark_cloud_confirmed(session_id, confirmed_at_ns=5)
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.execute("DELETE FROM foundation_operations")
+        connection.commit()
+    store.close()
+
+    healed = _open(db_path)
+    try:
+        assert healed.sync_handoff_state(session_id) == "CLOUD_CONFIRMED"
+        assert healed.offline_snapshot().pending_session_count == 0
+        assert healed.lease_sync_handoff(now_ns=1) is None
+    finally:
+        healed.close()
+
+
+def test_a_confirmation_is_durable_across_a_reopen(db_path: Path, store: StateStore) -> None:
+    session_id = _commit(store, 0)
+    assert store.lease_sync_handoff(now_ns=1) is not None
+    store.mark_cloud_confirmed(session_id, confirmed_at_ns=5)
+    store.close()
+
+    reopened = _open(db_path)
+    try:
+        assert reopened.sync_handoff_state(session_id) == "CLOUD_CONFIRMED"
+        assert reopened.valid_local_storage_snapshot().last_cloud_confirmed_at_ns == 5
+    finally:
+        reopened.close()
+
+
+def test_only_a_leased_upload_can_be_blocked_or_conflicted(store: StateStore) -> None:
+    session_id = _commit(store, 0)
+
+    with pytest.raises(KeyError):
+        store.mark_sync_handoff_blocked(session_id, error_code="E-SYN-400")
+    with pytest.raises(KeyError):
+        store.mark_sync_handoff_conflict(session_id)
+
+    assert store.sync_handoff_state(session_id) == "READY_FOR_NETWORK"
+
+
+def test_the_retry_deadline_is_reported_only_while_waiting_to_retry(store: StateStore) -> None:
+    session_id = _commit(store, 0)
+    assert store.lease_sync_handoff(now_ns=1_000_000) is not None
+    store.defer_sync_handoff(session_id, error_code="E-NET-503", next_attempt_at_ns=2_000_000)
+    assert store.sync_handoff_retry_state(session_id) == (1, 2_000_000, "E-NET-503")
+
+    assert store.lease_sync_handoff(now_ns=3_000_000) is not None
+    assert store.sync_handoff_state(session_id) == "UPLOADING"
+    attempts, due_ns, _ = store.sync_handoff_retry_state(session_id)
+    assert (attempts, due_ns) == (2, None)  # no stale deadline once it is leased again
+
+    store.mark_sync_handoff_blocked(session_id, error_code="E-SYN-400")
+    assert store.sync_handoff_retry_state(session_id) == (2, None, "E-SYN-400")

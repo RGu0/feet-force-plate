@@ -534,7 +534,13 @@ class StateStore:
         """v12 to v13: move each handoff's queue state into the operation store.
 
         In place and without clearing the queue (clearing would break the
-        capacity gate's pending counts).  Runs inside ``_migrate``'s transaction.
+        capacity gate's pending counts).  Row data is imported in one
+        transaction (it starts at the first insert); the DDL before it
+        (creating ``foundation_operations``, adding ``operation_id``) commits on
+        its own in Python's sqlite3.  A failure therefore never leaves data
+        half-migrated: the database stays at v12 with its legacy columns, plus
+        at most an empty ``foundation_operations`` table and an unused
+        ``operation_id`` column, and the next open completes the migration.
         """
 
         SqliteOperationStore.attach(self._connection)  # creates foundation_operations
@@ -552,12 +558,18 @@ class StateStore:
         ).fetchall()
         for row in rows:
             operation = new_operation(str(row[0]), str(row[1]), int(row[3]))
+            next_attempt_at_ns = None if row[5] is None else int(row[5])
+            if str(row[2]) == "RETRY_WAIT" and next_attempt_at_ns is None:
+                # v12 leased a RETRY_WAIT row with no deadline at once (rows written
+                # before schema v7 have none); the operation store would never
+                # lease it, so give it a deadline in the past.
+                next_attempt_at_ns = int(row[3])
             import_legacy_operation(
                 self._connection,
                 operation,
                 legacy_state=str(row[2]),
                 attempt_count=int(row[4]),
-                next_attempt_at_ns=None if row[5] is None else int(row[5]),
+                next_attempt_at_ns=next_attempt_at_ns,
                 error_code=None if row[6] is None else str(row[6]),
             )
             self._connection.execute(
@@ -577,14 +589,16 @@ class StateStore:
         """Give any handoff without a queue entry one, so no upload is ever forgotten.
 
         A handoff row without an operation, or whose operation row is missing,
-        is re-queued as ready: the server treats a repeated upload of the same
-        manifest as idempotent.
+        is re-queued as ready (the server treats a repeated upload of the same
+        manifest as idempotent), unless it carries a cloud receipt time, in
+        which case it stays confirmed.  A parked (blocked or conflict) state
+        cannot be recovered and returns to ready.
         """
 
         with self._lock, self._connection:
             rows = self._connection.execute(
-                """SELECT session_id, manifest_sha256, created_at_ns, operation_id
-                FROM sync_handoffs"""
+                """SELECT session_id, manifest_sha256, created_at_ns, operation_id,
+                    cloud_confirmed_at_ns FROM sync_handoffs"""
             ).fetchall()
             for row in rows:
                 if row[3] is not None:
@@ -597,7 +611,14 @@ class StateStore:
                     str(row[0]), str(row[1]), int(row[2]),
                     operation_id=None if row[3] is None else UUID(str(row[3])),
                 )
-                self._queue.enqueue(operation)
+                if row[4] is not None:
+                    # The cloud receipt time proves it was confirmed: keep it so.
+                    import_legacy_operation(
+                        self._connection, operation, legacy_state="CLOUD_CONFIRMED",
+                        attempt_count=0, next_attempt_at_ns=None, error_code=None,
+                    )
+                else:
+                    self._queue.enqueue(operation)
                 self._connection.execute(
                     "UPDATE sync_handoffs SET operation_id=? WHERE session_id=?",
                     (str(operation.operation_id), row[0]),
@@ -964,6 +985,9 @@ class StateStore:
                 ),
             )
             self._queue.enqueue(operation)
+            # An entry already stored under this session's key (left behind by a
+            # deletion that skipped the purge) would make enqueue a silent no-op.
+            self._queue.get(operation.operation_id)
 
     def sync_handoff_credential(self, session_id: str) -> CaptureCredential | None:
         with self._lock:
@@ -1407,11 +1431,14 @@ class StateStore:
 
         with self._lock:
             stored = self._queue.get(self._operation_id(session_id))
-        return (
-            stored.attempt_count,
-            None if stored.next_attempt_at is None else ns_from_datetime(stored.next_attempt_at),
-            stored.error_code,
+        # The operation store keeps the last deadline after a lease or a block;
+        # the deadline is only meaningful while the entry waits to retry.
+        due = (
+            ns_from_datetime(stored.next_attempt_at)
+            if stored.state is OperationState.RETRY_WAIT and stored.next_attempt_at is not None
+            else None
         )
+        return (stored.attempt_count, due, stored.error_code)
 
     def mark_sync_handoff_conflict(
         self, session_id: str, *, error_code: str = "E-SYN-409"
