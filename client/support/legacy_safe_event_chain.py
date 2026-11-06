@@ -48,7 +48,7 @@ def legacy_chain_files(root: Path) -> tuple[Path, ...]:
     file it would not recognise must never be left for it.  The test is
     therefore by exclusion: a non-empty generation file whose first line is
     not a foundation record (``payload`` key) is old-format or damaged and
-    triggers the archive.  When any file does, every non-empty generation file
+    triggers the archive; a lone torn line is left to the store's own recovery.  When any file does, every non-empty generation file
     goes into the archive together, so a mixed or half-moved set cannot leave
     foundation a chain whose older half it cannot link.
     """
@@ -58,7 +58,7 @@ def legacy_chain_files(root: Path) -> tuple[Path, ...]:
         for name in LEGACY_GENERATION_FILENAMES
         if (root / name).is_file() and (root / name).stat().st_size
     ]
-    if any(_first_line_kind(path) != "foundation" for path in present):
+    if any(_first_line_kind(path) == "other" for path in present):
         return tuple(present)
     return ()
 
@@ -123,17 +123,26 @@ def _legacy_record_digest(event: object, previous_sha256: str | None) -> str:
 
 
 def _first_line_kind(path: Path) -> str:
-    """``foundation`` for a foundation record, ``other`` for anything else."""
+    """``foundation``, ``torn`` or ``other`` for the first line of a generation file.
+
+    ``torn`` is a file holding one unterminated line that does not parse: the
+    remnant of a crash during the very first append.  Both stores cut such a
+    line away on open, so it says nothing about the format and must not make a
+    healthy neighbouring generation look like an old log.
+    """
 
     try:
         with path.open("rb") as handle:
             for raw_line in handle:
                 if not raw_line.strip():
                     continue
-                decoded = json.loads(raw_line.decode("utf-8"))
+                try:
+                    decoded = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return "other" if raw_line.endswith(b"\n") else "torn"
                 if isinstance(decoded, dict) and "payload" in decoded and "event" not in decoded:
                     return "foundation"
                 return "other"
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except OSError:
         return "other"
     return "other"

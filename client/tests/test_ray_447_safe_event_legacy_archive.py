@@ -391,3 +391,21 @@ def test_a_file_another_process_already_moved_is_skipped_not_an_error(
     assert safe_events._archive_legacy_chain(root) is False  # nothing left for us; no error
 
     assert (archive / "events.jsonl").read_bytes() == written["events.jsonl"]
+
+
+def test_a_torn_first_line_beside_a_healthy_foundation_chain_is_not_archived(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    store = SafeClientEventStore(root)
+    for index in range(2):
+        store.append(_event(index))
+    healthy = (root / "events.jsonl").read_bytes()
+    (root / "events.1.jsonl").write_bytes(healthy)
+    (root / "events.jsonl").write_bytes(b'{"payload":{"sch')  # crash in the first append after rotation
+
+    reopened = SafeClientEventStore(root)
+
+    assert not (root / LEGACY_DIRECTORY_NAME).exists()
+    assert reopened.anchors() == ()
+    assert (root / "events.1.jsonl").read_bytes() == healthy
+    SafeClientEventStore(root)  # a second open after the same crash must still start
+    assert not (root / LEGACY_DIRECTORY_NAME).exists()
