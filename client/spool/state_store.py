@@ -562,8 +562,8 @@ class StateStore:
             if str(row[2]) == "RETRY_WAIT" and next_attempt_at_ns is None:
                 # v12 leased a RETRY_WAIT row with no deadline at once (rows written
                 # before schema v7 have none); the operation store would never
-                # lease it, so give it a deadline in the past.
-                next_attempt_at_ns = int(row[3])
+                # lease it, so give it a deadline in the past (the epoch: always due).
+                next_attempt_at_ns = 0
             import_legacy_operation(
                 self._connection,
                 operation,
@@ -987,7 +987,13 @@ class StateStore:
             self._queue.enqueue(operation)
             # An entry already stored under this session's key (left behind by a
             # deletion that skipped the purge) would make enqueue a silent no-op.
-            self._queue.get(operation.operation_id)
+            try:
+                self._queue.get(operation.operation_id)
+            except KeyError:
+                raise RuntimeError(
+                    "an upload queue entry already exists for this session; "
+                    "the commit was rolled back"
+                ) from None
 
     def sync_handoff_credential(self, session_id: str) -> CaptureCredential | None:
         with self._lock:

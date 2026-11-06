@@ -350,3 +350,28 @@ def test_the_retry_deadline_is_reported_only_while_waiting_to_retry(store: State
 
     store.mark_sync_handoff_blocked(session_id, error_code="E-SYN-400")
     assert store.sync_handoff_retry_state(session_id) == (2, None, "E-SYN-400")
+
+
+def test_committing_a_session_over_a_stale_queue_entry_fails_and_commits_nothing(
+    db_path: Path, store: StateStore
+) -> None:
+    session_id = _commit(store, 0)
+    store.close()
+    with closing(sqlite3.connect(db_path)) as connection:
+        # Delete the session without the purge, as a bug or manual repair might.
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
+        connection.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+        connection.commit()
+        assert connection.execute("SELECT COUNT(*) FROM foundation_operations").fetchone()[0] == 1
+
+    reopened = _open(db_path)
+    try:
+        with pytest.raises(RuntimeError, match="already exists"):
+            _commit(reopened, 0)
+    finally:
+        reopened.close()
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM sync_handoffs").fetchone()[0] == 0
