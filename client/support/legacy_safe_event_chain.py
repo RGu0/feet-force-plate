@@ -145,4 +145,4 @@ def _first_line_kind(path: Path) -> str:
                 return "other"
     except OSError:
         return "other"
-    return "other"
+    return "torn"  # blank lines only: no record, so nothing to tell the formats apart

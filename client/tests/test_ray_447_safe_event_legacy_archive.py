@@ -450,3 +450,32 @@ def test_an_unreadable_new_chain_does_not_stop_the_start_when_the_marker_is_miss
 
     assert (root / LEGACY_DIRECTORY_NAME / ".anchored").exists()
     assert (root / "events.jsonl").read_bytes() == damaged  # nothing chained on top of it
+
+
+def test_a_lone_file_with_a_terminated_garbled_first_line_is_still_archived(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    written, _ = _write_legacy_log(root, (2,))
+    damaged = b"not json at all\n" + written["events.jsonl"].splitlines(keepends=True)[1]
+    (root / "events.jsonl").write_bytes(damaged)
+
+    store = SafeClientEventStore(root)
+
+    assert (root / LEGACY_DIRECTORY_NAME / "events.jsonl").read_bytes() == damaged
+    (anchor,) = store.anchors()
+    assert anchor["legacy_verified"] is False
+
+
+def test_a_whitespace_only_file_beside_a_healthy_foundation_chain_is_not_archived(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "safe-events"
+    store = SafeClientEventStore(root)
+    store.append(_event(1))
+    healthy = (root / "events.jsonl").read_bytes()
+    (root / "events.1.jsonl").write_bytes(healthy)
+    (root / "events.jsonl").write_bytes(b"  ")
+
+    SafeClientEventStore(root)
+
+    assert not (root / LEGACY_DIRECTORY_NAME).exists()
+    assert (root / "events.1.jsonl").read_bytes() == healthy
