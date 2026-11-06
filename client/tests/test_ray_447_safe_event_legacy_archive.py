@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid5
 
 import pytest
 
-from client.support import SafeClientEvent, SafeClientEventStore
+from client.support import SafeClientEvent, SafeClientEventStore, safe_events
+from client.support.diagnostic_export import _revalidate_records
 from client.support.legacy_safe_event_chain import (
     LEGACY_DIRECTORY_NAME,
     _legacy_record_digest,
@@ -203,3 +206,188 @@ def test_new_records_are_in_the_foundation_line_format(tmp_path: Path) -> None:
     assert hashlib.sha256(
         json.dumps(row["payload"], sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest() == row["sha256"]
+
+
+def _foundation_events_file(directory: Path, count: int) -> bytes:
+    """A real new-format events.jsonl, produced by the store itself."""
+
+    store = SafeClientEventStore(directory)
+    for index in range(count):
+        store.append(_event(200 + index))
+    return (directory / "events.jsonl").read_bytes()
+
+
+def test_diagnostic_export_verification_accepts_the_chain_after_migration(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (2,))
+    store = SafeClientEventStore(root)
+    for index in range(3):
+        store.append(_event(100 + index))
+
+    records = _revalidate_records(store.verified_records())  # raised before the fix
+
+    assert [record.event for record in records] == [_event(100 + index) for index in range(3)]
+    # the first surviving record is a segment start; every later link is still checked
+    tampered = list(store.verified_records())
+    tampered[2] = tampered[2].model_copy(update={"previous_sha256": "1" * 64})
+    with pytest.raises(ValueError, match="strict verification"):
+        _revalidate_records(tuple(tampered))
+    tampered = list(store.verified_records())
+    tampered[0] = tampered[0].model_copy(update={"sha256": "0" * 64})
+    with pytest.raises(ValueError, match="strict verification"):
+        _revalidate_records(tuple(tampered))
+
+
+def test_a_damaged_first_line_is_archived_with_the_rest_and_nothing_is_cut(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    written, _ = _write_legacy_log(root, (2, 2))
+    # newest generation: first line garbled, last record complete but without its newline
+    damaged = b"not json at all\n" + written["events.jsonl"].splitlines(keepends=True)[1].rstrip(b"\n")
+    (root / "events.jsonl").write_bytes(damaged)
+
+    store = SafeClientEventStore(root)  # must open, not raise
+
+    archive = root / LEGACY_DIRECTORY_NAME
+    assert (archive / "events.jsonl").read_bytes() == damaged  # not truncated by anyone
+    assert (archive / "events.1.jsonl").read_bytes() == written["events.1.jsonl"]
+    (anchor,) = store.anchors()
+    assert anchor["legacy_verified"] is False and anchor["legacy_failure"] == "INVALID_RECORD"
+    store.append(_event(100))
+    assert [r.event for r in store.verified_records()] == [_event(100)]
+
+
+def test_a_mixed_set_of_generations_is_archived_whole(tmp_path: Path) -> None:
+    root = tmp_path / "mixed"
+    written, _ = _write_legacy_log(root, (2,))
+    (root / "events.1.jsonl").write_bytes(written["events.jsonl"])  # old format, older generation
+    (root / "events.jsonl").write_bytes(_foundation_events_file(tmp_path / "scratch", 2))
+    before = {name: (root / name).read_bytes() for name in ("events.1.jsonl", "events.jsonl")}
+
+    store = SafeClientEventStore(root)
+
+    for name, data in before.items():
+        assert (root / LEGACY_DIRECTORY_NAME / name).read_bytes() == data
+    (anchor,) = store.anchors()
+    assert anchor["legacy_verified"] is False  # a mixed set is not one verifiable chain
+    store.append(_event(100))
+    assert len(store.verified_records()) == 1
+
+
+def test_an_empty_current_file_beside_old_generations_is_harmless(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    written, head = _write_legacy_log(root, (2,))
+    (root / "events.1.jsonl").write_bytes(written["events.jsonl"])
+    (root / "events.jsonl").write_bytes(b"")
+
+    store = SafeClientEventStore(root)
+
+    assert (root / LEGACY_DIRECTORY_NAME / "events.1.jsonl").read_bytes() == written["events.jsonl"]
+    (anchor,) = store.anchors()
+    assert anchor["legacy_verified"] is True and anchor["legacy_head_sha256"] == head
+
+
+def test_the_anchor_is_written_once_even_after_it_rotates_out_of_retention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(safe_events, "MAX_GENERATION_BYTES", 900)
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (2,))
+    store = SafeClientEventStore(root)
+    for index in range(40):  # far past three small generations: the anchor is gone
+        store.append(_event(100 + index))
+    assert store.anchors() == ()
+    assert (root / LEGACY_DIRECTORY_NAME / ".anchored").exists()
+    size_before = sum(path.stat().st_size for path in root.glob("events*.jsonl"))
+
+    for _ in range(5):
+        reopened = SafeClientEventStore(root)
+
+    assert reopened.anchors() == ()  # no fresh anchor on any later open
+    assert sum(path.stat().st_size for path in root.glob("events*.jsonl")) == size_before
+
+
+def test_the_marker_is_written_after_the_anchor_and_a_stop_between_them_heals(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (1,))
+    SafeClientEventStore(root)
+    (root / LEGACY_DIRECTORY_NAME / ".anchored").unlink()  # the stop: anchor written, no marker
+
+    healed = SafeClientEventStore(root)
+
+    assert len(healed.anchors()) == 1  # not anchored a second time
+    assert (root / LEGACY_DIRECTORY_NAME / ".anchored").exists()
+
+
+def test_a_wrong_link_between_old_generations_fails_the_verification(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    written, _ = _write_legacy_log(root, (2, 2))
+    first_of_newest, _ = _legacy_line(_event(50), "2" * 64)  # links to a digest nobody has
+    (root / "events.jsonl").write_bytes(first_of_newest + b"".join(
+        written["events.jsonl"].splitlines(keepends=True)[1:]
+    ))
+
+    (anchor,) = SafeClientEventStore(root).anchors()
+
+    assert anchor["legacy_failure"] == "BROKEN_CHAIN" and anchor["legacy_verified"] is False
+    assert anchor["legacy_record_count"] == 2  # the verified older generation only
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_the_archive_directory_is_private(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (1,))
+
+    SafeClientEventStore(root)
+
+    assert (root / LEGACY_DIRECTORY_NAME).stat().st_mode & 0o777 == 0o700
+
+
+def _open_store_in_process(root_text: str, results: object) -> None:
+    try:
+        SafeClientEventStore(root_text)
+        results.put("ok")  # type: ignore[attr-defined]
+    except BaseException as exc:  # reported to the parent, which fails the test
+        results.put(f"{type(exc).__name__}: {exc}")  # type: ignore[attr-defined]
+
+
+def test_simultaneous_first_starts_neither_crash_nor_lose_the_old_log(tmp_path: Path) -> None:
+    root = tmp_path / "safe-events"
+    written, head = _write_legacy_log(root, (2, 3))
+    context = multiprocessing.get_context("spawn")
+    results = context.Queue()
+    workers = [
+        context.Process(target=_open_store_in_process, args=(str(root), results))
+        for _ in range(6)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=30)
+        assert worker.exitcode == 0
+    outcomes = [results.get(timeout=5) for _ in workers]
+
+    assert outcomes == ["ok"] * 6
+    for name, data in written.items():
+        assert (root / LEGACY_DIRECTORY_NAME / name).read_bytes() == data
+    store = SafeClientEventStore(root)
+    anchors = store.anchors()
+    assert anchors and all(a["legacy_head_sha256"] == head for a in anchors)  # chain reads fine
+
+
+def test_a_file_another_process_already_moved_is_skipped_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "safe-events"
+    written, _ = _write_legacy_log(root, (2,))
+    stale_listing = tuple(root / name for name in written)  # what this process saw first
+    archive = root / LEGACY_DIRECTORY_NAME
+    archive.mkdir()
+    for name in written:  # ... and the other process has finished moving them since
+        (root / name).replace(archive / name)
+    monkeypatch.setattr(safe_events, "legacy_chain_files", lambda _root: stale_listing)
+
+    assert safe_events._archive_legacy_chain(root) is False  # nothing left for us; no error
+
+    assert (archive / "events.jsonl").read_bytes() == written["events.jsonl"]

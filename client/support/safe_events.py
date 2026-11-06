@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator
 from techflex_cloud_foundation import ChainedAppendLog
+from techflex_cloud_foundation.durability import fsync_directory
 
 from client.support.legacy_safe_event_chain import (
     LEGACY_DIRECTORY_NAME,
@@ -117,8 +118,10 @@ class SafeClientEventStore:
         self._log = ChainedAppendLog(
             self._root, max_generation_bytes=MAX_GENERATION_BYTES, generations=3
         )
-        if archived or _legacy_archive_without_anchor(self._root, self._log):
-            self._log.append(_legacy_anchor_payload(self._root))
+        if _legacy_anchor_pending(self._root):
+            if archived or not _chain_has_anchor(self._log):
+                self._log.append(_legacy_anchor_payload(self._root))
+            _mark_legacy_anchored(self._root)
 
     def append(self, event: SafeClientEvent) -> None:
         self._log.append(event.model_dump(mode="json"))
@@ -148,13 +151,17 @@ class SafeClientEventStore:
 
 _EVENT_SCHEMA = "safe-client-event/1"
 _ANCHOR_SCHEMA = "safe-client-log-anchor/1"
+_ANCHORED_MARKER = ".anchored"
 
 
 def _archive_legacy_chain(root: Path) -> bool:
     """Move an old-format log into ``legacy/`` unchanged; True when files moved.
 
-    Fails closed instead of overwriting: old-format files in ``root`` while
-    ``legacy/`` already holds files means two generations of the same log.
+    Tolerates a second process doing the same move at the same moment (a source
+    that is already gone is skipped) and fails closed instead of overwriting:
+    a file still in ``root`` whose name is already taken in ``legacy/`` means
+    two generations of the same log.  Directory entries are made durable
+    before the anchor is written.
     """
 
     old_files = legacy_chain_files(root)
@@ -162,27 +169,65 @@ def _archive_legacy_chain(root: Path) -> bool:
         return False
     archive = root / LEGACY_DIRECTORY_NAME
     archive.mkdir(exist_ok=True, mode=0o700)
+    fsync_directory(root)
+    moved = False
     for path in old_files:
         target = archive / path.name
         if target.exists():
+            if not path.exists():
+                continue  # the other process finished this move between our two checks
             raise RuntimeError(
                 f"legacy safe-event archive already holds {path.name}; refusing to overwrite"
             )
-    for path in old_files:
-        os.replace(path, archive / path.name)
-    return True
+        try:
+            os.replace(path, target)
+        except FileNotFoundError:
+            continue
+        moved = True
+    fsync_directory(archive)
+    fsync_directory(root)
+    return moved
 
 
-def _legacy_archive_without_anchor(root: Path, log: ChainedAppendLog) -> bool:
-    """An archive exists but the process stopped before its anchor was written."""
+def _legacy_anchor_pending(root: Path) -> bool:
+    """An archive exists and its anchor has not been confirmed by the marker."""
 
     archive = root / LEGACY_DIRECTORY_NAME
-    if not archive.is_dir() or not any(archive.iterdir()):
+    if not archive.is_dir() or (archive / _ANCHORED_MARKER).exists():
         return False
-    return not any(
-        record.payload.get("schema_version") == _ANCHOR_SCHEMA
-        for record in log.verified_records()
-    )
+    return any(entry.name != _ANCHORED_MARKER for entry in archive.iterdir())
+
+
+def _chain_has_anchor(log: ChainedAppendLog) -> bool:
+    """Whether the new chain already holds the anchor (a stop before the marker).
+
+    A chain that cannot be read is not opened here: reading reports it, and
+    chaining another record onto it would only bury the fault.
+    """
+
+    try:
+        return any(
+            record.payload.get("schema_version") == _ANCHOR_SCHEMA
+            for record in log.verified_records()
+        )
+    except ValueError:
+        return True
+
+
+def _mark_legacy_anchored(root: Path) -> None:
+    """Record, outside the rotating chain, that the anchor was written."""
+
+    archive = root / LEGACY_DIRECTORY_NAME
+    marker = archive / _ANCHORED_MARKER
+    staging = archive / (_ANCHORED_MARKER + ".tmp")
+    descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(descriptor, b"anchored\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(staging, marker)
+    fsync_directory(archive)
 
 
 def _legacy_anchor_payload(root: Path) -> dict[str, object]:

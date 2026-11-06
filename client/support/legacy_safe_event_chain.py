@@ -42,14 +42,25 @@ class LegacyChainSummary:
 
 
 def legacy_chain_files(root: Path) -> tuple[Path, ...]:
-    """Generation files directly in ``root`` that are in the old line format."""
+    """Generation files in ``root`` to archive, oldest first; empty when none.
 
-    found: list[Path] = []
-    for name in LEGACY_GENERATION_FILENAMES:
-        path = root / name
-        if path.is_file() and _is_legacy_format(path):
-            found.append(path)
-    return tuple(found)
+    foundation reads (and on open "repairs") only its own line format, so a
+    file it would not recognise must never be left for it.  The test is
+    therefore by exclusion: a non-empty generation file whose first line is
+    not a foundation record (``payload`` key) is old-format or damaged and
+    triggers the archive.  When any file does, every non-empty generation file
+    goes into the archive together, so a mixed or half-moved set cannot leave
+    foundation a chain whose older half it cannot link.
+    """
+
+    present = [
+        root / name
+        for name in LEGACY_GENERATION_FILENAMES
+        if (root / name).is_file() and (root / name).stat().st_size
+    ]
+    if any(_first_line_kind(path) != "foundation" for path in present):
+        return tuple(present)
+    return ()
 
 
 def verify_legacy_chain(directory: Path) -> LegacyChainSummary:
@@ -111,8 +122,8 @@ def _legacy_record_digest(event: object, previous_sha256: str | None) -> str:
     return hashlib.sha256(canonical_json_bytes(event) + previous_digest_bytes).hexdigest()
 
 
-def _is_legacy_format(path: Path) -> bool:
-    """True when the first non-empty line is an old-format record (has ``event``)."""
+def _first_line_kind(path: Path) -> str:
+    """``foundation`` for a foundation record, ``other`` for anything else."""
 
     try:
         with path.open("rb") as handle:
@@ -120,11 +131,9 @@ def _is_legacy_format(path: Path) -> bool:
                 if not raw_line.strip():
                     continue
                 decoded = json.loads(raw_line.decode("utf-8"))
-                return (
-                    isinstance(decoded, dict)
-                    and "event" in decoded
-                    and "payload" not in decoded
-                )
+                if isinstance(decoded, dict) and "payload" in decoded and "event" not in decoded:
+                    return "foundation"
+                return "other"
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return False
+        return "other"
+    return "other"
