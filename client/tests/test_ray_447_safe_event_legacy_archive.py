@@ -409,3 +409,44 @@ def test_a_torn_first_line_beside_a_healthy_foundation_chain_is_not_archived(tmp
     assert (root / "events.1.jsonl").read_bytes() == healthy
     SafeClientEventStore(root)  # a second open after the same crash must still start
     assert not (root / LEGACY_DIRECTORY_NAME).exists()
+
+
+def test_a_file_that_vanishes_during_the_move_is_skipped_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (2,))
+    real_replace = os.replace
+
+    def vanishing_replace(source: Path, target: Path) -> None:
+        if Path(source).name == "events.jsonl":
+            real_replace(source, Path(target).parent.parent / "elsewhere.jsonl")  # the other process won
+            raise FileNotFoundError(source)
+        real_replace(source, target)
+
+    monkeypatch.setattr(safe_events.os, "replace", vanishing_replace)
+
+    assert safe_events._archive_legacy_chain(root) in {True, False}  # no exception is the point
+    assert not (root / "events.jsonl").exists()
+
+
+def test_an_unreadable_new_chain_does_not_stop_the_start_when_the_marker_is_missing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "safe-events"
+    _write_legacy_log(root, (2,))
+    store = SafeClientEventStore(root)
+    store.append(_event(1))
+    store.append(_event(2))
+    (root / LEGACY_DIRECTORY_NAME / ".anchored").unlink()  # a stop before the marker was written
+    lines = (root / "events.jsonl").read_bytes().splitlines(keepends=True)
+    row = json.loads(lines[-1])
+    row["sha256"] = "0" * 64
+    lines[-1] = json.dumps(row).encode() + b"\n"  # first line intact, a later digest wrong
+    damaged = b"".join(lines)
+    (root / "events.jsonl").write_bytes(damaged)
+
+    SafeClientEventStore(root)  # must open; reading reports the fault, the constructor does not
+
+    assert (root / LEGACY_DIRECTORY_NAME / ".anchored").exists()
+    assert (root / "events.jsonl").read_bytes() == damaged  # nothing chained on top of it
