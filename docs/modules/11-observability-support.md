@@ -128,6 +128,19 @@ E-UPD-xxx  更新和配置
 - 诊断包无身份明文且可验证完整性；
 - 关键告警在目标时间内触发且不重复轰炸。
 
+## 本地安全事件日志（schema 变更，RAY-447 R7）
+
+客户端本机的隐私安全事件日志（`client/support/safe_events.py`，目录 `support-events/`）自 2026-11-06 起由
+foundation `ChainedAppendLog` 承担哈希链、三代轮转、fsync、0600、跨进程锁与崩溃后截断半行的恢复；
+`SafeClientEventStore` 只保留类型化事件契约。记录行格式为 `{"payload","previous_sha256","sha256"}`，
+摘要为 `sha256(规范化JSON(payload) + 上一条摘要)`；事件载荷即 `SafeClientEvent`，事件模式未变。
+
+- **篡改检测时机：** 追加时只信尾部缓存，历史被改在读取（`verified_records()`、诊断导出）时发现；此前每次追加都会重新校验整条链。
+- **旧日志：** 升级后第一次启动先用旧规则把旧链完整校验一次，把旧文件**原样**移到 `support-events/legacy/`
+  （不删除），再开始一条新链，首条记录是锚点（`safe-client-log-anchor/1`），记录旧链条数、首尾摘要、是否通过校验
+  及失败类别。校验失败的旧链同样原样归档并在锚点标明。锚点不计入事件数。`legacy/` 已有同名文件时拒绝覆盖并停止启动。
+- 旧校验代码（`client/support/legacy_safe_event_chain.py`）只为这次迁移保留，之后可删除。
+
 ## Seed MVP access model
 
 Platform IAM 使用独立 `feetforceplate-platform` audience，并区分
