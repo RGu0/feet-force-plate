@@ -39,8 +39,8 @@ from cloud.analysis.risk_rules import (
     evaluate_screening_risk,
     questionnaire_snapshot_sha256,
 )
-from cloud.session_hold.repository import SessionHoldReader
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.repository import SessionHoldReader
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 
 class QuestionnaireIdentityError(ValueError):

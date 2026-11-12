@@ -28,7 +28,7 @@ from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
 from client.workflow.protocol import default_standard_protocol
-from shared.contracts.capture_grants import CaptureGrant
+from techflex_cloud_foundation.contracts.capture_grants import CaptureGrant
 
 
 class _Key:

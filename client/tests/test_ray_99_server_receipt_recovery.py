@@ -6,12 +6,12 @@ from uuid import uuid4
 import pytest
 
 from client.sync.subject_recovery import SubjectRecoveryService
-from shared.contracts.client_sync import FormalUploadEnvelope
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.client_sync import FormalUploadEnvelope
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest, ExternalIdentifierInput, SessionVersions,
     SubjectCreateRequest, SubjectSummary, TestProtocol,
 )
-from shared.contracts.identity_recovery import RecoveryCaseSummary
+from techflex_cloud_foundation.contracts.identity_recovery import RecoveryCaseSummary
 
 
 class Store:

@@ -19,13 +19,13 @@ from client.spool.state_store import (
     PENDING_SESSION_LIMIT,
     OfflineSnapshot,
 )
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     LicenseDocumentV2,
     LicenseState,
     SignedLicenseV2,
 )
-from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.device_policy import GateReason
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.device_policy import GateReason
 
 
 class PolicyConnectivity(StrEnum):

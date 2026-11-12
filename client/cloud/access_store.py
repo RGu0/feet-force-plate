@@ -14,7 +14,7 @@ from uuid import UUID
 from techflex_cloud_foundation import CredentialVault
 
 from client.security.credential_vault import SystemCredentialVault
-from shared.contracts.access_control import AccessSession, SignedLicenseV2
+from techflex_cloud_foundation.contracts.access_control import AccessSession, SignedLicenseV2
 
 
 LOCK_TIMEOUT_OPTIONS = frozenset({None, 5, 15, 30, 60})

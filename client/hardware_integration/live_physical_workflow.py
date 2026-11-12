@@ -54,14 +54,14 @@ from client.local_analysis.models import LocalQualityStatus
 from client.spool.session_commit import FinalSessionStorageError, ValidSessionStager
 from client.spool.stage_attempt import StageAttemptSpool
 from client.spool.state_store import KeyProvider, StateStore
-from shared.contracts.capture_grants import CaptureCredential
+from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.protocol import ProtocolSnapshot
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.contracts.client_sync import (
     RAW_SEGMENT_PAYLOAD_SCHEMA,
     FormalUploadEnvelope,
 )
-from shared.contracts.cloud import SessionVersions, TestProtocol
+from techflex_cloud_foundation.contracts.cloud import SessionVersions, TestProtocol
 
 
 @dataclass(frozen=True, slots=True)

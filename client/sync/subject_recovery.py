@@ -8,12 +8,12 @@ from uuid import UUID, uuid4
 
 from client.spool.state_store import StateStore
 from client.workflow.consent import ConsentEvidenceSigner, ConsentRequest
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.contracts.client_sync import (
     SubjectRecoveryAuthorization,
     canonical_sha256,
 )
-from shared.contracts.cloud import SubjectResolveRequest, SubjectSummary
-from shared.contracts.identity_recovery import (
+from techflex_cloud_foundation.contracts.cloud import SubjectResolveRequest, SubjectSummary
+from techflex_cloud_foundation.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryCaseSummary,
 )
 
@@ -187,7 +187,7 @@ class SubjectRecoveryService:
             data_categories=envelope.consent.data_categories,
             evidence_type=evidence_type,
         )
-        from shared.contracts.cloud import ConsentCreateRequest
+        from techflex_cloud_foundation.contracts.cloud import ConsentCreateRequest
 
         consent = ConsentCreateRequest(
             consent_record_id=consent_id,

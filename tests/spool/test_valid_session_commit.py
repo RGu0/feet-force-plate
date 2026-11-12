@@ -16,8 +16,8 @@ from client.spool import session_commit
 from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
 from client.sync.runtime import PackagedUploadRuntime
-from shared.contracts.client_sync import FormalUploadEnvelope
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.client_sync import FormalUploadEnvelope
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest,
     SessionVersions,
     SubjectCreateRequest,

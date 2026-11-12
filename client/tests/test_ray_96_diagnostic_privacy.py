@@ -40,7 +40,7 @@ from client.support import (
     SafeClientEventRecorder,
     SafeClientEventStore,
 )
-from shared.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
 
 
 INSTALLATION_ID = UUID("8be74f4c-916b-4e6b-b78e-f53e7f7b5475")

@@ -12,7 +12,7 @@ from client.support import (
     SafeClientEventName,
     SafeClientEventOutcome,
 )
-from shared.contracts.validation_telemetry import ErrorCode
+from techflex_cloud_foundation.contracts.validation_telemetry import ErrorCode
 
 
 @dataclass(frozen=True, slots=True)

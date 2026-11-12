@@ -28,13 +28,13 @@ from client.spool.state_store import (
     StateStore,
     SyncHandoff,
 )
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.contracts.client_sync import (
     FormalUploadEnvelope,
     canonical_sha256,
     encode_segment_metadata,
 )
-from shared.contracts.capture_grants import SessionAuthorization
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.capture_grants import SessionAuthorization
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ErrorResponse,
@@ -56,7 +56,7 @@ from shared.contracts.cloud import (
     TestProtocol,
     ValidityStatus,
 )
-from shared.contracts.identity_recovery import (
+from techflex_cloud_foundation.contracts.identity_recovery import (
     RecoveryCaseCreateRequest, RecoveryCaseSummary,
     RecoveryRegistrationRequest, RecoveryRegistrationResult,
 )

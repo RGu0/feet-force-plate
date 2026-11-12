@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from shared.contracts.validation_telemetry import (
+from techflex_cloud_foundation.contracts.validation_telemetry import (
     DeviceValidationTelemetryBatchRequest,
     DeviceValidationTelemetryEvent,
     DeviceValidationTelemetryReceipt,

@@ -220,7 +220,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
     from uuid import uuid4
 
     from client.app import live_institution_runtime
-    from shared.contracts.capture_grants import CaptureCredential
+    from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential
     from client.tests.test_local_capture_grants import open_store
     from client.tests.test_p3_persistent_upload import (
         PersistentUploadQueueTests, _IngestionService, _Tokens,

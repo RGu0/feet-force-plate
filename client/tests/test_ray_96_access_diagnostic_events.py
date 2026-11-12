@@ -23,13 +23,13 @@ from client.support import (
     SafeClientEventRecorder,
     SafeClientEventStore,
 )
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     ActivateAccountResponse,
     LicenseDocumentV2,
     LoginResponse,
     RefreshResponse,
 )
-from shared.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
 
 
 class _MemoryCredentials:

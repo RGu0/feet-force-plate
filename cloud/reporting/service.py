@@ -17,8 +17,8 @@ from cloud.reporting.models import (
     ReportVersion,
 )
 from cloud.reporting.pdf import MinimalPdfRenderer
-from cloud.session_hold.repository import SessionHoldReader
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.repository import SessionHoldReader
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 
 class InMemoryArtifactStore:

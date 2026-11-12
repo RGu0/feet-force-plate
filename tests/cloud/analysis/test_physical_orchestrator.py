@@ -24,7 +24,7 @@ from cloud.analysis.risk_rules import (
     questionnaire_snapshot_sha256,
 )
 from cloud.analysis.protocol_context import protocol_context_sha256
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 from test_physical_features import _session_payload
 from test_physical_input import valid_protocol_context

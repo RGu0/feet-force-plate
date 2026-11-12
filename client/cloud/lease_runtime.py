@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Callable, Protocol
 from uuid import UUID
 
-from shared.contracts.access_control import HardwareLeaseRequest, HardwareLeaseResponse
+from techflex_cloud_foundation.contracts.access_control import HardwareLeaseRequest, HardwareLeaseResponse
 
 from .access_client import CloudAccessError
 from .runtime import AuthenticatedInstitutionSession

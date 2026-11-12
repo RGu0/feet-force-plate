@@ -18,8 +18,8 @@ from client.hardware_standardization.public_export import (
     restore_committed_physical_pressure_session,
 )
 from client.workflow.protocol import default_standard_protocol
-from shared.contracts.client_sync import FormalUploadEnvelope
-from shared.contracts.capture_grants import CaptureCredential
+from techflex_cloud_foundation.contracts.client_sync import FormalUploadEnvelope
+from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential
 
 from .derived_artifact import (
     DerivedArtifact,

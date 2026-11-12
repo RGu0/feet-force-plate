@@ -13,7 +13,7 @@ from client.app.packaged_entry import (
 )
 from client.app.pages import PageId
 from client.cloud.access_client import CloudAccessClient
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     PlatformLoginRequest,
     PlatformLoginResponse,
     PlatformRole,

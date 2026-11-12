@@ -23,8 +23,8 @@ from client.spool.operation_queue import (
     purge_operation,
 )
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from shared.contracts.capture_grants import CaptureCredential, LegacyMigrationBinding
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential, LegacyMigrationBinding
+from techflex_cloud_foundation.contracts.client_sync import (
     FormalUploadEnvelope,
     SubjectRecoveryAuthorization,
     canonical_sha256,

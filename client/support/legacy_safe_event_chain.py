@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from shared.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
 
 LEGACY_DIRECTORY_NAME = "legacy"
 LEGACY_GENERATION_FILENAMES = ("events.2.jsonl", "events.1.jsonl", "events.jsonl")
