@@ -213,10 +213,15 @@ def _revalidate_records(records: tuple[object, ...]) -> tuple[SafeClientLogRecor
     verified: list[SafeClientLogRecord] = []
     previous_sha256: str | None = None
     try:
-        for raw_record in records:
+        for index, raw_record in enumerate(records):
             record = SafeClientLogRecord.model_validate(raw_record)
             expected = _record_digest(record)
-            if record.previous_sha256 != previous_sha256 or record.sha256 != expected:
+            # The first record of the log that survives is a segment start: its
+            # predecessor was rotated away, or is the archive anchor of an
+            # upgraded log, and is not part of the export.  Its own digest and
+            # every later link are still checked.
+            linked = index == 0 or record.previous_sha256 == previous_sha256
+            if not linked or record.sha256 != expected:
                 raise ValueError("invalid verified safe event chain")
             verified.append(record)
             previous_sha256 = record.sha256
