@@ -7,11 +7,12 @@ import os
 from pathlib import Path
 
 from .session_commit import ValidSessionStager
+from techflex_cloud_foundation.durability import fsync_directory
+
 from .segments import (
     ImmutableSegmentWriter,
     SealedSegment,
     SegmentIntegrityError,
-    _fsync_directory,
     read_segment,
 )
 from .state_store import KeyProvider, StateStore
@@ -54,8 +55,8 @@ def _quarantine(path: Path) -> None:
     quarantine = path.parent / "quarantine"
     quarantine.mkdir(exist_ok=True)
     os.replace(path, quarantine / f"{path.name}.corrupt")
-    _fsync_directory(path.parent)
-    _fsync_directory(quarantine)
+    fsync_directory(path.parent)
+    fsync_directory(quarantine)
 
 
 def seal_and_register(
@@ -125,7 +126,7 @@ class RecoveryScanner:
                 continue
             final = temporary.with_suffix(".ffps")
             os.replace(temporary, final)
-            _fsync_directory(final.parent)
+            fsync_directory(final.parent)
             _register_path(final, restored, self._store, self._repository_root)
             recovered += 1
         for path in sorted(self._segment_root.rglob("*.ffps")):

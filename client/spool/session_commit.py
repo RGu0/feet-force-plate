@@ -26,10 +26,11 @@ from .derived_artifact import (
     read_derived_observation,
     write_derived_observation,
 )
+from techflex_cloud_foundation.durability import atomic_write, fsync_directory
+
 from .segments import (
     ImmutableSegmentWriter,
     SealedSegment,
-    _fsync_directory,
     read_segment,
     write_session_manifest,
 )
@@ -47,13 +48,7 @@ _STAGE_WINDOW_POLICY_VERSION = "operator-started-stage-window/1"
 
 
 def _write_atomic_json(path: Path, payload: dict[str, object]) -> None:
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("x", encoding="utf-8") as handle:
-        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    _fsync_directory(path.parent)
+    atomic_write(path, json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,9 +265,9 @@ class ValidSessionStager:
         if not existing_paths and not any(session_directory.iterdir()):
             session_directory.rmdir()
             if self._staging_root.exists():
-                _fsync_directory(self._staging_root)
+                fsync_directory(self._staging_root)
             return
-        _fsync_directory(session_directory)
+        fsync_directory(session_directory)
 
     def freeze_versions(self, additional_versions: dict[str, str]) -> None:
         """Bind acquisition policies before the first raw frame is accepted."""
@@ -300,7 +295,7 @@ class ValidSessionStager:
         self._finished = True
         if self.staging_directory.exists():
             shutil.rmtree(self.staging_directory)
-            _fsync_directory(self._staging_root)
+            fsync_directory(self._staging_root)
 
     def staged_frames(self) -> tuple[RawFrame, ...]:
         """Seal any buffered data and return verified temporary frames for gating."""
@@ -430,8 +425,8 @@ class ValidSessionStager:
             raise FileExistsError(f"local session already exists: {self._session_id}")
         self._sessions_root.mkdir(parents=True, exist_ok=True)
         os.replace(staging, final)
-        _fsync_directory(self._staging_root)
-        _fsync_directory(self._sessions_root)
+        fsync_directory(self._staging_root)
+        fsync_directory(self._sessions_root)
         try:
             self._store.commit_valid_session(
                 self._session_id,
@@ -448,11 +443,11 @@ class ValidSessionStager:
             )
         except Exception:
             os.replace(final, staging)
-            _fsync_directory(self._sessions_root)
-            _fsync_directory(self._staging_root)
+            fsync_directory(self._sessions_root)
+            fsync_directory(self._staging_root)
             raise
         (final / "registration.json").unlink()
-        _fsync_directory(final)
+        fsync_directory(final)
         self._finished = True
         return CommittedValidSession(
             session_id=self._session_id,
@@ -501,7 +496,7 @@ class ValidSessionStager:
                 shutil.rmtree(directory)
                 count += 1
         if count:
-            _fsync_directory(staging_root)
+            fsync_directory(staging_root)
         return count
 
     @classmethod
@@ -602,7 +597,7 @@ class ValidSessionStager:
                 )
                 recovered += 1
             registration_path.unlink()
-            _fsync_directory(directory)
+            fsync_directory(directory)
         return recovered
 
 
@@ -635,18 +630,18 @@ def delete_completed_valid_session(
     deleting_root.mkdir(parents=True, exist_ok=True)
     pending = deleting_root / f"{session_id}-{uuid.uuid4()}"
     os.replace(session_directory, pending)
-    _fsync_directory(sessions_root)
-    _fsync_directory(deleting_root)
+    fsync_directory(sessions_root)
+    fsync_directory(deleting_root)
     try:
         store.delete_completed_valid_session(session_id)
     except Exception:
         os.replace(pending, session_directory)
-        _fsync_directory(deleting_root)
-        _fsync_directory(sessions_root)
+        fsync_directory(deleting_root)
+        fsync_directory(sessions_root)
         raise
     try:
         shutil.rmtree(pending)
-        _fsync_directory(deleting_root)
+        fsync_directory(deleting_root)
     except Exception as exc:
         raise RuntimeError(
             "database index removed but manual-deletion files require recovery"

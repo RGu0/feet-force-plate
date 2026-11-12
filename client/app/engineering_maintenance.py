@@ -12,9 +12,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+
+from techflex_cloud_foundation.durability import atomic_write
 
 from client.hardware_standardization.dynamic_defect_mask import (
     DeviceHealthStatus,
@@ -109,17 +109,7 @@ class EngineeringDeviceBindingStore:
     def _atomic_write(self, payload: dict[str, object]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
-        with NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=self._path.parent, delete=False
-        ) as temporary:
-            temporary.write(encoded)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-            temporary_path = Path(temporary.name)
-        try:
-            os.replace(temporary_path, self._path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        atomic_write(self._path, encoded.encode("utf-8"))
 
 
 @dataclass(frozen=True, slots=True)

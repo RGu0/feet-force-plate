@@ -9,7 +9,9 @@ import uuid
 
 from client.device.protocol import RawFrame
 
-from .segments import ImmutableSegmentWriter, SealedSegment, _fsync_directory, read_segment
+from techflex_cloud_foundation.durability import fsync_directory
+
+from .segments import ImmutableSegmentWriter, SealedSegment, read_segment
 from .state_store import KeyProvider
 
 
@@ -179,4 +181,4 @@ class StageAttemptSpool:
         self._discarded = True
         if self._staging_directory.exists():
             shutil.rmtree(self._staging_directory)
-            _fsync_directory(self._staging_directory.parent)
+            fsync_directory(self._staging_directory.parent)

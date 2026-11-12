@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import os
-import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -21,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import ConfigDict, Field, ValidationError, field_validator
+from techflex_cloud_foundation.durability import atomic_write
 
 from shared.contracts.client_sync import canonical_json_bytes
 from shared.contracts.cloud import ContractModel
@@ -119,7 +119,7 @@ class SafeDiagnosticExporter:
             raise ValueError("safe diagnostic event count does not match verified records")
         archive = _build_archive(self._metadata, records)
         envelope = _encrypt_archive(archive, self._recipient)
-        _publish_private_envelope(destination, envelope)
+        atomic_write(destination, envelope)
         return DiagnosticExportResult(
             destination=destination,
             recipient_key_id=self._recipient.key_id,
@@ -311,41 +311,6 @@ def _validate_destination(destination: Path) -> None:
         raise ValueError("diagnostic destination must use the .ffpdiag suffix")
     if not destination.parent.is_dir():
         raise ValueError("diagnostic destination directory does not exist")
-
-
-def _publish_private_envelope(destination: Path, envelope: bytes) -> None:
-    temporary = destination.parent / f".ffpdiag-{secrets.token_hex(16)}"
-    try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            _set_private_file_mode(temporary, descriptor)
-            with os.fdopen(descriptor, "wb", closefd=False) as handle:
-                handle.write(envelope)
-                handle.flush()
-                os.fsync(handle.fileno())
-        finally:
-            os.close(descriptor)
-        os.replace(temporary, destination)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def _set_private_file_mode(path: Path, descriptor: int) -> None:
-    """Restrict the diagnostic file to owner-only on POSIX; best-effort on Windows.
-
-    POSIX: ``fchmod`` pins the descriptor to 0o600 (the file is already created
-    0o600 via ``os.open``, so this is belt-and-suspenders against a loose umask).
-    Windows: ``os.fchmod`` is unavailable, so we fall back to ``os.chmod``, which
-    only toggles the read-only attribute and does NOT establish an owner-only
-    ACL — the inherited directory ACL governs real access. Privacy on Windows
-    therefore rests on the envelope encryption, not the on-disk file mode.
-    """
-    fchmod = getattr(os, "fchmod", None)
-    if fchmod is None:
-        os.chmod(path, 0o600)
-        return
-    fchmod(descriptor, 0o600)
 
 
 def _decode_base64(value: str) -> bytes:

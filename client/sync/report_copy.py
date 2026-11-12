@@ -14,6 +14,7 @@ from uuid import UUID
 
 from client.reporting.models import BasicReportDocument
 from client.spool.state_store import KeyProvider, SensitiveBlobCodec
+from client.support.durable_sqlite import open_durable
 from client.sync.persistent_upload import (
     UploadAuthenticationRequired, UploadBlocked, UploadConflict, UploadRetryable,
     upload_retry_delay_seconds,
@@ -43,9 +44,8 @@ class ReportCopyUploader:
         self, database_path: Path, key_provider: KeyProvider, physical_store: _CloudBinding,
         cloud, renderer: _ReportRenderer, *, now_ns=time.time_ns,
     ) -> None:
-        self._db = sqlite3.connect(database_path, timeout=5.0, check_same_thread=False)
+        self._db = open_durable(database_path)
         self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA busy_timeout=5000")
         self._codec = SensitiveBlobCodec(key_provider)
         self._physical = physical_store
         self._cloud = cloud

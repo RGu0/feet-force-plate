@@ -12,6 +12,7 @@ from platformdirs import user_data_path
 from techflex_cloud_foundation import CredentialVault
 
 from client.security.credential_vault import SystemCredentialVault, get_or_create_credential
+from client.support.durable_sqlite import open_durable
 from client.security.key_envelope import (
     DualEnvelopeBlobCodec,
     KeyringTerminalKeyHandle,
@@ -47,7 +48,7 @@ class LocalReplayStore:
         self.root = root or Path(user_data_path("FeetForcePlate", "TechFlex", ensure_exists=True))
         self.root.mkdir(parents=True, exist_ok=True)
         self.codec = codec or _local_replay_development_codec(credential_vault)
-        self.db = sqlite3.connect(self.root / "local-replay.sqlite3")
+        self.db = open_durable(self.root / "local-replay.sqlite3")
         self._query_index_key = query_index_key or _load_local_query_index_key(credential_vault)
         self._migrate_subject_index()
         self._migrate_consent_store()

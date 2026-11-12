@@ -13,6 +13,7 @@ import zlib
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from techflex_cloud_foundation.durability import atomic_write
 
 from client.hardware_standardization.models import PhysicalArraySession
 
@@ -161,13 +162,8 @@ def write_derived_observation(
     )
     session_directory = Path(root) / session.session_id
     session_directory.mkdir(parents=True, exist_ok=True)
-    temporary = session_directory / f"derived-{artifact_id}.tmp"
     final = session_directory / f"derived-{artifact_id}.ffpd"
-    with temporary.open("xb") as handle:
-        handle.write(container)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, final)
+    atomic_write(final, container)
     return DerivedArtifact(
         artifact_id=artifact_id,
         kind="HARDWARE_DERIVED_OBSERVATION",

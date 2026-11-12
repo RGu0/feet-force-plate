@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator
 from techflex_cloud_foundation import ChainedAppendLog
-from techflex_cloud_foundation.durability import fsync_directory
+from techflex_cloud_foundation.durability import atomic_write, fsync_directory
 
 from client.support.legacy_safe_event_chain import (
     LEGACY_DIRECTORY_NAME,
@@ -215,19 +215,13 @@ def _chain_has_anchor(log: ChainedAppendLog) -> bool:
 
 
 def _mark_legacy_anchored(root: Path) -> None:
-    """Record, outside the rotating chain, that the anchor was written."""
+    """Record, outside the rotating chain, that the anchor was written.
 
-    archive = root / LEGACY_DIRECTORY_NAME
-    marker = archive / _ANCHORED_MARKER
-    staging = archive / (_ANCHORED_MARKER + ".tmp")
-    descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(descriptor, b"anchored\n")
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(staging, marker)
-    fsync_directory(archive)
+    Staged under a name no other process shares: two simultaneous first starts
+    both get here, and a fixed staging name let one rename the other's file away.
+    """
+
+    atomic_write(root / LEGACY_DIRECTORY_NAME / _ANCHORED_MARKER, b"anchored\n")
 
 
 def _legacy_anchor_payload(root: Path) -> dict[str, object]:

@@ -14,7 +14,6 @@ from enum import StrEnum
 import hashlib
 import json
 from math import isfinite
-import os
 from pathlib import Path
 import sqlite3
 import time
@@ -22,6 +21,7 @@ import uuid
 
 import numpy as np
 from numpy.typing import NDArray
+from techflex_cloud_foundation.durability import atomic_write
 
 
 class DynamicDefectStatus(StrEnum):
@@ -41,20 +41,6 @@ class DeviceHealthEventType(StrEnum):
     SUSPECT_FLOOD_SUPPRESSED = "SUSPECT_FLOOD_SUPPRESSED"
     HEALTH_UNAVAILABLE = "HEALTH_UNAVAILABLE"
     RECOVERY_CANDIDATE = "RECOVERY_CANDIDATE"
-
-
-def _fsync_directory(path: Path) -> None:
-    """Persist a renamed entry where the platform exposes directory handles."""
-
-    # Windows does not allow Python to open a directory with ``os.open``.
-    # The renamed file itself has already been flushed before this point.
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,14 +469,8 @@ class DynamicDefectMaskStore:
         if mask.device_id != self.device_id or mask.shape != self.shape:
             raise ValueError("cannot write a dynamic defect mask for another device ID")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
         encoded = json.dumps(mask.to_dict(), sort_keys=True, separators=(",", ":"))
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self.path)
-        _fsync_directory(self.path.parent)
+        atomic_write(self.path, encoded.encode("utf-8"))
 
 
 @dataclass(frozen=True, slots=True)
