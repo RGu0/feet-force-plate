@@ -51,9 +51,9 @@ from client.workflow.participant import (
 )
 from client.workflow.protocol import ProtocolSnapshot
 from client.workflow.models import ScreeningParticipantContext
-from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.capture_grants import CaptureCredential, CaptureGrant
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential, CaptureGrant
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest,
     ExternalIdentifierInput,
     IdentityProfileInput,

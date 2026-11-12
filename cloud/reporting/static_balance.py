@@ -23,8 +23,8 @@ from cloud.reporting.service import (
     InMemoryReportEventPublisher,
     InMemoryReportRepository,
 )
-from cloud.session_hold.repository import SessionHoldReader
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.repository import SessionHoldReader
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 
 _RISK_LABELS = {

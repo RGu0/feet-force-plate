@@ -25,13 +25,13 @@ from client.sync.persistent_upload import (
     UploadCycleOutcome,
     UploadRetryable,
 )
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.contracts.client_sync import (
     FormalUploadEnvelope,
     SubjectRecoveryAuthorization,
     canonical_sha256,
 )
-from shared.contracts.capture_grants import CaptureCredential, SessionAuthorization
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.capture_grants import CaptureCredential, SessionAuthorization
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest,
     ConsentResponse,
     ExternalIdentifierInput,
@@ -53,7 +53,7 @@ from shared.contracts.cloud import (
     TestProtocol as CloudTestProtocol,
     ValidityStatus,
 )
-from shared.contracts.identity_recovery import RecoveryRegistrationResult
+from techflex_cloud_foundation.contracts.identity_recovery import RecoveryRegistrationResult
 
 
 class _Key:

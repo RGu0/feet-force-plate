@@ -18,8 +18,8 @@ from cloud.analysis.orchestrator import (
     InMemoryEventPublisher,
     RegisteredMetric,
 )
-from cloud.session_hold.service import SessionHeld
-from cloud.session_hold.adapter import run_with_current_hold
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.adapter import run_with_current_hold
 
 
 class MutableHolds:

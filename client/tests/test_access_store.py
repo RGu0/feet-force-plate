@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from client.cloud.access_store import ClientAccessStore
-from shared.contracts.access_control import ActivateAccountResponse
+from techflex_cloud_foundation.contracts.access_control import ActivateAccountResponse
 
 
 class MemoryCredentials:

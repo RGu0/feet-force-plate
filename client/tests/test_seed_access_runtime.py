@@ -24,9 +24,9 @@ from client.cloud.runtime import (
     LicenseHardwareMismatch,
 )
 from client.cloud.policy import AccountHardwareLicenseVerifier
-from shared.contracts.access_control import LicenseDocumentV2
-from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import LicenseDocumentV2
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.access_control import (
     ActivateAccountResponse,
     LoginResponse,
     RefreshResponse,
@@ -184,7 +184,7 @@ class ClientAccessRuntimeTests(unittest.TestCase):
     def test_capture_replenishment_is_new_test_only_and_offline_preserves_pool(self):
         from types import SimpleNamespace
         from client.cloud.access_client import AccessServiceUnavailable, AccessDenied
-        from shared.contracts.capture_grants import CaptureGrant, CaptureGrantBatchResponse
+        from techflex_cloud_foundation.contracts.capture_grants import CaptureGrant, CaptureGrantBatchResponse
 
         session = self.runtime.login("seed-clinic", "correct-horse-battery-staple")
         calls = []

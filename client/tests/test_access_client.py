@@ -13,7 +13,7 @@ from client.cloud.access_client import (
     AccessDenied,
     CloudAccessClient,
 )
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     ActivateAccountRequest,
     HardwareLeaseRequest,
     LoginRequest,

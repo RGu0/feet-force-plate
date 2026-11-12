@@ -18,7 +18,7 @@ from client.support.legacy_safe_event_chain import (
     LEGACY_DIRECTORY_NAME,
     _legacy_record_digest,
 )
-from shared.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
 
 _NAMESPACE = UUID("00000000-0000-0000-0000-0000000000a7")
 _INSTALLATION = UUID("00000000-0000-0000-0000-0000000000b8")

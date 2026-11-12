@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from platformdirs import user_data_path
 
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     AccessSession,
     ActivateAccountRequest,
     HardwareLeaseRequest,
@@ -40,7 +40,7 @@ from client.support import (
     SafeClientEventName,
     SafeClientEventOutcome,
 )
-from shared.contracts.validation_telemetry import ErrorCode
+from techflex_cloud_foundation.contracts.validation_telemetry import ErrorCode
 
 
 class AccessClientPort(Protocol):

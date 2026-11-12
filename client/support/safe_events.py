@@ -19,8 +19,8 @@ from client.support.legacy_safe_event_chain import (
     legacy_chain_files,
     verify_legacy_chain,
 )
-from shared.contracts.cloud import ContractModel, Sha256Hex
-from shared.contracts.validation_telemetry import ErrorCode, TechnicalIdentifier
+from techflex_cloud_foundation.contracts.cloud import ContractModel, Sha256Hex
+from techflex_cloud_foundation.contracts.validation_telemetry import ErrorCode, TechnicalIdentifier
 
 
 MAX_GENERATION_BYTES = 2 * 1024 * 1024

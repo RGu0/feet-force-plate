@@ -24,7 +24,7 @@ from client.app.institution_store import (
 )
 from client.sync.runtime import PackagedUploadRuntime, build_packaged_upload_runtime
 from client.sync.subject_recovery import SubjectRecoveryService
-from shared.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
+from techflex_cloud_foundation.contracts.client_sync import RAW_SEGMENT_PAYLOAD_SCHEMA
 from client.support import (
     PlatformFamily,
     SafeClientEventName,

@@ -28,8 +28,8 @@ from cloud.analysis.ports import (
     CloudQualityAssessor,
     RawSessionLoader,
 )
-from cloud.session_hold.repository import SessionHoldReader
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.repository import SessionHoldReader
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 
 def _canonical_sha256(value: object) -> str:

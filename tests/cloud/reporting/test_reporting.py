@@ -21,7 +21,7 @@ from cloud.reporting.service import (
     InMemoryReportEventPublisher,
     InMemoryReportRepository,
 )
-from cloud.session_hold.service import SessionHeld
+from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 
 
 class MutableHolds:

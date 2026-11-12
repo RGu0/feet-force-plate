@@ -11,11 +11,11 @@ from pydantic import BaseModel, ValidationError
 from techflex_cloud_foundation import SecureTransport
 
 from client.cloud.foundation_compat import foundation_verify
-from shared.contracts.capture_grants import (
+from techflex_cloud_foundation.contracts.capture_grants import (
     CaptureGrantBatchRequest, CaptureGrantBatchResponse, RetireCaptureGrantRequest,
 )
 
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     ActivateAccountRequest,
     ActivateAccountResponse,
     InventoryActivationRequest,

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     PlatformLoginRequest,
     PlatformLoginResponse,
     PlatformRole,

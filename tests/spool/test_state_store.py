@@ -15,8 +15,8 @@ from client.spool.state_store import (
     StateStore,
     ValidSegmentRecord,
 )
-from shared.contracts.client_sync import FormalUploadEnvelope
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.client_sync import FormalUploadEnvelope
+from techflex_cloud_foundation.contracts.cloud import (
     ConsentCreateRequest,
     IdentityProfileInput,
     SessionVersions,

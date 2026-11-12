@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
-from shared.contracts.access_control import (
+from techflex_cloud_foundation.contracts.access_control import (
     PlatformLoginRequest,
     PlatformLoginResponse,
     PlatformRole,

@@ -22,9 +22,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import ConfigDict, Field, ValidationError, field_validator
 
-from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.cloud import ContractModel
-from shared.contracts.validation_telemetry import TechnicalIdentifier
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.cloud import ContractModel
+from techflex_cloud_foundation.contracts.validation_telemetry import TechnicalIdentifier
 
 from .safe_events import SafeClientEventStore, SafeClientLogRecord
 

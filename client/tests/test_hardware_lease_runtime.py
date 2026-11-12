@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from client.cloud.access_client import AccessConflict
 from client.cloud.lease_runtime import HardwareLeaseLifecycle, LeaseStatus
 from client.cloud.runtime import AuthenticatedInstitutionSession
-from shared.contracts.access_control import HardwareLeaseResponse
+from techflex_cloud_foundation.contracts.access_control import HardwareLeaseResponse
 
 
 class _LeaseClient:
