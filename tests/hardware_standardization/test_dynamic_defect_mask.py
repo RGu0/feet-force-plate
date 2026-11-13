@@ -296,7 +296,7 @@ def test_hardware_mask_file_is_loaded_at_session_start_and_atomically_updated_af
     assert first.updated_mask.mask_version == 1
     assert second_frozen == first.updated_mask
     assert second_frozen.entries[0].status is DynamicDefectStatus.SUSPECT
-    assert not store.path.with_suffix(".tmp").exists()
+    assert list(store.path.parent.glob("*.tmp")) == []  # no staged remnant of any name
 
     second = store.update_after_session(
         second_frozen,

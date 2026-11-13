@@ -16,6 +16,8 @@ import numpy as np
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from techflex_cloud_foundation.durability import atomic_write, fsync_directory
+
 from client.device.protocol import RawFrame
 from .state_store import KeyProvider, KeyProviderUnavailable
 
@@ -69,20 +71,6 @@ class SegmentWriterCheckpoint:
 
 def _canonical_json(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _fsync_directory(path: Path) -> None:
-    """Persist a renamed entry where the platform exposes directory handles."""
-
-    # Windows does not allow Python to open a directory with ``os.open``.
-    # The renamed file itself has already been flushed before this point.
-    if os.name == "nt":
-        return
-    directory_fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
 
 
 class ImmutableSegmentWriter:
@@ -240,7 +228,7 @@ class ImmutableSegmentWriter:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, final)
-        _fsync_directory(session_dir)
+        fsync_directory(session_dir)
         frames = self._frames
         self._frames = []
         sealed = SealedSegment(
@@ -398,11 +386,5 @@ def write_session_manifest(
     content["manifest_sha256"] = hashlib.sha256(_canonical_json(content)).hexdigest()
     session_dir = Path(root) / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
-    temporary = session_dir / "manifest.tmp"
-    final = session_dir / "manifest.json"
-    with temporary.open("xb") as handle:
-        handle.write(_canonical_json(content))
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, final)
+    atomic_write(session_dir / "manifest.json", _canonical_json(content))
     return content

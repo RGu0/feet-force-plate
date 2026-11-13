@@ -479,3 +479,25 @@ def test_a_whitespace_only_file_beside_a_healthy_foundation_chain_is_not_archive
 
     assert not (root / LEGACY_DIRECTORY_NAME).exists()
     assert (root / "events.1.jsonl").read_bytes() == healthy
+
+
+def test_two_processes_writing_the_marker_at_once_do_not_collide(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "safe-events"
+    (root / LEGACY_DIRECTORY_NAME).mkdir(parents=True)
+    real_replace = os.replace
+    interleaved: list[bool] = []
+
+    def replace_after_the_other_process_finished(source: object, target: object) -> None:
+        if not interleaved:  # the other process runs its whole marker write first
+            interleaved.append(True)
+            safe_events._mark_legacy_anchored(root)
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", replace_after_the_other_process_finished)
+
+    safe_events._mark_legacy_anchored(root)  # raised FileNotFoundError with a shared staging name
+
+    assert (root / LEGACY_DIRECTORY_NAME / ".anchored").read_bytes() == b"anchored\n"
+    assert [p.name for p in (root / LEGACY_DIRECTORY_NAME).iterdir()] == [".anchored"]

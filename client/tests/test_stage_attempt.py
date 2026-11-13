@@ -329,7 +329,7 @@ def test_failed_rollback_cleanup_poisoned_stager_rejects_append_and_commit(
     else:
         monkeypatch.setattr(
             session_commit,
-            "_fsync_directory",
+            "fsync_directory",
             lambda _path: (_ for _ in ()).throw(OSError("controlled fsync failure")),
         )
 

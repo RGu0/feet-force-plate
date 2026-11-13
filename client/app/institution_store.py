@@ -23,6 +23,7 @@ from platformdirs import user_data_path
 from cryptography.exceptions import InvalidTag
 from techflex_cloud_foundation import CredentialVault
 
+from client.support.durable_sqlite import open_durable
 from client.security.credential_vault import (
     SystemCredentialVault,
     _credential_initialization_lock,
@@ -255,7 +256,7 @@ class InstitutionLocalStore:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "institution.sqlite3"
-        self.db = sqlite3.connect(self.path)
+        self.db = open_durable(self.path)
         self.codec = SensitiveBlobCodec(key_provider)
         if len(query_index_key) != 32:
             raise ValueError("institution query index key must be 32 bytes")
