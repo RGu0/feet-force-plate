@@ -1,13 +1,31 @@
 # Mobile API contracts
 
 `openapi.json` and `vectors.json` are deterministic public artifacts of the
-existing FeetForcePlate API. They contain no deployment endpoints or real keys.
+adopted foundation API. The authoritative implementation and generic contract
+tests are in the pinned `techflex-cloud-foundation==0.9.4` release; this directory
+retains the FeetForcePlate export artifacts. They contain no deployment endpoints or real keys.
 Generate through the governed `build` action; the test gate detects drift.
 Consume the JSON files at a pinned Git commit/tag and retain their SHA-256 with
-the client build. Versioned source distributions include these tracked files;
+the client build. The foundation source release includes its exports under `docs/contracts/mobile/`;
+FeetForcePlate source snapshots retain the exports in this directory;
 CI also archives them with commit identity. This export does not claim that
 any route, including the insole inventory routes, hardware registration or
 institutional access rules, has been deployed.
+
+Resolve the verified published source root offline with
+
+```bash
+UV_OFFLINE=1 ./dev run python scripts/foundation_release_source.py --offline --print-root
+```
+
+Run `./dev setup` first to prewarm dependencies and source. This developer-only
+lookup and the test source lookup never download source; offline wrapper sync
+fails if dependencies are absent. The `tests/`
+references below are relative to that returned source root, not local scripts
+or test copies. Consult the release's documentation before invoking its tools.
+Adoption includes the RAY-829 / RAY-833 / RAY-953 registry ingestion work;
+legacy raw/insole paths remain distinct from registered payloads. This does
+not claim deployment, parent desktop activation or successful real upload.
 
 The server wraps success in `data` + `meta`; failures use `error` + `meta`.
 Since RAY-834 an unexpected server failure uses the same envelope instead of a
@@ -52,7 +70,7 @@ A later replay, or a replay after the successor was used, revokes the whole
 family (`E-TRM-401-REFRESH-REPLAYED`). Persist the newest refresh token before
 using it, and retry a lost refresh response with the previous token inside the
 window. Every `refresh_rotation` and `seats` scenario is replayed against the
-server in `cloud/tests/test_terminal_access.py`.
+server in `tests/test_ffp_terminal_access.py`.
 
 RAY-778 adds institutional insole inventory routes under `/v1/inventory/insoles`
 (register, cursor download, report, retire), all authenticated with the terminal
@@ -73,7 +91,7 @@ part of the `v0.2.0` release assets; pin a commit or a later release.
   never deleted and arrive as `retired` instead. On `E-INV-400-CURSOR-INVALID`,
   clear the cursor and download again from the start.
 Every `insole_inventory` scenario is replayed against the server in
-`cloud/tests/test_insole_inventory_api.py`; client alignment is tracked by
+`tests/test_ffp_insole_inventory_api.py`; client alignment is tracked by
 RAY-607.
 
 RAY-728 lets an activated terminal upload with its terminal access token: the
@@ -101,7 +119,7 @@ tenant token (vector section `terminal_data_plane`). Not part of `v0.2.0`.
   full) and resumes segments and complete of sessions created before the revoke.
   Another account gets `E-TRM-409-INSTALLATION-CONFLICT`.
 Every `terminal_data_plane` scenario is replayed against the server in
-`cloud/tests/test_terminal_data_plane.py`.
+`tests/test_ffp_terminal_data_plane.py`.
 
 RAY-825 registers the smart-insole payload schema `insole-session-archive/1`
 next to the force-plate `raw-segment/1`, which is unchanged (vector section
@@ -130,7 +148,7 @@ next to the force-plate `raw-segment/1`, which is unchanged (vector section
   that was saved with its archive complete. A manifest that differs from the
   received parts (index, sha256 or size) is `E-CLD-422` `UPLOAD_MISSING_SEGMENTS`.
 Every `insole_session_archive` scenario is replayed against the server in
-`cloud/tests/test_insole_session_archive.py`; client alignment is tracked by
+`tests/test_ffp_insole_session_archive.py`; client alignment is tracked by
 gait-insole-flutter RAY-624.
 
 RAY-907 adds institutional subject sync (vector section `subject_sync`), all
@@ -170,7 +188,7 @@ authenticated with the terminal bearer token. Not part of `v0.2.0`.
 - With an inactive License the three reads keep working and the two writes are
   `E-TRM-403-LICENSE-INACTIVE`; `POST /v1/subjects` is unchanged.
 Every `subject_sync` scenario is replayed against the server in
-`cloud/tests/test_subject_sync_api.py`; client alignment is tracked by
+`tests/test_ffp_subject_sync_api.py`; client alignment is tracked by
 gait-insole-flutter RAY-592 / RAY-912.
 
 RAY-802 adds the terminal diagnostic package upload `POST /v1/diagnostics` and
@@ -206,7 +224,7 @@ the `terminal_diagnostics` vector section. Not part of `v0.2.0`.
 - There is no terminal or tenant read path; platform support access is outside
   this contract (`cloud/api/README.md`).
 Every `terminal_diagnostics` scenario is replayed against the server in
-`cloud/tests/test_terminal_diagnostics_api.py`; one-tap upload in the client is
+`tests/test_ffp_terminal_diagnostics_api.py`; one-tap upload in the client is
 gait-insole-flutter RAY-615.
 
 Dart consumption: as of 2026-10-07, RAY-643 (Done) recorded native Dart

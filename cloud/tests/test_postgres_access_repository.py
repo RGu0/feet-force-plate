@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
+
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 import hashlib
@@ -9,8 +17,8 @@ from uuid import uuid4
 
 import pytest
 
-from cloud.access_control.postgres import PostgresAccessRepository
-from cloud.access_control.repository import (
+from techflex_cloud_foundation.server.access_control.postgres import PostgresAccessRepository
+from techflex_cloud_foundation.server.access_control.repository import (
     AccessActivationRejected,
     AccessRepositoryConflict,
     AccessGroupSeed,
@@ -20,7 +28,7 @@ from cloud.access_control.repository import (
     SensitiveAccessGrantRecord,
     TenantSeed,
 )
-from shared.contracts.access_control import LicenseState, PlatformRole
+from techflex_cloud_foundation.contracts.access_control import LicenseState, PlatformRole
 
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
@@ -62,8 +70,8 @@ def test_constructor_requires_three_explicit_pools() -> None:
 
 
 def test_adapter_and_migration_encode_locking_routing_and_least_privilege() -> None:
-    source = (ROOT / "cloud/access_control/postgres.py").read_text()
-    migration = (ROOT / "cloud/migrations/0003_seed_mvp_access_control.sql").read_text()
+    source = (SERVER_ROOT.joinpath("access_control/postgres.py")).read_text(encoding="utf-8")
+    migration = (SQL_ROOT.joinpath("0003_seed_mvp_access_control.sql")).read_text(encoding="utf-8")
     assert source.count("FOR UPDATE") >= 6
     assert "tenant_transaction(self._tenant_pool" in source
     assert "tenant_transaction(self._activation_pool" in source
@@ -213,15 +221,15 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
 
 
 def test_tenant_status_gate_is_granted_read_only_and_installed() -> None:
-    migration = (ROOT / "cloud/migrations/0019_tenant_status_gate.sql").read_text(encoding="utf-8")
-    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
-    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
-    source = (ROOT / "cloud/api/postgres.py").read_text(encoding="utf-8")
+    migration = SQL_ROOT.joinpath("0022_tenant_status_gate.sql").read_text(encoding="utf-8")
+    source = SERVER_ROOT.joinpath("postgres.py").read_text(encoding="utf-8")
     assert "GRANT SELECT ON iam.tenants TO ffp_tenant_app;" in migration
     assert "INSERT" not in migration and "UPDATE" not in migration
-    assert "0019_tenant_status_gate.sql" in install
-    assert "0019_tenant_status_gate" in backup
+    step = next(step for step in DEFAULT_PLAN if step.step_id == "0022_tenant_status_gate")
+    assert step.filename == "0022_tenant_status_gate.sql"
     assert "JOIN iam.tenants t ON t.tenant_id=a.tenant_id AND t.status='ACTIVE'" in source
+    installer = (foundation_source_root() / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
+    assert "run_schema apply" in installer
 
 
 @pytest.mark.skipif(_live_dsns() is None, reason="three PostgreSQL role DSNs are not configured")

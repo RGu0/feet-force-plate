@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
+
+
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
@@ -10,19 +18,19 @@ from uuid import uuid4
 
 import pytest
 
-from cloud.access_control.postgres import PostgresAccessRepository
-from cloud.access_control.repository import TenantSeed, TerminalRecord
-from cloud.api.access_auth import TerminalAccessContext
-from cloud.api.contract_export import build_vectors
-from cloud.api.errors import (
+from techflex_cloud_foundation.server.access_control.postgres import PostgresAccessRepository
+from techflex_cloud_foundation.server.access_control.repository import TenantSeed, TerminalRecord
+from techflex_cloud_foundation.server.access_auth import TerminalAccessContext
+from techflex_cloud_foundation.server.contract_export import build_vectors
+from techflex_cloud_foundation.platform_errors import (
     IdempotencyConflict, InsoleCursorInvalid, InsoleIdentityRegistered, InsoleNumberTaken, InsoleRetired,
     ResourceNotFound,
 )
-from cloud.insole_inventory.postgres import PostgresInsoleInventoryRepository
-from cloud.insole_inventory.repository import InMemoryInsoleInventoryRepository
-from cloud.insole_inventory.service import InsoleInventoryService
+from techflex_cloud_foundation.server.insole_inventory.postgres import PostgresInsoleInventoryRepository
+from techflex_cloud_foundation.server.insole_inventory.repository import InMemoryInsoleInventoryRepository
+from techflex_cloud_foundation.server.insole_inventory.service import InsoleInventoryService
 from cloud.tests.test_postgres_access_repository import NOW, _group, _live_dsns
-from shared.contracts.insole_inventory import (
+from techflex_cloud_foundation.contracts.insole_inventory import (
     InsoleIdentity,
     InsoleIdentityKind,
     InsoleNode,
@@ -35,7 +43,7 @@ from shared.contracts.insole_inventory import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = ROOT / "cloud/migrations/0013_insole_inventory.sql"
+MIGRATION = SQL_ROOT.joinpath("0013_insole_inventory.sql")
 TABLES = (
     "device.insole_revision_counters", "device.insole_pairs",
     "device.insole_identities", "device.insole_registration_keys",
@@ -58,12 +66,11 @@ def test_migration_is_additive_rls_scoped_retire_only_and_least_privilege() -> N
 
 
 def test_deployment_applies_and_backs_up_insole_migration() -> None:
-    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
-    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
-    assert install.index("0013_insole_inventory.sql") > install.index(
-        "0012_terminal_activation.sql"
-    )
-    assert "device.insole_registration_keys\n     TO ffp_seed_backup" in install
+    ids = [step.step_id for step in DEFAULT_PLAN]
+    assert ids.index("0013_insole_inventory") > ids.index("0012_terminal_activation")
+    grant = DEFAULT_PLAN[ids.index("grants_0013_insole_to_backup")]
+    assert "device.insole_registration_keys" in grant.inline_sql
+    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
     assert "0012_terminal_activation,0013_insole_inventory" in backup
 
 

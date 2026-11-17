@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from client.reporting.models import BasicReportDocument, ReportMetric, ReportStatus
-from cloud.api.errors import RequestContractError
+from techflex_cloud_foundation.platform_errors import RequestContractError
 
 
 def copy_request(*, report_id: str = "basic-123abc", pdf: bytes = b"%PDF-1.4\n%%EOF"):
@@ -29,7 +29,7 @@ def copy_request(*, report_id: str = "basic-123abc", pdf: bytes = b"%PDF-1.4\n%%
         disclaimer="internal synthetic", provenance=("local-basic/1.0.0",),
     )
     document_json = report.to_json()
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     return models.LocalBasicCopyRequest(
         session_id=session_id, report_id=report_id, version=1,
         source="LOCAL_BASIC_COPY", document_json=document_json, pdf_bytes=pdf,
@@ -39,7 +39,7 @@ def copy_request(*, report_id: str = "basic-123abc", pdf: bytes = b"%PDF-1.4\n%%
 
 
 def test_accepts_valid_local_basic_copy_contract() -> None:
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     request = copy_request()
     # A report must bind to the exact uploaded session; no inferred remapping.
     invalid = replace(request, session_id=uuid4())
@@ -49,7 +49,7 @@ def test_accepts_valid_local_basic_copy_contract() -> None:
 
 
 def test_accepts_local_hex_spelling_of_the_same_session_uuid() -> None:
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     request = copy_request()
     document = json.loads(request.document_json)
     document["session_id"] = request.session_id.hex
@@ -63,7 +63,7 @@ def test_accepts_local_hex_spelling_of_the_same_session_uuid() -> None:
 
 @pytest.mark.parametrize("report_id", ["../escape", "bad_name", "", "x" * 65, "含中文"])
 def test_rejects_unsafe_report_id(report_id: str) -> None:
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     with pytest.raises(RequestContractError, match="report ID"):
         models.validate_local_basic_copy(replace(copy_request(), report_id=report_id))
 
@@ -74,13 +74,13 @@ def test_rejects_unsafe_report_id(report_id: str) -> None:
     {"pdf_bytes": b"not a PDF"}, {"pdf_bytes": b"%PDF-1.4\n" + b"x" * (8 * 1024 * 1024)},
 ])
 def test_rejects_invalid_copy_metadata(changes: dict) -> None:
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     with pytest.raises(RequestContractError):
         models.validate_local_basic_copy(replace(copy_request(), **changes))
 
 
 def test_rejects_wrong_document_status_and_oversize_document() -> None:
-    models = importlib.import_module("cloud.report_copy.models")
+    models = importlib.import_module("techflex_cloud_foundation.server.report_copy.models")
     request = copy_request()
     value = json.loads(request.document_json)
     value["status"] = "FULL_READY"

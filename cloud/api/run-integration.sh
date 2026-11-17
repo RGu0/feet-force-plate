@@ -23,9 +23,8 @@ set +a
 : "${FFP_INTEGRATION_TLS_KEY:?missing FFP_INTEGRATION_TLS_KEY}"
 
 cd "$project_root"
-export PYTHONPATH="$project_root${PYTHONPATH:+:$PYTHONPATH}"
 exec "$FFP_INTEGRATION_PYTHON" -m uvicorn \
-    cloud.api.integration:app_from_environment \
+    techflex_cloud_foundation.server.integration:app_from_environment \
     --factory \
     --host "${FFP_INTEGRATION_HOST:-0.0.0.0}" \
     --port "${FFP_INTEGRATION_PORT:-7443}" \

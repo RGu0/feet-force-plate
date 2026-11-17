@@ -70,9 +70,12 @@ try {
     & $uv.Source @syncArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    $env:PYTHONDONTWRITEBYTECODE = "1"
     switch ($Action) {
         "setup" {
             if ($Command.Count -gt 0) { throw "setup accepts no arguments" }
+            & $uv.Source run --locked --extra dev python scripts/foundation_release_source.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if ($postgresTestAction) {
                 & $uv.Source run --locked --extra dev python scripts/local_postgres_test_environment.py $postgresTestAction
                 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -80,6 +83,8 @@ try {
         }
         "test" {
             if ($Command.Count -gt 0) { throw "test accepts no arguments" }
+            & $uv.Source run --locked --extra dev python scripts/foundation_release_source.py --offline
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if (-not $env:QT_QPA_PLATFORM) { $env:QT_QPA_PLATFORM = "offscreen" }
             if ($postgresTestAction -eq "live") {
                 & $uv.Source run --locked --extra dev python scripts/local_postgres_test_environment.py live-tests
@@ -90,13 +95,13 @@ try {
         "lint" {
             if ($Command.Count -gt 0) { throw "lint accepts no arguments" }
             & $uv.Source run --locked --extra dev ruff check .
-            if ($LASTEXITCODE -eq 0) { & $uv.Source run --locked --extra dev mypy shared/contracts cloud/observability }
+            if ($LASTEXITCODE -eq 0) { & $uv.Source run --locked --extra dev mypy client/cloud/foundation_compat.py scripts/verify_foundation_release_lock.py scripts/export_mobile_contracts.py }
         }
         "build" {
             if ($Command.Count -gt 0) { throw "build accepts no arguments" }
-            & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud shared
+            & $uv.Source run --locked --extra dev --extra build python -m compileall -q client cloud scripts
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & $uv.Source run --locked --extra dev python -m cloud.api.contract_export
+            & $uv.Source run --locked --extra dev python scripts/export_mobile_contracts.py
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if ($env:FEETFORCEPLATE_PORTABLE_OUTPUT_ROOT) {
                 if ($env:FEETFORCEPLATE_PORTABLE_UNSIGNED_DEVELOPMENT -ne "1") {

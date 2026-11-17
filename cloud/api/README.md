@@ -1,24 +1,26 @@
 # FeetForcePlate Cloud API (P3)
 
-This package implements the institution-facing cloud ingestion boundary for health screening and risk提示. It does not implement disease diagnosis, metric algorithms, report templates, public report links, or client UI.
+The pinned `techflex-cloud-foundation` package implements the institution-facing cloud ingestion boundary for health screening and risk提示. It does not implement disease diagnosis, metric algorithms, report templates, public report links, or client UI.
+
+The repository keeps product acceptance tests and compatibility wrappers here; service implementation, contracts and schema resources come from the locked foundation release. Use `./dev setup` to verify and install that release; `cloud/api/requirements.txt` is a compatibility dependency reference, not a replacement for the committed lock.
 
 ## Runtime baseline
 
 - Python 3.11+
 - PostgreSQL 15+ (the migration uses `UNIQUE NULLS NOT DISTINCT`)
-- S3-compatible object storage with versioning and server-side KMS encryption
+- Native Aliyun OSS or private filesystem object storage (legacy S3 compatibility remains in `cloud/ingestion/object_store.py`)
 - TLS 1.2+ terminated by the deployment ingress; production must reject direct plaintext HTTP
 
 Install and run through the repository's per-machine `uv` wrapper; it keeps the
 environment outside the OneDrive checkout:
 
 ```bash
-./scripts/local-env.sh python -m pytest cloud/tests -q
+./dev test
 ```
 
 ## Seed-pilot persistent composition
 
-`cloud.api.seed` is the supported seed-pilot composition. It uses separate
+`techflex_cloud_foundation.server.seed` is the supported seed-pilot composition. It uses separate
 PostgreSQL DSNs for migration, tenant data, pre-authentication/activation, and
 Platform operations; a private filesystem object root outside the checkout;
 independent tenant/Platform token and refresh keys; and an Ed25519 License key.
@@ -37,21 +39,21 @@ FEETFORCEPLATE_SEED_ENV_FILE=/etc/feetforceplate/seed.env \
 Provider-only lifecycle commands are:
 
 ```bash
-./scripts/local-env.sh python -m cloud.access_control.cli bootstrap-platform-owner \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli bootstrap-platform-owner \
   --login-name platform-owner --display-name "Platform Owner"
-./scripts/local-env.sh python -m cloud.access_control.cli provision-tenant \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli provision-tenant \
   --platform-login platform-owner --tenant-name "Seed Clinic" \
   --account-name seed-clinic --hardware-id usb-serial-0123456789abcdef0123 \
   --license-period-months 12
-./scripts/local-env.sh python -m cloud.access_control.cli create-platform-identity \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli create-platform-identity \
   --platform-login platform-owner --login-name platform-support \
   --display-name "Platform Support" --roles PLATFORM_SUPPORT
-./scripts/local-env.sh python -m cloud.access_control.cli rotate-platform-role \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli rotate-platform-role \
   --platform-login platform-owner --target-login platform-support \
   --roles PLATFORM_SUPPORT
-./scripts/local-env.sh python -m cloud.access_control.cli inspect-license \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli inspect-license \
   --license-id "$FEETFORCEPLATE_LICENSE_ID"
-./scripts/local-env.sh python -m cloud.access_control.cli set-terminal-seats \
+./scripts/local-env.sh python -m techflex_cloud_foundation.server.access_control.cli set-terminal-seats \
   --platform-login platform-owner --license-id "$FEETFORCEPLATE_LICENSE_ID" --seats 3
 ```
 
@@ -122,7 +124,7 @@ provision response, and inspection never prints hashes, DSNs, private keys, or
 signed License material. `/health/live` and `/health/ready` expose only named
 dependency classes and readiness states.
 
-Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002_p5_device_operations.sql`, with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
+Schema SQL is installed package data under `techflex_cloud_foundation.schema` (`sql/0001_p3_cloud_platform.sql`, `sql/0002_p5_device_operations.sql`, and subsequent migrations). Foundation owns the complete ordered `DEFAULT_PLAN`; authorized schema work uses its public schema runner and release deployment guide with a migration role before the API role starts. Resolve the fixed released source tooling as described in `deploy/aliyun/seed/README.md`. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
 
 Terminal diagnostic packages (RAY-802) are uploaded with a terminal access token
 to `POST /v1/diagnostics` (mobile contract: `cloud/contracts/mobile/README.md`).
@@ -154,7 +156,7 @@ Platform support access, not part of the mobile contract:
   `E-API-404`). A read whose stored content is missing or fails its digest
   check appends `diagnostics.read_failed` and returns 500.
 - Retention is 30 days from upload. Run the purge on the seed host with the
-  seed environment: `./dev run python -m cloud.terminal_diagnostics.purge`. It
+  seed environment: `./dev run python -m techflex_cloud_foundation.server.terminal_diagnostics.purge`. It
   deletes the content of every package past `expires_at` and keeps the row as a
   tombstone with `deleted_at` (on a versioned OSS bucket the content stays as a
   noncurrent version until a noncurrent-version rule removes it; see the seed
@@ -167,11 +169,14 @@ Platform support access, not part of the mobile contract:
 
 ## Application composition
 
-The transport is intentionally dependency-injected. A deployment bootstrap creates one `asyncpg.Pool`, one S3 client, and the server-only secrets, then composes:
+The transport is intentionally dependency-injected. A deployment bootstrap creates separate role-scoped `asyncpg.Pool` instances, a foundation immutable object store, and server-only secrets. The following uses the private filesystem adapter; native OSS uses the same `SegmentObjectStore` wrapper. The retained legacy S3 adapter is not part of this composition:
 
 ```python
+from techflex_cloud_foundation.object_store import FileSystemObjectStore
+from techflex_cloud_foundation.server.segment_store import SegmentObjectStore
+
 repository = PostgresPlatformRepository(pool, enrollment_pool=enrollment_pool)
-objects = S3ObjectStore(s3_client, bucket=raw_bucket, kms_key_id=kms_key_id)
+objects = SegmentObjectStore(FileSystemObjectStore(private_object_root))
 ingestion = IngestionService(
     repository,
     objects,
@@ -252,7 +257,7 @@ These tests use deterministic in-memory adapters plus SQL/transaction contract c
 
 ## Aliyun network integration environment
 
-`cloud.api.integration:app_from_environment` is an explicit remote integration
+`techflex_cloud_foundation.server.integration:app_from_environment` is an explicit remote integration
 composition for exercising the real HTTP contracts before production cloud
 dependencies are provisioned. It requires all identifiers and secrets through
 environment variables, exposes `/health/live` and `/health/ready`, and can be
@@ -302,7 +307,7 @@ sign-in (`POST /v1/access/terminal-activate`) is gated like sign-in and
 activation. Token refresh (`/v1/access/refresh`, `/v1/access/terminal-refresh`),
 hardware leases and the legacy device enrolment (`POST /v1/terminals/enroll`)
 are not gated.
-`cloud/migrations/0019_tenant_status_gate.sql` gives the tenant role read-only
+`sql/0022_tenant_status_gate.sql` in the installed `techflex_cloud_foundation.schema` resources gives the tenant role read-only
 access to `iam.tenants` for the capture-session check; the installer applies it
 on every install.
 
@@ -312,7 +317,7 @@ domain + public CA + 443.
 
 ## Local controlled fault lab
 
-RAY-428 may run `cloud.api.seed` on a Windows loopback TLS endpoint to exercise
+RAY-428 may run `techflex_cloud_foundation.server.seed` on a Windows loopback TLS endpoint to exercise
 retry behavior that the remote integration endpoint cannot inject. Its
 PostgreSQL data, object root, certificates, control token, test account and
 License material must remain in a non-synchronised local directory outside the
@@ -322,7 +327,7 @@ cover 503, latency/throttle, execute-then-drop completion responses and exact
 path targeting; none are present on the remote endpoint. Store only redacted
 scenario results in delivery evidence.
 
-Use `scripts/local_controlled_integration_lab.py` only with an
+Use `scripts/local_controlled_integration_lab.py` from the verified foundation source root (resolve it offline as described in `deploy/aliyun/seed/README.md`) only with an
 operator-created PostgreSQL database bound to a literal loopback address and a
 private runtime root outside the repository, `project-context`, OneDrive, and
 reparse points. Run `bootstrap` once, start `serve` in a separate local

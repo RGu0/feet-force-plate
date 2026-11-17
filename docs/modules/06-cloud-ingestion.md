@@ -112,12 +112,14 @@ staging + fsync + atomic rename 和不可变键；接口保持可替换，规模
 
 ## 本机可控联调
 
+RAY-969 后，通用服务端、共享契约和本机联调工具由固定的 `techflex-cloud-foundation==0.9.4` 发布源码维护。先以 `./dev setup` 缓存已校验的公开 sdist，再以 `UV_OFFLINE=1 ./dev run python scripts/foundation_release_source.py --offline --print-root` 离线取得源码根目录。下述 `scripts/` 和 `tests/` 路径均相对于该发布源码根；按其中手册及环境调用，不再运行本仓库已删除的副本。当前文档只描述联调方法，不代表远端部署、父级桌面激活或真实上传验收；这些仍需用户授权和独立证据。
+
 RAY-428 的 Windows 本机联调使用独立 PostgreSQL、私有文件对象根和回环 TLS。
 测试 tenant、账号、License、硬件绑定、证书和故障控制令牌均不进入仓库、OneDrive
 或共享证据。控制面只在 `127.0.0.1` 接受有限期规则，用于验证临时 503、延迟/限速、
 服务重启、完成响应丢失后重试以及确认乱序；远端 integration endpoint 不提供此能力。
 验收记录仅保留队列结果、最终 `INGESTED`/`VALID` 状态、幂等事件计数和脱敏审计摘要。
-操作入口为 `scripts/local_controlled_integration_lab.py`：在同一私有运行树上依次运行
+操作入口为发布源码中的 `scripts/local_controlled_integration_lab.py`：在同一私有运行树上依次运行
 `bootstrap`、单独进程的 `serve` 和 `exercise`。`exercise` 对一次完成请求实施
 “服务端执行后丢响应”，以相同幂等键重试，并以一个延迟请求和一个后发请求验证确认
 响应顺序反转；它还请求本地监督器重启并核验重启后的持久状态。私有运行树中的证书、

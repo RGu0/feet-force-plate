@@ -11,8 +11,24 @@ project-specific runtime contract.
 - `techflex-cloud-foundation` is pinned by version and public GitHub Release
   URL in `pyproject.toml`; `uv.lock` pins its wheel SHA-256. Entrypoints use
   locked uv sync, which downloads and verifies the wheel without a worktree-local
-  artifact or release credential. Never install an unverified wheel or bypass
-  the committed lock.
+  artifact or release credential. `setup` also caches the published 0.9.4
+  sdist with its pinned SHA-256 under ignored `.foundation-source/`; tests
+  require the verified cache offline. Never install an unverified wheel or bypass
+  the committed lock. This cache and locator are developer-only; setup must
+  prewarm dependencies and source. Tests and lookups never download source;
+  offline wrapper sync fails closed when dependencies are missing.
+- Shared contracts, generic server, schema/migrations, smoke and deployment
+  tooling belong to the pinned foundation release. Keep product integration and
+  desktop behavior here; do not recreate deleted shared/server copies. Resolve
+  the verified release source offline with
+  `UV_OFFLINE=1 ./dev run python scripts/foundation_release_source.py --offline --print-root`
+  (Windows: set `$env:UV_OFFLINE="1"` for this invocation, then use
+  `pwsh -File dev.ps1 run python scripts/foundation_release_source.py --offline --print-root`;
+  restore the prior environment value afterward). Follow
+  that source tree's documentation for its tools; do not invoke deleted local
+  script paths. The lookup fails closed for missing or modified cache content.
+- Adoption does not authorize deployment, parent desktop activation, real upload
+  or device acceptance. Keep those user gates and evidence separate.
 - Sensitive outbound communication goes through the foundation's public API
   (`SecureTransport`, `AuthorizedTransport`, `CredentialVault`,
   `TrustBundleVerifier`). Do not re-implement transport, authorization,

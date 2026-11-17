@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
+
+
 import asyncio
 import hashlib
 import os
@@ -11,8 +19,8 @@ from uuid import uuid4
 
 import pytest
 
-from cloud.access_control.postgres import PostgresAccessRepository
-from cloud.access_control.repository import (
+from techflex_cloud_foundation.server.access_control.postgres import PostgresAccessRepository
+from techflex_cloud_foundation.server.access_control.repository import (
     InMemoryAccessRepository,
     TenantSeed,
     TerminalInstallationOwned,
@@ -25,7 +33,7 @@ from cloud.tests.test_postgres_access_repository import NOW, _group, _live_dsns
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = ROOT / "cloud/migrations/0012_terminal_activation.sql"
+MIGRATION = SQL_ROOT.joinpath("0012_terminal_activation.sql")
 
 
 def test_migration_is_additive_rls_scoped_and_least_privilege() -> None:
@@ -44,16 +52,15 @@ def test_migration_is_additive_rls_scoped_and_least_privilege() -> None:
 
 
 def test_deployment_applies_and_backs_up_terminal_migration() -> None:
-    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
-    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
-    assert install.index("0012_terminal_activation.sql") > install.index(
-        "0011_controlled_identity_recovery.sql"
-    )
-    assert "iam.terminal_refresh_directory\n     TO ffp_seed_backup" in install
-    assert "0011_controlled_identity_recovery,0012_terminal_activation" in backup
-    nginx = (ROOT / "deploy/aliyun/seed/nginx-feetforceplate-seed.conf").read_text(encoding="utf-8")
+    ids = [step.step_id for step in DEFAULT_PLAN]
+    assert ids.index("0012_terminal_activation") > ids.index("0011_controlled_identity_recovery")
+    grant = DEFAULT_PLAN[ids.index("grants_0012_terminals_to_backup")]
+    assert "iam.terminal_refresh_directory" in grant.inline_sql
+    root = foundation_source_root() / "deploy/aliyun/seed"
+    assert "0011_controlled_identity_recovery,0012_terminal_activation" in (root / "backup.sh").read_text(encoding="utf-8")
+    nginx = (root / "nginx-feetforceplate-seed.conf").read_text(encoding="utf-8")
     block = nginx[nginx.index("location = /v1/access/terminal-activate {"):]
-    assert block[: block.index("}")].count("limit_req zone=seed_auth") == 1
+    assert block[:block.index("}")].count("limit_req zone=seed_auth") == 1
 
 
 def _terminal(tenant_id, group, *, installation=None) -> TerminalRecord:

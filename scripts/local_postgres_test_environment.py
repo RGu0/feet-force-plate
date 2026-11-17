@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 import ipaddress
 import json
@@ -15,6 +16,11 @@ import socket
 import subprocess
 import sys
 from urllib.parse import quote, urlparse
+
+import asyncpg
+from techflex_cloud_foundation.schema import DEFAULT_PLAN, apply_migrations
+
+from scripts.foundation_release_source import foundation_source_root
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -47,8 +53,10 @@ TARGET_OVERRIDE_VARIABLES = (
     "FEETFORCEPLATE_TEST_POSTGRES_RUNTIME_ROOT",
 )
 TEST_FILES = (
-    "cloud/tests/test_postgres_capture_grants.py",
-    "cloud/tests/test_identity_recovery_postgres_live.py",
+    "cloud/tests/test_postgres_access_repository.py",
+    "cloud/tests/test_insole_inventory_postgres_live.py",
+    "cloud/tests/test_terminal_access_postgres_live.py",
+    "cloud/tests/test_terminal_data_plane_postgres_live.py",
 )
 
 
@@ -364,27 +372,23 @@ def _create_roles_and_database(credentials: dict[str, str]) -> None:
 
 def _apply_migrations(credentials: dict[str, str]) -> None:
     admin_password = credentials["admin"]
-    _psql(
-        DATABASE, admin_password,
-        sql="CREATE TABLE IF NOT EXISTS public.ffp_ray513_test_migrations (name text PRIMARY KEY);",
-    )
-    migrations = sorted((REPOSITORY_ROOT / "cloud" / "migrations").glob("*.sql"))
-    if not migrations:
-        raise RuntimeError("committed PostgreSQL migrations are missing")
-    for migration in migrations:
-        applied = _psql(
-            DATABASE, admin_password,
-            query=("SELECT EXISTS (SELECT 1 FROM public.ffp_ray513_test_migrations "
-                   f"WHERE name = {_sql_literal(migration.name)})"),
+
+    async def migrate() -> None:
+        connection = await asyncpg.connect(
+            _dsn(ADMIN_ROLE, admin_password), timeout=5, command_timeout=120,
         )
-        if applied == "t":
-            continue
-        _psql(DATABASE, admin_password, file=migration)
-        _psql(
-            DATABASE, admin_password,
-            sql=("INSERT INTO public.ffp_ray513_test_migrations(name) VALUES "
-                 f"({_sql_literal(migration.name)});"),
-        )
+        try:
+            report = await apply_migrations(connection, plan=DEFAULT_PLAN)
+            if report.pending:
+                raise RuntimeError("packaged schema left migration steps pending")
+        finally:
+            await connection.close()
+
+    try:
+        asyncio.run(migrate())
+    except Exception as error:
+        # Never print a connection exception containing a private DSN/password.
+        raise RuntimeError(f"private PostgreSQL migration failed ({type(error).__name__})") from None
     grants = "\n".join(
         f"GRANT {membership} TO {role} WITH INHERIT TRUE;"
         for role, membership in APPLICATION_ROLES.values()
@@ -566,18 +570,33 @@ def _live_tests() -> int:
     dsn_values = _role_dsns(credentials)
     test_environment = os.environ.copy()
     test_environment.update(dsn_values)
+    # Keep the original capture/recovery PostgreSQL acceptance after its tests
+    # move upstream. Separate processes isolate the released `tests` package.
+    source_root = foundation_source_root(REPOSITORY_ROOT)
+    released_environment = test_environment.copy()
+    released_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    released_environment["PYTHONPATH"] = str(source_root) + os.pathsep + test_environment.get("PYTHONPATH", "")
+    runs = (
+        (REPOSITORY_ROOT, test_environment, TEST_FILES),
+        (source_root, released_environment, (
+            "tests/test_ffp_postgres_capture_grants.py",
+            "tests/test_ffp_identity_recovery_postgres_live.py",
+        )),
+    )
+    outputs: list[str] = []
+    returncode = 0
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", *TEST_FILES],
-            cwd=REPOSITORY_ROOT,
-            env=test_environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        for cwd, environment, tests in runs:
+            result = subprocess.run(
+                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *tests],
+                cwd=cwd, env=environment, text=True, capture_output=True, check=False,
+            )
+            outputs.append(result.stdout + result.stderr)
+            if result.returncode and not returncode:
+                returncode = result.returncode
     except OSError as error:
         raise RuntimeError("RAY-513 PostgreSQL live tests could not start") from error
-    output = result.stdout + result.stderr
+    output = "\n".join(outputs)
     for secret in (*credentials.values(), *dsn_values.values()):
         output = output.replace(secret, "<redacted>")
     run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -586,7 +605,7 @@ def _live_tests() -> int:
         stream.write(output)
     print(json.dumps({"role_check": summary, "test_log": evidence_path.name}, sort_keys=True))
     print(output, end="")
-    return result.returncode
+    return returncode
 
 
 def _stop_cluster() -> None:

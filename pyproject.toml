@@ -5,7 +5,7 @@ description = "足底压力力台 PC 上位机：实时采集、可视化、算�
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "techflex-cloud-foundation==0.9.2",
+    "techflex-cloud-foundation==0.9.4",
     # GUI
     "PySide6",
     "pyqtgraph",
@@ -59,7 +59,7 @@ dev = [
 package = false
 
 [tool.uv.sources]
-techflex-cloud-foundation = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.2/techflex_cloud_foundation-0.9.2-py3-none-any.whl" }
+techflex-cloud-foundation = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.4/techflex_cloud_foundation-0.9.4-py3-none-any.whl" }
 
 [tool.pytest.ini_options]
 testpaths = ["client/tests", "cloud/tests", "tests"]
@@ -77,10 +77,10 @@ select = ["F"]
 
 [tool.mypy]
 python_version = "3.11"
-# This initial gate protects the versioned cross-process contract and the
-# privacy boundary. Qt presentation and numerical pipelines need a dedicated
+# Shared contracts and observability are typed in foundation CI. This gate
+# protects consumer TLS configuration, release locking and public export boundaries. Qt presentation and numerical pipelines need a dedicated
 # typing remediation before they can become a reliable blocking gate.
-files = ["shared/contracts", "cloud/observability"]
+files = ["client/cloud/foundation_compat.py", "scripts/verify_foundation_release_lock.py", "scripts/export_mobile_contracts.py"]
 ignore_missing_imports = true
 follow_imports = "silent"
 explicit_package_bases = true

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from pathlib import Path
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN, Probe
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
 
 
-MIGRATION = Path(__file__).parents[1] / "migrations" / "0003_seed_mvp_access_control.sql"
+
+
+MIGRATION = SQL_ROOT.joinpath("0003_seed_mvp_access_control.sql")
 ACTIVATION_PROJECTION_GRANTS = (
-    Path(__file__).parents[1] / "migrations" / "0008_activation_projection_grants.sql"
+    SQL_ROOT.joinpath("0008_activation_projection_grants.sql")
 )
-CAPTURE_GRANTS = Path(__file__).parents[1] / "migrations" / "0009_capture_grants.sql"
-SEED_INSTALLER = Path(__file__).parents[2] / "deploy" / "aliyun" / "seed" / "install-seed-release.sh"
+CAPTURE_GRANTS = SQL_ROOT.joinpath("0009_capture_grants.sql")
+SEED_INSTALLER = foundation_source_root() / "deploy" / "aliyun" / "seed" / "install-seed-release.sh"
 
 
 def test_capture_authorization_migration_contract() -> None:
@@ -41,30 +48,33 @@ def test_capture_authorization_migration_contract() -> None:
 
 
 def test_seed_installer_applies_capture_authorization_migration() -> None:
+    step = next(step for step in DEFAULT_PLAN if step.step_id == "0009_capture_grants")
+    assert step.filename == "0009_capture_grants.sql"
+    assert step.probe == Probe(relation="screening.capture_grants")
     installer = SEED_INSTALLER.read_text(encoding="utf-8")
-    assert 'apply_migration screening.capture_grants "$release_source/cloud/migrations/0009_capture_grants.sql"' in installer
+    assert "run_schema apply" in installer
 
 
 def test_session_expected_manifest_migration_preserves_legacy_rows():
-    sql = (MIGRATION.parent / "0010_session_expected_manifest.sql").read_text()
+    sql = SQL_ROOT.joinpath("0010_session_expected_manifest.sql").read_text(encoding="utf-8")
     assert "ALTER TABLE screening.sessions" in sql
     assert "ADD COLUMN expected_manifest_sha256 text" in sql
     assert "expected_manifest_sha256 IS NULL OR expected_manifest_sha256 ~ '^[0-9a-f]{64}$'" in sql
     assert "NOT NULL" not in sql and "DEFAULT" not in sql
-    assert 'apply_migration_if_column_missing screening sessions expected_manifest_sha256 "$release_source/cloud/migrations/0010_session_expected_manifest.sql"' in SEED_INSTALLER.read_text()
+    step = next(step for step in DEFAULT_PLAN if step.step_id == "0010_session_expected_manifest")
+    assert step.probe == Probe(column=("screening", "sessions", "expected_manifest_sha256"))
+    assert "run_schema apply" in SEED_INSTALLER.read_text(encoding="utf-8")
 
 
 def test_activation_role_can_write_its_data_plane_projection() -> None:
-    sql = ACTIVATION_PROJECTION_GRANTS.read_text()
+    sql = ACTIVATION_PROJECTION_GRANTS.read_text(encoding="utf-8")
 
     assert (
         "GRANT SELECT, INSERT, UPDATE ON device.devices, device.terminals, "
         "device.terminal_device_bindings TO ffp_activation_app;" in sql
     )
 REVOKED_LICENSE_MIGRATION = (
-    Path(__file__).parents[1]
-    / "migrations"
-    / "0004_allow_unsigned_revoked_license.sql"
+    SQL_ROOT.joinpath("0004_allow_unsigned_revoked_license.sql")
 )
 
 TENANT_TABLES = (

@@ -21,7 +21,7 @@
 本仓库唯一受控的命令入口是 `./dev`（macOS/Linux）与 `pwsh -File dev.ps1`（Windows）。不要直接运行 `uv sync`、`uv run`、系统 Python、pip 或共享 Conda 环境。入口按 [`pyproject.toml`](pyproject.toml) 中的公开 GitHub Release URL 和 [`uv.lock`](uv.lock) 中的 SHA-256 安装并校验 `techflex-cloud-foundation` wheel，无需工作树内的本地 wheel。
 
 ```bash
-./dev setup            # 从 GitHub Release 下载并校验 foundation wheel，按锁文件同步环境
+./dev setup            # 校验公开 wheel，同步锁定环境，并缓存已校验的 0.9.4 sdist
 ./dev test
 ./dev lint
 ./dev build
@@ -33,7 +33,17 @@ pwsh -File dev.ps1 setup
 pwsh -File dev.ps1 run python main.py
 ```
 
-`./dev setup` 需要能访问公开的 Foundation GitHub Release。uv 自行下载和缓存 wheel，并按 `uv.lock` 校验 SHA-256；不需要 `gh` 登录或专用 Release 令牌。摘要不匹配时同步失败。
+`./dev setup` 需要能访问公开的 Foundation GitHub Release。uv 自行下载和缓存 wheel，并按 `uv.lock` 校验 SHA-256；不需要 `gh` 登录或专用 Release 令牌。摘要不匹配时同步失败。setup 还会下载并校验固定 0.9.4 的公开源码包（sdist），将只读源码树保存在忽略的本机 `.foundation-source/` 缓存中；源码包摘要由 `scripts/foundation_release_source.py` 固定。
+
+共享契约、通用服务端、迁移、smoke 和部署工具由 `techflex-cloud-foundation==0.9.4` 维护。FeetForcePlate 保留桌面产品、产品集成测试、移动契约导出产物与公开 TLS bundle 构建 helper。已删除的本地服务端或共享契约不再作为备用实现。查找已验证发布源码根目录：
+
+```bash
+UV_OFFLINE=1 ./dev run python scripts/foundation_release_source.py --offline --print-root
+```
+
+此缓存和源码定位器仅用于开发与消费端验证，不是部署入口。必须先通过 setup 预热依赖与源码缓存；测试和查询不得下载源码。`UV_OFFLINE=1` 同时禁止入口同步环境时下载依赖，依赖缺失也会失败。该查询离线验证缓存并只输出源码根目录；缓存缺失或内容变化时失败，先运行 setup 恢复。后续查阅发布源码根下的 `docs/guides/seed-cutover-runbook.md`、`deploy/aliyun/seed/README.md` 和 `scripts/`；执行工具须遵循该发布源码的手册、环境和授权要求。采用发布源码包含 RAY-829 / RAY-833 / RAY-953 的 registry ingestion 行为，不声称与旧共享副本完全相同。
+
+本次依赖采用与删除不表示远端已部署或桌面端已验收；父级桌面激活、真实上传和设备验收仍须用户授权及独立证据。
 
 `scripts/local-env.sh` 与 `scripts/local-env.ps1` 现在只是转发到 `./dev` 的向后兼容壳，新脚本和文档不要再引用它们。
 
