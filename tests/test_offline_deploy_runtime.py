@@ -11,7 +11,9 @@ import zipfile
 
 import pytest
 
-SEED = Path(__file__).resolve().parents[1] / "deploy" / "aliyun" / "seed"
+from scripts.foundation_release_source import foundation_source_root
+
+SEED = foundation_source_root() / "deploy" / "aliyun" / "seed"
 
 
 def _text(name: str) -> str:
@@ -28,7 +30,7 @@ def test_installer_does_not_fetch_foundation_wheel_from_host() -> None:
 def test_installer_proves_offline_resolution_before_migrations() -> None:
     installer = _text("install-seed-release.sh")
     preflight = installer.index("UV_OFFLINE=1")
-    assert preflight < installer.index("apply_migration iam.tenants")
+    assert preflight < installer.index("run_schema apply")
     assert preflight < installer.index("createdb")
 
 
@@ -41,9 +43,13 @@ def test_offline_check_runs_outside_the_root_executed_tree() -> None:
     assert re.search(r'chmod 0711 "\$offline_check_root"', installer)
     check = installer.index("UV_OFFLINE=1")
     assert installer.index('cp -a "$release_source" "$offline_check_root/release"') < check
-    assert '"$offline_check_root/release/dev" setup' in installer
+    assert '--project "$offline_check_root/release/deploy/aliyun/seed/runtime"' in installer
+    assert "uv sync --frozen --no-dev --group acceptance" in installer
     assert '"$release_source/dev"' not in installer
-    assert 'rm -rf -- "$install_root" "$offline_check_root"' in installer
+    recovery = _text("installer-recovery.sh")
+    assert 'source "$script_dir/installer-recovery.sh"' in installer
+    assert "trap finish_install EXIT" in installer
+    assert 'rm -rf -- "$install_root" "$offline_check_root"' in recovery
 
 
 def test_operator_script_uploads_checked_wheel() -> None:
@@ -65,7 +71,7 @@ def test_installer_seeds_uv_cache_from_uploaded_wheel_before_offline_check() -> 
     assert installer.index('"$foundation_wheel" "$offline_check_root') < warm
     assert warm < installer.index("UV_OFFLINE=1")
     assert '"$foundation_url" "$foundation_sha256"' in installer
-    assert "nothing was changed" in installer[warm:installer.index("UV_OFFLINE=1")]
+    assert "live configuration and database were not changed (runtime cache may be warmed)" in installer[warm:installer.index("UV_OFFLINE=1")]
 
 
 def _wheel(directory: Path, version: str) -> Path:

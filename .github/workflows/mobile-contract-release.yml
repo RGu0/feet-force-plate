@@ -19,7 +19,7 @@ jobs:
       - name: Check versioned exports
         run: |
           uv sync --locked --extra dev
-          uv run --locked --extra dev python -m pytest cloud/tests/test_mobile_contract_export.py
+          uv run --locked --extra dev python -m pytest tests/foundation/test_mobile_contract_export.py
       - name: Attach public contract files to tagged version
         env:
           GH_TOKEN: ${{ github.token }}

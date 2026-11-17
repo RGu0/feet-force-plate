@@ -15,6 +15,7 @@ jobs:
         python: ["3.11"]
     env:
       QT_QPA_PLATFORM: offscreen
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux Qt and PTY runtime
@@ -29,10 +30,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install locked dependencies from public Foundation Release
         run: uv sync --extra dev --locked
+      - name: Verify pinned Foundation tooling source
+        run: uv run --locked --extra dev python scripts/foundation_release_source.py
       - name: Static quality gates
         run: |
           uv run --extra dev ruff check .
-          uv run --extra dev mypy shared/contracts cloud/observability
+          uv run --extra dev mypy client/cloud/foundation_compat.py scripts/verify_foundation_release_lock.py scripts/export_mobile_contracts.py
       - name: Full governed test suite
         run: uv run --extra dev python -m pytest --junitxml=pytest-results.xml
       - name: Unprivileged integration public bundle root gate

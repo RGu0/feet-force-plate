@@ -11,9 +11,9 @@ from uuid import UUID, uuid4
 
 from botocore.exceptions import ClientError
 
-from cloud.api.errors import DigestMismatch, SegmentDigestConflict, SizeMismatch
-from shared.contracts.client_sync import canonical_json_bytes
-from shared.contracts.cloud import AnySegmentMetadata, AnySessionManifest
+from techflex_cloud_foundation.platform_errors import DigestMismatch, SegmentDigestConflict, SizeMismatch
+from techflex_cloud_foundation.contracts.client_sync import canonical_json_bytes
+from techflex_cloud_foundation.contracts.cloud import AnySegmentMetadata, AnySessionManifest
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,14 @@ foreign keys of subject.consents and screening.sessions they satisfy.
 
 from __future__ import annotations
 
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
+
+
 import asyncio
 import base64
 import hashlib
@@ -20,38 +28,39 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from httpx import ASGITransport, AsyncClient
 
-from cloud.access_control.postgres import PostgresAccessRepository
-from cloud.access_control.repository import (
+from techflex_cloud_foundation.server.access_control.postgres import PostgresAccessRepository
+from techflex_cloud_foundation.server.access_control.repository import (
     AccessRepositoryConflict,
     TenantSeed,
     TerminalInstallationOwned,
     TerminalRecord,
     TerminalRefreshSessionRecord,
 )
-from cloud.access_control.terminal_service import TerminalAccessService
-from cloud.api.access_auth import (
+from techflex_cloud_foundation.server.access_control.terminal_service import TerminalAccessService
+from techflex_cloud_foundation.server.access_auth import (
     LicenseDocumentSigner,
     TerminalAccessTokenIssuer,
     TerminalRefreshTokenFactory,
 )
-from cloud.api.app import ServiceContainer, create_app
-from cloud.api.contract_export import build_vectors
-from cloud.api.postgres import PostgresPlatformRepository, tenant_transaction
-from cloud.api.subject_service import IdentityProtector, SubjectConsentService
-from cloud.ingestion.object_store import InMemoryObjectStore
-from cloud.ingestion.service import IngestionService
-from cloud.insole_inventory.postgres import (
+from techflex_cloud_foundation.server.app import ServiceContainer, create_app
+from techflex_cloud_foundation.server.contract_export import build_vectors
+from techflex_cloud_foundation.server.postgres import PostgresPlatformRepository, tenant_transaction
+from techflex_cloud_foundation.server.subject_service import IdentityProtector, SubjectConsentService
+from techflex_cloud_foundation.object_store import InMemoryObjectStore
+from techflex_cloud_foundation.server.segment_store import SegmentObjectStore
+from techflex_cloud_foundation.server.ingestion_service import IngestionService
+from techflex_cloud_foundation.server.insole_inventory.postgres import (
     PostgresInsoleInventoryRepository,
     insole_device_serial_hmac,
 )
-from cloud.insole_inventory.service import InsoleInventoryService
+from techflex_cloud_foundation.server.insole_inventory.service import InsoleInventoryService
 from cloud.tests.test_postgres_access_repository import _group, _live_dsns
-from shared.contracts.client_sync import canonical_sha256, encode_segment_metadata
-from shared.contracts.cloud import ManifestSegment, SegmentMetadata, SessionManifest
+from techflex_cloud_foundation.contracts.client_sync import canonical_sha256, encode_segment_metadata
+from techflex_cloud_foundation.contracts.cloud import ManifestSegment, SegmentMetadata, SessionManifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = ROOT / "cloud/migrations/0015_terminal_data_plane_projection.sql"
+MIGRATION = SQL_ROOT.joinpath("0015_terminal_data_plane_projection.sql")
 SECRET = b"tenant-token-secret-must-be-at-least-32-bytes"
 
 
@@ -77,11 +86,9 @@ def test_projection_serial_matches_the_migration_backfill() -> None:
 
 
 def test_deployment_applies_and_backs_up_projection_migration() -> None:
-    install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
-    backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
-    assert install.index("0015_terminal_data_plane_projection.sql") > install.index(
-        "0014_recovery_bound_migration_permits.sql"
-    )
+    ids = [step.step_id for step in DEFAULT_PLAN]
+    assert ids.index("0015_terminal_data_plane_projection") > ids.index("0014_recovery_bound_migration_permits")
+    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text()
     assert "0014_recovery_bound_migration_permits,0015_terminal_data_plane_projection" in backup
 
 
@@ -150,7 +157,7 @@ def test_terminal_uploads_through_projected_terminal_and_insole() -> None:
             data = PostgresPlatformRepository(tenant_pool, platform_pool=platform_pool)
             app = create_app(ServiceContainer(
                 ingestion=IngestionService(
-                    data, InMemoryObjectStore(),
+                    data, SegmentObjectStore(InMemoryObjectStore()),
                     supported_payload_schemas={"raw-segment/1", "insole-session-archive/1"},
                     supported_manifest_schemas={"session-manifest/1", "insole-session-manifest/1"},
                 ),

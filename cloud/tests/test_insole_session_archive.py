@@ -1,6 +1,14 @@
 """RAY-825 R1: insole-session-archive/1 sessions replayed from the published vectors."""
 from __future__ import annotations
 
+from importlib.resources import files
+from scripts.foundation_release_source import foundation_source_root
+from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+SQL_ROOT = files("techflex_cloud_foundation.schema").joinpath("sql")
+SERVER_ROOT = files("techflex_cloud_foundation.server")
+
+
 import base64
 import copy
 import hashlib
@@ -13,19 +21,20 @@ from uuid import uuid4
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
-from cloud.api.access_auth import TenantAccessTokenIssuer
-from cloud.api.app import ServiceContainer, create_app
-from cloud.api.contract_export import build_vectors
-from cloud.api.repository import InMemoryPlatformRepository
-from cloud.ingestion.object_store import InMemoryObjectStore
-from cloud.ingestion.service import IngestionService
-from shared.contracts.access_control import AccessCapabilities
-from shared.contracts.client_sync import (
+from techflex_cloud_foundation.server.access_auth import TenantAccessTokenIssuer
+from techflex_cloud_foundation.server.app import ServiceContainer, create_app
+from techflex_cloud_foundation.server.contract_export import build_vectors
+from techflex_cloud_foundation.server.repository import InMemoryPlatformRepository
+from techflex_cloud_foundation.object_store import InMemoryObjectStore
+from techflex_cloud_foundation.server.segment_store import SegmentObjectStore
+from techflex_cloud_foundation.server.ingestion_service import IngestionService
+from techflex_cloud_foundation.contracts.access_control import AccessCapabilities
+from techflex_cloud_foundation.contracts.client_sync import (
     canonical_sha256,
     decode_segment_metadata,
     encode_segment_metadata,
 )
-from shared.contracts.cloud import (
+from techflex_cloud_foundation.contracts.cloud import (
     INSOLE_ARCHIVE_PAYLOAD_SCHEMA,
     INSOLE_MANIFEST_SCHEMA,
     ArchiveSegmentMetadata,
@@ -121,7 +130,7 @@ class InsoleArchiveContractTests(unittest.TestCase):
 
 class InsoleArchiveMigrationTests(unittest.TestCase):
     def test_migration_relaxes_columns_only_for_the_insole_schemas(self) -> None:
-        sql = (ROOT / "cloud/migrations/0016_insole_session_archive.sql").read_text("utf-8")
+        sql = (SQL_ROOT.joinpath("0016_insole_session_archive.sql")).read_text("utf-8")
         self.assertTrue(sql.startswith("BEGIN;") and sql.rstrip().endswith("COMMIT;"))
         for forbidden in ("DROP TABLE", "DROP COLUMN", "GRANT ", "UPDATE ", "DELETE "):
             self.assertNotIn(forbidden, sql)
@@ -133,27 +142,21 @@ class InsoleArchiveMigrationTests(unittest.TestCase):
         self.assertEqual(sql.count("IF NOT EXISTS ("), 2)
 
     def test_deployment_applies_and_backs_up_the_migration(self) -> None:
-        install = (ROOT / "deploy/aliyun/seed/install-seed-release.sh").read_text("utf-8")
-        backup = (ROOT / "deploy/aliyun/seed/backup.sh").read_text("utf-8")
-        self.assertGreater(
-            install.index("0016_insole_session_archive.sql"),
-            install.index("0015_terminal_data_plane_projection.sql"),
-        )
-        self.assertIn(
-            "0015_terminal_data_plane_projection,0016_insole_session_archive", backup
-        )
+        ids = [step.step_id for step in DEFAULT_PLAN]
+        self.assertGreater(ids.index("0016_insole_session_archive"), ids.index("0015_terminal_data_plane_projection"))
+        backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text()
+        self.assertIn("0015_terminal_data_plane_projection,0016_insole_session_archive", backup)
 
     def test_deployed_apps_register_both_payload_schemas(self) -> None:
-        for name in ("cloud/api/seed.py", "cloud/api/integration.py"):
-            source = (ROOT / name).read_text("utf-8")
-            self.assertIn(
-                'supported_payload_schemas={"raw-segment/1", INSOLE_ARCHIVE_PAYLOAD_SCHEMA}',
-                source,
-            )
-            self.assertIn(
-                'supported_manifest_schemas={"session-manifest/1", INSOLE_MANIFEST_SCHEMA}',
-                source,
-            )
+        from techflex_cloud_foundation import default_payload_schema_registry
+        registry = default_payload_schema_registry()
+        for schema, manifest in (("raw-segment/1", "session-manifest/1"), (INSOLE_ARCHIVE_PAYLOAD_SCHEMA, INSOLE_MANIFEST_SCHEMA)):
+            self.assertIn(schema, registry.schema_ids)
+            self.assertEqual(registry.get(schema).manifest_schema, manifest)
+        for name in ("seed.py", "integration.py"):
+            source = SERVER_ROOT.joinpath(name).read_text()
+            self.assertIn("IngestionService(", source)
+            self.assertIn("SegmentObjectStore(objects)", source)
 
 
 class InsoleArchiveApiTests(unittest.IsolatedAsyncioTestCase):
@@ -184,7 +187,7 @@ class InsoleArchiveApiTests(unittest.IsolatedAsyncioTestCase):
         )
         ingestion = IngestionService(
             repository,
-            InMemoryObjectStore(),
+            SegmentObjectStore(InMemoryObjectStore()),
             supported_payload_schemas={"raw-segment/1", INSOLE_ARCHIVE_PAYLOAD_SCHEMA},
             supported_manifest_schemas={"session-manifest/1", INSOLE_MANIFEST_SCHEMA},
         )

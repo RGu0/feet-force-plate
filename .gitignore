@@ -35,3 +35,6 @@ wheels/
 
 # Claude Code machine-local state (permissions, agent sessions, etc.)
 .claude/
+
+# Digest-verified published foundation tooling, local-only.
+/.foundation-source/

@@ -1,58 +1,24 @@
 from __future__ import annotations
 
+from scripts.foundation_release_source import foundation_source_root
+
 import json
 import os
 from pathlib import Path
+import re
+import runpy
 import stat
 import tempfile
+import tomllib
 
-
-ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
+ROOT = foundation_source_root() / "deploy/aliyun/seed"
+LOCAL_DEPLOY_ROOT = Path(__file__).resolve().parents[2] / "deploy/aliyun/seed"
 
 
 def _read_repository_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
-    workflow = (
-        ROOT.parents[2] / ".github" / "workflows" / "quality.yml"
-    ).read_text(encoding="utf-8")
-    assert "UV_INDEX_URL" not in workflow
-    assert (
-        'sudo env "PATH=$PATH" '
-        '"$test_python" -m pytest'
-    ) in workflow
-    assert 'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR"' not in workflow
-
-
-def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> None:
-    path = ROOT / "build-integration-public-bundle.sh"
-    text = path.read_text(encoding="utf-8")
-    if os.name != "nt":
-        assert path.stat().st_mode & stat.S_IXUSR
-    assert "must run as root" in text
-    assert "seed.env" not in text
-    assert "systemctl" not in text
-    assert "os.O_NOFOLLOW" in text
-    assert "os.fstat" in text
-    assert "copyfile(" not in text
-    assert "copyfileobj(" not in text
-    assert "--help|-h" not in text
-    assert ".ray-99-integration.lock" in text
-    assert "mv -T" in text
-    assert 'mv -- "$backup" "$destination"' not in text
-    assert 'mv -T -n -- "$backup" "$destination"' in text
-    assert "ca_source_payload = ca_input.read()" in text
-    assert "ca_input.seek" not in text
-    assert "write_from_stream" not in text
-    assert 'echo "destination=$destination"' in text
-    assert 'echo "api_base_url=$normalized_api_base_url"' in text
-    assert 'echo "license_key_id=$normalized_license_key_id"' in text
-    assert 'echo "bundle=ray-99-integration"' not in text
-    assert '"$repository_root/scripts/local-env.sh" python -' not in text
-    assert '"$repository_root/client/cloud/packaged_defaults.py"' in text
-    assert "importlib.util.spec_from_file_location" in text
 def test_repository_text_reader_uses_utf8() -> None:
     with tempfile.TemporaryDirectory() as directory:
         metadata = Path(directory) / "project.toml"
@@ -60,15 +26,6 @@ def test_repository_text_reader_uses_utf8() -> None:
         metadata.write_text(expected, encoding="utf-8")
 
         assert _read_repository_text(metadata) == expected
-
-
-def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
-    repository = ROOT.parents[2]
-    project = (repository / "pyproject.toml").read_text(encoding="utf-8")
-    lock = (repository / "uv.lock").read_text(encoding="utf-8")
-    for package in ("alibabacloud-oss-v2", "alibabacloud-credentials"):
-        assert package in project
-        assert package in lock
 
 
 def test_systemd_service_is_unprivileged_hardened_and_loopback_only() -> None:
@@ -169,57 +126,6 @@ def test_host_prerequisites_are_idempotent_and_do_not_cut_over_7443() -> None:
     assert "nginx-feetforceplate-seed.conf" not in text
 
 
-def test_release_installer_preflights_before_exact_legacy_cutover() -> None:
-    path = ROOT / "install-seed-release.sh"
-    text = _read_repository_text(path)
-    for token in (
-        "sha256sum", "scram-sha-256", "17443", "/health/ready",
-        "uvicorn cloud.api.integration:app_from_environment", "kill -TERM \"$old_pid\"",
-        "systemctl start feetforceplate-backup.service", "secrets=not-printed",
-    ):
-        assert token in text
-    assert text.index("https://127.0.0.1:17443/health/ready") < text.index("kill -TERM")
-    assert text.index("http://127.0.0.1:8743/health/ready") < text.index("kill -TERM")
-    assert text.index("kill -TERM") < text.index("systemctl start nginx", text.index("kill -TERM"))
-    if os.name != "nt":
-        assert path.stat().st_mode & stat.S_IXUSR
-    assert "0004_allow_unsigned_revoked_license.sql" in text
-    assert "0005_sales_inventory_activation.sql" in text
-    assert "0006_inventory_activation_pairing.sql" in text
-    assert "apply_migration_if_column_missing sales inventory_batches activation_binding_mode" in text
-    assert text.index("0008_activation_projection_grants.sql") > text.index("-f \"$role_wrapper\"")
-    assert text.index("0009_unverified_session_holds.sql") > text.index("0008_activation_projection_grants.sql")
-    assert text.index("0010_local_basic_report_copies.sql") > text.index("0009_unverified_session_holds.sql")
-    assert text.index("0011_controlled_identity_recovery.sql") > text.index("0010_local_basic_report_copies.sql")
-    assert text.index("0012_terminal_activation.sql") > text.index("0011_controlled_identity_recovery.sql")
-    assert text.index("0013_insole_inventory.sql") > text.index("0012_terminal_activation.sql")
-    assert text.index("0014_recovery_bound_migration_permits.sql") > text.index("0013_insole_inventory.sql")
-    # 0014 only alters an existing table, so its idempotence marker must be a
-    # column; a constraint name is not a relation and to_regclass never sees it.
-    assert (
-        "apply_migration_if_column_missing screening upload_migration_permits original_envelope_sha256 "
-        '"$release_source/cloud/migrations/0014_recovery_bound_migration_permits.sql"'
-    ) in text
-    assert "upload_migration_permits_recovery_binding \"" not in text
-    assert text.index("to_regclass('ops.session_holds')") < text.index("0011_controlled_identity_recovery.sql")
-    assert text.index("GRANT SELECT ON ops.identity_recovery_cases") > text.index(
-        "0011_controlled_identity_recovery.sql"
-    )
-    assert text.index("GRANT USAGE ON SCHEMA reporting TO ffp_seed_backup") > text.index(
-        "0010_local_basic_report_copies.sql"
-    )
-    assert "install_tls_file" in text
-    assert "readlink -f" in text
-    assert text.index("uv.lock") < text.index("apply_migration iam.tenants")
-    assert "verify_foundation_release_lock.py" in text
-    # RAY-814: the host has no GitHub access; the operator uploads the wheel.
-    assert "curl --fail" not in text
-    assert "foundation_wheel_source" in text
-    assert "foundation release wheel digest mismatch" in text
-    assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
-    assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
-
-
 def test_oss_configuration_uses_ecs_role_without_long_lived_access_keys() -> None:
     path = ROOT / "configure-oss.sh"
     text = _read_repository_text(path)
@@ -247,6 +153,21 @@ def test_backup_metadata_includes_sales_inventory_schema_version() -> None:
     assert "0006_inventory_activation_pairing" in text
 
 
+def test_backup_metadata_names_only_shipped_migrations_and_ends_at_the_ledger() -> None:
+    from techflex_cloud_foundation.schema import DEFAULT_PLAN
+
+    text = _read_repository_text(ROOT / "backup.sh")
+    listed = next(
+        line for line in text.splitlines() if line.startswith("schema_versions=")
+    ).split('"')[1].split(",")
+    files = [step.filename.removesuffix(".sql") for step in DEFAULT_PLAN if step.filename]
+    assert set(listed) <= set(files)
+    assert listed[-1] == "0019_terminal_diagnostics"
+    assert [name for name in files if name in listed] == listed
+    assert "0012_terminal_activation,0013_insole_inventory" in text
+    assert "0015_terminal_data_plane_projection,0016_insole_session_archive" in text
+
+
 def test_sales_inventory_server_bootstrap_reads_release_manifest() -> None:
     text = _read_repository_text(ROOT / "feetforceplate-sales-inventory-server.sh")
     assert 'release_manifest="/home/rui/feetforceplate-sales-inventory-release.env"' in text
@@ -268,7 +189,11 @@ def test_remote_release_deploy_stages_a_wrapper_before_tty_sudo() -> None:
 
 def test_remote_release_deploy_ships_the_git_archive_and_checked_wheel() -> None:
     text = _read_repository_text(ROOT / "deploy-sales-inventory-release.sh")
-    assert 'git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha"' in text
+    assert (
+        'git -C "$repo_root" archive --format=tar.gz --output="$archive" "$release_sha" '
+        "deploy scripts tests"
+    ) in text
+    assert "deploy/aliyun/seed/runtime/uv.lock" in text
     # RAY-814: the operator downloads and checks the locked wheel, then uploads it.
     assert 'foundation release wheel digest mismatch' in text
     assert "prepare_foundation_artifact" not in text
@@ -287,9 +212,8 @@ def test_remote_seed_release_wrapper_is_root_gated_and_validates_the_archive() -
 
 def test_systemd_entry_scripts_are_executable() -> None:
     for relative in (
-        "dev",
-        "cloud/api/run-seed.sh",
-        "scripts/local-env.sh",
+        "deploy/aliyun/seed/run-seed.sh",
+        "deploy/aliyun/seed/venv-python.sh",
         "deploy/aliyun/seed/backup.sh",
         "deploy/aliyun/seed/check-secrets.sh",
         "deploy/aliyun/seed/restore-verify.sh",
@@ -322,6 +246,121 @@ def test_live_acceptance_uses_the_service_owned_uv_runtime() -> None:
     assert "aliyun-oss-summary.json" in text
 
 
+def test_runtime_project_pins_the_server_extra_and_the_installer_requires_its_lock() -> None:
+    project = tomllib.loads((ROOT / "runtime" / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = project["project"]["dependencies"]
+    assert len(dependencies) == 1
+    assert re.fullmatch(r"techflex-cloud-foundation\[server\]==\d+\.\d+\.\d+", dependencies[0])
+    assert project["tool"]["uv"]["package"] is False
+    source = project["tool"]["uv"]["sources"]["techflex-cloud-foundation"]["url"]
+    version = dependencies[0].rsplit("==", 1)[1]
+    assert source == (
+        "https://github.com/RGu0/techflex-cloud-foundation/releases/download/"
+        f"v{version}/techflex_cloud_foundation-{version}-py3-none-any.whl"
+    )
+    text = _read_repository_text(ROOT / "install-seed-release.sh")
+    assert 'runtime_project="$release_source/deploy/aliyun/seed/runtime"' in text
+    assert 'release has no pinned runtime project' in text
+    assert text.index("verify_foundation_release_lock.py") < text.index("run_schema apply")
+
+
+def test_installer_preflights_before_any_change_and_migrates_through_the_runner() -> None:
+    path = ROOT / "install-seed-release.sh"
+    text = _read_repository_text(path)
+    for token in (
+        "sha256sum", "scram-sha-256", "17443", "/health/ready",
+        "systemctl start feetforceplate-backup.service",
+        "secrets=not-printed", "install_tls_file", "readlink -f",
+        "foundation release wheel digest mismatch", "foundation_wheel_source",
+    ):
+        assert token in text
+    assert "curl --fail" not in text
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
+    # Nothing is changed until the new runtime resolves offline and the postgres
+    # OS user can run the migration runner.
+    runtime_ready = text.index("cannot run the migration runtime")
+    assert text.index("uv sync --frozen --no-dev") < runtime_ready
+    assert runtime_ready < text.index("openssl rand")
+    assert runtime_ready < text.index("createdb")
+    # The runner replaces the per-file psql sequence.
+    assert "cloud/migrations" not in text
+    assert "apply_migration " not in text and "apply_migration_if_column_missing" not in text
+    assert "python -m techflex_cloud_foundation.schema" not in text.split("run_schema()")[0]
+    assert "techflex_cloud_foundation.schema" in text
+    # Roles: the runner pauses with exit 3, the role step runs, and it runs once
+    # more after the last migration (it grants on tables created by later steps).
+    assert "schema_status" in text and "-eq 3" in text
+    first_apply = text.index("run_schema apply")
+    assert text.index("apply_roles", first_apply) < text.index("run_schema apply", first_apply + 1)
+    assert text.count("apply_roles\n") >= 2
+    assert '"pending": []' in text
+    # Cutover/recovery behavior is executed by test_seed_installer_recovery.py.
+    assert '"$release_source/deploy/aliyun/seed/run-restore-drill.sh"' in text
+    assert '"$release_source/deploy/aliyun/seed/configure-oss.sh"' in text
+    assert '"$release_source/deploy/aliyun/seed/run-seed.sh"' in text
+
+
+def test_seed_entry_scripts_use_the_pinned_runtime_not_a_source_checkout() -> None:
+    for name in (
+        "run-seed.sh", "backup.sh", "run-live-acceptance.sh",
+        "feetforceplate-sales-inventory-server.sh", "install-seed-release.sh",
+    ):
+        text = _read_repository_text(ROOT / name)
+        assert "local-env.sh" not in text and "./dev" not in text, name
+        assert "cloud/api" not in text and "cloud/tests" not in text, name
+    run_seed = _read_repository_text(ROOT / "run-seed.sh")
+    assert "techflex_cloud_foundation.server.seed" in run_seed
+    helper = _read_repository_text(ROOT / "venv-python.sh")
+    assert "uv sync --frozen --no-dev" in helper
+    assert "UV_PROJECT_ENVIRONMENT" in helper
+    assert "deploy/aliyun/seed/runtime" in helper
+    service = _read_repository_text(ROOT / "feetforceplate-seed.service")
+    assert "ExecStart=/opt/feetforceplate/app/deploy/aliyun/seed/run-seed.sh" in service
+    assert "UV_OFFLINE=1" in service
+    sales = _read_repository_text(ROOT / "feetforceplate-sales-inventory-server.sh")
+    assert "techflex_cloud_foundation.server.access_control.cli" in sales
+    acceptance = _read_repository_text(ROOT / "run-live-acceptance.sh")
+    assert "tests/test_ffp_postgres_access_repository.py" in acceptance
+    assert "FEETFORCEPLATE_ACCEPTANCE=1" in acceptance
+
+
+def test_every_python_file_shipped_to_the_host_imports_from_the_installed_package() -> None:
+    for path in sorted(ROOT.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        assert "from cloud" not in source and "import cloud" not in source, path.name
+        assert "from shared" not in source and "import shared" not in source, path.name
+    export = ROOT / "oss_backup_export.py"
+    namespace = runpy.run_path(str(export), run_name="oss_backup_export_under_test")
+    assert callable(namespace["SeedSettings"]) and callable(namespace["build_aliyun_oss_sdk"])
+
+
+def test_every_unit_that_runs_the_pinned_runtime_names_its_environment() -> None:
+    for name in ("feetforceplate-seed.service", "feetforceplate-backup.service"):
+        text = _read_repository_text(ROOT / name)
+        assert "FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv" in text, name
+        assert "XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache" in text, name
+        assert "UV_OFFLINE=1" in text, name
+
+
+def test_installer_prepares_the_offline_venv_directory_for_the_service_user() -> None:
+    text = _read_repository_text(ROOT / "install-seed-release.sh")
+    create = text.index('install -d -o "$service_user" -g "$service_group" -m 0755 "$migration_venv"')
+    assert create < text.index("uv sync --frozen --no-dev --group acceptance")
+    assert "import asyncpg, techflex_cloud_foundation.schema.__main__" in text
+    assert text.index("\ncd /\n") < text.index("offline_check_root=")
+    assert '"$release_source/deploy/aliyun/seed/venv-python.sh"' in text
+
+
+def test_live_acceptance_does_not_run_source_text_checks_on_the_host() -> None:
+    text = _read_repository_text(ROOT / "run-live-acceptance.sh")
+    assert "--deselect tests/test_ffp_postgres_access_repository.py::" in text
+    source = (ROOT.parents[2] / "tests" / "test_ffp_postgres_access_repository.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def test_adapter_and_migration_encode_locking_routing_and_least_privilege" in source
+
+
 def _unit_settings(text: str) -> dict[str, list[str]]:
     settings: dict[str, list[str]] = {}
     for line in text.splitlines():
@@ -333,16 +372,20 @@ def _unit_settings(text: str) -> dict[str, list[str]]:
 
 def test_diagnostics_purge_service_runs_the_purge_unprivileged_with_seed_settings() -> None:
     # RAY-927: the purge reads the same seed.env as the API and prints counts only.
-    service = _unit_settings(_read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service"))
+    text = _read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service")
+    service = _unit_settings(text)
     assert service["Type"] == ["oneshot"]
     assert service["User"] == ["feetforceplate"]
     assert service["Group"] == ["feetforceplate"]
     assert service["WorkingDirectory"] == ["/opt/feetforceplate/app"]
     assert service["EnvironmentFile"] == ["/etc/feetforceplate/seed.env"]
+    # The foundation release runs through the pinned runtime, not ffp's ./dev.
     assert service["ExecStart"] == [
-        "/opt/feetforceplate/app/dev run python -m cloud.terminal_diagnostics.purge"
+        "/opt/feetforceplate/app/deploy/aliyun/seed/venv-python.sh "
+        "-m techflex_cloud_foundation.server.terminal_diagnostics.purge"
     ]
-    # Offline from the host uv cache, like the backup service.
+    # Offline from the host uv cache, like the seed and backup services.
+    assert "FEETFORCEPLATE_VENV=/var/lib/feetforceplate/runtime/venv" in service["Environment"]
     assert "XDG_CACHE_HOME=/var/lib/feetforceplate/runtime/cache" in service["Environment"]
     assert "UV_OFFLINE=1" in service["Environment"]
     for key, value in (
@@ -351,11 +394,19 @@ def test_diagnostics_purge_service_runs_the_purge_unprivileged_with_seed_setting
     ):
         assert service[key] == [value]
     assert service["ReadOnlyPaths"] == ["/opt/feetforceplate/app /etc/feetforceplate/seed.env"]
-    # Filesystem-backed content is deleted under objects; OSS content needs no local path.
+    # Filesystem-backed content is deleted under objects; the venv sync needs runtime.
     assert service["ReadWritePaths"] == [
         "/var/lib/feetforceplate/objects /var/lib/feetforceplate/runtime"
     ]
-    assert "User=root" not in _read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service")
+    assert "User=root" not in text
+
+
+def test_diagnostics_purge_service_names_a_module_the_wheel_ships() -> None:
+    import importlib.util
+
+    text = _read_repository_text(ROOT / "feetforceplate-diagnostics-purge.service")
+    module = text.split("-m ", 1)[1].split()[0]
+    assert importlib.util.find_spec(module) is not None
 
 
 def test_diagnostics_purge_timer_fires_once_a_day_and_catches_up() -> None:
@@ -384,16 +435,23 @@ def test_release_installer_installs_and_enables_the_diagnostics_purge_timer() ->
     assert text.index("systemctl start feetforceplate-diagnostics-purge.timer") > text.index(
         "curl -kfsS https://127.0.0.1:7443/health/ready"
     )
-    # The service executes ./dev directly; its git mode (checked in
-    # test_systemd_entry_scripts_are_executable) survives the release archive.
     assert "diagnostics_purge=timer-enabled secrets=not-printed" in text
+
+
+def test_installer_recovery_snapshots_the_diagnostics_purge_units() -> None:
+    text = _read_repository_text(ROOT / "installer-recovery.sh")
+    for unit in ("feetforceplate-diagnostics-purge.service", "feetforceplate-diagnostics-purge.timer"):
+        assert f"/etc/systemd/system/{unit}" in text
+        assert unit in text[text.index("recovery_units=("):text.index("prepare_recovery()")]
+        assert unit in text[text.index("recover_cutover()"):]
 
 
 def test_seed_readme_grants_the_oss_role_every_diagnostics_object_action() -> None:
     # RAY-927 oss-role-doc: upload needs PutObject, the HeadObject pre-check and
     # support read need GetObject, the purge needs DeleteObject.
     text = _read_repository_text(ROOT / "README.md")
-    section = text[text.index("### OSS role grant for `diagnostics/`"):text.index("### OSS lifecycle backstop")]
+    start = text.index("### OSS role grant for `diagnostics/`")
+    section = text[start:text.index("### OSS lifecycle backstop")]
     block = section[section.index("```json\n") + len("```json\n"):]
     statement = json.loads(block[:block.index("```")])
     assert statement["Effect"] == "Allow"
@@ -408,3 +466,54 @@ def test_seed_readme_grants_the_oss_role_every_diagnostics_object_action() -> No
     backstop = " ".join(text[text.index("### OSS lifecycle backstop"):].split())
     assert "allow prefix overlap" in backstop
     assert "delete marker" in backstop
+
+
+
+def test_linux_root_bundle_ci_preserves_the_managed_uv_path() -> None:
+    workflow = (
+        LOCAL_DEPLOY_ROOT.parents[2] / ".github" / "workflows" / "quality.yml"
+    ).read_text(encoding="utf-8")
+    assert "UV_INDEX_URL" not in workflow
+    assert (
+        'sudo env "PATH=$PATH" '
+        '"$test_python" -m pytest'
+    ) in workflow
+    assert 'sudo env "PATH=$PATH" "UV_CACHE_DIR=$UV_CACHE_DIR"' not in workflow
+
+
+def test_integration_public_bundle_helper_is_root_gated_and_secret_free() -> None:
+    path = LOCAL_DEPLOY_ROOT / "build-integration-public-bundle.sh"
+    text = path.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert path.stat().st_mode & stat.S_IXUSR
+    assert "must run as root" in text
+    assert "seed.env" not in text
+    assert "systemctl" not in text
+    assert "os.O_NOFOLLOW" in text
+    assert "os.fstat" in text
+    assert "copyfile(" not in text
+    assert "copyfileobj(" not in text
+    assert "--help|-h" not in text
+    assert ".ray-99-integration.lock" in text
+    assert "mv -T" in text
+    assert 'mv -- "$backup" "$destination"' not in text
+    assert 'mv -T -n -- "$backup" "$destination"' in text
+    assert "ca_source_payload = ca_input.read()" in text
+    assert "ca_input.seek" not in text
+    assert "write_from_stream" not in text
+    assert 'echo "destination=$destination"' in text
+    assert 'echo "api_base_url=$normalized_api_base_url"' in text
+    assert 'echo "license_key_id=$normalized_license_key_id"' in text
+    assert 'echo "bundle=ray-99-integration"' not in text
+    assert '"$repository_root/scripts/local-env.sh" python -' not in text
+    assert '"$repository_root/client/cloud/packaged_defaults.py"' in text
+    assert "importlib.util.spec_from_file_location" in text
+
+
+def test_runtime_declares_native_oss_and_rotating_ecs_role_dependencies() -> None:
+    repository = LOCAL_DEPLOY_ROOT.parents[2]
+    project = (repository / "pyproject.toml").read_text(encoding="utf-8")
+    lock = (repository / "uv.lock").read_text(encoding="utf-8")
+    for package in ("alibabacloud-oss-v2", "alibabacloud-credentials"):
+        assert package in project
+        assert package in lock

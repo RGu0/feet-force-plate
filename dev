@@ -20,6 +20,7 @@ unset UV_PROJECT_ENVIRONMENT
 if [[ ",${UV_PREVIEW_FEATURES:-}," != *,centralized-project-envs,* ]]; then
     export UV_PREVIEW_FEATURES="${UV_PREVIEW_FEATURES:+${UV_PREVIEW_FEATURES},}centralized-project-envs"
 fi
+export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="$project_root${PYTHONPATH:+:$PYTHONPATH}"
 cd "$project_root"
 
@@ -33,23 +34,25 @@ case "$action" in
     setup)
         [ "$#" -eq 0 ] || { echo "setup accepts no arguments" >&2; exit 2; }
         sync
+        "$uv_bin" run --locked --extra dev python scripts/foundation_release_source.py
         ;;
     test)
         [ "$#" -eq 0 ] || { echo "test accepts no arguments" >&2; exit 2; }
         sync
+        "$uv_bin" run --locked --extra dev python scripts/foundation_release_source.py --offline
         QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}" "$uv_bin" run --locked --extra dev python -m pytest
         ;;
     lint)
         [ "$#" -eq 0 ] || { echo "lint accepts no arguments" >&2; exit 2; }
         sync
         "$uv_bin" run --locked --extra dev ruff check .
-        "$uv_bin" run --locked --extra dev mypy shared/contracts cloud/observability
+        "$uv_bin" run --locked --extra dev mypy client/cloud/foundation_compat.py scripts/verify_foundation_release_lock.py scripts/export_mobile_contracts.py
         ;;
     build)
         [ "$#" -eq 0 ] || { echo "build accepts no arguments" >&2; exit 2; }
         sync --extra build
-        "$uv_bin" run --locked --extra dev --extra build python -m compileall -q client cloud shared
-        "$uv_bin" run --locked --extra dev python -m cloud.api.contract_export
+        "$uv_bin" run --locked --extra dev --extra build python -m compileall -q client cloud scripts
+        "$uv_bin" run --locked --extra dev python scripts/export_mobile_contracts.py
         ;;
     run)
         [ "$#" -gt 0 ] || { echo "run requires a command" >&2; exit 2; }

@@ -1,13 +1,14 @@
 import re
 import unittest
 from pathlib import Path
+from importlib.resources import files
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ANALYSIS = ROOT / "cloud/analysis/migrations/0001_analysis.sql"
 ANALYSIS_PHYSICAL_CONTEXT = ROOT / "cloud/analysis/migrations/0002_physical_protocol_context.sql"
 REPORTING = ROOT / "cloud/reporting/migrations/0001_reporting.sql"
-OPS = ROOT / "cloud/observability/migrations/0001_ops.sql"
+OPS = files("techflex_cloud_foundation.server.observability").joinpath("migrations/0001_ops.sql")
 
 
 def normalized(path: Path) -> str:

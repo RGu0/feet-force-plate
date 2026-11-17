@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from scripts import local_postgres_test_environment as postgres_test
 
@@ -108,17 +110,89 @@ class RuntimePathValidationTests(unittest.TestCase):
 
 class RunFailureTests(unittest.TestCase):
     def test_migration_resume_skips_recorded_files_and_retries_unrecorded_files(self) -> None:
-        migrations = [Path("0001.sql"), Path("0010.sql")]
+        from techflex_cloud_foundation.schema import MigrationStep
+
+        recorded_sql, pending_sql = "SELECT 'recorded';", "SELECT 'retry';"
+        plan = tuple(
+            MigrationStep(step_id=name, filename=None, inline_sql=sql, converges=True,
+                          sha256=hashlib.sha256(sql.encode()).hexdigest())
+            for name, sql in (("recorded", recorded_sql), ("pending", pending_sql))
+        )
+
+        class Connection:
+            def __init__(self):
+                self.ledger = {"recorded": plan[0].sha256}
+                self.executed = []
+                self.fail_once = True
+                self.closed = 0
+
+            def is_in_transaction(self):
+                return False
+
+            async def fetchval(self, _query, *_args):
+                return True  # The packaged runner ledger already exists.
+
+            async def fetch(self, _query):
+                return [{"migration_id": key, "sha256": value}
+                        for key, value in self.ledger.items()]
+
+            async def execute(self, query, *args):
+                if query in (recorded_sql, pending_sql):
+                    self.executed.append(query)
+                    if self.fail_once:
+                        self.fail_once = False
+                        raise RuntimeError("interrupted SQL")
+                if query.startswith("INSERT INTO ops.schema_migrations"):
+                    self.ledger[args[0]] = args[1]
+                return "OK"
+
+            async def close(self):
+                self.closed += 1
+
+        connection = Connection()
         with (
-            patch.object(postgres_test, "_psql", side_effect=["", "t", "f", "", "", ""] ) as psql,
-            patch.object(Path, "glob", return_value=migrations),
+            patch.object(postgres_test, "DEFAULT_PLAN", plan),
+            patch.object(postgres_test.asyncpg, "connect", new=AsyncMock(return_value=connection)) as connect,
+            patch.object(postgres_test, "_psql") as psql,
         ):
+            with self.assertRaisesRegex(RuntimeError, "migration failed"):
+                postgres_test._apply_migrations({"admin": "admin-secret"})
+            psql.assert_not_called()
             postgres_test._apply_migrations({"admin": "admin-secret"})
-        calls = psql.call_args_list
-        self.assertIn("CREATE TABLE IF NOT EXISTS", calls[0].kwargs["sql"])
-        self.assertEqual(calls[1].kwargs["query"], "SELECT EXISTS (SELECT 1 FROM public.ffp_ray513_test_migrations WHERE name = '0001.sql')")
-        self.assertEqual(calls[2].kwargs["query"], "SELECT EXISTS (SELECT 1 FROM public.ffp_ray513_test_migrations WHERE name = '0010.sql')")
-        self.assertEqual(calls[3].kwargs["file"], migrations[1])
+            postgres_test._apply_migrations({"admin": "admin-secret"})
+        self.assertEqual(connection.executed, [pending_sql, pending_sql])
+        self.assertEqual(connection.ledger["pending"], plan[1].sha256)
+        self.assertEqual(connection.closed, 3)
+        self.assertTrue(all(call.kwargs["timeout"] == 5 for call in connect.call_args_list))
+        self.assertTrue(all("127.0.0.1:55432/ffp_ray513_test" in call.args[0]
+                            for call in connect.call_args_list))
+        self.assertEqual(psql.call_count, 2)
+        self.assertIn("WITH INHERIT TRUE", psql.call_args.kwargs["sql"])
+
+    def test_packaged_migration_connection_error_does_not_expose_credentials(self) -> None:
+        with (
+            patch.object(postgres_test.asyncpg, "connect", new=AsyncMock(
+                side_effect=OSError("postgresql://admin:admin-secret@127.0.0.1:55432/private"))),
+            patch.object(postgres_test, "_psql") as psql,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "migration failed") as raised:
+                postgres_test._apply_migrations({"admin": "admin-secret"})
+        self.assertNotIn("admin-secret", str(raised.exception))
+        psql.assert_not_called()
+
+    def test_packaged_schema_failure_closes_connection_and_does_not_grant(self) -> None:
+        connection = SimpleNamespace(close=AsyncMock())
+        with (
+            patch.object(postgres_test.asyncpg, "connect", new=AsyncMock(return_value=connection)),
+            patch.object(postgres_test, "apply_migrations", new=AsyncMock(
+                side_effect=RuntimeError("checksum mismatch"))) as migrate,
+            patch.object(postgres_test, "_psql") as psql,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "migration failed"):
+                postgres_test._apply_migrations({"admin": "admin-secret"})
+        migrate.assert_awaited_once_with(connection, plan=postgres_test.DEFAULT_PLAN)
+        connection.close.assert_awaited_once()
+        psql.assert_not_called()
 
     def test_server_identity_check_normalizes_loopback_address(self) -> None:
         credentials = {"admin": "admin-secret", "tenant": "tenant-secret",

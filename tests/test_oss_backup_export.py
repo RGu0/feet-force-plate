@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.util import module_from_spec, spec_from_file_location
 import hashlib
 import asyncio
 import os
@@ -7,10 +8,16 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "deploy" / "aliyun" / "seed"))
+from scripts.foundation_release_source import foundation_source_root
 
-from oss_backup_export import export_bucket_objects, referenced_object_keys  # noqa: E402
+# Execute only the verified published exporter, with no sys.path shadowing or cache writes.
+EXPORTER = foundation_source_root() / "deploy" / "aliyun" / "seed" / "oss_backup_export.py"
+_spec = spec_from_file_location("foundation_released_oss_backup_export", EXPORTER)
+assert _spec is not None and _spec.loader is not None
+_exporter = module_from_spec(_spec)
+exec(compile(EXPORTER.read_bytes(), str(EXPORTER), "exec"), _exporter.__dict__)
+export_bucket_objects = _exporter.export_bucket_objects
+referenced_object_keys = _exporter.referenced_object_keys
 
 
 class _Stream:
