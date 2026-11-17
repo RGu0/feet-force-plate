@@ -124,7 +124,7 @@ provision response, and inspection never prints hashes, DSNs, private keys, or
 signed License material. `/health/live` and `/health/ready` expose only named
 dependency classes and readiness states.
 
-Apply `cloud/migrations/0001_p3_cloud_platform.sql`, then `cloud/migrations/0002_p5_device_operations.sql`, with a migration role before the API role starts. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
+Schema SQL is installed package data under `techflex_cloud_foundation.schema` (`sql/0001_p3_cloud_platform.sql`, `sql/0002_p5_device_operations.sql`, and subsequent migrations). Foundation owns the complete ordered `DEFAULT_PLAN`; authorized schema work uses its public schema runner and release deployment guide with a migration role before the API role starts. Resolve the fixed released source tooling as described in `deploy/aliyun/seed/README.md`. The tenant API role must not own tenant tables or receive `BYPASSRLS`. Enrollment-code provisioning is an administrative operation. The unauthenticated enrollment lookup uses a separate pool/role because no trusted tenant identity exists before the one-time code is resolved. Limit that role to the activation transaction's enrollment-code read/update, terminal/binding insert, idempotency, and audit tables; do not reuse it for authenticated tenant requests. Validate the exact grants and RLS role matrix in deployment evidence.
 
 Terminal diagnostic packages (RAY-802) are uploaded with a terminal access token
 to `POST /v1/diagnostics` (mobile contract: `cloud/contracts/mobile/README.md`).
@@ -307,7 +307,7 @@ sign-in (`POST /v1/access/terminal-activate`) is gated like sign-in and
 activation. Token refresh (`/v1/access/refresh`, `/v1/access/terminal-refresh`),
 hardware leases and the legacy device enrolment (`POST /v1/terminals/enroll`)
 are not gated.
-`cloud/migrations/0019_tenant_status_gate.sql` gives the tenant role read-only
+`sql/0022_tenant_status_gate.sql` in the installed `techflex_cloud_foundation.schema` resources gives the tenant role read-only
 access to `iam.tenants` for the capture-session check; the installer applies it
 on every install.
 
@@ -327,7 +327,7 @@ cover 503, latency/throttle, execute-then-drop completion responses and exact
 path targeting; none are present on the remote endpoint. Store only redacted
 scenario results in delivery evidence.
 
-Use `scripts/local_controlled_integration_lab.py` only with an
+Use `scripts/local_controlled_integration_lab.py` from the verified foundation source root (resolve it offline as described in `deploy/aliyun/seed/README.md`) only with an
 operator-created PostgreSQL database bound to a literal loopback address and a
 private runtime root outside the repository, `project-context`, OneDrive, and
 reparse points. Run `bootstrap` once, start `serve` in a separate local

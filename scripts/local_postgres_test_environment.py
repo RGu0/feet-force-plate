@@ -20,6 +20,8 @@ from urllib.parse import quote, urlparse
 import asyncpg
 from techflex_cloud_foundation.schema import DEFAULT_PLAN, apply_migrations
 
+from scripts.foundation_release_source import foundation_source_root
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ROOT = Path(r"C:\FeetForcePlate\local-labs\ray513-postgres-20261010")
@@ -568,18 +570,33 @@ def _live_tests() -> int:
     dsn_values = _role_dsns(credentials)
     test_environment = os.environ.copy()
     test_environment.update(dsn_values)
+    # Keep the original capture/recovery PostgreSQL acceptance after its tests
+    # move upstream. Separate processes isolate the released `tests` package.
+    source_root = foundation_source_root(REPOSITORY_ROOT)
+    released_environment = test_environment.copy()
+    released_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    released_environment["PYTHONPATH"] = str(source_root) + os.pathsep + test_environment.get("PYTHONPATH", "")
+    runs = (
+        (REPOSITORY_ROOT, test_environment, TEST_FILES),
+        (source_root, released_environment, (
+            "tests/test_ffp_postgres_capture_grants.py",
+            "tests/test_ffp_identity_recovery_postgres_live.py",
+        )),
+    )
+    outputs: list[str] = []
+    returncode = 0
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", *TEST_FILES],
-            cwd=REPOSITORY_ROOT,
-            env=test_environment,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        for cwd, environment, tests in runs:
+            result = subprocess.run(
+                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *tests],
+                cwd=cwd, env=environment, text=True, capture_output=True, check=False,
+            )
+            outputs.append(result.stdout + result.stderr)
+            if result.returncode and not returncode:
+                returncode = result.returncode
     except OSError as error:
         raise RuntimeError("RAY-513 PostgreSQL live tests could not start") from error
-    output = result.stdout + result.stderr
+    output = "\n".join(outputs)
     for secret in (*credentials.values(), *dsn_values.values()):
         output = output.replace(secret, "<redacted>")
     run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -588,7 +605,7 @@ def _live_tests() -> int:
         stream.write(output)
     print(json.dumps({"role_check": summary, "test_log": evidence_path.name}, sort_keys=True))
     print(output, end="")
-    return result.returncode
+    return returncode
 
 
 def _stop_cluster() -> None:

@@ -144,7 +144,7 @@ class InsoleArchiveMigrationTests(unittest.TestCase):
     def test_deployment_applies_and_backs_up_the_migration(self) -> None:
         ids = [step.step_id for step in DEFAULT_PLAN]
         self.assertGreater(ids.index("0016_insole_session_archive"), ids.index("0015_terminal_data_plane_projection"))
-        backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text()
+        backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
         self.assertIn("0015_terminal_data_plane_projection,0016_insole_session_archive", backup)
 
     def test_deployed_apps_register_both_payload_schemas(self) -> None:
@@ -154,7 +154,7 @@ class InsoleArchiveMigrationTests(unittest.TestCase):
             self.assertIn(schema, registry.schema_ids)
             self.assertEqual(registry.get(schema).manifest_schema, manifest)
         for name in ("seed.py", "integration.py"):
-            source = SERVER_ROOT.joinpath(name).read_text()
+            source = SERVER_ROOT.joinpath(name).read_text(encoding="utf-8")
             self.assertIn("IngestionService(", source)
             self.assertIn("SegmentObjectStore(objects)", source)
 

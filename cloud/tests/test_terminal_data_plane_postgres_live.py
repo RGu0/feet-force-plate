@@ -88,7 +88,7 @@ def test_projection_serial_matches_the_migration_backfill() -> None:
 def test_deployment_applies_and_backs_up_projection_migration() -> None:
     ids = [step.step_id for step in DEFAULT_PLAN]
     assert ids.index("0015_terminal_data_plane_projection") > ids.index("0014_recovery_bound_migration_permits")
-    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text()
+    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
     assert "0014_recovery_bound_migration_permits,0015_terminal_data_plane_projection" in backup
 
 

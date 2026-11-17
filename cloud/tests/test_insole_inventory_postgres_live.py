@@ -70,7 +70,7 @@ def test_deployment_applies_and_backs_up_insole_migration() -> None:
     assert ids.index("0013_insole_inventory") > ids.index("0012_terminal_activation")
     grant = DEFAULT_PLAN[ids.index("grants_0013_insole_to_backup")]
     assert "device.insole_registration_keys" in grant.inline_sql
-    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text()
+    backup = (foundation_source_root() / "deploy/aliyun/seed/backup.sh").read_text(encoding="utf-8")
     assert "0012_terminal_activation,0013_insole_inventory" in backup
 
 

@@ -266,3 +266,31 @@ class RunFailureTests(unittest.TestCase):
                 )
         self.assertNotIn("private-secret", str(raised.exception))
         self.assertIn("<redacted>", str(raised.exception))
+
+
+class LiveSuiteDispatchTests(unittest.TestCase):
+    def test_live_action_preserves_released_capture_recovery_and_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "released"
+            source.mkdir()
+            results = [SimpleNamespace(returncode=2, stdout="consumer failure", stderr=""),
+                       SimpleNamespace(returncode=0, stdout="capture/recovery passed", stderr="")]
+            dsns = {"FEETFORCEPLATE_TEST_ADMIN_DSN": "private-dsn"}
+            with patch.object(postgres_test, "_load_credentials", return_value={"admin": "private-secret"}), \
+                 patch.object(postgres_test, "_validate_role_contract", return_value={}), \
+                 patch.object(postgres_test, "_role_dsns", return_value=dsns), \
+                 patch.object(postgres_test, "foundation_source_root", return_value=source), \
+                 patch.object(postgres_test, "LOG_ROOT", Path(temporary)), \
+                 patch.object(postgres_test.subprocess, "run", side_effect=results) as run:
+                self.assertEqual(postgres_test._live_tests(), 2)
+            self.assertEqual(run.call_count, 2)
+            consumer, released = run.call_args_list
+            self.assertEqual(consumer.kwargs["cwd"], postgres_test.REPOSITORY_ROOT)
+            self.assertTrue(set(postgres_test.TEST_FILES).issubset(consumer.args[0]))
+            self.assertEqual(released.kwargs["cwd"], source)
+            for name in ("tests/test_ffp_postgres_capture_grants.py", "tests/test_ffp_identity_recovery_postgres_live.py"):
+                self.assertIn(name, released.args[0])
+            self.assertIn("no:cacheprovider", released.args[0])
+            self.assertEqual(released.kwargs["env"]["PYTHONDONTWRITEBYTECODE"], "1")
+            self.assertEqual(released.kwargs["env"]["FEETFORCEPLATE_TEST_ADMIN_DSN"], "private-dsn")
+            self.assertTrue(released.kwargs["env"]["PYTHONPATH"].startswith(str(source) + os.pathsep))

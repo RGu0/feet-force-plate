@@ -57,8 +57,8 @@ def test_deployment_applies_and_backs_up_terminal_migration() -> None:
     grant = DEFAULT_PLAN[ids.index("grants_0012_terminals_to_backup")]
     assert "iam.terminal_refresh_directory" in grant.inline_sql
     root = foundation_source_root() / "deploy/aliyun/seed"
-    assert "0011_controlled_identity_recovery,0012_terminal_activation" in (root / "backup.sh").read_text()
-    nginx = (root / "nginx-feetforceplate-seed.conf").read_text()
+    assert "0011_controlled_identity_recovery,0012_terminal_activation" in (root / "backup.sh").read_text(encoding="utf-8")
+    nginx = (root / "nginx-feetforceplate-seed.conf").read_text(encoding="utf-8")
     block = nginx[nginx.index("location = /v1/access/terminal-activate {"):]
     assert block[:block.index("}")].count("limit_req zone=seed_auth") == 1
 

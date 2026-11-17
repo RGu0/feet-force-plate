@@ -70,8 +70,8 @@ def test_constructor_requires_three_explicit_pools() -> None:
 
 
 def test_adapter_and_migration_encode_locking_routing_and_least_privilege() -> None:
-    source = (SERVER_ROOT.joinpath("access_control/postgres.py")).read_text()
-    migration = (SQL_ROOT.joinpath("0003_seed_mvp_access_control.sql")).read_text()
+    source = (SERVER_ROOT.joinpath("access_control/postgres.py")).read_text(encoding="utf-8")
+    migration = (SQL_ROOT.joinpath("0003_seed_mvp_access_control.sql")).read_text(encoding="utf-8")
     assert source.count("FOR UPDATE") >= 6
     assert "tenant_transaction(self._tenant_pool" in source
     assert "tenant_transaction(self._activation_pool" in source
@@ -221,14 +221,14 @@ def test_live_repository_parity_for_seed_lifecycle() -> None:
 
 
 def test_tenant_status_gate_is_granted_read_only_and_installed() -> None:
-    migration = SQL_ROOT.joinpath("0022_tenant_status_gate.sql").read_text()
-    source = SERVER_ROOT.joinpath("postgres.py").read_text()
+    migration = SQL_ROOT.joinpath("0022_tenant_status_gate.sql").read_text(encoding="utf-8")
+    source = SERVER_ROOT.joinpath("postgres.py").read_text(encoding="utf-8")
     assert "GRANT SELECT ON iam.tenants TO ffp_tenant_app;" in migration
     assert "INSERT" not in migration and "UPDATE" not in migration
     step = next(step for step in DEFAULT_PLAN if step.step_id == "0022_tenant_status_gate")
     assert step.filename == "0022_tenant_status_gate.sql"
     assert "JOIN iam.tenants t ON t.tenant_id=a.tenant_id AND t.status='ACTIVE'" in source
-    installer = (foundation_source_root() / "deploy/aliyun/seed/install-seed-release.sh").read_text()
+    installer = (foundation_source_root() / "deploy/aliyun/seed/install-seed-release.sh").read_text(encoding="utf-8")
     assert "run_schema apply" in installer
 
 

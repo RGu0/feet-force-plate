@@ -56,18 +56,18 @@ def test_seed_installer_applies_capture_authorization_migration() -> None:
 
 
 def test_session_expected_manifest_migration_preserves_legacy_rows():
-    sql = SQL_ROOT.joinpath("0010_session_expected_manifest.sql").read_text()
+    sql = SQL_ROOT.joinpath("0010_session_expected_manifest.sql").read_text(encoding="utf-8")
     assert "ALTER TABLE screening.sessions" in sql
     assert "ADD COLUMN expected_manifest_sha256 text" in sql
     assert "expected_manifest_sha256 IS NULL OR expected_manifest_sha256 ~ '^[0-9a-f]{64}$'" in sql
     assert "NOT NULL" not in sql and "DEFAULT" not in sql
     step = next(step for step in DEFAULT_PLAN if step.step_id == "0010_session_expected_manifest")
     assert step.probe == Probe(column=("screening", "sessions", "expected_manifest_sha256"))
-    assert "run_schema apply" in SEED_INSTALLER.read_text()
+    assert "run_schema apply" in SEED_INSTALLER.read_text(encoding="utf-8")
 
 
 def test_activation_role_can_write_its_data_plane_projection() -> None:
-    sql = ACTIVATION_PROJECTION_GRANTS.read_text()
+    sql = ACTIVATION_PROJECTION_GRANTS.read_text(encoding="utf-8")
 
     assert (
         "GRANT SELECT, INSERT, UPDATE ON device.devices, device.terminals, "
