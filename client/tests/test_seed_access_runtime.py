@@ -235,6 +235,22 @@ class ClientAccessRuntimeTests(unittest.TestCase):
             "refresh-token-0-value-at-least-20",
         )
 
+    def test_lease_expiry_uses_server_time_even_after_wall_clock_rollback(self):
+        from techflex_cloud_foundation.contracts.access_control import HardwareLeaseResponse
+
+        session = self.runtime.login("seed-clinic", "correct-horse-battery-staple")
+        reply = HardwareLeaseResponse(
+            lease_id=uuid4(), hardware_id=self.hardware_id,
+            client_installation_id=self.installation_id, acquired_at=self.now,
+            expires_at=self.now + timedelta(minutes=10),
+        )
+        self.client.acquire_hardware_lease = lambda *_args: reply
+        lease = self.runtime.hardware_lease_lifecycle(session)
+        lease.acquire()
+        self.now -= timedelta(hours=2)
+        self.runtime._monotonic_ns = lambda: 100 + 600_000_000_000
+        self.assertFalse(lease.allows_new_session)
+
     def test_replacement_computer_uses_new_installation_for_same_license_and_hardware(self) -> None:
         replacement_credentials = MemoryCredentials()
         replacement_store = ClientAccessStore(

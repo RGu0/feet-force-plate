@@ -11,12 +11,14 @@ from uuid import UUID
 
 from techflex_cloud_foundation.contracts.access_control import HardwareLeaseRequest, HardwareLeaseResponse
 
+from .access_client import AccessServiceUnavailable
 from .runtime import AuthenticatedInstitutionSession
 
 
 class LeaseStatus(StrEnum):
     INACTIVE = "INACTIVE"
     ACTIVE = "ACTIVE"
+    RETRYING = "RETRYING"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     RELEASED = "RELEASED"
 
@@ -87,12 +89,16 @@ class HardwareLeaseLifecycle:
     def allows_current_session(self) -> bool:
         return self._state.status in {
             LeaseStatus.ACTIVE,
+            LeaseStatus.RETRYING,
             LeaseStatus.RECOVERY_REQUIRED,
         }
 
     def acquire(self) -> LeaseState:
-        if self.allows_new_session:
-            return self._state
+        if self._heartbeat is not None and self._heartbeat.is_alive():
+            raise HardwareLeaseUnavailable("previous capture still owns the hardware lease")
+        self._heartbeat = None
+        # Idempotent for this installation. Ask the server even after a successful
+        # P-05: the operator can wait in position guidance beyond the original TTL.
         response = self._client.acquire_hardware_lease(
             self._access_token(),
             HardwareLeaseRequest(
@@ -105,8 +111,6 @@ class HardwareLeaseLifecycle:
 
     def start_capture(self) -> None:
         """Recheck the P-05 lease after operator wait, before consuming a grant."""
-        if self._heartbeat is not None:
-            raise HardwareLeaseUnavailable("capture already owns a hardware lease")
         try:
             self.acquire()
         except Exception as exc:
@@ -119,15 +123,26 @@ class HardwareLeaseLifecycle:
         self._heartbeat = worker
 
     def _keep_alive(self) -> None:
-        while not self._stop.wait(self._HEARTBEAT_INTERVAL_SECONDS):
-            if self.renew_if_due() is not LeaseStatus.ACTIVE:
-                return
+        try:
+            while not self._stop.wait(self._HEARTBEAT_INTERVAL_SECONDS):
+                if self.renew_if_due() is LeaseStatus.RECOVERY_REQUIRED:
+                    self._stop.wait()
+                    break
+        finally:
+            self._release_remote()
+
+    def end_capture(self) -> None:
+        """The worker releases its own lease without blocking the Qt stop action."""
+        self._stop.set()
 
     def renew_if_due(self, now: datetime | None = None) -> LeaseStatus:
         state = self._state
-        if state.status is not LeaseStatus.ACTIVE or state.expires_at is None:
+        if state.status not in {LeaseStatus.ACTIVE, LeaseStatus.RETRYING} or state.expires_at is None:
             return state.status
         observed_at = now or self._now()
+        if observed_at >= state.expires_at:
+            self._state = LeaseState(LeaseStatus.RECOVERY_REQUIRED, state.lease_id, state.expires_at)
+            return self._state.status
         if observed_at < state.expires_at - self._RENEW_EARLY:
             return LeaseStatus.ACTIVE
         try:
@@ -138,6 +153,9 @@ class HardwareLeaseLifecycle:
             if response.lease_id != state.lease_id:
                 raise HardwareLeaseResponseMismatch("renewed hardware lease ID changed")
             self._state = self._validated_active_state(response)
+        except AccessServiceUnavailable:
+            # Retry this same lease on the next tick while its original TTL permits.
+            self._state = LeaseState(LeaseStatus.RETRYING, state.lease_id, state.expires_at)
         except Exception:
             # A failed token refresh or lease request must allow safe capture finalization.
             self._state = LeaseState(LeaseStatus.RECOVERY_REQUIRED, state.lease_id, state.expires_at)
@@ -150,6 +168,10 @@ class HardwareLeaseLifecycle:
         if self._heartbeat is not None:
             self._heartbeat.join()
             self._heartbeat = None
+            return
+        self._release_remote()
+
+    def _release_remote(self) -> None:
         state = self._state
         if state.lease_id is None or state.status is LeaseStatus.RELEASED:
             return

@@ -59,7 +59,7 @@ def test_formal_session_ends_heartbeat_even_on_storage_error(terminal_action) ->
                                        lease=lease)
     with pytest.raises(OSError):
         getattr(sessions, terminal_action)("session")
-    lease.release.assert_called_once_with("CAPTURE_ENDED")
+    lease.end_capture.assert_called_once_with()
 
 
 def test_formal_live_capture_keeps_subject_and_session_identities_distinct(

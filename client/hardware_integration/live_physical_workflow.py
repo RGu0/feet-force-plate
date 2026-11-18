@@ -230,7 +230,7 @@ class InstitutionLiveSessions:
 
     def _release_lease(self) -> None:
         if self._lease is not None:
-            self._lease.release("CAPTURE_ENDED")
+            self._lease.end_capture()
 
     def subject_upload_request(self, subject_uuid: str):
         return self._store.subject_upload_request(subject_uuid)

@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import threading
 from uuid import UUID, uuid4
 
-from client.cloud.access_client import AccessConflict
+from client.cloud.access_client import AccessConflict, AccessServiceUnavailable
 from client.cloud.lease_runtime import HardwareLeaseLifecycle, LeaseStatus
 from client.cloud.runtime import AuthenticatedInstitutionSession
 from techflex_cloud_foundation.contracts.access_control import HardwareLeaseResponse
@@ -131,3 +131,45 @@ def test_expired_preflight_lease_is_reacquired_before_capture() -> None:
         assert lifecycle.allows_new_session
     finally:
         lifecycle.release("CAPTURE_ENDED")
+
+
+def test_transient_renewal_retries_only_the_original_unexpired_lease() -> None:
+    client = _LeaseClient(datetime(2026, 8, 5, tzinfo=UTC))
+    session = _session()
+    lifecycle = HardwareLeaseLifecycle(client, session, lambda: session.access_token,
+                                       now=lambda: client.now)
+    original = lifecycle.acquire()
+    client.now += timedelta(minutes=9)
+    client.renew_error = AccessServiceUnavailable("temporarily offline")
+    assert lifecycle.renew_if_due() is LeaseStatus.RETRYING
+    assert lifecycle.allows_current_session and not lifecycle.allows_new_session
+    client.renew_error = None
+    assert lifecycle.renew_if_due() is LeaseStatus.ACTIVE
+    assert lifecycle.state.lease_id == original.lease_id
+    client.now += timedelta(minutes=10)
+    client.renewed.clear()
+    assert lifecycle.renew_if_due() is LeaseStatus.RECOVERY_REQUIRED
+    assert not client.renewed.is_set()
+
+
+def test_end_capture_returns_while_release_is_in_flight(monkeypatch) -> None:
+    client = _LeaseClient(datetime(2026, 8, 5, tzinfo=UTC))
+    session = _session()
+    lifecycle = HardwareLeaseLifecycle(client, session, lambda: session.access_token,
+                                       now=lambda: client.now)
+    started, finish = threading.Event(), threading.Event()
+
+    def slow_release(_token, _lease_id):
+        started.set()
+        assert finish.wait(3)
+
+    monkeypatch.setattr(client, "release_hardware_lease", slow_release)
+    lifecycle.start_capture()
+    try:
+        lifecycle.end_capture()
+        assert started.wait(3)
+        assert lifecycle.state.status is LeaseStatus.ACTIVE
+    finally:
+        finish.set()
+        lifecycle.release("APPLICATION_CLOSED")
+    assert lifecycle.state.status is LeaseStatus.RELEASED

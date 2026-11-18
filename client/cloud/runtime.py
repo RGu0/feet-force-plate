@@ -364,11 +364,24 @@ class ClientAccessRuntime:
         from .lease_runtime import HardwareLeaseLifecycle
 
         self._release_hardware_lease()
+        baseline = self._store.load()
+        if (baseline is None or baseline.last_trusted_server_utc is None
+                or baseline.trusted_monotonic_ns is None):
+            raise ClientAccessRuntimeError("设备使用授权需要可信服务端时间")
+        server_utc = baseline.last_trusted_server_utc
+        monotonic_ns = baseline.trusted_monotonic_ns
+
+        def lease_now() -> datetime:
+            elapsed = self._monotonic_ns() - monotonic_ns
+            if elapsed < 0:
+                raise ClientAccessRuntimeError("设备使用授权时间基准已失效")
+            return server_utc + timedelta(microseconds=elapsed // 1000)
+
         self._hardware_lease = HardwareLeaseLifecycle(
             self._client,
             session,
             self.current_access_token,
-            now=self._now,
+            now=lease_now,
         )
         return self._hardware_lease
 
