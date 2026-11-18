@@ -4,9 +4,12 @@ import hashlib
 import json
 import threading
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
+from time import monotonic
 
 from cloud.analysis.models import AnalysisRun, AnalysisRunStatus
+from cloud.reporting.alerts import DEFAULT_REPORT_ALERTS, ReportPublicationAlerts
 from cloud.reporting.builder import CloudReportBuilder
 from cloud.reporting.models import (
     ReportArtifact,
@@ -138,6 +141,30 @@ class InMemoryReportRepository:
             return version, True
 
 
+def publish_cloud_version(
+    *, repository: InMemoryReportRepository, publisher: InMemoryReportEventPublisher,
+    alerts: ReportPublicationAlerts, tenant_id: str, session_id: str,
+    source_analysis_run_id: str, correlation_id: str, build: Callable[[str, int], ReportVersion],
+) -> ReportVersion:
+    requested_at = monotonic()
+    with ExitStack() as attempt:
+        def monitored_build(report_id: str, version_number: int) -> ReportVersion:
+            attempt.enter_context(alerts.publishing(tenant_id, requested_at))
+            return build(report_id, version_number)
+
+        version, created = repository.append_cloud_version(
+            tenant_id=tenant_id, session_id=session_id,
+            source_analysis_run_id=source_analysis_run_id, build=monitored_build,
+        )
+        if created:
+            publisher.publish(ReportPublishedEvent(
+                event_type="report.published.v1", tenant_id=tenant_id,
+                report_id=version.report_id, correlation_id=correlation_id,
+                version_number=version.version_number, kind=version.kind,
+            ))
+        return version
+
+
 class CloudReportService:
     def __init__(
         self,
@@ -148,6 +175,7 @@ class CloudReportService:
         renderer: MinimalPdfRenderer,
         publisher: InMemoryReportEventPublisher,
         holds: SessionHoldReader,
+        alerts: ReportPublicationAlerts = DEFAULT_REPORT_ALERTS,
     ) -> None:
         self.repository = repository
         self.artifact_store = artifact_store
@@ -155,6 +183,7 @@ class CloudReportService:
         self.renderer = renderer
         self.publisher = publisher
         self.holds = holds
+        self.alerts = alerts
 
     def publish(
         self,
@@ -180,7 +209,8 @@ class CloudReportService:
                 separators=(",", ":"),
             ).encode("utf-8")
             document_sha256 = hashlib.sha256(public_json).hexdigest()
-            pdf = self.renderer.render(document)
+            with self.alerts.rendering_pdf(run.key.tenant_id):
+                pdf = self.renderer.render(document)
             artifact_sha256 = hashlib.sha256(pdf).hexdigest()
             object_key = (
                 f"tenants/{run.key.tenant_id}/reports/{report_id}/"
@@ -209,21 +239,11 @@ class CloudReportService:
                 generated_at=document.generated_at,
             )
 
-        version, created = self.repository.append_cloud_version(
+        return publish_cloud_version(
+            repository=self.repository, publisher=self.publisher, alerts=self.alerts,
+            correlation_id=run.correlation_id,
             tenant_id=run.key.tenant_id,
             session_id=run.key.session_id,
             source_analysis_run_id=run.analysis_run_id,
             build=build,
         )
-        if created:
-            self.publisher.publish(
-                ReportPublishedEvent(
-                    event_type="report.published.v1",
-                    tenant_id=run.key.tenant_id,
-                    report_id=version.report_id,
-                    correlation_id=run.correlation_id,
-                    version_number=version.version_number,
-                    kind=version.kind,
-                )
-            )
-        return version

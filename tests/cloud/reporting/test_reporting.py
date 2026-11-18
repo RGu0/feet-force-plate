@@ -139,6 +139,28 @@ def service(holds: MutableHolds | None = None) -> tuple[
 
 
 class CloudReportingTests(unittest.TestCase):
+    def test_only_renderer_failures_open_pdf_incident_and_success_resolves_it(self):
+        from unittest.mock import patch
+        from cloud.reporting.alerts import ReportPublicationAlerts
+
+        reports, _, _, _ = service()
+        reports.alerts = ReportPublicationAlerts()
+        run, context = analysis_run(), report_context()
+        with self.assertLogs("cloud.reporting.alerts", level="INFO") as logs:
+            with patch.object(reports.renderer, "render", side_effect=ValueError("private-payload")):
+                for _ in range(2):
+                    with self.assertRaisesRegex(ValueError, "private-payload"):
+                        reports.publish(run, context)
+            reports.publish(run, context)
+            reports.publish(run, context)
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("ffp-pdf-render-failed-v1 status=OPEN", logs.output[0])
+        self.assertIn("status=RESOLVED", logs.output[1])
+        for entry in logs.output:
+            for private in ("private-payload", "tenant-a", context.masked_subject_id,
+                            context.institution_name, run.correlation_id):
+                self.assertNotIn(private, entry)
+
     def test_hold_blocks_new_version_but_preserves_existing_pdf(self) -> None:
         holds = MutableHolds()
         report_service, repository, artifacts, events = service(holds)
