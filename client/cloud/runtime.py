@@ -223,6 +223,7 @@ class ClientAccessRuntime:
         self._access_expires_at: datetime | None = None
         self._account_name: str | None = None
         self._token_lock = threading.RLock()
+        self._hardware_lease = None
         self._closed = False
 
     def hardware_connection_ready(self) -> bool:
@@ -362,12 +363,19 @@ class ClientAccessRuntime:
 
         from .lease_runtime import HardwareLeaseLifecycle
 
-        return HardwareLeaseLifecycle(
+        self._release_hardware_lease()
+        self._hardware_lease = HardwareLeaseLifecycle(
             self._client,
             session,
             self.current_access_token,
             now=self._now,
         )
+        return self._hardware_lease
+
+    def _release_hardware_lease(self) -> None:
+        if self._hardware_lease is not None:
+            self._hardware_lease.release("AUTHENTICATED_RUNTIME_CLOSED")
+            self._hardware_lease = None
 
     def replenish_capture_grants(self, institution, session: AuthenticatedInstitutionSession) -> None:
         """New-test-only best effort; server verifies current License before issuance."""
@@ -431,6 +439,7 @@ class ClientAccessRuntime:
             return session
 
     def logout(self) -> None:
+        self._release_hardware_lease()
         refresh_token = self._store.refresh_token()
         if refresh_token is not None:
             try:
@@ -443,6 +452,8 @@ class ClientAccessRuntime:
 
     def close(self) -> None:
         """Release the packaged access database owned by this runtime."""
+        # A heartbeat may need the token lock to finish its last request.
+        self._release_hardware_lease()
         with self._token_lock:
             if self._closed:
                 return

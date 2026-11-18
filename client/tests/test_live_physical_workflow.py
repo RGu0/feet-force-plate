@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import UUID, uuid4
+
+import pytest
 
 from client.app.institution_store import InstitutionLocalStore
 from client.device.stage_windows import CapturedStageWindow, StageRecordingGate
@@ -34,6 +37,29 @@ from techflex_cloud_foundation.contracts.capture_grants import CaptureGrant
 class _Key:
     def get_key(self) -> bytes:
         return b"l" * 32
+
+
+def test_failed_lease_leaves_formal_grant_untouched() -> None:
+    from client.cloud.lease_runtime import HardwareLeaseUnavailable
+
+    store, lease = Mock(), Mock()
+    lease.start_capture.side_effect = HardwareLeaseUnavailable()
+    sessions = InstitutionLiveSessions(store, tenant_id="tenant", installation_id="installation",
+                                       lease=lease)
+    with pytest.raises(HardwareLeaseUnavailable):
+        sessions.create_session(Mock(), Mock())
+    store.create_session.assert_not_called()
+
+
+@pytest.mark.parametrize("terminal_action", ["finalize", "mark_incomplete"])
+def test_formal_session_ends_heartbeat_even_on_storage_error(terminal_action) -> None:
+    store, lease = Mock(), Mock()
+    getattr(store, terminal_action).side_effect = OSError("storage unavailable")
+    sessions = InstitutionLiveSessions(store, tenant_id="tenant", installation_id="installation",
+                                       lease=lease)
+    with pytest.raises(OSError):
+        getattr(sessions, terminal_action)("session")
+    lease.release.assert_called_once_with("CAPTURE_ENDED")
 
 
 def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
