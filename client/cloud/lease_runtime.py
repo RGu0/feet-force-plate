@@ -71,6 +71,7 @@ class HardwareLeaseLifecycle:
         self._state = LeaseState(LeaseStatus.INACTIVE)
         self._stop = threading.Event()
         self._heartbeat: threading.Thread | None = None
+        self._uncertain_release_id: UUID | None = None
 
     @property
     def state(self) -> LeaseState:
@@ -106,7 +107,12 @@ class HardwareLeaseLifecycle:
                 client_installation_id=UUID(self._session.client_installation_id),
             ),
         )
+        # After a DELETE timeout its request may still arrive. An idempotent
+        # acquire can return that same ID until the server releases or expires it.
+        if response.lease_id == self._uncertain_release_id:
+            raise HardwareLeaseUnavailable("previous hardware lease release is unconfirmed")
         self._state = self._validated_active_state(response)
+        self._uncertain_release_id = None
         return self._state
 
     def start_capture(self) -> None:
@@ -179,6 +185,7 @@ class HardwareLeaseLifecycle:
             self._client.release_hardware_lease(self._access_token(), state.lease_id)
         except Exception:
             # Leave recovery to the server TTL when credentials or transport are unavailable.
+            self._uncertain_release_id = state.lease_id
             self._state = LeaseState(LeaseStatus.RECOVERY_REQUIRED, state.lease_id, state.expires_at)
             return
         self._state = LeaseState(LeaseStatus.RELEASED, state.lease_id, state.expires_at)

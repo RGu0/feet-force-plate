@@ -4,8 +4,10 @@ from datetime import UTC, datetime, timedelta
 import threading
 from uuid import UUID, uuid4
 
+import pytest
+
 from client.cloud.access_client import AccessConflict, AccessServiceUnavailable
-from client.cloud.lease_runtime import HardwareLeaseLifecycle, LeaseStatus
+from client.cloud.lease_runtime import HardwareLeaseLifecycle, HardwareLeaseUnavailable, LeaseStatus
 from client.cloud.runtime import AuthenticatedInstitutionSession
 from techflex_cloud_foundation.contracts.access_control import HardwareLeaseResponse
 
@@ -173,3 +175,26 @@ def test_end_capture_returns_while_release_is_in_flight(monkeypatch) -> None:
         finish.set()
         lifecycle.release("APPLICATION_CLOSED")
     assert lifecycle.state.status is LeaseStatus.RELEASED
+
+
+def test_unknown_release_never_admits_an_id_that_a_late_delete_can_close(monkeypatch) -> None:
+    client = _LeaseClient(datetime(2026, 8, 5, tzinfo=UTC))
+    session = _session()
+    lifecycle = HardwareLeaseLifecycle(client, session, lambda: session.access_token,
+                                       now=lambda: client.now)
+
+    def timeout(*_args):
+        raise AccessServiceUnavailable("release response timed out")
+
+    monkeypatch.setattr(client, "release_hardware_lease", timeout)
+    lifecycle.start_capture()
+    lifecycle.release("CAPTURE_ENDED")
+    with pytest.raises(HardwareLeaseUnavailable):
+        lifecycle.start_capture()
+    assert not lifecycle.allows_new_session
+    client.lease_id = uuid4()
+    lifecycle.start_capture()
+    try:
+        assert lifecycle.allows_new_session
+    finally:
+        lifecycle.release("CAPTURE_ENDED")
