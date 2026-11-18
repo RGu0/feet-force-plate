@@ -22,7 +22,6 @@ from cloud.reporting.service import (
     InMemoryArtifactStore,
     InMemoryReportEventPublisher,
     InMemoryReportRepository,
-    publish_cloud_version,
 )
 from techflex_cloud_foundation.server.session_hold.repository import SessionHoldReader
 from techflex_cloud_foundation.server.session_hold.service import SessionHeld
@@ -279,8 +278,8 @@ class StaticBalanceCloudReportService:
                 generated_at=document.generated_at,
             )
 
-        return publish_cloud_version(
-            repository=self.repository, publisher=self.publisher, alerts=self.alerts,
+        return self.repository.publish_cloud_version(
+            publisher=self.publisher, alerts=self.alerts,
             correlation_id=correlation_id,
             tenant_id=tenant_id,
             session_id=session_id,

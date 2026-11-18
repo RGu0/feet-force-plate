@@ -4,12 +4,12 @@ import hashlib
 import json
 import threading
 from collections.abc import Callable
-from contextlib import ExitStack
+from concurrent.futures import Future
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from time import monotonic
 
 from cloud.analysis.models import AnalysisRun, AnalysisRunStatus
-from cloud.reporting.alerts import DEFAULT_REPORT_ALERTS, ReportPublicationAlerts
+from cloud.reporting.alerts import DEFAULT_REPORT_ALERTS, PublicationDeadline, ReportPublicationAlerts
 from cloud.reporting.builder import CloudReportBuilder
 from cloud.reporting.models import (
     ReportArtifact,
@@ -50,15 +50,32 @@ class InMemoryArtifactStore:
 class InMemoryReportEventPublisher:
     def __init__(self) -> None:
         self.events: list[ReportPublishedEvent] = []
+        self._sent: set[tuple[str, str, int]] = set()
+        self._lock = threading.Lock()
 
     def publish(self, event: ReportPublishedEvent) -> None:
-        self.events.append(event)
+        key = (event.tenant_id, event.report_id, event.version_number)
+        with self._lock:
+            if key not in self._sent:
+                self.events.append(event)
+                self._sent.add(key)
+
+
+@dataclass(frozen=True)
+class _PendingReportEvent:
+    version: ReportVersion
+    event: ReportPublishedEvent
+    deadline: PublicationDeadline
 
 
 class InMemoryReportRepository:
     def __init__(self) -> None:
         self._reports: dict[tuple[str, str], ReportRecord] = {}
         self._lock = threading.RLock()
+        # Separate from the build lock: a blocked renderer cannot delay deadline registration.
+        self._delivery_lock = threading.Lock()
+        self._deliveries: dict[tuple[str, str, str], Future[ReportVersion]] = {}
+        self._unsent: dict[tuple[str, str, str], _PendingReportEvent] = {}
 
     def seed_basic(
         self,
@@ -141,28 +158,52 @@ class InMemoryReportRepository:
             return version, True
 
 
-def publish_cloud_version(
-    *, repository: InMemoryReportRepository, publisher: InMemoryReportEventPublisher,
-    alerts: ReportPublicationAlerts, tenant_id: str, session_id: str,
-    source_analysis_run_id: str, correlation_id: str, build: Callable[[str, int], ReportVersion],
-) -> ReportVersion:
-    requested_at = monotonic()
-    with ExitStack() as attempt:
-        def monitored_build(report_id: str, version_number: int) -> ReportVersion:
-            attempt.enter_context(alerts.publishing(tenant_id, requested_at))
-            return build(report_id, version_number)
+    def publish_cloud_version(
+        self, *, publisher: InMemoryReportEventPublisher, alerts: ReportPublicationAlerts,
+        tenant_id: str, session_id: str, source_analysis_run_id: str, correlation_id: str,
+        build: Callable[[str, int], ReportVersion],
+    ) -> ReportVersion:
+        key = (tenant_id, session_id, source_analysis_run_id)
+        with self._delivery_lock:
+            delivery = self._deliveries.get(key)
+            owner = delivery is None
+            if owner:
+                delivery = self._deliveries[key] = Future()
+            pending = self._unsent.get(key)
+        if not owner:
+            return delivery.result()
 
-        version, created = repository.append_cloud_version(
-            tenant_id=tenant_id, session_id=session_id,
-            source_analysis_run_id=source_analysis_run_id, build=monitored_build,
-        )
-        if created:
-            publisher.publish(ReportPublishedEvent(
-                event_type="report.published.v1", tenant_id=tenant_id,
-                report_id=version.report_id, correlation_id=correlation_id,
-                version_number=version.version_number, kind=version.kind,
-            ))
-        return version
+        try:
+            if pending is None:
+                deadline = alerts.watch_publication(tenant_id)
+                try:
+                    version, _ = self.append_cloud_version(
+                        tenant_id=tenant_id, session_id=session_id,
+                        source_analysis_run_id=source_analysis_run_id, build=build,
+                    )
+                except BaseException:
+                    deadline.finish(published=False)
+                    raise
+                event = ReportPublishedEvent(
+                    event_type="report.published.v1", tenant_id=tenant_id,
+                    report_id=version.report_id, correlation_id=correlation_id,
+                    version_number=version.version_number, kind=version.kind,
+                )
+                pending = _PendingReportEvent(version, event, deadline)
+                with self._delivery_lock:
+                    self._unsent[key] = pending
+            publisher.publish(pending.event)
+        except BaseException as exc:
+            with self._delivery_lock:
+                delivery.set_exception(exc)
+                del self._deliveries[key]
+            raise
+
+        pending.deadline.finish(published=True)
+        with self._delivery_lock:
+            del self._unsent[key]
+            delivery.set_result(pending.version)
+        return pending.version
 
 
 class CloudReportService:
@@ -239,8 +280,8 @@ class CloudReportService:
                 generated_at=document.generated_at,
             )
 
-        return publish_cloud_version(
-            repository=self.repository, publisher=self.publisher, alerts=self.alerts,
+        return self.repository.publish_cloud_version(
+            publisher=self.publisher, alerts=self.alerts,
             correlation_id=run.correlation_id,
             tenant_id=run.key.tenant_id,
             session_id=run.key.session_id,

@@ -139,6 +139,90 @@ def service(holds: MutableHolds | None = None) -> tuple[
 
 
 class CloudReportingTests(unittest.TestCase):
+    def test_another_tenant_is_monitored_while_waiting_for_repository(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from dataclasses import replace
+        from threading import Event
+        from unittest.mock import patch
+        from cloud.reporting.alerts import ReportPublicationAlerts
+
+        reports, repository, _, events = service()
+        reports.alerts = ReportPublicationAlerts(delay_seconds=0.02)
+        run = analysis_run()
+        second = replace(run, key=replace(run.key, tenant_id="tenant-b"))
+        repository.seed_basic(tenant_id="tenant-b", session_id=run.key.session_id,
+                              report_id="report-b", document_sha256="d"*64, artifact_sha256="e"*64)
+        entered, release, other_late = Event(), Event(), Event()
+        render = reports.renderer.render
+        observe = reports.alerts._observe
+
+        def stalled(document):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError()
+            return render(document)
+
+        def signal(tenant_id, metric, value):
+            observe(tenant_id, metric, value)
+            if tenant_id == "tenant-b" and metric == "report_generation_seconds" and value > 0:
+                other_late.set()
+
+        with patch.object(reports.renderer, "render", side_effect=stalled), \
+             patch.object(reports.alerts, "_observe", side_effect=signal), \
+             ThreadPoolExecutor(max_workers=3) as pool:
+            first = pool.submit(reports.publish, run, report_context())
+            try:
+                self.assertTrue(entered.wait(2))
+                queued = pool.submit(reports.publish, second, report_context())
+                duplicate = pool.submit(reports.publish, second, report_context())
+                self.assertTrue(other_late.wait(2))
+                self.assertFalse(queued.done())
+            finally:
+                release.set()
+            first.result()
+            self.assertEqual(queued.result(), duplicate.result())
+        self.assertEqual(len(events.events), 2)
+
+    def test_unacknowledged_publication_stays_monitored_and_retries_existing_version(self):
+        from unittest.mock import Mock, patch
+        from cloud.reporting.alerts import ReportPublicationAlerts
+
+        reports, repository, artifacts, events = service()
+        metrics = Mock()
+        reports.alerts = ReportPublicationAlerts(metrics=metrics)
+        run, context = analysis_run(), report_context()
+        timers = []
+
+        def capture_timer(delay, callback):
+            timer = Mock(fire=callback)
+            timers.append(timer)
+            return timer
+
+        send = events.publish
+
+        def response_lost(event):
+            send(event)
+            raise TimeoutError("private publisher exception")
+
+        with patch("cloud.reporting.alerts.Timer", side_effect=capture_timer), \
+             self.assertLogs("cloud.reporting.alerts", level="INFO") as log:
+            with patch.object(events, "publish", side_effect=response_lost), self.assertRaises(TimeoutError):
+                reports.publish(run, context)
+            timers[0].cancel.assert_not_called()
+            timers[0].fire()
+            recovered = reports.publish(run, context)
+            self.assertEqual(recovered, reports.publish(run, context))
+        self.assertEqual(len(log.output), 2)
+        self.assertIn("status=OPEN", log.output[0])
+        self.assertIn("status=RESOLVED", log.output[1])
+        self.assertEqual(len(timers), 1)
+        self.assertEqual(len(events.events), 1)
+        self.assertEqual(artifacts.count(), 1)
+        self.assertEqual(repository.get_for_session("tenant-a", "session-a").latest_version, 2)
+        self.assertEqual([call.args[0] for call in metrics.observe.call_args_list], [
+            "ffp_pdf_render_failed_v1", "ffp_cloud_complete_publication_seconds_v1",
+        ])
+
     def test_only_renderer_failures_open_pdf_incident_and_success_resolves_it(self):
         from unittest.mock import patch
         from cloud.reporting.alerts import ReportPublicationAlerts

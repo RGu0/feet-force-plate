@@ -23,6 +23,14 @@ _LOG = logging.getLogger(__name__)
 _RUNBOOK = "docs/modules/report-publication-alerts.md"
 
 
+def _log(level: int, message: str, *args: object) -> None:
+    try:
+        _LOG.log(level, message, *args)
+    except Exception:
+        # A broken log handler must not change a report outcome or strand its waiters.
+        pass
+
+
 class ReportPublicationAlerts:
     """Evaluate product rules locally and optionally export the same observations."""
 
@@ -58,7 +66,7 @@ class ReportPublicationAlerts:
         else:
             self._emitted[key] = revision
         # The default log formatter also carries the incident, without report content.
-        _LOG.log(logging.INFO if incident.status is AlertStatus.RESOLVED else logging.WARNING,
+        _log(logging.INFO if incident.status is AlertStatus.RESOLVED else logging.WARNING,
                  "report_alert rule=%s status=%s incident=%s tenant_hash=%s count=%d runbook=%s",
                  incident.rule_id, incident.status.value, incident.incident_id,
                  hashlib.sha256(tenant_id.encode()).hexdigest(), incident.occurrence_count,
@@ -69,7 +77,7 @@ class ReportPublicationAlerts:
             try:
                 self._metrics.observe(name, value=value)
             except Exception:
-                _LOG.warning("report metric export unavailable")
+                _log(logging.WARNING, "report metric export unavailable")
 
     @contextmanager
     def rendering_pdf(self, tenant_id: str) -> Iterator[None]:
@@ -86,48 +94,53 @@ class ReportPublicationAlerts:
             self._observe(tenant_id, "report_failures", failed)
         self._export("ffp_pdf_render_failed_v1", failed)
 
-    @contextmanager
-    def publishing(self, tenant_id: str, requested_at: float) -> Iterator[None]:
-        """Start the deadline only when the repository admits a new report version."""
-        finished = overdue = False
+    def watch_publication(self, tenant_id: str) -> PublicationDeadline:
+        return PublicationDeadline(self, tenant_id)
 
-        def deadline() -> None:
-            nonlocal overdue
-            with self._lock:
-                if finished or overdue:
-                    return
-                overdue = True
-                self._overdue[tenant_id] += 1
-                self._observe(tenant_id, "report_generation_seconds", self.delay_seconds)
 
-        remaining = self.delay_seconds - (monotonic() - requested_at)
-        timer = Timer(max(0, remaining), deadline)
-        timer.daemon = True
+class PublicationDeadline:
+    """A logical version retains the same deadline across event delivery retries."""
+
+    def __init__(self, monitor: ReportPublicationAlerts, tenant_id: str):
+        self._monitor = monitor
+        self._tenant = tenant_id
+        self._start = monotonic()
+        self._finished = self._late = False
+        self._timer = Timer(monitor.delay_seconds, self._deadline)
+        self._timer.daemon = True
         try:
-            timer.start()
+            self._timer.start()
         except RuntimeError:
-            # Completion still checks elapsed time if the process cannot create a timer.
-            _LOG.warning("report publication deadline timer unavailable")
-        published = False
-        try:
-            yield
-            published = True
-        finally:
-            elapsed = max(0.0, monotonic() - requested_at)
-            with self._lock:
-                # Also catch a threshold crossing if completion beats the timer callback.
-                if elapsed >= self.delay_seconds and not overdue:
-                    deadline()
-                finished = True
-                timer.cancel()
-                if overdue:
-                    self._overdue[tenant_id] -= 1
-                    if not self._overdue[tenant_id]:
-                        del self._overdue[tenant_id]
-                if published and not overdue and not self._overdue[tenant_id]:
-                    self._observe(tenant_id, "report_generation_seconds", elapsed)
-            if published:
-                self._export("ffp_cloud_complete_publication_seconds_v1", elapsed)
+            _log(logging.WARNING, "report publication deadline timer unavailable")
+
+    def _deadline(self) -> None:
+        monitor = self._monitor
+        with monitor._lock:
+            if self._finished or self._late:
+                return
+            self._late = True
+            monitor._overdue[self._tenant] += 1
+            monitor._observe(self._tenant, "report_generation_seconds", monitor.delay_seconds)
+
+    def finish(self, *, published: bool) -> None:
+        monitor = self._monitor
+        elapsed = max(0.0, monotonic() - self._start)
+        with monitor._lock:
+            if self._finished:
+                return
+            if elapsed >= monitor.delay_seconds:
+                self._deadline()
+            self._finished = True
+            self._timer.cancel()
+            if self._late:
+                monitor._overdue[self._tenant] -= 1
+                if not monitor._overdue[self._tenant]:
+                    del monitor._overdue[self._tenant]
+            if published and not monitor._overdue[self._tenant]:
+                # No outstanding overdue report; export actual elapsed time separately.
+                monitor._observe(self._tenant, "report_generation_seconds", 0)
+        if published:
+            monitor._export("ffp_cloud_complete_publication_seconds_v1", elapsed)
 
 
 DEFAULT_REPORT_ALERTS = ReportPublicationAlerts()
