@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from client.cloud.lease_runtime import HardwareLeaseUnavailable
+
 from .models import (
     AnalysisStatus,
     ClientAction,
@@ -275,6 +277,13 @@ class ScreeningCoordinator:
                     self._participant_context,
                     self._protocol.snapshot(),
                 )
+            except HardwareLeaseUnavailable:
+                self._error = ClientError(
+                    code="E-LIC-201",
+                    operator_message="设备使用授权不可用，请确认网络和设备后重试",
+                    action=ClientAction.RECHECK,
+                )
+                return False
             except Exception as exc:
                 from client.app.institution_store import CaptureGrantExhausted
 

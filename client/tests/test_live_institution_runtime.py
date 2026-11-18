@@ -343,6 +343,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
         raising=False,
     )
     session_bindings = {}
+    lease_lifecycle = object()
     def make_sessions(_store, **kwargs):
         session_bindings.update(kwargs)
         return object()
@@ -387,7 +388,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
             hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
         ),
         access_runtime=SimpleNamespace(
-            hardware_lease_lifecycle=lambda _session: object()
+            hardware_lease_lifecycle=lambda _session: lease_lifecycle
         ),
         key_provider=object(),
         institution=institution,
@@ -402,6 +403,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert session_bindings["tenant_id"] == "tenant-1"
     assert session_bindings["installation_id"] == "c03732ad-c781-4364-9d3a-c3ce3ea8488c"
     assert callable(session_bindings["replenish"])
+    assert session_bindings["lease"] is lease_lifecycle
 
     assert (
         acquisition is not None

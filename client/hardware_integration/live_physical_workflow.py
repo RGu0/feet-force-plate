@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from cloud.analysis.feature_parameters import FeatureParameters
 from client.app.institution_store import InstitutionLocalStore
+from client.cloud.lease_runtime import HardwareLeaseLifecycle
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.hardware_integration.live_hardware_demo import (
     build_operator_attested_protocol,
@@ -169,21 +170,29 @@ class InstitutionLiveSessions:
     """One local workflow session maps to one physical encrypted capture."""
 
     def __init__(self, store: InstitutionLocalStore, *, tenant_id: str,
-                 installation_id: str, replenish=None) -> None:
+                 installation_id: str, replenish=None,
+                 lease: HardwareLeaseLifecycle | None = None) -> None:
         self._store = store
         self._tenant_id = tenant_id
         self._installation_id = installation_id
         self._replenish = replenish
+        self._lease = lease
         self._metadata: dict[str, LiveSessionMetadata] = {}
 
     def create_session(
         self, context: ScreeningParticipantContext, protocol: ProtocolSnapshot
     ) -> str:
-        if self._replenish is not None:
-            self._replenish()
-        session_id = self._store.create_session(
-            context, protocol, self._tenant_id, self._installation_id
-        )
+        if self._lease is not None:
+            self._lease.start_capture()
+        try:
+            if self._replenish is not None:
+                self._replenish()
+            session_id = self._store.create_session(
+                context, protocol, self._tenant_id, self._installation_id
+            )
+        except Exception:
+            self._release_lease()
+            raise
         self._remember_metadata(session_id, context, protocol)
         return session_id
 
@@ -205,13 +214,23 @@ class InstitutionLiveSessions:
             raise KeyError("institution session metadata is unavailable") from exc
 
     def mark_incomplete(self, session_id: str) -> None:
-        self._store.mark_incomplete(session_id)
+        try:
+            self._store.mark_incomplete(session_id)
+        finally:
+            self._release_lease()
 
     def mark_stage_complete(self, session_id: str, stage_id: str) -> None:
         self._store.mark_stage_complete(session_id, stage_id)
 
     def finalize(self, session_id: str) -> None:
-        self._store.finalize(session_id)
+        try:
+            self._store.finalize(session_id)
+        finally:
+            self._release_lease()
+
+    def _release_lease(self) -> None:
+        if self._lease is not None:
+            self._lease.end_capture()
 
     def subject_upload_request(self, subject_uuid: str):
         return self._store.subject_upload_request(subject_uuid)
@@ -225,6 +244,7 @@ class EngineeringLiveSessions(InstitutionLiveSessions):
 
     def __init__(self, store: InstitutionLocalStore) -> None:
         self._store = store
+        self._lease = None
         self._metadata = {}
 
     def create_session(self, context, protocol) -> str:

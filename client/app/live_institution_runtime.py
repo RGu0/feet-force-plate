@@ -165,9 +165,11 @@ def build_live_institution_runtime(
         payload_schema=payload_schema,
         calibration_profile=calibration.profile_version,
     )
+    lifecycle = access_runtime.hardware_lease_lifecycle(session)
     sessions = InstitutionLiveSessions(
         institution, tenant_id=session.tenant_id,
         installation_id=client_installation_id,
+        lease=lifecycle,
         replenish=lambda: access_runtime.replenish_capture_grants(institution, session),
     )
 
@@ -182,7 +184,7 @@ def build_live_institution_runtime(
         ).load_for_session()
 
     baseline = LiveBaselinePreflight(hardware)
-    lease = HardwareLeasePreflight(access_runtime.hardware_lease_lifecycle(session))
+    lease = HardwareLeasePreflight(lifecycle)
     preflight = build_production_preflight(
         startup_run=startup_run,
         new_test_gate=physical_store,

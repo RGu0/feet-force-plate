@@ -266,7 +266,11 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
         # Model an unavailable issuance service, without modifying the empty
         # real pool. Upload authorization remains available independently.
         access.replenish_capture_grants = lambda store, active: replenishments.append((store, active))
-        access.hardware_lease_lifecycle = lambda _session: object()
+        lease_events = []
+        access.hardware_lease_lifecycle = lambda _session: SimpleNamespace(
+            start_capture=lambda: lease_events.append("start"),
+            end_capture=lambda: lease_events.append("end"),
+        )
         starts = []
 
         class AcquisitionProbe:
@@ -310,6 +314,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
         assert "采集额度已用尽" in coordinator.state.error.operator_message
         assert institution.db.execute("SELECT session_id FROM institution_sessions").fetchall() == [(historic_id,)]
         assert replenishments == [(institution, session)]
+        assert lease_events == ["start", "end"]
 
         # Replace only the remote HTTP boundary. The packaged factory creates
         # its actual PersistentUploadQueue and background scheduler.
