@@ -9,7 +9,6 @@ from pathlib import Path
 from client.app.heatmap import PhysicalGridOverlay
 from client.app.institution_read_models import InstitutionUiReadModels
 from client.app.report_index_recovery import recover_missing_screening_records
-from client.app.engineering_maintenance import EngineeringDeviceBindingStore
 from client.hardware_integration.live_baseline import LiveBaselinePreflight
 from client.app.live_display import LiveDisplayProjection
 from client.hardware_integration.live_hardware_acquisition import QtLiveHardwareAcquisition
@@ -156,6 +155,9 @@ def build_live_institution_runtime(
     hardware_asset_id = getattr(session, "hardware_asset_id", None)
     if not isinstance(hardware_asset_id, str) or not hardware_asset_id.strip():
         raise ValueError("hardware_asset_id is required for formal runtime")
+    asset_serial = getattr(session, "hardware_id", None)
+    if not isinstance(asset_serial, str) or not asset_serial.strip():
+        raise ValueError("hardware_id is required for formal runtime")
     calibration = hardware.calibration_metadata
     formal_upload = FormalCaptureUpload(
         client_installation_id=client_installation_id,
@@ -173,14 +175,9 @@ def build_live_institution_runtime(
         replenish=lambda: access_runtime.replenish_capture_grants(institution, session),
     )
 
-    def load_selected_device_dynamic_mask() -> DynamicDefectMask:
-        selected_device_id = EngineeringDeviceBindingStore(
-            data_root
-        ).selected_device_id
-        if selected_device_id is None or not selected_device_id.strip():
-            raise ValueError("engineer-selected device ID is required")
+    def load_authorized_device_dynamic_mask() -> DynamicDefectMask:
         return DynamicDefectMaskStore(
-            data_root, selected_device_id, shape=(48, 64)
+            data_root, asset_serial, shape=(48, 64)
         ).load_for_session()
 
     baseline = LiveBaselinePreflight(hardware)
@@ -204,7 +201,7 @@ def build_live_institution_runtime(
         spool_root=data_root / "spool",
         latest_frames=raw_mailbox,
         formal_upload=formal_upload,
-        dynamic_defect_mask_loader=load_selected_device_dynamic_mask,
+        dynamic_defect_mask_loader=load_authorized_device_dynamic_mask,
     )
     acquisition = QtLiveHardwareAcquisition(
         capture.capture,
@@ -272,6 +269,7 @@ def build_live_institution_runtime(
                 hardware.display_geometry, specification_id=hardware.specification_id
             ),
             "engineering_login": engineering_login,
+            "capture_asset_serial": asset_serial,
         },
     )
     acquisition.set_callbacks(

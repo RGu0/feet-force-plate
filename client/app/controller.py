@@ -6,6 +6,7 @@ import time
 from typing import Protocol
 
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from client.hardware_standardization.ports import HardwareUiFailure
 from client.workflow.consent import (
@@ -115,6 +116,7 @@ class ApplicationController:
         session_deletion: CompletedSessionDeletionService | None = None,
         subject_recovery=None,
         physical_grid: PhysicalGridOverlay | None = None,
+        capture_asset_serial: str | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._export_destination = export_destination or (lambda: None)
@@ -129,6 +131,7 @@ class ApplicationController:
         self._engineering_login = engineering_login
         self._session_deletion = session_deletion
         self._subject_recovery = subject_recovery
+        self._capture_asset_serial = capture_asset_serial
         onboarding_dependencies = (participant, consent, consent_policy)
         if any(value is not None for value in onboarding_dependencies) and any(
             value is None for value in onboarding_dependencies
@@ -233,7 +236,7 @@ class ApplicationController:
             "SAVE_PROFILE": self._coordinator.complete_profile,
             "SKIP_PROFILE": self._coordinator.complete_profile,
             "RECHECK": self._coordinator.run_preflight,
-            "ENTER_POSITION": self._coordinator.enter_position_guidance,
+            "ENTER_POSITION": self._enter_position_guidance,
             "CANCEL_POSITION_GUIDANCE": (
                 lambda: self._coordinator.cancel_position_guidance()
             ),
@@ -391,6 +394,31 @@ class ApplicationController:
             return
         self._live_display.poll()
         self.on_display_tick(time.monotonic())
+
+    def _enter_position_guidance(self) -> bool:
+        state = self._coordinator.state
+        asset_serial = self._capture_asset_serial
+        if (
+            asset_serial is not None
+            and state.step is ScreeningStep.PREFLIGHT
+            and state.preflight_ready
+            and state.session_id is None
+        ):
+            label, accepted = QInputDialog.getText(
+                self.window,
+                "核对压力板资产编号",
+                f"本次授权设备：{asset_serial}\n请输入当前压力板标签上的资产编号。",
+            )
+            if not accepted:
+                return False
+            if label.strip() != asset_serial:
+                QMessageBox.warning(
+                    self.window,
+                    "设备编号不一致",
+                    "请连接本次授权的压力板；如已更换设备，请按正式换机流程更新授权。",
+                )
+                return False
+        return self._coordinator.enter_position_guidance()
 
     def _start_acquisition(self) -> bool:
         """Start an accepted stage with an empty, stage-local display pipeline."""

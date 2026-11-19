@@ -288,7 +288,6 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     institution = SimpleNamespace(consent_port=lambda: object())
     controller = _FakeController()
     physical_store = PhysicalStore()
-    live_runtime.EngineeringDeviceBindingStore(tmp_path).register_device_id("FFP-001")
     baseline: object | None = None
     acquisition: Acquisition | None = None
     capture: Capture | None = None
@@ -386,6 +385,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
             tenant_id="tenant-1",
             client_installation_id="c03732ad-c781-4364-9d3a-c3ce3ea8488c",
             hardware_asset_id="7d9238d9-0ef8-4de4-b0c5-f08e22b72268",
+            hardware_id="FFP-002",
         ),
         access_runtime=SimpleNamespace(
             hardware_lease_lifecycle=lambda _session: lease_lifecycle
@@ -424,7 +424,13 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
     assert formal_upload.payload_schema == "raw-segment/7"
     assert formal_upload.calibration_profile == "calibration-authoritative/42"
     assert callable(capture_kwargs["dynamic_defect_mask_loader"])
-    assert capture_kwargs["dynamic_defect_mask_loader"]().device_id == "FFP-001"
+    load_mask = capture_kwargs["dynamic_defect_mask_loader"]
+    assert load_mask().device_id == "FFP-002"
+    from client.app.engineering_maintenance import EngineeringDeviceBindingStore
+
+    EngineeringDeviceBindingStore(tmp_path).register_device_id("FFP-001")
+    assert load_mask().device_id == "FFP-002"
+    assert connected_kwargs["controller_options"]["capture_asset_serial"] == "FFP-002"
     assert connected_kwargs["controller_options"]["engineering_login"] is not None
     read_models = connected_kwargs["controller_options"]["read_models"]
     assert read_models.tenant_id == "tenant-1"

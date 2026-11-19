@@ -260,6 +260,7 @@ def test_packaged_empty_grant_pool_blocks_capture_but_upload_and_history_work(
             tenant_id=tenant_id,
             client_installation_id=str(pending.envelope.client_installation_id),
             hardware_asset_id=str(pending.envelope.hardware_asset_id),
+            hardware_id="FFP-DP4864-000001",
         )
         access = _Tokens()
         replenishments = []
