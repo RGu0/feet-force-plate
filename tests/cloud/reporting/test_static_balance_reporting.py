@@ -165,8 +165,14 @@ def test_customer_document_contains_one_score_and_no_sensitive_or_internal_field
         assert forbidden not in serialized
 
 
-def test_duplicate_static_balance_publish_is_idempotent() -> None:
+def test_duplicate_static_balance_publish_is_idempotent(monkeypatch, caplog) -> None:
+    from unittest.mock import Mock
+    import pytest
+    from cloud.reporting.alerts import ReportPublicationAlerts
+
     service, repository, artifacts = publish_service()
+    metrics = Mock()
+    service.alerts = ReportPublicationAlerts(metrics=metrics)
     session, features, risk = analysis_input()
     kwargs = dict(
         tenant_id="tenant-a",
@@ -180,8 +186,20 @@ def test_duplicate_static_balance_publish_is_idempotent() -> None:
         context=report_context(),
     )
 
+    with monkeypatch.context() as failure:
+        failure.setattr(service.renderer, "render", Mock(side_effect=ValueError("sensitive")))
+        with pytest.raises(ValueError, match="sensitive"):
+            service.publish(**kwargs)
+    assert "ffp-pdf-render-failed-v1 status=OPEN" in caplog.text
+    assert "sensitive" not in caplog.text
     first = service.publish(**kwargs)
+    assert [call.args[0] for call in metrics.observe.call_args_list] == [
+        "ffp_pdf_render_failed_v1", "ffp_pdf_render_failed_v1",
+        "ffp_cloud_complete_publication_seconds_v1",
+    ]
+    metrics.reset_mock()
     second = service.publish(**kwargs)
+    metrics.observe.assert_not_called()
 
     assert first == second
     assert repository.get_for_session("tenant-a", session.session_id).latest_version == 2
