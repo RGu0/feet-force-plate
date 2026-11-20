@@ -122,7 +122,7 @@ def test_v12_queue_state_moves_into_the_operation_store_without_loss(
 
     migrated = _open(db_path)
     try:
-        assert migrated.schema_version == SCHEMA_VERSION == 13
+        assert migrated.schema_version == SCHEMA_VERSION == 14
         assert [migrated.sync_handoff_state(session_id) for session_id in sessions] == [
             "READY_FOR_NETWORK", "RETRY_WAIT", "BLOCKED", "CONFLICT",
             "CLOUD_CONFIRMED", "UPLOADING",
@@ -148,6 +148,57 @@ def test_v12_queue_state_moves_into_the_operation_store_without_loss(
     assert not columns & {"state", "attempt_count", "next_attempt_at_ns", "last_error_code"}
     assert "operation_id" in columns and "cloud_confirmed_at_ns" in columns
     assert "idx_sync_handoffs_state" not in indexes
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        ("upload_credential", "expected_cloud_manifest_sha256"),
+        ("upload_credential",),
+        ("expected_cloud_manifest_sha256",),
+        (),
+    ],
+)
+def test_v13_capture_handoff_upgrade_preserves_queue_and_enables_new_saves(
+    db_path: Path, store: StateStore, missing: tuple[str, ...]
+) -> None:
+    uploaded = _commit(store, 0)
+    assert store.lease_sync_handoff(now_ns=1) is not None
+    store.mark_cloud_confirmed(uploaded, confirmed_at_ns=99)
+    pending = _commit(store, 1)
+    store.close()
+    before = _operation_rows(db_path)
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute(
+            """UPDATE sync_handoffs SET upload_credential=?,
+               expected_cloud_manifest_sha256=? WHERE session_id=?""",
+            (b"existing encrypted bytes", "a" * 64, pending),
+        )
+        for column in missing:
+            connection.execute(f"ALTER TABLE sync_handoffs DROP COLUMN {column}")
+        connection.execute("PRAGMA user_version=13")
+
+    with closing(_open(db_path)) as migrated:
+        assert migrated.schema_version == SCHEMA_VERSION == 14
+        assert _operation_rows(db_path) == before
+        assert migrated.sync_handoff_state(pending) == "READY_FOR_NETWORK"
+        assert migrated.sync_handoff_state(uploaded) == "CLOUD_CONFIRMED"
+        assert migrated.valid_local_storage_snapshot().last_cloud_confirmed_at_ns == 99
+        with closing(sqlite3.connect(db_path)) as connection:
+            assert connection.execute(
+                """SELECT upload_credential, expected_cloud_manifest_sha256
+                FROM sync_handoffs WHERE session_id=?""",
+                (pending,),
+            ).fetchone() == (
+                None if "upload_credential" in missing else b"existing encrypted bytes",
+                None if "expected_cloud_manifest_sha256" in missing else "a" * 64,
+            )
+        new_session = _commit(migrated, 2)
+
+    with closing(_open(db_path)) as reopened:
+        assert reopened.schema_version == 14
+        assert reopened.sync_handoff_state(new_session) == "READY_FOR_NETWORK"
+        assert reopened.offline_snapshot().pending_session_count == 2
 
 
 def test_an_unknown_legacy_state_fails_closed_and_leaves_the_database_at_v12(

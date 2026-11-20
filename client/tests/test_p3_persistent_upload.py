@@ -15,7 +15,7 @@ import numpy as np
 
 from client.device.protocol import RawFrame
 from client.spool.segments import ImmutableSegmentWriter, SealedSegment, write_session_manifest
-from client.spool.state_store import SensitiveBlobCodec, StateStore, ValidSegmentRecord
+from client.spool.state_store import SCHEMA_VERSION, SensitiveBlobCodec, StateStore, ValidSegmentRecord
 from client.sync.persistent_upload import (
     HttpIngestionClient,
     PersistentUploadQueue,
@@ -508,7 +508,7 @@ class PersistentUploadQueueTests(unittest.TestCase):
             connection.execute("PRAGMA user_version=9")
         connection.close()
         self.store = StateStore(self.root / "state.sqlite3", SensitiveBlobCodec(self.keys))
-        self.assertEqual(self.store.schema_version, 13)
+        self.assertEqual(self.store.schema_version, SCHEMA_VERSION)
         self.assertIsNone(self.store.sync_handoff_credential(str(self.session_id)))
         self.assertEqual(self.store.sync_handoff_envelope(str(self.session_id)), self.envelope)
         self.assertEqual(self._queue(_IngestionService()).upload_next(_Tokens()), UploadCycleOutcome.CONFIRMED)
