@@ -2,7 +2,7 @@
 
 `openapi.json` and `vectors.json` are deterministic public artifacts of the
 adopted foundation API. The authoritative implementation and generic contract
-tests are in the pinned `techflex-cloud-foundation==0.9.4` release; this directory
+tests are in the pinned `techflex-cloud-foundation==0.9.5` release; this directory
 retains the FeetForcePlate export artifacts. They contain no deployment endpoints or real keys.
 Generate through the governed `build` action; the test gate detects drift.
 Consume the JSON files at a pinned Git commit/tag and retain their SHA-256 with

@@ -13,8 +13,8 @@ import tempfile
 import tomllib
 import urllib.request
 
-SOURCE_VERSION = "0.9.4"
-SOURCE_SHA256 = "0ec2554e64542fd12877ed5cf207d305b4efabb087e2fbc242714f9b32d4c321"
+SOURCE_VERSION = "0.9.5"
+SOURCE_SHA256 = "b75fca4d0501cb21e09c70b860e71530b5dfb8f0235b750da17c61645ec46a6b"
 _RELEASE = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/"
 SOURCE_URL = f"{_RELEASE}v{SOURCE_VERSION}/techflex_cloud_foundation-{SOURCE_VERSION}.tar.gz"
 _TOP = f"techflex_cloud_foundation-{SOURCE_VERSION}"

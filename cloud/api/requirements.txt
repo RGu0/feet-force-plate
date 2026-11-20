@@ -1,6 +1,6 @@
 # Compatibility reference only. Install the verified release with ./dev setup.
 # pyproject.toml and uv.lock are authoritative for dependency versions and hashes.
-techflex-cloud-foundation @ https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.4/techflex_cloud_foundation-0.9.4-py3-none-any.whl
+techflex-cloud-foundation @ https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.5/techflex_cloud_foundation-0.9.5-py3-none-any.whl
 fastapi>=0.116,<1
 uvicorn>=0.35,<1
 pydantic>=2.11,<3

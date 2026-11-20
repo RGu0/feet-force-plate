@@ -11,7 +11,7 @@ project-specific runtime contract.
 - `techflex-cloud-foundation` is pinned by version and public GitHub Release
   URL in `pyproject.toml`; `uv.lock` pins its wheel SHA-256. Entrypoints use
   locked uv sync, which downloads and verifies the wheel without a worktree-local
-  artifact or release credential. `setup` also caches the published 0.9.4
+  artifact or release credential. `setup` also caches the published 0.9.5
   sdist with its pinned SHA-256 under ignored `.foundation-source/`; tests
   require the verified cache offline. Never install an unverified wheel or bypass
   the committed lock. This cache and locator are developer-only; setup must

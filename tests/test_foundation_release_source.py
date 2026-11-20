@@ -11,7 +11,7 @@ import pytest
 from scripts import foundation_release_source as source
 
 
-def _project(root: Path, *, version: str = "0.9.4") -> Path:
+def _project(root: Path, *, version: str = "0.9.5") -> Path:
     root.mkdir(exist_ok=True)
     (root / "pyproject.toml").write_text(
         '[project]\ndependencies = ["techflex-cloud-foundation[server]==' + version + '"]\n'
@@ -22,7 +22,7 @@ def _project(root: Path, *, version: str = "0.9.4") -> Path:
     return root
 
 
-def _archive(name: str = "techflex_cloud_foundation-0.9.4/tests/test_probe.py", *, link=False, executable=False) -> bytes:
+def _archive(name: str = "techflex_cloud_foundation-0.9.5/tests/test_probe.py", *, link=False, executable=False) -> bytes:
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
         item = tarfile.TarInfo(name)
@@ -91,8 +91,8 @@ def test_cache_tamper_is_rejected_without_repair_or_network(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("name,link", [
     ("../escaped", False), ("/tmp/escaped", False),
-    ("techflex_cloud_foundation-0.9.4/../escaped", False),
-    ("techflex_cloud_foundation-0.9.4/link", True),
+    ("techflex_cloud_foundation-0.9.5/../escaped", False),
+    ("techflex_cloud_foundation-0.9.5/link", True),
 ])
 def test_digest_valid_unsafe_archives_cannot_publish_cache(tmp_path, monkeypatch, name, link):
     root = _project(tmp_path)
