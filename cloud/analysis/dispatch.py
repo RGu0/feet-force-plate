@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
+from uuid import UUID
 
 from cloud.analysis.models import AnalysisRun, SessionIngestedEvent
 from cloud.analysis.orchestrator import AnalysisOrchestrator
@@ -90,6 +91,15 @@ def _required_text(payload: Mapping[str, Any], field: str) -> str:
     return value
 
 
+def _canonical_uuid(value: object, field: str) -> str:
+    try:
+        return str(value if isinstance(value, UUID) else UUID(str(value)))
+    except ValueError:
+        raise UnsupportedForcePlateEvent(
+            f"session.ingested.v1 {field} is not a UUID"
+        ) from None
+
+
 class ForcePlateAnalysisHandler:
     """Map a ``session.ingested.v1`` envelope onto ``AnalysisOrchestrator``."""
 
@@ -114,9 +124,9 @@ class ForcePlateAnalysisHandler:
                 f"force-plate analysis accepts only {FORCE_PLATE_PAYLOAD_SCHEMA}, "
                 f"got {schema!r}"
             )
-        session_id = _required_text(payload, "session_id")
+        session_id = _canonical_uuid(_required_text(payload, "session_id"), "session_id")
         manifest_sha256 = _required_text(payload, "manifest_sha256")
-        if str(event.aggregate_id) != session_id:
+        if _canonical_uuid(event.aggregate_id, "aggregate_id") != session_id:
             raise UnsupportedForcePlateEvent(
                 "session.ingested.v1 aggregate_id does not match payload session_id"
             )

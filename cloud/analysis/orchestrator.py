@@ -129,7 +129,9 @@ class AnalysisOrchestrator:
         if event.event_type != "session.ingested.v1":
             raise ValueError("analysis only accepts session.ingested.v1")
         # Which payload schemas reach this pipeline is decided by foundation's
-        # registry binding and ForcePlateAnalysisHandler (cloud.analysis.dispatch).
+        # registry binding and ForcePlateAnalysisHandler (cloud.analysis.dispatch);
+        # production callers must go through that dispatcher, since this method
+        # no longer refuses other schemas itself.
 
         if self.holds.is_held(event.tenant_id, event.session_id):
             raise SessionHeld("session is under administrative hold")

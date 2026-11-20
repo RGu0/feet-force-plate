@@ -20,7 +20,10 @@ from techflex_cloud_foundation import (
     RAW_SEGMENT_SCHEMA,
     default_payload_schema_registry,
 )
-from techflex_cloud_foundation.analysis_dispatch import AnalyzerHandlerUnbound
+from techflex_cloud_foundation.analysis_dispatch import (
+    AnalyzerHandlerUnbound,
+    UndispatchableEvent,
+)
 from techflex_cloud_foundation.contracts.events import EventEnvelope
 from techflex_cloud_foundation.server.session_hold.service import SessionHeld
 from tests.cloud.analysis.test_orchestrator import (
@@ -183,6 +186,22 @@ class ForcePlateDispatchTests(unittest.TestCase):
     def test_aggregate_and_payload_session_must_match(self) -> None:
         with self.assertRaisesRegex(UnsupportedForcePlateEvent, "aggregate_id"):
             self.dispatcher.dispatch(envelope(aggregate_id=uuid4()))
+        self.assertEqual(self.repository.count(), 0)
+
+    def test_session_ids_are_compared_as_uuids(self) -> None:
+        run = self.dispatcher.dispatch(
+            envelope(payload_overrides={"session_id": str(SESSION).upper()})
+        ).result
+
+        assert run is not None
+        self.assertEqual(run.key.session_id, str(SESSION))
+        with self.assertRaisesRegex(UnsupportedForcePlateEvent, "not a UUID"):
+            self.dispatcher.dispatch(envelope(payload_overrides={"session_id": "session-a"}))
+
+    def test_unregistered_schema_is_undispatchable(self) -> None:
+        with self.assertRaises(UndispatchableEvent):
+            self.dispatcher.dispatch(envelope(schema="estimated-force-session/1.1"))
+        self.assertEqual(self.versions.calls, [])
         self.assertEqual(self.repository.count(), 0)
 
     def test_missing_registered_versions_are_refused(self) -> None:
