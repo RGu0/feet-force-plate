@@ -32,7 +32,7 @@ from techflex_cloud_foundation.contracts.client_sync import (
 from techflex_cloud_foundation import OperationState, SqliteOperationStore
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 OFFLINE_LIMIT_NS = 24 * 60 * 60 * 1_000_000_000
 PENDING_SESSION_LIMIT = 50
 PENDING_BYTE_LIMIT = 2 * 1024 * 1024 * 1024
@@ -529,6 +529,23 @@ class StateStore:
             if version < 13:
                 self._migrate_upload_queue_to_operations()
                 self._connection.execute("PRAGMA user_version=13")
+            if version < 14:
+                # Some deployed databases carried v13 without both capture-handoff
+                # columns. Repair the actual schema instead of rerunning queue import.
+                if not self._connection.in_transaction:
+                    self._connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    row[1] for row in self._connection.execute("PRAGMA table_info(sync_handoffs)")
+                }
+                if "upload_credential" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN upload_credential BLOB"
+                    )
+                if "expected_cloud_manifest_sha256" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sync_handoffs ADD COLUMN expected_cloud_manifest_sha256 TEXT"
+                    )
+                self._connection.execute("PRAGMA user_version=14")
 
     def _migrate_upload_queue_to_operations(self) -> None:
         """v12 to v13: move each handoff's queue state into the operation store.
