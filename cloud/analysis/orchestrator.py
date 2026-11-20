@@ -128,10 +128,8 @@ class AnalysisOrchestrator:
     def handle(self, event: SessionIngestedEvent) -> AnalysisRun:
         if event.event_type != "session.ingested.v1":
             raise ValueError("analysis only accepts session.ingested.v1")
-        if event.payload_schema_version.startswith("estimated-force-session/"):
-            raise ValueError(
-                "standard estimated-force sessions must be handled by PhysicalAnalysisOrchestrator"
-            )
+        # Which payload schemas reach this pipeline is decided by foundation's
+        # registry binding and ForcePlateAnalysisHandler (cloud.analysis.dispatch).
 
         if self.holds.is_held(event.tenant_id, event.session_id):
             raise SessionHeld("session is under administrative hold")

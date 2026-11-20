@@ -1,12 +1,12 @@
 # Seed deployment toolkit ownership
 
 The seed service, migrations, backup/restore, smoke and deployment toolkit are
-maintained in the published `techflex-cloud-foundation==0.9.4` source release.
+maintained in the published `techflex-cloud-foundation==0.9.5` source release.
 This FeetForcePlate directory retains only the product public TLS bundle helper
 `build-integration-public-bundle.sh` and this ownership note.
 
 Run `./dev setup` (Windows: `pwsh -File dev.ps1 setup`) to synchronize the
-locked wheel and cache the digest-verified published 0.9.4 sdist. Resolve its
+locked wheel and cache the digest-verified published 0.9.5 sdist. Resolve its
 developer source root without downloading anything (setup must have prewarmed
 both dependencies and source; offline sync fails closed on a cache miss):
 

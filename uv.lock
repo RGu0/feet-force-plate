@@ -883,7 +883,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy" },
     { name = "sqlalchemy" },
-    { name = "techflex-cloud-foundation", url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.4/techflex_cloud_foundation-0.9.4-py3-none-any.whl" },
+    { name = "techflex-cloud-foundation", url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.5/techflex_cloud_foundation-0.9.5-py3-none-any.whl" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 provides-extras = ["build", "dev"]
@@ -3103,15 +3103,15 @@ wheels = [
 
 [[package]]
 name = "techflex-cloud-foundation"
-version = "0.9.4"
-source = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.4/techflex_cloud_foundation-0.9.4-py3-none-any.whl" }
+version = "0.9.5"
+source = { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.5/techflex_cloud_foundation-0.9.5-py3-none-any.whl" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
 wheels = [
-    { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.4/techflex_cloud_foundation-0.9.4-py3-none-any.whl", hash = "sha256:86352bc722134ed45a5ff1b37c6201b6525a2f8de771bd86009cfc338bcfe79d" },
+    { url = "https://github.com/RGu0/techflex-cloud-foundation/releases/download/v0.9.5/techflex_cloud_foundation-0.9.5-py3-none-any.whl", hash = "sha256:b3e23f7b63e2f047d006968bc2f10ef35633b4801f76f884d11427ffa93bcc1b" },
 ]
 
 [package.metadata]

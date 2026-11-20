@@ -21,7 +21,7 @@
 本仓库唯一受控的命令入口是 `./dev`（macOS/Linux）与 `pwsh -File dev.ps1`（Windows）。不要直接运行 `uv sync`、`uv run`、系统 Python、pip 或共享 Conda 环境。入口按 [`pyproject.toml`](pyproject.toml) 中的公开 GitHub Release URL 和 [`uv.lock`](uv.lock) 中的 SHA-256 安装并校验 `techflex-cloud-foundation` wheel，无需工作树内的本地 wheel。
 
 ```bash
-./dev setup            # 校验公开 wheel，同步锁定环境，并缓存已校验的 0.9.4 sdist
+./dev setup            # 校验公开 wheel，同步锁定环境，并缓存已校验的 0.9.5 sdist
 ./dev test
 ./dev lint
 ./dev build
@@ -33,9 +33,9 @@ pwsh -File dev.ps1 setup
 pwsh -File dev.ps1 run python main.py
 ```
 
-`./dev setup` 需要能访问公开的 Foundation GitHub Release。uv 自行下载和缓存 wheel，并按 `uv.lock` 校验 SHA-256；不需要 `gh` 登录或专用 Release 令牌。摘要不匹配时同步失败。setup 还会下载并校验固定 0.9.4 的公开源码包（sdist），将只读源码树保存在忽略的本机 `.foundation-source/` 缓存中；源码包摘要由 `scripts/foundation_release_source.py` 固定。
+`./dev setup` 需要能访问公开的 Foundation GitHub Release。uv 自行下载和缓存 wheel，并按 `uv.lock` 校验 SHA-256；不需要 `gh` 登录或专用 Release 令牌。摘要不匹配时同步失败。setup 还会下载并校验固定 0.9.5 的公开源码包（sdist），将只读源码树保存在忽略的本机 `.foundation-source/` 缓存中；源码包摘要由 `scripts/foundation_release_source.py` 固定。
 
-共享契约、通用服务端、迁移、smoke 和部署工具由 `techflex-cloud-foundation==0.9.4` 维护。FeetForcePlate 保留桌面产品、产品集成测试、移动契约导出产物与公开 TLS bundle 构建 helper。已删除的本地服务端或共享契约不再作为备用实现。查找已验证发布源码根目录：
+共享契约、通用服务端、迁移、smoke 和部署工具由 `techflex-cloud-foundation==0.9.5` 维护。FeetForcePlate 保留桌面产品、产品集成测试、移动契约导出产物与公开 TLS bundle 构建 helper。已删除的本地服务端或共享契约不再作为备用实现。查找已验证发布源码根目录：
 
 ```bash
 UV_OFFLINE=1 ./dev run python scripts/foundation_release_source.py --offline --print-root
