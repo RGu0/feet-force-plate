@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from cloud.analysis.features import SessionFeatureSet, StageFeatureSet
 from cloud.analysis.risk_rules import RiskTier, ScreeningRiskResult
+from cloud.reporting.alerts import DEFAULT_REPORT_ALERTS, ReportPublicationAlerts
 from cloud.reporting.models import (
     PublicFigure,
     PublicMetric,
@@ -14,7 +15,6 @@ from cloud.reporting.models import (
     ReportContext,
     ReportDocument,
     ReportKind,
-    ReportPublishedEvent,
     ReportVersion,
 )
 from cloud.reporting.pdf import MinimalPdfRenderer
@@ -204,6 +204,7 @@ class StaticBalanceCloudReportService:
         renderer: MinimalPdfRenderer,
         publisher: InMemoryReportEventPublisher,
         holds: SessionHoldReader,
+        alerts: ReportPublicationAlerts = DEFAULT_REPORT_ALERTS,
     ) -> None:
         self.repository = repository
         self.artifact_store = artifact_store
@@ -211,6 +212,7 @@ class StaticBalanceCloudReportService:
         self.renderer = renderer
         self.publisher = publisher
         self.holds = holds
+        self.alerts = alerts
 
     def publish(
         self,
@@ -247,7 +249,8 @@ class StaticBalanceCloudReportService:
                 separators=(",", ":"),
             ).encode("utf-8")
             document_sha256 = hashlib.sha256(public_json).hexdigest()
-            pdf = self.renderer.render(document)
+            with self.alerts.rendering_pdf(tenant_id):
+                pdf = self.renderer.render(document)
             artifact_sha256 = hashlib.sha256(pdf).hexdigest()
             object_key = (
                 f"tenants/{tenant_id}/reports/{report_id}/"
@@ -275,21 +278,11 @@ class StaticBalanceCloudReportService:
                 generated_at=document.generated_at,
             )
 
-        version, created = self.repository.append_cloud_version(
+        return self.repository.publish_cloud_version(
+            publisher=self.publisher, alerts=self.alerts,
+            correlation_id=correlation_id,
             tenant_id=tenant_id,
             session_id=session_id,
             source_analysis_run_id=source_analysis_run_id,
             build=build,
         )
-        if created:
-            self.publisher.publish(
-                ReportPublishedEvent(
-                    event_type="report.published.v1",
-                    tenant_id=tenant_id,
-                    report_id=version.report_id,
-                    correlation_id=correlation_id,
-                    version_number=version.version_number,
-                    kind=ReportKind.CLOUD_COMPLETE,
-                )
-            )
-        return version
