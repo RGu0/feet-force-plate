@@ -78,12 +78,45 @@ class SerialDiscoveryTests(unittest.TestCase):
 
     def test_enumeration_without_probe_does_not_claim_occupancy(self) -> None:
         candidates = enumerate_ch340_ports(
-            port_provider=lambda: [FakePort("COM7", vid=0x1A86)],
+            port_provider=lambda: [FakePort("COM7", vid=0x1A86, description="CH340")],
             probe_availability=False,
             **self._serial_options,
         )
 
         self.assertEqual(candidates[0].availability, PortAvailability.UNKNOWN)
+
+    def test_ch343_debug_port_is_never_probed_even_with_another_board(self) -> None:
+        debug = FakePort("COM6", vid=0x1A86, pid=0x55D3, description="USB-Enhanced-SERIAL CH343")
+        pressure = FakePort("COM7", vid=0x1A86, pid=0x7523)
+        opened = []
+
+        def factory(*, port, **_options):
+            opened.append(port)
+            return FakeSerial()
+
+        for ports, expected in (([debug], []), ([debug, pressure], ["COM7"])):
+            with self.subTest(ports=ports):
+                opened.clear()
+                candidates = enumerate_ch340_ports(
+                    port_provider=lambda: ports,
+                    serial_factory=factory,
+                    **self._serial_options,
+                )
+                self.assertEqual([candidate.device for candidate in candidates], expected)
+                self.assertEqual([candidate.availability for candidate in candidates],
+                                 [PortAvailability.AVAILABLE] * len(expected))
+                self.assertEqual(opened, expected)
+
+    def test_ch341_is_detected_with_generic_driver_description(self) -> None:
+        candidates = enumerate_ch340_ports(
+            port_provider=lambda: [
+                FakePort("COM8", vid=0x1A86, pid=0x5523, description="USB Serial"),
+                FakePort("COM9", vid=0x1A86, pid=0x7522, description="USB Serial"),
+            ],
+            probe_availability=False,
+            **self._serial_options,
+        )
+        self.assertEqual([candidate.device for candidate in candidates], ["COM8", "COM9"])
 
 
 class SerialTransportTests(unittest.TestCase):
