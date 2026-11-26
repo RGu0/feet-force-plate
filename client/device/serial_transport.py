@@ -12,6 +12,7 @@ from .transport import TransportDisconnected
 
 
 CH340_VENDOR_ID = 0x1A86
+_CH340_CH341_SERIAL_PRODUCT_IDS = frozenset({0x5523, 0x7522, 0x7523})
 
 
 class PortAvailability(StrEnum):
@@ -76,8 +77,10 @@ def _serial_options(
 
 
 def _is_ch340(port: Any) -> bool:
-    if getattr(port, "vid", None) == CH340_VENDOR_ID:
-        return True
+    product_id = getattr(port, "pid", None)
+    if getattr(port, "vid", None) == CH340_VENDOR_ID and product_id is not None:
+        # WCH also makes unrelated serial adapters, including the CH343.
+        return product_id in _CH340_CH341_SERIAL_PRODUCT_IDS
     identity = " ".join(
         str(getattr(port, field, "") or "")
         for field in ("device", "description", "hwid")
