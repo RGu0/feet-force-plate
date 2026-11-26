@@ -269,7 +269,6 @@ def build_live_institution_runtime(
                 hardware.display_geometry, specification_id=hardware.specification_id
             ),
             "engineering_login": engineering_login,
-            "capture_asset_serial": asset_serial,
         },
     )
     acquisition.set_callbacks(
