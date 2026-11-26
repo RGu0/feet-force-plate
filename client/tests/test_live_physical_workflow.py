@@ -5,9 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
+import numpy as np
 import pytest
 
 from client.app.institution_store import InstitutionLocalStore
+from client.device.protocol import RawFrame
 from client.device.stage_windows import CapturedStageWindow, StageRecordingGate
 from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapter
 from client.hardware_standardization.models import BaselineReference
@@ -27,6 +29,7 @@ from client.hardware_integration.live_physical_workflow import (
 from client.local_analysis.models import LocalQualityStatus
 from client.local_analysis.service import PhysicalLocalProcessingOutcome, ProcessingStatus
 from client.spool.state_store import SensitiveBlobCodec, StateStore
+from client.spool.session_commit import read_failed_capture
 from client.workflow.consent import ConsentRequest
 from client.workflow.models import ScreeningParticipantContext
 from client.workflow.participant import AnalysisProfile, CreateSubjectRequest
@@ -202,6 +205,67 @@ def test_formal_live_capture_keeps_subject_and_session_identities_distinct(
         assert state.stager.upload_envelope.config_snapshot["stage_ids"] == list(
             protocol.stage_ids
         )
+        for stage_id in protocol.stage_ids:
+            institution.mark_stage_complete(session_id, stage_id)
+        matrix = np.zeros((48, 64), dtype=np.uint8)
+        matrix[4, 3] = 255
+        state.stager.append(RawFrame(
+            values=matrix,
+            host_monotonic_ns=1_000_000_000,
+            host_wall_time_ns=1_000_000_000,
+            source_index=7,
+            device_frame_seq=None,
+            device_timestamp_ns=None,
+            quality_flags=frozenset(),
+        ))
+        outcome = capture._finalize_session(session_id, state)
+        assert outcome.ui_failure.code.value == "FORCE_CONVERSION_FAILED"
+        sessions.mark_incomplete(session_id)
+
+        institution.add_capture_grants(
+            "tenant-1", str(installation_id),
+            (CaptureGrant(session_id=uuid4(), token="formal-live-retry-token-1234567890"),),
+        )
+        retry_id = sessions.create_session(
+            ScreeningParticipantContext(subject.subject_uuid, consent.consent_record_id),
+            protocol,
+        )
+        assert retry_id != session_id
+        institution.close()
+        institution = InstitutionLocalStore.open(
+            tmp_path / "institution", key_provider=key, query_index_key=b"q" * 32
+        )
+        rows = institution.recent_records(
+            tenant_id="tenant-1", failed_capture_root=tmp_path / "spool"
+        )
+        assert len(rows) == 1
+        assert rows[0].report_status_label == "未完成"
+        assert "E-DEV-109" in rows[0].screening_label
+        assert rows[0].report_id is None
+        assert not institution.recent_records(
+            tenant_id="another-tenant", failed_capture_root=tmp_path / "spool"
+        )
+        diagnostic, frames = read_failed_capture(
+            tmp_path / "spool", session_id=session_id, key_provider=key
+        )
+        failure = diagnostic["failure"]
+        assert isinstance(failure, dict)
+        assert "ADC_OR_FORCE_MODEL_SATURATED" in failure.pop("frame_flags")
+        assert failure == {
+            "condition": "REFERENCE_VOLTAGE_REACHED",
+            "frame_source_index": 7,
+            "frame_timestamp_s": 0.0,
+            "sensor_row": 4,
+            "sensor_column": 3,
+            "raw_count": 255.0,
+            "baseline_count": 0.0,
+            "processing_count": 255.0,
+            "corrected_voltage_v": 4.096,
+            "reference_voltage_v": 4.096,
+        }
+        assert int(frames[0].values[4, 3]) == 255
+        with pytest.raises(KeyError):
+            physical_store.sync_handoff_state(session_id)
     finally:
         physical_store.close()
         institution.close()

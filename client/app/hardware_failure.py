@@ -41,7 +41,7 @@ _PRESENTATIONS: dict[HardwareUiFailureCode, tuple[str, str]] = {
 def resolve_hardware_ui_failure(failure: HardwareUiFailure) -> ClientError:
     """Return stable copy suitable for the operator UI, never audit detail."""
 
-    code, operator_message = _PRESENTATIONS[failure.code]
+    code, operator_message = hardware_failure_presentation(failure.code)
     return ClientError(
         code=code,
         operator_message=operator_message,
@@ -51,3 +51,7 @@ def resolve_hardware_ui_failure(failure: HardwareUiFailure) -> ClientError:
             else ClientAction.CONTACT_SUPPORT
         ),
     )
+
+
+def hardware_failure_presentation(code: HardwareUiFailureCode) -> tuple[str, str]:
+    return _PRESENTATIONS[code]

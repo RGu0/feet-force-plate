@@ -937,14 +937,36 @@ class LivePhysicalCapture:
         reason_codes = tuple(getattr(decision, "reasons", ()))
         reason = "; ".join(reason_codes) or None
         if decision_value == SessionValidity.INVALID.value:
-            return self._discard_final_session(
-                session_id,
-                state,
+            ui_failure = from_quality_reasons(reason_codes, fallback_reason=reason)
+            if self._formal_upload is None:
+                return self._discard_final_session(
+                    session_id,
+                    state,
+                    acquisition,
+                    reason=reason or "hardware quality gate failed",
+                    ui_failure=ui_failure,
+                )
+            try:
+                state.stager.preserve_quality_failure(
+                    ended_at_ns=self._wall_time_ns(),
+                    diagnostic={
+                        "reason_codes": reason_codes,
+                        "hardware_failure_code": ui_failure.code.value,
+                        "failure": getattr(decision, "failure_diagnostic", None),
+                    },
+                )
+            except Exception as exc:
+                reason = f"failed capture preservation failed: {type(exc).__name__}"
+                ui_failure = finalization_failed()
+            with self._state_lock:
+                self._states.pop(session_id, None)
+            return LiveHardwareSessionResult(
                 acquisition,
-                reason=reason or "hardware quality gate failed",
-                ui_failure=from_quality_reasons(
-                    reason_codes, fallback_reason=reason
-                ),
+                SessionValidity.INVALID,
+                reason or "hardware quality gate failed",
+                False,
+                ui_failure,
+                state.stager.stage_windows,
             )
         try:
             physical_session = getattr(decision, "physical_session", None)

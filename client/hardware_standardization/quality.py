@@ -69,6 +69,7 @@ class HardwareQualityEvaluation:
     repaired_source_indices: tuple[int, ...] = ()
     physical_session: PhysicalArraySession | None = None
     processing_metadata: dict[str, object] | None = None
+    failure_diagnostic: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.validity is HardwareDataValidity.VALID and self.physical_session is None:
@@ -147,13 +148,47 @@ class DoP4864HardwareQualityGate:
         )
         if outcome.status is StandardizationStatus.INVALID or outcome.session is None:
             return self._invalid("STANDARDIZATION_FAILED")
-        if any(
-            frame.estimated_force_n is None
-            or any(value is None for value in frame.estimated_force_n)
-            or "ADC_OR_FORCE_MODEL_SATURATED" in frame.quality_flags
-            for frame in outcome.session.frames
-        ):
-            return self._invalid("FORCE_CONVERSION_OR_SATURATION_FAILED")
+        for source, frame in zip(frames, outcome.session.frames, strict=True):
+            if (
+                frame.estimated_force_n is None
+                or any(value is None for value in frame.estimated_force_n)
+                or "ADC_OR_FORCE_MODEL_SATURATED" in frame.quality_flags
+            ):
+                diagnostic: dict[str, object] = {
+                    "frame_source_index": source.source_index,
+                    "frame_timestamp_s": frame.timestamp_s,
+                    "frame_flags": sorted(frame.quality_flags),
+                    "condition": "FORCE_VALUES_UNAVAILABLE",
+                }
+                model = self._adapter.specification.force_model
+                voltages = frame.zero_corrected_voltage_v
+                if model is not None and voltages is not None:
+                    for index, voltage in enumerate(voltages):
+                        if model.force_from_voltage(max(voltage, 0.0)) is not None:
+                            continue
+                        row, column = self._row_column(index)
+                        diagnostic.update(
+                            condition=(
+                                "REFERENCE_VOLTAGE_REACHED"
+                                if voltage >= model.adc_reference_voltage_v
+                                else "FORCE_MODEL_RETURNED_NO_VALUE"
+                            ),
+                            sensor_row=row,
+                            sensor_column=column,
+                            raw_count=float(frame.raw_count[index]),
+                            baseline_count=self._baseline_reference.zero_offset_count[index],
+                            processing_count=float(
+                                (frame.repaired_count or frame.raw_count)[index]
+                            ),
+                            corrected_voltage_v=voltage,
+                            reference_voltage_v=model.adc_reference_voltage_v,
+                        )
+                        break
+                return HardwareQualityEvaluation(
+                    HardwareDataValidity.INVALID,
+                    ("FORCE_CONVERSION_OR_SATURATION_FAILED",),
+                    failure_diagnostic=diagnostic,
+                )
         return HardwareQualityEvaluation(
             validity=HardwareDataValidity.VALID,
             reasons=(),

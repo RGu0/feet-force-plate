@@ -31,6 +31,9 @@ from client.security.credential_vault import (
 )
 from client.reporting.models import BasicReportDocument
 from client.app.ui_models import ScreeningRecordRow
+from client.app.hardware_failure import hardware_failure_presentation
+from client.hardware_standardization.ports import HardwareUiFailureCode
+from client.spool.session_commit import read_failed_capture_diagnostic
 from client.spool.state_store import (
     KeyProvider,
     KeyProviderUnavailable,
@@ -848,8 +851,9 @@ class InstitutionLocalStore:
         tenant_id: str,
         query: str = "",
         limit: int = 100,
+        failed_capture_root: Path | None = None,
     ) -> tuple[ScreeningRecordRow, ...]:
-        """Return the newest decryptable report rows for exactly one tenant."""
+        """Return recent report and failed capture records for one tenant."""
 
         if not tenant_id or limit <= 0:
             raise ValueError("tenant ID and positive record limit are required")
@@ -862,7 +866,7 @@ class InstitutionLocalStore:
             (tenant_id, limit),
         ).fetchall()
         needle = query.strip().casefold()
-        records: list[ScreeningRecordRow] = []
+        records: list[tuple[datetime, ScreeningRecordRow]] = []
         for report_lookup, encrypted in rows:
             try:
                 value = json.loads(
@@ -877,23 +881,90 @@ class InstitutionLocalStore:
                 if needle and needle not in subject_display_id.casefold():
                     continue
                 captured_at = datetime.fromisoformat(str(value["captured_at"]))
-                records.append(
-                    ScreeningRecordRow(
-                        subject_display_id=subject_display_id,
-                        performed_at_label=captured_at.strftime("%m-%d %H:%M"),
-                        screening_label=str(value["screening_label"]),
-                        report_status_label=str(value["report_status_label"]),
-                        performed_on=captured_at.date(),
-                        report_id=str(value["report_id"]),
-                        report_version=int(value["report_version"]),
-                    )
+                row = ScreeningRecordRow(
+                    subject_display_id=subject_display_id,
+                    performed_at_label=captured_at.strftime("%m-%d %H:%M"),
+                    screening_label=str(value["screening_label"]),
+                    report_status_label=str(value["report_status_label"]),
+                    performed_on=captured_at.date(),
+                    report_id=str(value["report_id"]),
+                    report_version=int(value["report_version"]),
                 )
+                records.append((captured_at, row))
             except (
                 InvalidTag, KeyProviderUnavailable, UnicodeDecodeError,
                 json.JSONDecodeError, KeyError, TypeError, ValueError,
             ):
                 continue
-        return tuple(records)
+        if failed_capture_root is not None:
+            records.extend(
+                self._failed_capture_records(
+                    root=failed_capture_root, tenant_id=tenant_id, needle=needle, limit=limit
+                )
+            )
+        records.sort(key=lambda entry: entry[0].timestamp(), reverse=True)
+        return tuple(row for _, row in records[:limit])
+
+    def _failed_capture_records(
+        self, *, root: Path, tenant_id: str, needle: str, limit: int
+    ) -> list[tuple[datetime, ScreeningRecordRow]]:
+        rows = self.db.execute(
+            """SELECT s.session_id, s.subject_uuid, s.lifecycle_status, MAX(c.completed_at)
+            FROM institution_sessions s
+            JOIN institution_subjects t ON t.subject_uuid=s.subject_uuid
+            JOIN institution_stage_completions c ON c.session_id=s.session_id
+            WHERE t.tenant_id=? AND s.lifecycle_status IN ('INCOMPLETE', 'ACQUIRING')
+            GROUP BY s.session_id
+            HAVING COUNT(*)=4
+            ORDER BY MAX(c.completed_at) DESC
+            LIMIT ?""",
+            (tenant_id, limit),
+        ).fetchall()
+        records: list[tuple[datetime, ScreeningRecordRow]] = []
+        for session_id, subject_uuid, lifecycle, completed in rows:
+            display_id = f"匿名 {subject_uuid[-6:]}"
+            if needle and needle not in display_id.casefold():
+                continue
+            try:
+                captured_at = datetime.fromisoformat(completed)
+            except (TypeError, ValueError):
+                continue
+            failure_code = ""
+            detail = "检测未完成，未保存详细失败原因。"
+            try:
+                diagnostic = read_failed_capture_diagnostic(
+                    root, session_id=session_id, codec=self.codec
+                )
+                code = diagnostic.get("hardware_failure_code")
+                if isinstance(code, str):
+                    failure_code, detail = hardware_failure_presentation(HardwareUiFailureCode(code))
+                    failure = diagnostic.get("failure")
+                    if isinstance(failure, dict):
+                        condition = failure.get("condition")
+                        if condition == "REFERENCE_VOLTAGE_REACHED":
+                            detail = "有测点达到压力换算上限。"
+                        elif condition == "FORCE_MODEL_RETURNED_NO_VALUE":
+                            detail = "有测点的压力换算未返回有效力值。"
+            except (OSError, InvalidTag, KeyProviderUnavailable, UnicodeDecodeError, ValueError):
+                if lifecycle != "INCOMPLETE":
+                    continue
+            label = _screening_label("standard-static-balance")
+            if failure_code:
+                label = f"{label} · {failure_code}"
+            records.append(
+                (
+                    captured_at,
+                    ScreeningRecordRow(
+                        subject_display_id=display_id,
+                        performed_at_label=captured_at.strftime("%m-%d %H:%M:%S"),
+                        screening_label=label,
+                        report_status_label="未完成",
+                        performed_on=captured_at.date(),
+                        failure_detail=detail,
+                    ),
+                )
+            )
+        return records
 
     def load_report(self, report_id: str, version: int) -> str:
         row = self.db.execute(

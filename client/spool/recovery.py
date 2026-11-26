@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from .session_commit import ValidSessionStager
+from .session_commit import ValidSessionStager, failed_capture_archive
 from techflex_cloud_foundation.durability import fsync_directory
 
 from .segments import (
@@ -117,7 +117,10 @@ class RecoveryScanner:
         quarantined = 0
         sealed_quarantined = 0
         registered = 0
+        failed_archive = failed_capture_archive(self._repository_root).resolve()
         for temporary in sorted(self._segment_root.rglob("*.tmp")):
+            if temporary.resolve().is_relative_to(failed_archive):
+                continue
             try:
                 restored = read_segment(temporary, self._key_provider)
             except SegmentIntegrityError:
@@ -130,6 +133,8 @@ class RecoveryScanner:
             _register_path(final, restored, self._store, self._repository_root)
             recovered += 1
         for path in sorted(self._segment_root.rglob("*.ffps")):
+            if path.resolve().is_relative_to(failed_archive):
+                continue
             try:
                 restored = read_segment(path, self._key_provider)
             except SegmentIntegrityError:

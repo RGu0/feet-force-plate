@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from .institution_store import InstitutionLocalStore
@@ -24,9 +25,12 @@ class InstitutionUiReadModels:
     physical_store: _PhysicalStore
     app_version: str
     organization_name: str = "康健社区健康服务中心"
+    failed_capture_root: Path | None = None
 
     def recent_records(self, *, query: str = "") -> tuple[ScreeningRecordRow, ...]:
-        return self.institution.recent_records(tenant_id=self.tenant_id, query=query)
+        return self.institution.recent_records(
+            tenant_id=self.tenant_id, query=query, failed_capture_root=self.failed_capture_root
+        )
 
     def dashboard_snapshot(self) -> DashboardSnapshot:
         records = self.recent_records()
