@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
@@ -45,10 +45,65 @@ from .state_store import (
 
 
 _STAGE_WINDOW_POLICY_VERSION = "operator-started-stage-window/1"
+_FAILURE_RECORD = "failure.enc"
 
 
 def _write_atomic_json(path: Path, payload: dict[str, object]) -> None:
     atomic_write(path, json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def failed_capture_archive(root: str | Path) -> Path:
+    """Keep local diagnostics outside the formal spool hierarchy."""
+    spool = Path(root)
+    return spool.with_name(f"{spool.name}-failed-captures")
+
+
+def read_failed_capture_diagnostic(
+    root: str | Path, *, session_id: str, codec: SensitiveBlobCodec
+) -> dict[str, object]:
+    if not session_id or Path(session_id).name != session_id or session_id in {".", ".."}:
+        raise ValueError("invalid failed capture session ID")
+    record = failed_capture_archive(root) / session_id / _FAILURE_RECORD
+    payload = json.loads(
+        codec.decrypt(record.read_bytes(), context=f"failed-capture:{session_id}")
+    )
+    if not isinstance(payload, dict) or payload.get("schema_version") != "failed-capture/1":
+        raise ValueError("invalid failed capture diagnostic")
+    return payload
+
+
+def read_failed_capture(
+    root: str | Path, *, session_id: str, key_provider: KeyProvider
+) -> tuple[dict[str, object], tuple[RawFrame, ...]]:
+    """Read authenticated local evidence outside the report and upload paths."""
+    diagnostic = read_failed_capture_diagnostic(
+        root, session_id=session_id, codec=SensitiveBlobCodec(key_provider)
+    )
+    names = diagnostic.get("segment_names")
+    if not isinstance(names, list) or not names:
+        raise ValueError("failed capture has no segment index")
+    directory = failed_capture_archive(root) / session_id
+    frames: list[RawFrame] = []
+    for index, name in enumerate(names):
+        if not isinstance(name, str) or Path(name).name != name or name in {".", ".."}:
+            raise ValueError("invalid failed capture segment name")
+        segment = read_segment(directory / name, key_provider)
+        if segment.session_id != session_id or segment.segment_index != index:
+            raise ValueError("failed capture segment identity mismatch")
+        frames.extend(segment.frames)
+    return diagnostic, tuple(frames)
+
+
+def _promote_failed_capture(root: Path, staging: Path) -> None:
+    archive = failed_capture_archive(root)
+    archive.mkdir(exist_ok=True)
+    target = archive / staging.name
+    if target.exists():
+        raise FileExistsError("failed capture archive already exists")
+    os.rename(staging, target)
+    fsync_directory(staging.parent)
+    fsync_directory(archive)
+    fsync_directory(archive.parent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +352,32 @@ class ValidSessionStager:
             shutil.rmtree(self.staging_directory)
             fsync_directory(self._staging_root)
 
+    def preserve_quality_failure(
+        self, *, ended_at_ns: int, diagnostic: dict[str, object]
+    ) -> None:
+        """Retain the already sealed capture without creating an uploadable session."""
+        self._ensure_active()
+        if self._has_open_frames:
+            self._sealed.append(self._writer.close())
+            self._has_open_frames = False
+        if not self._sealed:
+            raise ValueError("cannot preserve a failed capture without frames")
+        payload = {
+            **diagnostic,
+            "schema_version": "failed-capture/1",
+            "started_at_ns": self._started_at_ns,
+            "ended_at_ns": ended_at_ns,
+            "stage_windows": [asdict(window) for window in self._stage_windows],
+            "segment_names": [segment.path.name for segment in self._sealed],
+        }
+        sealed = SensitiveBlobCodec(self._key_provider).encrypt(
+            json.dumps(payload, allow_nan=False).encode("utf-8"),
+            context=f"failed-capture:{self._session_id}",
+        )
+        atomic_write(self.staging_directory / _FAILURE_RECORD, sealed)
+        self._finished = True
+        _promote_failed_capture(self._root, self.staging_directory)
+
     def staged_frames(self) -> tuple[RawFrame, ...]:
         """Seal any buffered data and return verified temporary frames for gating."""
 
@@ -493,6 +574,9 @@ class ValidSessionStager:
         count = 0
         for directory in staging_root.iterdir():
             if directory.is_dir():
+                if (directory / _FAILURE_RECORD).is_file():
+                    _promote_failed_capture(Path(root), directory)
+                    continue
                 shutil.rmtree(directory)
                 count += 1
         if count:

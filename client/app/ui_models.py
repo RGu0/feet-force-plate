@@ -14,6 +14,7 @@ class ScreeningRecordRow:
     performed_on: date | None = None
     report_id: str | None = None
     report_version: int | None = None
+    failure_detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

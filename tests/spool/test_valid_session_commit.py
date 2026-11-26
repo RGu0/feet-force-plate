@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import numpy as np
@@ -12,6 +13,7 @@ from client.hardware_standardization.do_p4864 import DoP4864StandardizationAdapt
 from client.hardware_standardization.models import BaselineReference
 from client.hardware_standardization.quality import DoP4864HardwareQualityGate
 from client.spool.derived_artifact import read_derived_observation
+from client.spool.recovery import RecoveryScanner
 from client.spool import session_commit
 from client.spool.session_commit import ValidSessionStager, delete_completed_valid_session
 from client.spool.state_store import SensitiveBlobCodec, StateStore
@@ -112,6 +114,45 @@ class ValidSessionStagerTests(unittest.TestCase):
             self.store.session_status("invalid")
         with self.assertRaises(KeyError):
             self.store.sync_handoff_state("invalid")
+
+    def test_quality_failure_preserves_encrypted_capture_without_upload_handoff(self) -> None:
+        stager = self._stager("failed")
+        stager.append(_frame(1))
+        stager.preserve_quality_failure(
+            ended_at_ns=1_100_000_000,
+            diagnostic={"reason_codes": ["FORCE_CONVERSION_OR_SATURATION_FAILED"]},
+        )
+        root = self.root / "data"
+        self.assertEqual(ValidSessionStager.discard_interrupted_staging(root), 0)
+        result = RecoveryScanner(self.root, self.store, self.keys, root).scan(
+            recovered_at_ns=1_200_000_000
+        )
+        self.assertEqual(result.orphan_segments_registered, 0)
+        diagnostic, frames = session_commit.read_failed_capture(
+            root, session_id="failed", key_provider=self.keys
+        )
+        self.assertEqual(diagnostic["reason_codes"], ["FORCE_CONVERSION_OR_SATURATION_FAILED"])
+        self.assertEqual([frame.source_index for frame in frames], [1])
+        with self.assertRaises(KeyError):
+            self.store.session_status("failed")
+        with self.assertRaises(KeyError):
+            self.store.sync_handoff_state("failed")
+
+    def test_startup_finishes_archiving_a_marked_failed_capture(self) -> None:
+        stager = self._stager("interrupted-failure")
+        stager.append(_frame(1))
+        with patch.object(session_commit, "_promote_failed_capture", side_effect=OSError):
+            with self.assertRaises(OSError):
+                stager.preserve_quality_failure(
+                    ended_at_ns=1_100_000_000,
+                    diagnostic={"reason_codes": ["FORCE_CONVERSION_OR_SATURATION_FAILED"]},
+                )
+        root = self.root / "data"
+        self.assertEqual(ValidSessionStager.discard_interrupted_staging(root), 0)
+        _, frames = session_commit.read_failed_capture(
+            root, session_id="interrupted-failure", key_provider=self.keys
+        )
+        self.assertEqual([frame.source_index for frame in frames], [1])
 
     def test_valid_capture_is_promoted_then_registered_with_ready_network_handoff(self) -> None:
         stager = self._stager("valid")

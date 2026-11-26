@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -1168,6 +1169,9 @@ class ScreeningWindow(QMainWindow):
             )
             host = QWidget()
             host.setAccessibleName(record.report_status_label)
+            if record.failure_detail:
+                host.setToolTip(record.failure_detail)
+                table.item(row_index, 1).setToolTip(record.failure_detail)
             host_layout = QHBoxLayout(host)
             host_layout.setContentsMargins(8, 0, 8, 0)
             host_layout.addWidget(
@@ -1185,7 +1189,14 @@ class ScreeningWindow(QMainWindow):
             view = QPushButton("查看")
             view.setObjectName(f"{table.objectName()}View{row_index}")
             view.setProperty("importance", "ghost")
-            if record.report_id is None or record.report_version is None:
+            if record.failure_detail:
+                view.setText("查看原因")
+                view.clicked.connect(
+                    lambda _checked=False, reason=record.failure_detail: QMessageBox.information(
+                        self, "检测未完成", reason
+                    )
+                )
+            elif record.report_id is None or record.report_version is None:
                 view.setEnabled(False)
                 view.setToolTip("报告尚不可用")
             else:
@@ -1973,7 +1984,13 @@ class ScreeningWindow(QMainWindow):
         status = QComboBox()
         status.setObjectName("recordStatusFilter")
         status.setAccessibleName("按报告状态筛选检测记录")
-        for label, value in (("报告状态：全部", ""), ("完整报告", "完整报告"), ("基础报告", "基础报告"), ("分析中", "分析中")):
+        for label, value in (
+            ("报告状态：全部", ""),
+            ("完整报告", "完整报告"),
+            ("基础报告", "基础报告"),
+            ("分析中", "分析中"),
+            ("未完成", "未完成"),
+        ):
             status.addItem(label, value)
         dates = QComboBox()
         dates.setObjectName("recordDateFilter")

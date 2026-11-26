@@ -263,6 +263,7 @@ def build_live_institution_runtime(
                 tenant_id=session.tenant_id,
                 physical_store=physical_store,
                 app_version=app_version,
+                failed_capture_root=data_root / "spool",
             ),
             "consent_policy": ConsentPolicy("institution-screening/1", ("SCREENING",), ("SCREENING",)),
             "physical_grid": PhysicalGridOverlay.from_hardware_geometry(
