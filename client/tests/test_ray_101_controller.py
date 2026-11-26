@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton, QInputDialog, QMessageBox, QTableWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QInputDialog, QTableWidget
 
 from client.app.controller import ApplicationController
 from client.app.pages import PageId
@@ -18,22 +18,25 @@ from client.workflow.models import ClientError, WorkflowState
 from client.workflow.state_machine import ScreeningStep
 
 
-def test_formal_capture_requires_matching_board_label(qtbot, monkeypatch) -> None:
+def test_screening_enters_position_guidance_without_board_label_prompt(
+    qtbot, monkeypatch
+) -> None:
     coordinator = _Coordinator()
-    coordinator.run_preflight()
-    controller = ApplicationController(coordinator, capture_asset_serial="FFP-001")
+    controller = ApplicationController(coordinator)
     qtbot.addWidget(controller.window)
-    answers = iter([("", False), ("FFP-002", True), (" FFP-001 ", True)])
-    warnings = []
-    monkeypatch.setattr(QInputDialog, "getText", lambda *_args: next(answers))
-    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(True))
 
-    controller.dispatch("ENTER_POSITION")
-    assert coordinator.state.step is ScreeningStep.PREFLIGHT
-    assert warnings == []
-    controller.dispatch("ENTER_POSITION")
-    assert coordinator.state.step is ScreeningStep.PREFLIGHT
-    assert warnings == [True]
+    def unexpected_prompt(*_args):
+        raise AssertionError("screening must not prompt for a board label")
+
+    monkeypatch.setattr(QInputDialog, "getText", unexpected_prompt)
+
+    for _ in range(2):
+        coordinator.run_preflight()
+        controller.dispatch("ENTER_POSITION")
+        assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
+
+    controller.on_device_disconnected("test disconnect")
+    coordinator.run_preflight()
     controller.dispatch("ENTER_POSITION")
     assert coordinator.state.step is ScreeningStep.POSITION_GUIDANCE
 

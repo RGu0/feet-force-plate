@@ -430,7 +430,7 @@ def test_live_runtime_owns_staged_capture_and_forwards_worker_callbacks(
 
     EngineeringDeviceBindingStore(tmp_path).register_device_id("FFP-001")
     assert load_mask().device_id == "FFP-002"
-    assert connected_kwargs["controller_options"]["capture_asset_serial"] == "FFP-002"
+    assert "capture_asset_serial" not in connected_kwargs["controller_options"]
     assert connected_kwargs["controller_options"]["engineering_login"] is not None
     read_models = connected_kwargs["controller_options"]["read_models"]
     assert read_models.tenant_id == "tenant-1"
