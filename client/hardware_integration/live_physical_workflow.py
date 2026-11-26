@@ -951,6 +951,7 @@ class LivePhysicalCapture:
                     ended_at_ns=self._wall_time_ns(),
                     diagnostic={
                         "reason_codes": reason_codes,
+                        "hardware_failure_code": ui_failure.code.value,
                         "failure": getattr(decision, "failure_diagnostic", None),
                     },
                 )

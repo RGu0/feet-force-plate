@@ -31,8 +31,8 @@ from client.security.credential_vault import (
 )
 from client.reporting.models import BasicReportDocument
 from client.app.ui_models import ScreeningRecordRow
-from client.app.hardware_failure import resolve_hardware_ui_failure
-from client.device.session_ui import from_quality_reasons
+from client.app.hardware_failure import hardware_failure_presentation
+from client.hardware_standardization.ports import HardwareUiFailureCode
 from client.spool.session_commit import read_failed_capture_diagnostic
 from client.spool.state_store import (
     KeyProvider,
@@ -935,11 +935,9 @@ class InstitutionLocalStore:
                 diagnostic = read_failed_capture_diagnostic(
                     root, session_id=session_id, codec=self.codec
                 )
-                reasons = diagnostic.get("reason_codes")
-                if isinstance(reasons, list) and all(isinstance(code, str) for code in reasons):
-                    error = resolve_hardware_ui_failure(from_quality_reasons(tuple(reasons)))
-                    failure_code = error.code
-                    detail = error.operator_message
+                code = diagnostic.get("hardware_failure_code")
+                if isinstance(code, str):
+                    failure_code, detail = hardware_failure_presentation(HardwareUiFailureCode(code))
                     failure = diagnostic.get("failure")
                     if isinstance(failure, dict):
                         condition = failure.get("condition")
